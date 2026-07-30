@@ -57,6 +57,7 @@ describe("LedgerService — limit clamping and reads", () => {
     const result = await service.listAccounts(ctx, { limit: 0 });
     expect(result.items).toEqual([]);
     expect(result.next_cursor).toBeNull();
+    expect(result.total_count).toBe(0);
   });
 
   it("clamps requested limit above max", async () => {
@@ -105,9 +106,39 @@ describe("LedgerService — limit clamping and reads", () => {
     const { pool, calls } = fakePool();
     const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
     await service.listCounterparties(ctx, { verified_status: "unverified" });
-    const list = calls.find((c) => c.text.includes("SELECT * FROM ledger_counterparties"))!;
-    expect(list.text).toContain("verified_status = $1");
+    const list = calls.find((c) => c.text.includes("FROM ledger_counterparties cp"))!;
+    expect(list.text).toContain("cp.verified_status = $1");
     expect(list.values).toEqual(["unverified", 51]);
+  });
+
+  it("serializes counterparty payment rollups", async () => {
+    const { pool } = fakePool({
+      "FROM ledger_counterparties cp": [
+        {
+          ...rowCommon(),
+          id: "cp_globex",
+          name: "Globex Corp",
+          normalized_name: "globex_corp",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          aliases: [],
+          linked_accounts: [],
+          agent_id: null,
+          onchain_address: null,
+          metadata: {},
+          payment_count: 2,
+          payment_total: "1234.56",
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    const result = await service.listCounterparties(ctx, { type: "vendor" });
+    expect(result.items[0]).toMatchObject({
+      id: "cp_globex",
+      payment_count: 2,
+      payment_total: "1234.56",
+    });
   });
 
   it("returns a keyset cursor when an account list has another page", async () => {
@@ -115,10 +146,14 @@ describe("LedgerService — limit clamping and reads", () => {
       accountRow("acct_2", new Date("2026-07-02T00:00:00Z")),
       accountRow("acct_1", new Date("2026-07-01T00:00:00Z")),
     ];
-    const { pool, calls } = fakePool({ "SELECT * FROM ledger_accounts": rows });
+    const { pool, calls } = fakePool({
+      "SELECT * FROM ledger_accounts": rows,
+      "SELECT count(*)::int AS total_count FROM ledger_accounts": [{ total_count: 2 }],
+    });
     const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
     const result = await service.listAccounts(ctx, { limit: 1 });
     expect(result.items.map((account) => account.id)).toEqual(["acct_2"]);
+    expect(result.total_count).toBe(2);
     expect(result.next_cursor).toEqual(expect.any(String));
     expect(decodeKeysetCursor(result.next_cursor!)).toEqual({
       sort: "2026-07-02T00:00:00.000Z",
@@ -426,7 +461,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("renames with the previous name preserved as an alias and audits changed fields", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -480,7 +515,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("updates display_name without rename collision and preserves the previous display name", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -526,7 +561,7 @@ describe("LedgerService manual counterparty endpoints", () => {
 
   it("returns name_conflict on rename collision without mutating", async () => {
     const { pool, calls } = fakePool({
-      "WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
         {
           ...rowCommon(),
           id: "cp_existing",

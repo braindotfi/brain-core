@@ -369,6 +369,59 @@ describe("connector ledger canonical projectors", () => {
     });
   });
 
+  it("normalizes uploaded bank counterparty names before creating identity keys", () => {
+    const out = projectBankStatementUploadLedger(
+      {
+        object_type: "bank_statement",
+        account: {
+          account_id: "upload:raw_1:account",
+          institution: "Mercury",
+          name: "Operating",
+          currency: "USD",
+          current_balance: "1000",
+        },
+        transactions: [
+          {
+            transaction_id: "raw_1:bank:0001",
+            date: "2026-06-01",
+            description: "- GLOBEX CORP INV-1044",
+            amount: "250",
+            direction: "outflow",
+            currency: "USD",
+            counterparty_name: "- GLOBEX CORP INV-1044",
+          },
+          {
+            transaction_id: "raw_1:bank:0002",
+            date: "2026-06-02",
+            description: "...",
+            amount: "1",
+            direction: "outflow",
+            currency: "USD",
+            counterparty_name: "...",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(out).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "counterparty",
+          input: expect.objectContaining({
+            sourceNaturalKey: "upload_counterparty:globex_corp",
+            normalizedName: "globex_corp",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      out.some(
+        (op) => op.kind === "counterparty" && op.input.sourceNaturalKey === "upload_counterparty:",
+      ),
+    ).toBe(false);
+  });
+
   it("projects AR aging upload rows into receivable obligations", () => {
     const out = projectDocumentRecordsUploadLedger(
       {

@@ -191,6 +191,10 @@ Done
   `POST /v1/governance/reports/snapshot` is BFF-only and uses a route-local
   idempotency wrapper against the same store, scoped by explicit `tenant_id` and
   the full snapshot request parameters.
+- Unmatched high-risk `agent_action` proposals from fraud and vendor-risk
+  workflows fail to human review, not silent rejection. The policy VM still
+  default-denies unmatched rules; `PolicyService.evaluateLegacy` converts only
+  scoped high-risk proposal fallthroughs to `confirm` with a signer requirement.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent
@@ -352,16 +356,31 @@ Pending Dmitriy sign-off
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
+  Known upload PDFs are classified before parser selection: bank statement PDFs
+  must clear the bank-statement confidence floor, while AR aging and payroll
+  PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
+  emit the upload-projected hook so compact AP/AR rebuilds and projection status
+  are not stranded.
 - Production tenancy is governed by
   `docs/contracts/production-tenancy.md`. Production tenants are created only by
   `POST /v1/tenants` with the platform service credential. The route creates
   `tenant.kind='production'`, one active bootstrap admin member, a platform
   identity link, a user-principal member session, and the tenant's propose-only
-  BFF service agent with an initial agent token. It seeds no demo data.
+  BFF service agent with an initial agent token. When the platform sends
+  `demo_seed: true`, the same durable production tenant is also seeded with the
+  Brightline demo ledger, policy, agent, pending Needs Review proposals, and
+  fake-connected source rows before the 201 response. This is the supported
+  persistent "Continue with Demo" path; it does not change `tenant.kind`, add a
+  TTL, or make the tenant eligible for demo cleanup.
 - Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production
   tenants are not eligible for demo cleanup.
+- BrainSaaS demo provisioning also seeds demo-only fake connected
+  `raw_sources` rows for the MVP source categories. These rows overlap the
+  Brightline document seed data, expose `disconnectable:false`,
+  `disconnect_hidden:true`, and `sync_disabled:true` in metadata, and are
+  excluded from raw source sync by `demo_seed_kind='fake_connected_source'`.
 - Production member sessions use the exchange model:
   `POST /v1/sessions`, `POST /v1/sessions/refresh`, and
   `DELETE /v1/sessions`. Unlinked platform identities return

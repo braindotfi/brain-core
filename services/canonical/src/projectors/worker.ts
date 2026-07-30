@@ -1053,6 +1053,47 @@ async function runDocObligationPass(
         { projector: DOC_OBLIGATION_PROJECTOR, object_type: "doc_obligation" },
         written,
       );
+      const uploadSummary: LedgerUploadProjectionSummary = {
+        accounts: 0,
+        transactions: 0,
+        receivables: 0,
+        obligations: written,
+        newCounterparties: written,
+      };
+      if (hasProjectedRows(uploadSummary)) {
+        await deps.audit.emit({
+          tenantId: row.tenant_id,
+          layer: "ledger",
+          eventType: "system_activity",
+          severity: "info",
+          actor,
+          action: "ledger.upload.projected",
+          inputs: {
+            raw_artifact_id: row.raw_artifact_id,
+            raw_parsed_id: row.id,
+            projector: DOC_OBLIGATION_PROJECTOR,
+          },
+          outputs: { summary: uploadSummary },
+        });
+        summary.uploadProjectedEvents += 1;
+      }
+      if (deps.onUploadProjected !== undefined && hasProjectedRows(uploadSummary)) {
+        try {
+          await deps.onUploadProjected({
+            event: "ledger.upload.projected",
+            tenantId: row.tenant_id,
+            rawArtifactId: row.raw_artifact_id,
+            rawParsedId: row.id,
+            projector: DOC_OBLIGATION_PROJECTOR,
+            summary: uploadSummary,
+          });
+        } catch (err) {
+          console.error(
+            `[canonicalProjector] doc upload projection trigger failed for ${row.id}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[canonicalProjector] doc projection failed for ${row.id}:`, message);

@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { evaluate, type Action, type PolicyDocument } from "@brain/policy";
 import type * as BrainShared from "@brain/shared";
 
 const { upsertCounterpartyRow, upsertAccountRow, recordTransactionRow } = vi.hoisted(() => ({
@@ -126,6 +127,11 @@ describe("seedBrainSaasDemo", () => {
     expect(result.accounts.smartAccount).toBeNull();
     expect(result.accounts.operating).toBe("acct_brainsaas_operating");
     expect(result.accounts.reserve).toBe("acct_brainsaas_reserve");
+    const accountArgs = upsertAccountRow.mock.calls.map((c) => c[3] as { institution: string });
+    expect(accountArgs.map((a) => a.institution)).toEqual([
+      "First Meridian Bank",
+      "First Meridian Bank",
+    ]);
 
     // AP inbox (3) + AR receivables (4).
     expect(Object.keys(result.apInvoices)).toEqual(["cloudops", "datacenter", "quickpay"]);
@@ -138,6 +144,32 @@ describe("seedBrainSaasDemo", () => {
 
     expect(result.policyId.startsWith("pol_")).toBe(true);
     expect(result.agentId.startsWith("agent_")).toBe(true);
+    expect(Object.keys(result.proposals)).toEqual([
+      "midmarket_collections",
+      "startupx_collections",
+    ]);
+    expect(Object.values(result.proposals).every((id) => id.startsWith("prop_"))).toBe(true);
+    expect(Object.keys(result.sources)).toEqual([
+      "plaid",
+      "stripe",
+      "finch",
+      "merge_accounting",
+      "alchemy_wallet",
+      "tax_return",
+    ]);
+  });
+
+  it("does not overwrite tenant kind when seeding an existing durable tenant", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const tenantUpsert = scopedCalls.find((c) =>
+      c.sql.includes("INSERT INTO tenants (id, kind, default_ap_account_id)"),
+    );
+    expect(tenantUpsert).toBeDefined();
+    expect(tenantUpsert?.sql).toContain("ON CONFLICT (id) DO UPDATE");
+    expect(tenantUpsert?.sql).toContain("SET default_ap_account_id");
+    expect(tenantUpsert?.sql).not.toContain("SET kind");
   });
 
   it("marks unapproved vendors high-risk with no settlement alias", async () => {
@@ -180,6 +212,16 @@ describe("seedBrainSaasDemo", () => {
     // 3 accounts now: operating + reserve + smart.
     expect(upsertAccountRow).toHaveBeenCalledTimes(3);
     expect(result.accounts.smartAccount).toBe("acct_0xSMART00000000000000000000000000000000AA");
+    const smartAccountCall = upsertAccountRow.mock.calls.find(
+      (c) =>
+        (c[3] as { external_account_id: string }).external_account_id ===
+        "0xSMART00000000000000000000000000000000AA",
+    );
+    expect(smartAccountCall).toBeDefined();
+    expect(smartAccountCall![3]).toMatchObject({
+      institution: "Base Sepolia",
+      name: "Brightline Treasury Wallet",
+    });
   });
 
   it("posts monthly inflow history only for customers with payment_days", async () => {
@@ -192,6 +234,85 @@ describe("seedBrainSaasDemo", () => {
       (c) => (c[3] as { direction: string }).direction,
     );
     expect(directions.every((d) => d === "inflow")).toBe(true);
+  });
+
+  it("seeds fake-connected demo sources that overlap with document data", async () => {
+    const { pool, audit } = deps();
+    const result = await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const deletePrior = scopedCalls.find((c) =>
+      c.sql.includes("metadata->>'demo_seed_kind' = 'fake_connected_source'"),
+    );
+    expect(deletePrior).toBeDefined();
+
+    const inserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO raw_sources"));
+    expect(inserts).toHaveLength(6);
+    expect(Object.values(result.sources).every((id) => id.startsWith("src_"))).toBe(true);
+
+    const byType = new Map(
+      inserts.map((c) => [
+        c.values?.[2],
+        {
+          externalAccountIds: c.values?.[4],
+          isStub: c.values?.[6],
+          metadata: JSON.parse(String(c.values?.[3])) as {
+            demo_seed_kind: string;
+            demo_fake_connected: boolean;
+            company_name: string;
+            display_name: string;
+            provider_name: string;
+            source_category: string;
+            disconnect_hidden: boolean;
+            disconnectable: boolean;
+            sync_disabled: boolean;
+            overlaps_with: Record<string, unknown>;
+          },
+        },
+      ]),
+    );
+
+    expect([...byType.keys()].sort()).toEqual([
+      "alchemy_wallet",
+      "email_inbound",
+      "finch",
+      "merge_accounting",
+      "plaid",
+      "stripe",
+    ]);
+
+    for (const entry of byType.values()) {
+      expect(entry.metadata).toMatchObject({
+        demo_seed_kind: "fake_connected_source",
+        demo_fake_connected: true,
+        company_name: "Brightline Systems Inc.",
+        disconnect_hidden: true,
+        disconnectable: false,
+        sync_disabled: true,
+      });
+      expect(entry.metadata.source_category).toEqual(expect.any(String));
+      expect(entry.metadata.provider_name).toEqual(expect.any(String));
+      expect(entry.metadata.display_name).toEqual(expect.any(String));
+    }
+
+    expect(byType.get("plaid")?.externalAccountIds).toEqual([
+      "brainsaas_operating",
+      "brainsaas_reserve",
+    ]);
+    expect(byType.get("plaid")?.metadata.overlaps_with).toMatchObject({
+      documents: ["bank_statement_2026-06.pdf"],
+      ledger_account_ids: ["acct_brainsaas_operating", "acct_brainsaas_reserve"],
+    });
+    expect(byType.get("stripe")?.metadata.overlaps_with).toMatchObject({
+      documents: ["bank_statement_2026-06.pdf", "ar_aging_2026-06-30.xlsx"],
+    });
+    expect(byType.get("finch")?.metadata.overlaps_with).toMatchObject({
+      documents: ["payroll_register_2026-06.xlsx"],
+      pay_runs: ["2026-06A", "2026-06B"],
+    });
+    expect(byType.get("merge_accounting")?.metadata.overlaps_with.ap_invoice_ids).toHaveLength(3);
+    expect(byType.get("merge_accounting")?.metadata.overlaps_with.ar_invoice_ids).toHaveLength(4);
+    expect(byType.get("alchemy_wallet")?.isStub).toBe(true);
+    expect(byType.get("email_inbound")?.isStub).toBe(true);
   });
 
   it("backdates payment-instruction history out of the 24h fraud window", async () => {
@@ -241,6 +362,94 @@ describe("seedBrainSaasDemo", () => {
     // version comes from the COALESCE(MAX(version)+1) stub → 1.
     expect(insertPolicy!.values?.[2]).toBe(1);
     expect(insertPolicy!.values?.[1]).toBe(TENANT);
+
+    const policy = JSON.parse(String(insertPolicy!.values?.[3])) as PolicyDocument;
+    expect(policy.rules).not.toContainEqual(
+      expect.objectContaining({ id: "ar-auto-agent-action", execute: "auto" }),
+    );
+    expect(policy.rules).toContainEqual({
+      id: "ar-agent-action-requires-review",
+      applies_to: ["agent_action"],
+      when: { "agent.confidence.gte": 0.6 },
+      execute: "confirm",
+      require: "single_signer",
+    });
+
+    const ordinaryAgentAction: Action = {
+      kind: "agent_action",
+      counterparty_id: null,
+      amount: null,
+      agent_role: "collections",
+      timestamp: new Date("2026-06-30T00:00:00Z"),
+      confidence: 0.72,
+    };
+    expect(evaluate(policy, ordinaryAgentAction)).toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "ar-agent-action-requires-review",
+      required_approvers: ["signer"],
+    });
+
+    const largeAgentAction: Action = {
+      ...ordinaryAgentAction,
+      amount: { currency: "USD", value: "500000.01" },
+    };
+    expect(evaluate(policy, largeAgentAction)).toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "ar-confirm-above-500k",
+      required_approvers: ["owner"],
+    });
+  });
+
+  it("plants pending Needs Review agent proposals for overdue receivables", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const proposalInserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO proposals"));
+    expect(proposalInserts).toHaveLength(2);
+
+    const actions = proposalInserts.map(
+      (c) => JSON.parse(String(c.values?.[3])) as Record<string, unknown>,
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "agent_action",
+          type: "collections",
+          mode: "propose",
+          risk_band: "elevated",
+          action_id: "demo.collections.ar-midmarket-001",
+        }),
+        expect.objectContaining({
+          kind: "agent_action",
+          type: "collections",
+          mode: "propose",
+          risk_band: "high",
+          action_id: "demo.collections.ar-startupx-001",
+        }),
+      ]),
+    );
+
+    for (const call of proposalInserts) {
+      expect(call.values?.[1]).toBe(TENANT);
+      expect(call.values?.[4]).toBe(1);
+      expect(call.values?.[5]).toContain("ar-agent-action-requires-review");
+      expect(String(call.values?.[6])).toMatch(/^demo:brainsaas:proposal:/);
+      expect(call.sql).toContain("'confirm'");
+      expect(call.sql).toContain("'pending'");
+      expect(call.sql).toContain("ARRAY['signer']");
+      expect(call.sql).toContain("ON CONFLICT (tenant_id, proposal_dedup_key)");
+    }
+
+    const auditEvents = audit.events.filter((event) => event.action === "agent.action.proposed");
+    expect(auditEvents).toHaveLength(2);
+    expect(auditEvents.every((event) => event.outcome === "confirm")).toBe(true);
+    expect(
+      auditEvents.every(
+        (event) =>
+          (event.outputs as { matched_rule_id?: string }).matched_rule_id ===
+          "ar-agent-action-requires-review",
+      ),
+    ).toBe(true);
   });
 
   it("deletes and re-inserts the demo payment agent", async () => {

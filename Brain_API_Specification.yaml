@@ -416,7 +416,10 @@ paths:
         agent token. Rejects the request outright if the demo
         provisioning header (`X-Demo-Provision-Auth`) is also present, to
         keep the demo and production tenant-creation paths from being
-        conflatable.
+        conflatable. When `demo_seed: true` is present, the route also
+        seeds the durable production tenant with the Brightline demo
+        ledger, policy, agent, and fake-connected source rows. The tenant
+        remains `kind='production'`.
       operationId: createTenant
       security: []
       requestBody:
@@ -428,6 +431,14 @@ paths:
               required: [founder, founder_external_ref]
               properties:
                 company_name: { type: string }
+                demo_seed:
+                  type: boolean
+                  default: false
+                  description: |
+                    When true, seed the durable production tenant with the
+                    server-owned Brightline demo dataset. Intended for the
+                    platform "Continue with Demo" flow. Does not change
+                    tenant.kind.
                 founder:
                   type: object
                   required: [email]
@@ -454,6 +465,29 @@ paths:
                       refresh_token: { type: string }
                       expires_in: { type: integer, enum: [900] }
                   agent: { $ref: '#/components/schemas/ProductionAgentToken' }
+                  demo_seed:
+                    type: object
+                    description: Present only when demo_seed was requested.
+                    properties:
+                      seeded: { type: boolean, enum: [true] }
+                      sources:
+                        type: object
+                        additionalProperties: { type: string }
+                      proposals:
+                        type: object
+                        additionalProperties: { type: string }
+                      accounts:
+                        type: object
+                        additionalProperties:
+                          type: [string, 'null']
+                      ap_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      ar_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      policy_id: { type: [string, 'null'] }
+                      agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
           description: |
@@ -481,7 +515,8 @@ paths:
       description: |
         Organization-scoped alias for `POST /tenants`. It persists a
         production tenant with the same bootstrap admin, member session, and
-        propose-only agent token behavior, and echoes `org_id` in the response.
+        propose-only agent token behavior, supports the same `demo_seed`
+        option, and echoes `org_id` in the response.
       operationId: createOrgTenant
       security: []
       parameters:
@@ -498,6 +533,10 @@ paths:
               required: [founder, founder_external_ref]
               properties:
                 company_name: { type: string }
+                demo_seed:
+                  type: boolean
+                  default: false
+                  description: Same semantics as POST /tenants.
                 founder:
                   type: object
                   required: [email]
@@ -523,6 +562,29 @@ paths:
                       refresh_token: { type: string }
                       expires_in: { type: integer, enum: [900] }
                   agent: { $ref: '#/components/schemas/ProductionAgentToken' }
+                  demo_seed:
+                    type: object
+                    description: Present only when demo_seed was requested.
+                    properties:
+                      seeded: { type: boolean, enum: [true] }
+                      sources:
+                        type: object
+                        additionalProperties: { type: string }
+                      proposals:
+                        type: object
+                        additionalProperties: { type: string }
+                      accounts:
+                        type: object
+                        additionalProperties:
+                          type: [string, 'null']
+                      ap_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      ar_invoices:
+                        type: object
+                        additionalProperties: { type: string }
+                      policy_id: { type: [string, 'null'] }
+                      agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
           description: Missing or invalid platform credential.
@@ -1219,6 +1281,8 @@ paths:
                   expires_at: { type: string, format: date-time }
                   mime_type: { type: string }
                   bytes: { type: integer, minimum: 0 }
+                  projection_status:
+                    $ref: '#/components/schemas/RawProjectionStatus'
         '404':
           description: No such artifact. Error code `raw_artifact_not_found`.
           content:
@@ -1619,6 +1683,9 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Account' }
                   next_cursor: { type: [string, "null"] }
+                  total_count:
+                    type: integer
+                    description: Total tenant accounts matching the filters, independent of pagination.
 
         '400': { $ref: '#/components/responses/BadRequest' }
   /ledger/accounts/{account_id}:
@@ -2223,6 +2290,32 @@ paths:
   #############################################################################
   # LAYER 3: WIKI (memory)
   #############################################################################
+
+  /assistant/questions:
+    get:
+      tags: [Wiki]
+      summary: List suggested assistant questions
+      description: |
+        Requires `wiki:read`. Returns tenant-scoped assistant questions when
+        present. Empty tenants receive `questions: []`.
+      operationId: listAssistantQuestions
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+      responses:
+        '200':
+          description: Assistant question list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions:
+                    type: array
+                    items: { $ref: '#/components/schemas/AssistantQuestion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   # Wiki memory pages — derived from Ledger + Raw, regenerable on demand.
   /memory/pages:
@@ -6441,6 +6534,8 @@ components:
         source_schema:
           type: string
           description: Declared payload schema tag, echoed when one was declared
+        projection_status:
+          $ref: '#/components/schemas/RawProjectionStatus'
         bytes: { type: integer }
         ingested_at: { type: string, format: date-time }
         deduplicated:
@@ -6448,6 +6543,15 @@ components:
           description: True if this artifact was already in storage
         extraction_job:
           $ref: '#/components/schemas/RawExtractionJob'
+
+    RawProjectionStatus:
+      type: string
+      description: |
+        Lifecycle status for upload document projection side effects. This is
+        not a row-count validator: `projected` means the post-upload projection
+        side-effect chain completed for the artifact. Use audit events such as
+        `ledger.apar_projection.rebuilt` for produced-row diagnostics.
+      enum: [pending, projecting, projected, projection_timed_out, projection_failed]
 
     RawExtractionJob:
       type: object
@@ -6528,6 +6632,12 @@ components:
         metadata:
           type: object
           additionalProperties: true
+          description: |
+            Connector metadata. Demo tenants may include
+            `demo_seed_kind:"fake_connected_source"`, `disconnectable:false`,
+            `disconnect_hidden:true`, and `sync_disabled:true` for fake connected
+            rows that should count as connected sources but should not show a
+            disconnect control or run provider sync.
         error_message: { type: [string, "null"] }
         is_stub:
           type: boolean
@@ -7420,6 +7530,13 @@ components:
             linked_accounts:
               type: array
               items: { type: string }
+            payment_count:
+              type: integer
+              minimum: 0
+              description: Count of posted or cleared outflow transactions linked to this counterparty.
+            payment_total:
+              type: string
+              description: Sum of posted or cleared outflow transaction amounts linked to this counterparty.
 
     Obligation:
       allOf:
@@ -7766,6 +7883,24 @@ components:
     #
     # Wiki memory pages (v0.2)
     #
+
+    AssistantQuestion:
+      type: object
+      required: [id, question, answer, status, source, evidence_ids, metadata, created_at, updated_at]
+      properties:
+        id: { type: string }
+        question: { type: string }
+        answer: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [suggested, answered, dismissed]
+        source: { type: [string, "null"] }
+        evidence_ids:
+          type: array
+          items: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     WikiPage:
       type: object

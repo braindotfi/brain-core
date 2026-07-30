@@ -148,6 +148,13 @@ export class ProposalDecisionService {
         outputs: {
           status: target.status,
           actor: { member_id: actor.memberId, verification: actor.verification },
+          // `outputs` is what services/audit/src/routes.ts serializes from
+          // GET /audit/events. Keep the proposal context here so the audit
+          // record remains meaningful without a live proposal lookup.
+          proposal_summary: {
+            proposing_agent: before.proposing_agent,
+            ...proposalActionSnapshot(before),
+          },
         },
         beforeState: proposalAuditEnvelope(before),
         afterState,
@@ -196,8 +203,36 @@ function proposalAuditEnvelope(row: ProposalRow): Record<string, unknown> {
     policy_decision: row.policy_decision,
     required_approvers: row.required_approvers,
     approvers_signed: row.approvers_signed,
+    ...proposalActionSnapshot(row),
   };
 }
+
+/**
+ * Decision-time snapshot of presentation fields emitted by internal-agent
+ * proposal handlers. This is deliberately a narrow whitelist, not the full
+ * action blob, so future handler fields are not made permanent audit data
+ * without review.
+ */
+function proposalActionSnapshot(row: ProposalRow): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of PROPOSAL_SNAPSHOT_KEYS) {
+    const value = row.action[key];
+    if (value !== undefined) snapshot[key] = value;
+  }
+  return snapshot;
+}
+
+const PROPOSAL_SNAPSHOT_KEYS = [
+  "narrative",
+  "summary",
+  "risk_band",
+  "finding_type",
+  "severity",
+  "rule_id",
+  "affected_entities",
+  "evidence_refs",
+  "recommended_remediation",
+] as const;
 
 type TargetStatus =
   | { status: ProposalState; idempotent: false }

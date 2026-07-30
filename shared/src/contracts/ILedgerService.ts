@@ -103,6 +103,10 @@ export interface Counterparty extends LedgerCommonFields {
   onchain_address: string | null;
   /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
   metadata: Record<string, unknown>;
+  /** Count of posted or cleared outflow transactions linked to this counterparty. */
+  payment_count?: number;
+  /** Sum of posted or cleared outflow transaction amounts linked to this counterparty. */
+  payment_total?: DecimalString;
 }
 
 export interface Obligation extends LedgerCommonFields {

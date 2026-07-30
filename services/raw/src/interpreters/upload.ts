@@ -8,6 +8,7 @@ export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
 export const UPLOAD_DOCUMENT_INTERPRETER_VERSION = "1.0.1";
 const DEFAULT_CURRENCY = "USD";
 const HEADER_SCAN_LIMIT = 10;
+const MIN_BANK_STATEMENT_PDF_CONFIDENCE = 0.6;
 const AR_HEADER_KEYWORDS = [
   "ar",
   "accounts receivable",
@@ -99,7 +100,7 @@ export const uploadDocumentInterpreter: ArtifactInterpreter = (bytes, ctx) => {
     mimeType: ctx.mimeType,
   };
   if (ctx.sourceType === "pdf_upload") {
-    return interpretBankStatementPdf(bytes, uploadCtx);
+    return interpretPdfUpload(bytes, uploadCtx);
   }
   if (ctx.sourceType === "csv_upload") {
     return interpretSpreadsheetUpload(bytes, uploadCtx);
@@ -110,8 +111,22 @@ export const uploadDocumentInterpreter: ArtifactInterpreter = (bytes, ctx) => {
   );
 };
 
-function interpretBankStatementPdf(bytes: Buffer, ctx: UploadContext): InterpretedOutput | null {
+function interpretPdfUpload(bytes: Buffer, ctx: UploadContext): InterpretedOutput | null {
   const text = extractPdfText(bytes);
+  if (looksLikeArAgingPdf(text)) return arAgingPdfOutput(text);
+  if (looksLikePayrollPdf(text)) return payrollPdfOutput(text, ctx);
+  return interpretBankStatementPdfText(
+    text,
+    ctx,
+    bytes.subarray(0, 5).toString("latin1") === "%PDF-",
+  );
+}
+
+function interpretBankStatementPdfText(
+  text: string,
+  ctx: UploadContext,
+  enforceConfidenceFloor = false,
+): InterpretedOutput | null {
   const parsed = parseBankStatementText(text, ctx);
   if (parsed.transactions.length === 0) {
     throw brainError(
@@ -119,12 +134,191 @@ function interpretBankStatementPdf(bytes: Buffer, ctx: UploadContext): Interpret
       "bank statement upload contained no transaction rows",
     );
   }
+  const confidence = bankStatementConfidence(parsed);
+  if (enforceConfidenceFloor && confidence < MIN_BANK_STATEMENT_PDF_CONFIDENCE) {
+    throw brainError(
+      "raw_source_unsupported",
+      `bank statement upload confidence ${confidence.toFixed(2)} is below ${MIN_BANK_STATEMENT_PDF_CONFIDENCE.toFixed(2)}`,
+      { details: { confidence } },
+    );
+  }
   return {
     parser: BANK_STATEMENT_UPLOAD_PARSER,
     parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
     extracted: parsed,
-    confidence: bankStatementConfidence(parsed),
+    confidence,
   };
+}
+
+function looksLikeArAgingPdf(text: string): boolean {
+  const normalized = normalizedPdfText(text);
+  return (
+    /\b(accounts receivable|ar)\s+aging\s+report\b/.test(normalized) ||
+    (normalized.includes(" invoice ") &&
+      normalized.includes(" aging bucket ") &&
+      normalized.includes(" total outstanding ar "))
+  );
+}
+
+function looksLikePayrollPdf(text: string): boolean {
+  const normalized = normalizedPdfText(text);
+  return (
+    /\bpayroll\s+(register|report)\b/.test(normalized) ||
+    (normalized.includes(" gross pay ") &&
+      normalized.includes(" net pay ") &&
+      normalized.includes(" pay period "))
+  );
+}
+
+function normalizedPdfText(text: string): string {
+  return ` ${text
+    .toLowerCase()
+    .replace(/[#/]+/g, " ")
+    .replace(/[^a-z0-9+.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()} `;
+}
+
+function arAgingPdfOutput(text: string): InterpretedOutput {
+  const tokens = pdfTokens(text);
+  const receivables = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const invoiceRef = tokens[index] ?? "";
+    if (!/^inv-\d+/i.test(invoiceRef)) continue;
+    const counterparty = tokens[index + 1]?.trim() ?? "";
+    const issueDate = normalizeSpreadsheetDate(tokens[index + 2]);
+    const dueDate = normalizeSpreadsheetDate(tokens[index + 3]);
+    const amount = moneyToDecimal(tokens[index + 4]);
+    const agingBucket = tokens[index + 5]?.trim() ?? "";
+    const status = tokens[index + 6]?.trim() ?? "";
+    if (counterparty.length === 0 || amount === null) continue;
+    receivables.push({
+      counterparty_name: counterparty,
+      invoice_ref: invoiceRef,
+      amount,
+      currency: DEFAULT_CURRENCY,
+      aging_bucket: agingBucket.length > 0 ? agingBucket : null,
+      due_date: dueDate,
+      issue_date: issueDate,
+      status: status.length > 0 ? status : "Open",
+    });
+  }
+  if (receivables.length === 0) {
+    throw brainError("raw_source_unsupported", "AR aging PDF contained no receivable rows");
+  }
+  return {
+    parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
+    extracted: { object_type: "ar_aging", receivables },
+    confidence: pdfRecordsConfidence(receivables.length, tokens.length),
+  };
+}
+
+function payrollPdfOutput(text: string, ctx: UploadContext): InterpretedOutput {
+  const tokens = pdfTokens(text);
+  const obligations = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const period = tokens[index]?.match(
+      /^Pay Period\s+(\d+):\s*(20\d{2}-\d{2}-\d{2})\s+-\s+(20\d{2}-\d{2}-\d{2})\s+\(Pay Date:\s*(20\d{2}-\d{2}-\d{2})\)$/i,
+    );
+    if (period === undefined || period === null) continue;
+    const runRef = `pay-period-${period[1]}`;
+    const payDate = period[4]!;
+    const nextPeriod = tokens.findIndex((token, nextIndex) => {
+      if (nextIndex <= index) return false;
+      return /^Pay Period\s+\d+:/i.test(token) || /^Upcoming Employer Obligations$/i.test(token);
+    });
+    const section = tokens.slice(index + 1, nextPeriod === -1 ? undefined : nextPeriod);
+    const totals = parsePayrollPdfTotals(section);
+    if (totals === null) continue;
+    obligations.push({
+      counterparty_name: "Payroll",
+      run_ref: runRef,
+      amount: decimalString(totals.netPay),
+      net_amount: decimalString(totals.netPay),
+      tax_amount: decimalString(totals.fedTax + totals.stateTax),
+      currency: DEFAULT_CURRENCY,
+      due_date: payDate,
+      cadence: "semi_monthly",
+      status: "posted",
+    });
+  }
+  obligations.push(...payrollPdfEmployerObligations(tokens, ctx));
+  if (obligations.length === 0) {
+    throw brainError("raw_source_unsupported", "payroll PDF contained no obligation rows");
+  }
+  return {
+    parser: DOCUMENT_RECORDS_UPLOAD_PARSER,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
+    extracted: { object_type: "payroll_register", obligations },
+    confidence: pdfRecordsConfidence(obligations.length, tokens.length),
+  };
+}
+
+function parsePayrollPdfTotals(
+  section: string[],
+): { gross: number; fedTax: number; stateTax: number; benefits: number; netPay: number } | null {
+  const totalsIndex = section.findIndex((token) => /^Totals:?$/i.test(token));
+  if (totalsIndex === -1) return null;
+  const joined = section.slice(totalsIndex, totalsIndex + 12).join(" ");
+  const gross = moneyToNumber(joined.match(/\bGross\s+\$?([\d,]+\.\d{2})/i)?.[1]);
+  const fedTax = moneyToNumber(joined.match(/\bFed\.\s*Tax\s+\$?([\d,]+\.\d{2})/i)?.[1]);
+  const stateTax = moneyToNumber(joined.match(/\bState\s+Tax\s+\$?([\d,]+\.\d{2})/i)?.[1]);
+  const benefits = moneyToNumber(joined.match(/\bBenefits\s+\$?([\d,]+\.\d{2})/i)?.[1]);
+  const netPay = moneyToNumber(joined.match(/\bNet\s+Pay\s+\$?([\d,]+\.\d{2})/i)?.[1]);
+  if (
+    gross === null ||
+    fedTax === null ||
+    stateTax === null ||
+    benefits === null ||
+    netPay === null
+  ) {
+    return null;
+  }
+  return { gross, fedTax, stateTax, benefits, netPay };
+}
+
+function payrollPdfEmployerObligations(
+  tokens: string[],
+  ctx: UploadContext,
+): Array<Record<string, string | null>> {
+  const out: Array<Record<string, string | null>> = [];
+  const start = tokens.findIndex((token) => /^Upcoming Employer Obligations$/i.test(token));
+  if (start === -1) return out;
+  for (let index = start + 1; index < tokens.length; index += 1) {
+    const description = tokens[index] ?? "";
+    const dueDate = normalizeSpreadsheetDate(tokens[index + 1]);
+    const amount = moneyToDecimal(tokens[index + 2]);
+    const status = tokens[index + 3]?.trim() ?? "";
+    if (dueDate === null || amount === null) continue;
+    out.push({
+      counterparty_name: "Payroll Tax",
+      run_ref: `${ctx.rawArtifactId}:employer:${out.length + 1}`,
+      amount,
+      net_amount: null,
+      tax_amount: amount,
+      currency: DEFAULT_CURRENCY,
+      due_date: dueDate,
+      cadence: "quarterly",
+      status: status.length > 0 ? status : "Scheduled",
+      description,
+    });
+  }
+  return out;
+}
+
+function pdfTokens(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((token) => token.replace(/\s+/g, " ").trim())
+    .filter((token) => token.length > 0 && token !== "|");
+}
+
+function pdfRecordsConfidence(parsedRows: number, tokenCount: number): number {
+  if (parsedRows <= 0) return 0.1;
+  if (parsedRows >= 5) return 0.9;
+  if (tokenCount > 0) return 0.72;
+  return 0.48;
 }
 
 function interpretSpreadsheetUpload(bytes: Buffer, ctx: UploadContext): InterpretedOutput | null {
@@ -467,6 +661,7 @@ function parseBankTransactionTokenRow(
     }
   }
 
+  const counterpartyName = counterpartyFromDescription(description);
   return {
     transaction_id: `${rawArtifactId}:bank:${String(index + 1).padStart(4, "0")}`,
     date,
@@ -475,9 +670,7 @@ function parseBankTransactionTokenRow(
     direction,
     currency: DEFAULT_CURRENCY,
     running_balance: decimalString(running.value),
-    ...(counterpartyFromDescription(description) !== null
-      ? { counterparty_name: counterpartyFromDescription(description)! }
-      : {}),
+    ...(counterpartyName !== null ? { counterparty_name: counterpartyName } : {}),
   };
 }
 
@@ -553,6 +746,7 @@ function parseBankTransactionLine(
   if (amountCandidate === null || amountCandidate.value === 0) return null;
 
   const direction = inferDirection(amountCandidate.token, amountCandidate.value, description);
+  const counterpartyName = counterpartyFromDescription(description);
   return {
     transaction_id: `${rawArtifactId}:bank:${String(index + 1).padStart(4, "0")}`,
     date,
@@ -561,9 +755,7 @@ function parseBankTransactionLine(
     direction,
     currency: DEFAULT_CURRENCY,
     ...(runningBalance !== null ? { running_balance: runningBalance } : {}),
-    ...(counterpartyFromDescription(description) !== null
-      ? { counterparty_name: counterpartyFromDescription(description)! }
-      : {}),
+    ...(counterpartyName !== null ? { counterparty_name: counterpartyName } : {}),
   };
 }
 
@@ -591,12 +783,37 @@ function inferDirection(token: string, value: number, description: string): "inf
   return "outflow";
 }
 
-function counterpartyFromDescription(description: string): string | null {
+export function counterpartyFromDescription(description: string): string | null {
+  if (isNonCounterpartyBankDescription(description)) return null;
   const cleaned = description
     .replace(/\b(ach|pos|debit|credit|card|online|payment|deposit|withdrawal)\b/gi, " ")
+    .replace(/^[^A-Za-z0-9]+/g, "")
+    .replace(
+      /\b(?:invoice|reference)(?:(?:\s+no\.?)?\s*[-#:]\s*|\s+)[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b|\b(?:inv|bill|ref|po|p\.?o\.?)[-#:\s]+[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b/gi,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned.length > 0 ? cleaned : null;
+  return cleaned.length > 0 && !isNonCounterpartyBankDescription(cleaned) ? cleaned : null;
+}
+
+function isNonCounterpartyBankDescription(description: string): boolean {
+  const normalized = description
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (normalized.length === 0) return true;
+  return (
+    /^(interest|interest earned|interest paid|interest credit|interest charge|interest income)$/.test(
+      normalized,
+    ) ||
+    /\b(bank fee|service fee|monthly fee|maintenance fee|overdraft fee|wire fee|atm fee|fee reversal)\b/.test(
+      normalized,
+    ) ||
+    /\b(internal transfer|transfer to|transfer from|account transfer|book transfer)\b/.test(
+      normalized,
+    )
+  );
 }
 
 function bankStatementConfidence(parsed: BankStatementOutput): number {

@@ -76,8 +76,9 @@ export class PolicyService {
       timestamp: new Date(),
     };
 
-    const decision = evaluate(active.content, action);
+    const decision = highRiskAgentActionFallback(evaluate(active.content, action), action, raw);
     const snapshotHash = sha256Action(raw);
+    const subjectId = legacySubjectId(raw, snapshotHash);
     const id = newPolicyDecisionId();
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
@@ -92,7 +93,7 @@ export class PolicyService {
           active.id,
           active.version,
           "agent_action",
-          null,
+          subjectId,
           decision.outcome,
           decision.matched_rule_id,
           decision.required_approvers,
@@ -112,6 +113,7 @@ export class PolicyService {
       outcome: decision.outcome,
       inputs: {
         subject_type: "agent_action",
+        subject_id: subjectId,
         action_kind: action.kind,
         policy_version: active.version,
       },
@@ -349,8 +351,69 @@ function isRiskLevel(v: unknown): v is NonNullable<Action["risk_level"]> {
   return v === "low" || v === "medium" || v === "high" || v === "critical";
 }
 
+function rawString(raw: Record<string, unknown>, key: string): string | null {
+  const value = raw[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function legacySubjectId(raw: Record<string, unknown>, snapshotHash: string): string {
+  return (
+    rawString(raw, "subject_id") ??
+    rawString(raw, "action_id") ??
+    rawString(raw, "proposal_id") ??
+    rawString(raw, "run_id") ??
+    rawString(raw, "invoice_id") ??
+    rawString(raw, "obligation_id") ??
+    rawString(raw, "balance_id") ??
+    rawString(raw, "account_id") ??
+    `agent_action_${snapshotHash.slice(0, 32)}`
+  );
+}
+
 function sha256Action(action: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(action)).digest("hex");
+}
+
+function highRiskAgentActionFallback(
+  decision: ReturnType<typeof evaluate>,
+  action: Action,
+  raw: Record<string, unknown>,
+): ReturnType<typeof evaluate> {
+  if (
+    decision.outcome !== "reject" ||
+    decision.matched_rule_id !== null ||
+    action.kind !== "agent_action" ||
+    !isHighRiskAgentAction(raw)
+  ) {
+    return decision;
+  }
+  return {
+    ...decision,
+    outcome: "confirm",
+    required_approvers: ["signer"],
+  };
+}
+
+const HIGH_RISK_AGENT_KEYS = new Set(["fraud_anomaly", "vendor_risk"]);
+const HIGH_RISK_AGENT_ACTION_TYPES = new Set([
+  "block_payment",
+  "create_dispute_draft",
+  "escalate",
+  "flag_transaction",
+  "flag_vendor_risk",
+  "freeze_card",
+  "require_approval",
+]);
+
+function isHighRiskAgentAction(raw: Record<string, unknown>): boolean {
+  const agentId = rawString(raw, "agent_id");
+  const agentRole = rawString(raw, "agent_role");
+  const type = rawString(raw, "type");
+  return (
+    (agentId !== null && HIGH_RISK_AGENT_KEYS.has(agentId)) ||
+    (agentRole !== null && HIGH_RISK_AGENT_KEYS.has(agentRole)) ||
+    (type !== null && HIGH_RISK_AGENT_ACTION_TYPES.has(type))
+  );
 }
 
 function intentToApplyTo(actionType: string): ApplyTo {

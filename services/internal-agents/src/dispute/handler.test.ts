@@ -23,6 +23,7 @@ describe("disputeHandler", () => {
         context: baseContext({ amount: "50.00", dispute_age_days: 60, evidence_completeness: 1 }),
         evidence,
         definition: disputeDefinition,
+        now: new Date("2026-07-01T00:00:00.000Z"),
       }),
     );
     expect(action).toMatchObject({ recommended_action: "accept", mode: "propose" });
@@ -35,6 +36,7 @@ describe("disputeHandler", () => {
         context: baseContext({ amount: "750.00", evidence_completeness: 1 }),
         evidence,
         definition: disputeDefinition,
+        now: new Date("2026-07-01T00:00:00.000Z"),
       }),
     );
     expect(action).toMatchObject({

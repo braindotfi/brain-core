@@ -69,7 +69,7 @@ export interface TenantDeletionResult {
  */
 export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   table: string;
-  column: "owner_id" | "tenant_id";
+  column: "owner_id" | "tenant_id" | "brain_tenant_id";
 }> = [
   // ---- Layer 1: Raw ----
   { table: "raw_parsed", column: "tenant_id" },
@@ -144,6 +144,31 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "production_agent_tokens", column: "tenant_id" },
   { table: "agents", column: "tenant_id" },
 
+  // ---- Surface gateway (Slack / Teams / email approval surfaces) ----
+  // services/surface-gateway/migrations. None of these declare a foreign key
+  // to `tenants`, so before this block a deleted tenant's surface rows were
+  // silently ORPHANED rather than FK-erroring the transaction — the deletion
+  // reported success while Slack/Teams install tokens, external identities and
+  // proposal payloads survived. Ordering among them is arbitrary (no FKs
+  // between them either).
+  { table: "surface_delivered_refs", column: "tenant_id" },
+  { table: "surface_decisions", column: "tenant_id" },
+  { table: "surface_proposals", column: "tenant_id" },
+  { table: "surface_external_identities", column: "tenant_id" },
+  { table: "surface_slack_install_nonces", column: "tenant_id" },
+  { table: "surface_slack_installations", column: "tenant_id" },
+  { table: "surface_teams_conversation_refs", column: "tenant_id" },
+  // The only table in the repo whose tenant key is not tenant_id/owner_id:
+  // it joins a Brain tenant to an AAD tenant, so both columns are "tenant ids"
+  // and the Brain one is qualified (services/surface-gateway/migrations/0005).
+  { table: "surface_teams_installations", column: "brain_tenant_id" },
+  { table: "surface_email_recipients", column: "tenant_id" },
+  { table: "surface_email_routes", column: "tenant_id" },
+  { table: "surface_email_domains", column: "tenant_id" },
+  // surface_slack_retries is deliberately absent: it has no tenant column and
+  // stores only a SHA-256 of a Slack signature+body (one-way, no payload to
+  // recover), so it holds nothing to erase.
+
   // ---- Layer 6: Audit (metadata only; events + anchors preserved) ----
   { table: "webhook_delivery_receipts", column: "tenant_id" },
   { table: "webhook_dead_letters", column: "tenant_id" },
@@ -161,6 +186,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
 
   // ---- Onboarding / identity (tenants registry last) ----
   { table: "governance_report_snapshots", column: "tenant_id" },
+  { table: "assistant_questions", column: "tenant_id" },
   { table: "tenant_export_jobs", column: "tenant_id" },
   { table: "email_verifications", column: "tenant_id" },
   { table: "wallet_identities", column: "tenant_id" },
@@ -200,7 +226,7 @@ export interface TenantDeletionDeps {
   audit: AuditEmitter;
 }
 
-export type TenantDeletionPredicateColumn = "owner_id" | "tenant_id" | "id";
+export type TenantDeletionPredicateColumn = "owner_id" | "tenant_id" | "brain_tenant_id" | "id";
 
 export function assertTenantDeleteStatement(
   sql: string,

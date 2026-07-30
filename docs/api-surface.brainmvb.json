@@ -266,12 +266,13 @@
           "auth": "X-Platform-Service-Auth",
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
-          "request_shape": "{ company_name?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, member, session, agent }",
+          "request_shape": "{ company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, member, session, agent, demo_seed? }",
           "example_request": {
             "headers": { "X-Platform-Service-Auth": "<secret>" },
             "body": {
               "company_name": "Example Inc",
+              "demo_seed": true,
               "founder": { "email": "founder@example.com" },
               "founder_external_ref": "mvb_user_123"
             }
@@ -280,7 +281,27 @@
             "tenant_id": "tnt_example",
             "member": {},
             "session": { "token": "<jwt>", "refresh_token": "<secret>", "expires_in": 900 },
-            "agent": {}
+            "agent": {},
+            "demo_seed": {
+              "seeded": true,
+              "sources": {
+                "plaid": "src_plaid",
+                "stripe": "src_stripe",
+                "finch": "src_finch",
+                "merge_accounting": "src_merge",
+                "alchemy_wallet": "src_wallet",
+                "tax_return": "src_tax"
+              },
+              "accounts": {},
+              "proposals": {
+                "midmarket_collections": "prop_midmarket",
+                "startupx_collections": "prop_startupx"
+              },
+              "ap_invoices": {},
+              "ar_invoices": {},
+              "policy_id": "pol_example",
+              "agent_id": "agent_example"
+            }
           },
           "openapi": "documented:/tenants"
         },
@@ -290,11 +311,12 @@
           "auth": "X-Platform-Service-Auth",
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
-          "request_shape": "path { orgId }; body { company_name?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, org_id, member, session, agent }",
+          "request_shape": "path { orgId }; body { company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
+          "response_shape": "201 { tenant_id, org_id, member, session, agent, demo_seed? }",
           "example_request": {
             "path": "/v1/orgs/org_123/tenants",
             "body": {
+              "demo_seed": true,
               "founder": { "email": "founder@example.com" },
               "founder_external_ref": "mvb_user_123"
             }
@@ -304,7 +326,8 @@
             "org_id": "org_123",
             "member": {},
             "session": {},
-            "agent": {}
+            "agent": {},
+            "demo_seed": { "seeded": true, "sources": {}, "proposals": {} }
           },
           "openapi": "documented:/orgs/{orgId}/tenants"
         },
@@ -540,7 +563,22 @@
           "request_shape": "query { type?, status?, limit?, cursor? }",
           "response_shape": "200 { data, next_cursor }",
           "example_request": "GET /v1/sources?limit=25",
-          "example_response": { "data": [], "next_cursor": null },
+          "example_response": {
+            "data": [
+              {
+                "id": "src_example",
+                "type": "plaid",
+                "status": "active",
+                "metadata": {
+                  "demo_seed_kind": "fake_connected_source",
+                  "disconnectable": false,
+                  "disconnect_hidden": true,
+                  "sync_disabled": true
+                }
+              }
+            ],
+            "next_cursor": null
+          },
           "openapi": "documented:/sources"
         },
         {
@@ -552,7 +590,16 @@
           "request_shape": "path { source_id }",
           "response_shape": "200 source",
           "example_request": "GET /v1/sources/src_example",
-          "example_response": { "id": "src_example", "status": "connected" },
+          "example_response": {
+            "id": "src_example",
+            "status": "active",
+            "metadata": {
+              "demo_seed_kind": "fake_connected_source",
+              "disconnectable": false,
+              "disconnect_hidden": true,
+              "sync_disabled": true
+            }
+          },
           "openapi": "documented:/sources/{source_id}"
         },
         {
@@ -607,9 +654,9 @@
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { status?, account_type?, limit?, cursor? }",
-          "response_shape": "200 { accounts, next_cursor }",
+          "response_shape": "200 { accounts, next_cursor, total_count }",
           "example_request": "GET /v1/ledger/accounts?limit=25",
-          "example_response": { "accounts": [], "next_cursor": null },
+          "example_response": { "accounts": [], "next_cursor": null, "total_count": 0 },
           "openapi": "documented:/ledger/accounts"
         },
         {
@@ -667,9 +714,20 @@
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { q?, type?, verified_status?, limit?, cursor? }",
-          "response_shape": "200 { counterparties, next_cursor }",
+          "response_shape": "200 { counterparties[{..., payment_count, payment_total}], next_cursor }",
           "example_request": "GET /v1/ledger/counterparties",
-          "example_response": { "counterparties": [], "next_cursor": null },
+          "example_response": {
+            "counterparties": [
+              {
+                "id": "cp_example",
+                "name": "Globex Corp",
+                "type": "vendor",
+                "payment_count": 2,
+                "payment_total": "1234.56"
+              }
+            ],
+            "next_cursor": null
+          },
           "openapi": "documented:/ledger/counterparties"
         },
         {
@@ -905,6 +963,18 @@
     {
       "group": "wiki_memory_policy",
       "endpoints": [
+        {
+          "method": "GET",
+          "path": "/v1/assistant/questions",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "query { limit? }",
+          "response_shape": "200 { questions }",
+          "example_request": "GET /v1/assistant/questions",
+          "example_response": { "questions": [] },
+          "openapi": "documented:/assistant/questions"
+        },
         {
           "method": "GET",
           "path": "/v1/memory/pages",

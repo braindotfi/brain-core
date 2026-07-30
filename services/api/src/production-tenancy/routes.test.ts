@@ -12,7 +12,7 @@ import {
 } from "@brain/shared";
 import { ActorResolver } from "@brain/execution";
 import { registerMemberRoutes } from "@brain/execution";
-import { registerProductionTenancyRoutes } from "./routes.js";
+import { registerProductionTenancyRoutes, type ProductionTenantDemoSeeder } from "./routes.js";
 import { SERVICE_TOKEN_SCOPES } from "../onboarding/service-token.js";
 
 const platformSecret = "platform-secret";
@@ -192,6 +192,7 @@ async function build(
       token: string;
       expiresAt: Date;
     }) => Promise<void>;
+    demoSeeder?: ProductionTenantDemoSeeder;
   } = {},
 ) {
   const app = Fastify({ logger: false });
@@ -212,6 +213,7 @@ async function build(
     ...(opts.deliverSetPasswordEmail !== undefined
       ? { deliverSetPasswordEmail: opts.deliverSetPasswordEmail }
       : {}),
+    ...(opts.demoSeeder !== undefined ? { demoSeeder: opts.demoSeeder } : {}),
   });
   return { app, appDb, resolver, audit, signer };
 }
@@ -310,6 +312,115 @@ describe("production tenancy routes", () => {
       );
       expect(appDb.agents.size).toBe(1);
       expect(appDb.productionAgentTokens.size).toBe(1);
+      expect(body.demo_seed).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("can seed demo data onto a durable production tenant at creation time", async () => {
+    const demoSeeder = vi.fn<ProductionTenantDemoSeeder>(async ({ tenantId, actor }) => ({
+      tenantId,
+      actor,
+      sources: {
+        plaid: "src_plaid",
+        stripe: "src_stripe",
+        finch: "src_finch",
+        merge_accounting: "src_merge",
+        alchemy_wallet: "src_wallet",
+        tax_return: "src_tax",
+      },
+      accounts: { operating: "acct_operating", reserve: "acct_reserve", smartAccount: null },
+      apInvoices: { cloudops: "inv_cloudops" },
+      arInvoices: { bigco: "inv_bigco" },
+      proposals: { midmarket_collections: "prop_midmarket" },
+      policyId: "pol_demo",
+      agentId: "agent_demo",
+    }));
+    const { app, appDb, audit } = await build({ demoSeeder });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          company_name: "Brightline Systems Inc.",
+          founder: { email: "founder@example.com", display_name: "Founder" },
+          founder_external_ref: "platform-user-1",
+          demo_seed: true,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(appDb.tenants.get(body.tenant_id)).toBe("production");
+      expect(demoSeeder).toHaveBeenCalledWith({
+        tenantId: body.tenant_id,
+        actor: expect.stringMatching(/^user_/),
+        companyName: "Brightline Systems Inc.",
+        founderEmail: "founder@example.com",
+      });
+      expect(body.demo_seed).toMatchObject({
+        seeded: true,
+        sources: {
+          plaid: "src_plaid",
+          stripe: "src_stripe",
+          finch: "src_finch",
+          merge_accounting: "src_merge",
+          alchemy_wallet: "src_wallet",
+          tax_return: "src_tax",
+        },
+        accounts: { operating: "acct_operating", reserve: "acct_reserve", smartAccount: null },
+        ap_invoices: { cloudops: "inv_cloudops" },
+        ar_invoices: { bigco: "inv_bigco" },
+        proposals: { midmarket_collections: "prop_midmarket" },
+        policy_id: "pol_demo",
+        agent_id: "agent_demo",
+      });
+      const auditEvents = (audit.emit.mock.calls as unknown as Array<[{ action: string }]>).map(
+        (call) => call[0],
+      );
+      expect(auditEvents.some((event) => event.action === "tenant.demo_seeded")).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails visibly when durable demo seeding is requested but not wired", async () => {
+    const { app, appDb } = await build();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+          demo_seed: true,
+        },
+      });
+      expect(res.statusCode).toBe(503);
+      expect(res.json().error.code).toBe("dependency_unavailable");
+      expect(appDb.tenants.size).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects non-boolean demo_seed values", async () => {
+    const { app } = await build();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+          demo_seed: "yes",
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe("request_body_invalid");
     } finally {
       await app.close();
     }

@@ -18,13 +18,22 @@ playground only.
 ## Tenant lifecycle
 
 POST /v1/tenants (auth: platform service credential)
-body: { company_name, founder: { email, display_name }, founder_external_ref }
+body: { company_name, demo_seed?, founder: { email, display_name }, founder_external_ref }
 -> 201 { tenant_id, member: {...bootstrap admin...}, session: { token, refresh_token,
-expires_in }, agent: {...propose-only production BFF service agent...} }
-Semantics: atomic - tenant + bootstrap admin member (role admin, all domains, high limit,
+expires_in }, agent: {...propose-only production BFF service agent...}, demo_seed? }
+Base semantics: atomic - tenant + bootstrap admin member (role admin, all domains, high limit,
 active) + identity link (surface "platform", external_ref = founder_external_ref) + session +
-production BFF service agent + initial agent token, one transaction. No seeded data. Audit:
+production BFF service agent + initial agent token, one transaction. Audit:
 tenant.created, member.changed, auth.production_agent_token.minted.
+
+When `demo_seed: true` is present, this route additionally seeds the durable production
+tenant with the server-owned Brightline demo data before returning: ledger rows, active demo
+policy, demo agent, pending agent-action proposals for Needs Review, and fake-connected
+`raw_sources` rows. This is the production-compatible "Continue with Demo" path for clients
+that need persistent sessions across logins. It does not change `tenant.kind`, does not add a
+TTL, and does not make the tenant eligible for demo cleanup. If the seeder is not wired or
+throws, the request fails visibly rather than returning an empty durable tenant as a successful
+demo.
 
 ## Sessions (exchange model; ACTOR = SESSION preserved)
 
@@ -93,3 +102,8 @@ sessions remains POST /v1/sessions.
 8. Agent principals remain never member-resolvable (unchanged; re-pinned).
 9. Production tenants use `docs/contracts/production-agents.md` for propose-only agent
    principals; they never use POST /v1/auth/service-token.
+10. `demo_seed: true` on POST /v1/tenants preserves production tenancy while making the
+    Brightline demo dataset reachable to durable clients. The legacy demo fence remains
+    separate and still cannot create production tenants. Fresh demo-seeded production tenants
+    include pending agent-action proposals, so the approval loop is visible without waiting for
+    background scanners.

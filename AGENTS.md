@@ -30,6 +30,12 @@ and returns a separate user-principal member session for member and approval
 workflows. Missing email is written as `bootstrap+<tenantId>@brain.invalid` and
 can be patched by an admin later.
 
+Durable "Continue with Demo" tenants use `POST /v1/tenants` with
+`demo_seed: true`. They remain `tenant.kind='production'` for session exchange
+and production agent tokens, but receive the Brightline demo ledger, policy,
+agent, pending Needs Review proposals, and fake-connected source rows before the
+create response returns.
+
 Agent principals are propose-only at the identity layer. They must never resolve
 as members, receive member claims, or carry approval/member admin scopes.
 

@@ -222,7 +222,10 @@ export interface paths {
          *     agent token. Rejects the request outright if the demo
          *     provisioning header (`X-Demo-Provision-Auth`) is also present, to
          *     keep the demo and production tenant-creation paths from being
-         *     conflatable.
+         *     conflatable. When `demo_seed: true` is present, the route also
+         *     seeds the durable production tenant with the Brightline demo
+         *     ledger, policy, agent, and fake-connected source rows. The tenant
+         *     remains `kind='production'`.
          */
         post: operations["createTenant"];
         delete?: never;
@@ -244,7 +247,8 @@ export interface paths {
          * Create a production tenant for an organization
          * @description Organization-scoped alias for `POST /tenants`. It persists a
          *     production tenant with the same bootstrap admin, member session, and
-         *     propose-only agent token behavior, and echoes `org_id` in the response.
+         *     propose-only agent token behavior, supports the same `demo_seed`
+         *     option, and echoes `org_id` in the response.
          */
         post: operations["createOrgTenant"];
         delete?: never;
@@ -1079,6 +1083,27 @@ export interface paths {
          *     not see the full window reflected (no cursor pagination yet).
          */
         get: operations["getCashFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List suggested assistant questions
+         * @description Requires `wiki:read`. Returns tenant-scoped assistant questions when
+         *     present. Empty tenants receive `questions: []`.
+         */
+        get: operations["listAssistantQuestions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3648,6 +3673,7 @@ export interface components {
             source_type?: components["schemas"]["RawSourceType"];
             /** @description Declared payload schema tag, echoed when one was declared */
             source_schema?: string;
+            projection_status?: components["schemas"]["RawProjectionStatus"];
             bytes?: number;
             /** Format: date-time */
             ingested_at?: string;
@@ -3655,6 +3681,14 @@ export interface components {
             deduplicated?: boolean;
             extraction_job?: components["schemas"]["RawExtractionJob"];
         };
+        /**
+         * @description Lifecycle status for upload document projection side effects. This is
+         *     not a row-count validator: `projected` means the post-upload projection
+         *     side-effect chain completed for the artifact. Use audit events such as
+         *     `ledger.apar_projection.rebuilt` for produced-row diagnostics.
+         * @enum {string}
+         */
+        RawProjectionStatus: "pending" | "projecting" | "projected" | "projection_timed_out" | "projection_failed";
         RawExtractionJob: {
             job_id: string;
             raw_id: string;
@@ -3709,6 +3743,13 @@ export interface components {
             /** Format: date-time */
             last_synced_at: string | null;
             freshness: components["schemas"]["SourceFreshness"];
+            /**
+             * @description Connector metadata. Demo tenants may include
+             *     `demo_seed_kind:"fake_connected_source"`, `disconnectable:false`,
+             *     `disconnect_hidden:true`, and `sync_disabled:true` for fake connected
+             *     rows that should count as connected sources but should not show a
+             *     disconnect control or run provider sync.
+             */
             metadata: {
                 [key: string]: unknown;
             };
@@ -4309,6 +4350,10 @@ export interface components {
             verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared" | null;
             aliases?: string[];
             linked_accounts?: string[];
+            /** @description Count of posted or cleared outflow transactions linked to this counterparty. */
+            payment_count?: number;
+            /** @description Sum of posted or cleared outflow transaction amounts linked to this counterparty. */
+            payment_total?: string;
         };
         Obligation: components["schemas"]["LedgerCommonFields"] & {
             /** @enum {string} */
@@ -4505,6 +4550,22 @@ export interface components {
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        AssistantQuestion: {
+            id: string;
+            question: string;
+            answer: string | null;
+            /** @enum {string} */
+            status: "suggested" | "answered" | "dismissed";
+            source: string | null;
+            evidence_ids: string[];
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         WikiPage: {
             id: string;
@@ -5130,6 +5191,14 @@ export interface operations {
             content: {
                 "application/json": {
                     company_name?: string;
+                    /**
+                     * @description When true, seed the durable production tenant with the
+                     *     server-owned Brightline demo dataset. Intended for the
+                     *     platform "Continue with Demo" flow. Does not change
+                     *     tenant.kind.
+                     * @default false
+                     */
+                    demo_seed?: boolean;
                     founder: {
                         /** Format: email */
                         email: string;
@@ -5158,6 +5227,28 @@ export interface operations {
                             expires_in?: 900;
                         };
                         agent?: components["schemas"]["ProductionAgentToken"];
+                        /** @description Present only when demo_seed was requested. */
+                        demo_seed?: {
+                            /** @enum {boolean} */
+                            seeded?: true;
+                            sources?: {
+                                [key: string]: string;
+                            };
+                            proposals?: {
+                                [key: string]: string;
+                            };
+                            accounts?: {
+                                [key: string]: string | null;
+                            };
+                            ap_invoices?: {
+                                [key: string]: string;
+                            };
+                            ar_invoices?: {
+                                [key: string]: string;
+                            };
+                            policy_id?: string | null;
+                            agent_id?: string | null;
+                        };
                     };
                 };
             };
@@ -5198,6 +5289,11 @@ export interface operations {
             content: {
                 "application/json": {
                     company_name?: string;
+                    /**
+                     * @description Same semantics as POST /tenants.
+                     * @default false
+                     */
+                    demo_seed?: boolean;
                     founder: {
                         /** Format: email */
                         email: string;
@@ -5225,6 +5321,28 @@ export interface operations {
                             expires_in?: 900;
                         };
                         agent?: components["schemas"]["ProductionAgentToken"];
+                        /** @description Present only when demo_seed was requested. */
+                        demo_seed?: {
+                            /** @enum {boolean} */
+                            seeded?: true;
+                            sources?: {
+                                [key: string]: string;
+                            };
+                            proposals?: {
+                                [key: string]: string;
+                            };
+                            accounts?: {
+                                [key: string]: string | null;
+                            };
+                            ap_invoices?: {
+                                [key: string]: string;
+                            };
+                            ar_invoices?: {
+                                [key: string]: string;
+                            };
+                            policy_id?: string | null;
+                            agent_id?: string | null;
+                        };
                     };
                 };
             };
@@ -5952,6 +6070,7 @@ export interface operations {
                         expires_at?: string;
                         mime_type?: string;
                         bytes?: number;
+                        projection_status?: components["schemas"]["RawProjectionStatus"];
                     };
                 };
             };
@@ -6407,6 +6526,8 @@ export interface operations {
                     "application/json": {
                         accounts?: components["schemas"]["Account"][];
                         next_cursor?: string | null;
+                        /** @description Total tenant accounts matching the filters, independent of pagination. */
+                        total_count?: number;
                     };
                 };
             };
@@ -6990,6 +7111,31 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    listAssistantQuestions: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Assistant question list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["AssistantQuestion"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     listMemoryPages: {

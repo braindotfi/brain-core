@@ -21,8 +21,9 @@
  *               The operating buffer is a Treasury *policy* parameter; the
  *               yield-venue catalog is a global reference endpoint, not seeded.
  *   Policy    — one active policy whose rules express the AP / Treasury / AR
- *               behaviour the demo proves (approved≤$50k auto, approved>$50k
- *               confirm, unapproved reject, onchain + agent_action auto).
+ *               behaviour the demo proves (approved <= $50k auto,
+ *               approved > $50k confirm, unapproved reject, onchain auto,
+ *               agent_action confirm).
  *   Agent     — a registered Demo Payment Agent (onchain_address = the shared
  *               BrainSmartAccount when BRAIN_ONCHAIN_SMART_ACCOUNT is set).
  *
@@ -47,8 +48,10 @@ import {
   newDocumentId,
   newInvoiceId,
   newPolicyId,
+  newProposalId,
   newRawArtifactId,
   newRawParsedId,
+  newSourceId,
   PAYMENT_AGENT_SCOPES,
   withTenantScope,
   type AuditEmitter,
@@ -240,12 +243,50 @@ export interface BrainSaasSeed {
   accounts: { operating: string; reserve: string; smartAccount: string | null };
   apInvoices: Record<string, string>; // vendorKey -> invoice id
   arInvoices: Record<string, string>; // customerKey -> invoice id
+  sources: Record<DemoFakeSourceKey, string>; // source key -> raw_sources id
+  proposals: Record<DemoProposalKey, string>; // proposal key -> proposal id
   policyId: string;
   agentId: string;
 }
 
+type DemoFakeSourceKey =
+  | "plaid"
+  | "stripe"
+  | "finch"
+  | "merge_accounting"
+  | "alchemy_wallet"
+  | "tax_return";
+
+type DemoProposalKey = "midmarket_collections" | "startupx_collections";
+
+type DemoFakeSourceType =
+  | "plaid"
+  | "stripe"
+  | "finch"
+  | "merge_accounting"
+  | "alchemy_wallet"
+  | "email_inbound";
+
+interface DemoFakeSourceSpec {
+  key: DemoFakeSourceKey;
+  type: DemoFakeSourceType;
+  displayName: string;
+  providerName: string;
+  sourceCategory:
+    | "banking_cash"
+    | "payments_revenue"
+    | "payroll_hr"
+    | "accounting_erp"
+    | "digital_assets"
+    | "documents_email";
+  externalAccountIds: string[];
+  isStub: boolean;
+  overlapsWith: Record<string, unknown>;
+}
+
 const NOW = new Date();
 const DEMO_BOOTSTRAP_DISPLAY_NAME = "Demo Owner";
+const DEMO_COMPANY_NAME = "Brightline Systems Inc.";
 function daysAgo(n: number): Date {
   const d = new Date(NOW);
   d.setUTCDate(d.getUTCDate() - n);
@@ -340,7 +381,7 @@ export async function seedBrainSaasDemo(
   const operating = (
     await upsertAccountRow(pool, audit, ctx, {
       external_account_id: "brainsaas_operating",
-      institution: "Mercury",
+      institution: "First Meridian Bank",
       account_type: "bank_checking",
       name: "Operating",
       currency: "USD",
@@ -356,7 +397,7 @@ export async function seedBrainSaasDemo(
   const reserve = (
     await upsertAccountRow(pool, audit, ctx, {
       external_account_id: "brainsaas_reserve",
-      institution: "Mercury",
+      institution: "First Meridian Bank",
       account_type: "bank_savings",
       name: "Reserve",
       currency: "USD",
@@ -378,7 +419,7 @@ export async function seedBrainSaasDemo(
         external_account_id: smartAccountAddr,
         institution: "Base Sepolia",
         account_type: "onchain",
-        name: "Brain Smart Account (ETH)",
+        name: "Brightline Treasury Wallet",
         currency: "ETH",
         current_balance: "0.005",
         available_balance: "0.005",
@@ -532,9 +573,23 @@ export async function seedBrainSaasDemo(
     }
   }
 
+  const sources = await seedDemoFakeConnectedSources(pool, tenantId, {
+    operatingAccountId: operating.id,
+    reserveAccountId: reserve.id,
+    smartAccountId: smartAccount?.id ?? null,
+    apInvoices,
+    arInvoices,
+  });
+
   // ---------- Active policy (off-chain; on-chain registration is a later phase) ----------
   const approvedVendorCpIds = VENDORS.filter((v) => v.approved).map((v) => vendors[v.key]!.id);
-  const policyId = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
+  const policy = await seedPolicy(pool, tenantId, actor, approvedVendorCpIds);
+  const proposals = await seedNeedsReviewProposals(pool, audit, tenantId, {
+    agentId,
+    policyVersion: policy.version,
+    arInvoices,
+    customers: mapIds(customers),
+  });
 
   return {
     tenantId,
@@ -548,13 +603,167 @@ export async function seedBrainSaasDemo(
     },
     apInvoices,
     arInvoices,
-    policyId,
+    sources,
+    proposals,
+    policyId: policy.id,
     agentId,
   };
 }
 
 function mapIds(rows: Record<string, CounterpartyRow>): Record<string, string> {
   return Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, v.id]));
+}
+
+async function seedDemoFakeConnectedSources(
+  pool: Pool,
+  tenantId: string,
+  refs: {
+    operatingAccountId: string;
+    reserveAccountId: string;
+    smartAccountId: string | null;
+    apInvoices: Record<string, string>;
+    arInvoices: Record<string, string>;
+  },
+): Promise<Record<DemoFakeSourceKey, string>> {
+  const now = NOW.toISOString();
+  const smartAccount =
+    process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
+    process.env["BRAIN_DEMO_ONCHAIN_RECIPIENT"] ??
+    DEMO_SETTLEMENT_RECIPIENT_FALLBACK;
+  const specs: DemoFakeSourceSpec[] = [
+    {
+      key: "plaid",
+      type: "plaid",
+      displayName: "First Meridian Bank",
+      providerName: "Plaid",
+      sourceCategory: "banking_cash",
+      externalAccountIds: ["brainsaas_operating", "brainsaas_reserve"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["bank_statement_2026-06.pdf"],
+        ledger_account_ids: [refs.operatingAccountId, refs.reserveAccountId],
+        accounts: [
+          { name: "Operating", kind: "checking", last4: "7302" },
+          { name: "Reserve", kind: "savings", last4: "1188" },
+        ],
+      },
+    },
+    {
+      key: "stripe",
+      type: "stripe",
+      displayName: "Brightline Stripe",
+      providerName: "Stripe",
+      sourceCategory: "payments_revenue",
+      externalAccountIds: ["stripe_brightline_payments"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["bank_statement_2026-06.pdf", "ar_aging_2026-06-30.xlsx"],
+        bank_statement_counterparties: ["CARD SERV", "BigCo Industries", "Enterprise Holdings"],
+        ar_invoice_ids: Object.values(refs.arInvoices),
+      },
+    },
+    {
+      key: "finch",
+      type: "finch",
+      displayName: "Brightline Payroll",
+      providerName: "Finch",
+      sourceCategory: "payroll_hr",
+      externalAccountIds: ["finch_brightline_payroll"],
+      isStub: false,
+      overlapsWith: {
+        documents: ["payroll_register_2026-06.xlsx"],
+        pay_runs: ["2026-06A", "2026-06B"],
+      },
+    },
+    {
+      key: "merge_accounting",
+      type: "merge_accounting",
+      displayName: "Brightline Accounting",
+      providerName: "Merge",
+      sourceCategory: "accounting_erp",
+      externalAccountIds: ["merge_brightline_accounting"],
+      isStub: false,
+      overlapsWith: {
+        ap_invoice_ids: Object.values(refs.apInvoices),
+        ar_invoice_ids: Object.values(refs.arInvoices),
+        fixture_scope:
+          "Brightline Systems Inc. general ledger, vendors, customers, bills, invoices",
+      },
+    },
+    {
+      key: "alchemy_wallet",
+      type: "alchemy_wallet",
+      displayName: "Brightline Treasury Wallet",
+      providerName: "Alchemy",
+      sourceCategory: "digital_assets",
+      externalAccountIds: [smartAccount],
+      isStub: true,
+      overlapsWith: {
+        documents: ["crypto_wallet_2026-06.json"],
+        ledger_account_ids: refs.smartAccountId === null ? [] : [refs.smartAccountId],
+        wallet_address: smartAccount,
+      },
+    },
+    {
+      key: "tax_return",
+      type: "email_inbound",
+      displayName: "Brightline Tax Portal",
+      providerName: "Tax mailbox",
+      sourceCategory: "documents_email",
+      externalAccountIds: ["brightline_tax_return_2025"],
+      isStub: true,
+      overlapsWith: {
+        documents: ["tax_return_2025.pdf"],
+        company: DEMO_COMPANY_NAME,
+      },
+    },
+  ];
+  const ids = Object.fromEntries(specs.map((spec) => [spec.key, newSourceId()])) as Record<
+    DemoFakeSourceKey,
+    string
+  >;
+
+  await withTenantScope(pool, tenantId, async (c) => {
+    // This intentionally supersedes the 2026-07-28 "do not fake connections"
+    // demo decision. Investor walkthroughs need connected-looking sources, but
+    // the rows are demo-only, skipped by sync, and never create duplicate facts.
+    await c.query(
+      `DELETE FROM raw_sources
+        WHERE tenant_id = $1
+          AND metadata->>'demo_seed_kind' = 'fake_connected_source'`,
+      [tenantId],
+    );
+    for (const spec of specs) {
+      await c.query(
+        `INSERT INTO raw_sources (
+           id, tenant_id, type, status, encrypted_credentials, credential_key_id,
+           metadata, external_account_ids, last_synced_at, error_message, is_stub, created_at, updated_at
+         ) VALUES ($1,$2,$3,'active',NULL,NULL,$4::jsonb,$5,$6,NULL,$7,$6,$6)`,
+        [
+          ids[spec.key],
+          tenantId,
+          spec.type,
+          JSON.stringify({
+            demo_seed_kind: "fake_connected_source",
+            demo_fake_connected: true,
+            company_name: DEMO_COMPANY_NAME,
+            display_name: spec.displayName,
+            provider_name: spec.providerName,
+            source_category: spec.sourceCategory,
+            disconnect_hidden: true,
+            disconnectable: false,
+            sync_disabled: true,
+            overlaps_with: spec.overlapsWith,
+          }),
+          spec.externalAccountIds,
+          now,
+          spec.isStub,
+        ],
+      );
+    }
+  });
+
+  return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -568,8 +777,8 @@ function mapIds(rows: Record<string, CounterpartyRow>): Record<string, string> {
 //        concentration breach escalation); otherwise auto. The marquee AP
 //        settlement is a symbolic ETH transfer — its currency never matches the
 //        USD threshold, so it stays auto and the verified money path is intact.
-//   AR (agent_action): outstanding >$500k → confirm (≈ approval_above_500k);
-//        otherwise auto.
+//   AR (agent_action): outstanding >$500k -> confirm (approval_above_500k);
+//        otherwise corroborated actions require single-signer confirmation.
 // The buffer minimum, per-venue concentration cap, approved-venue list, the
 // 7-day chase window, and relationship tone are NOT brain-core gate primitives
 // (no DSL/Ledger column expresses them) — they remain advisory, orchestrator-
@@ -584,7 +793,7 @@ async function seedPolicy(
   tenantId: string,
   actor: string,
   approvedVendorCpIds: string[],
-): Promise<string> {
+): Promise<{ id: string; version: number }> {
   const policy = {
     version: 1,
     lists: { "vendors.approved": approvedVendorCpIds },
@@ -639,28 +848,182 @@ async function seedPolicy(
         require: "owner_approval",
         execute: "confirm",
       },
-      { id: "ar-auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
+      {
+        id: "ar-agent-action-requires-review",
+        applies_to: ["agent_action"],
+        when: { "agent.confidence.gte": 0.6 },
+        execute: "confirm",
+        require: "single_signer",
+      },
     ],
   };
   const policyJson = JSON.stringify(policy);
   const policyHash = createHash("sha256").update(policyJson).digest();
   const policyId = newPolicyId();
+  let version = 1;
 
   await withTenantScope(pool, tenantId, async (c) => {
     const v = await c.query<{ next: number }>(
       `SELECT COALESCE(MAX(version) + 1, 1) AS next FROM policies WHERE tenant_id = $1`,
       [tenantId],
     );
+    version = v.rows[0]?.next ?? 1;
     await c.query(
       `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
     );
     await c.query(
       `INSERT INTO policies (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at, created_at)
        VALUES ($1, $2, $3, $4::jsonb, $5, 1, 'active', $6, now(), now())`,
-      [policyId, tenantId, v.rows[0]?.next ?? 1, policyJson, policyHash, actor],
+      [policyId, tenantId, version, policyJson, policyHash, actor],
     );
   });
-  return policyId;
+  return { id: policyId, version };
+}
+
+async function seedNeedsReviewProposals(
+  pool: Pool,
+  audit: AuditEmitter,
+  tenantId: string,
+  refs: {
+    agentId: string;
+    policyVersion: number;
+    arInvoices: Record<string, string>;
+    customers: Record<string, string>;
+  },
+): Promise<Record<DemoProposalKey, string>> {
+  const proposals: Array<{
+    key: DemoProposalKey;
+    proposalId: string;
+    dedupKey: string;
+    action: Record<string, unknown>;
+  }> = [
+    {
+      key: "midmarket_collections",
+      proposalId: newProposalId(),
+      dedupKey: "demo:brainsaas:proposal:midmarket_collections",
+      action: demoCollectionsAction({
+        agentId: refs.agentId,
+        customerId: refs.customers["midmarket"]!,
+        invoiceId: refs.arInvoices["midmarket"]!,
+        customerName: "Midmarket Solutions",
+        invoiceNumber: "AR-MIDMARKET-001",
+        amount: "42000.00",
+        daysOverdue: 18,
+        confidence: 0.78,
+        riskBand: "elevated",
+        recommendation:
+          "Approve a customer-safe payment reminder before quarter-end collections escalation.",
+      }),
+    },
+    {
+      key: "startupx_collections",
+      proposalId: newProposalId(),
+      dedupKey: "demo:brainsaas:proposal:startupx_collections",
+      action: demoCollectionsAction({
+        agentId: refs.agentId,
+        customerId: refs.customers["startupx"]!,
+        invoiceId: refs.arInvoices["startupx"]!,
+        customerName: "StartupX",
+        invoiceNumber: "AR-STARTUPX-001",
+        amount: "8000.00",
+        daysOverdue: 32,
+        confidence: 0.82,
+        riskBand: "high",
+        recommendation:
+          "Approve a payment-plan outreach that preserves the account while reducing aging risk.",
+      }),
+    },
+  ];
+  const trace = JSON.stringify([
+    {
+      rule_id: "ar-agent-action-requires-review",
+      matched: true,
+      checks: [{ key: "agent.confidence.gte", passed: true, detail: "0.6" }],
+    },
+  ]);
+
+  await withTenantScope(pool, tenantId, async (c) => {
+    for (const proposal of proposals) {
+      await c.query(
+        `INSERT INTO proposals (
+           id, tenant_id, proposing_agent, action, policy_version, policy_decision,
+           policy_trace, required_approvers, status, proposal_dedup_key
+         )
+         VALUES ($1,$2,$3,$4::jsonb,$5,'confirm',$6::jsonb,ARRAY['signer']::text[],'pending',$7)
+         ON CONFLICT (tenant_id, proposal_dedup_key)
+         WHERE proposal_dedup_key IS NOT NULL
+         DO NOTHING`,
+        [
+          proposal.proposalId,
+          tenantId,
+          refs.agentId,
+          JSON.stringify(proposal.action),
+          refs.policyVersion,
+          trace,
+          proposal.dedupKey,
+        ],
+      );
+    }
+  });
+
+  for (const proposal of proposals) {
+    await audit.emit({
+      tenantId,
+      layer: "agent",
+      actor: refs.agentId,
+      action: "agent.action.proposed",
+      policyCheckId: "ar-agent-action-requires-review",
+      outcome: "confirm",
+      inputs: { action_kind: "agent_action", proposal_id: proposal.proposalId },
+      outputs: {
+        status: "pending",
+        outcome: "confirm",
+        matched_rule_id: "ar-agent-action-requires-review",
+        required_approvers: ["signer"],
+      },
+      idempotencyKey: `${proposal.dedupKey}:agent.action.proposed`,
+    });
+  }
+
+  return Object.fromEntries(
+    proposals.map((proposal) => [proposal.key, proposal.proposalId]),
+  ) as Record<DemoProposalKey, string>;
+}
+
+function demoCollectionsAction(input: {
+  agentId: string;
+  customerId: string;
+  invoiceId: string;
+  customerName: string;
+  invoiceNumber: string;
+  amount: string;
+  daysOverdue: number;
+  confidence: number;
+  riskBand: "elevated" | "high";
+  recommendation: string;
+}): Record<string, unknown> {
+  const narrative = `${input.customerName} is ${input.daysOverdue} days overdue on ${input.invoiceNumber} for $${input.amount}. ${input.recommendation}`;
+  return {
+    kind: "agent_action",
+    type: "collections",
+    agent_role: "collections",
+    agent_id: input.agentId,
+    action_id: `demo.collections.${input.invoiceNumber.toLowerCase()}`,
+    mode: "propose",
+    confidence: input.confidence,
+    risk_band: input.riskBand,
+    counterparty_id: input.customerId,
+    amount: { currency: "USD", value: input.amount },
+    invoice_id: input.invoiceId,
+    summary: `Review collections outreach for ${input.customerName}`,
+    narrative,
+    recommended_remediation: input.recommendation,
+    affected_entities: [input.customerId, input.invoiceId],
+    evidence_refs: [
+      { kind: "invoice", ref: input.invoiceId },
+      { kind: "counterparty", ref: input.customerId },
+    ],
+  };
 }
 
 async function seedAgent(pool: Pool, tenantId: string): Promise<string> {

@@ -1,0 +1,241 @@
+name: prod-ar-misclassification-repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Affected production tenant id"
+        required: true
+        type: string
+      execute:
+        description: "Set true to apply the fixed repair. False performs read-only diagnostics."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: repair fixed AR upload projection
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: prod-ar-misclassification-repair
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      EXECUTE_REPAIR: ${{ inputs.execute }}
+    steps:
+      - name: Validate fixed scope
+        shell: bash
+        run: |
+          if [[ "$TENANT_ID" != "tnt_01KYR7EBDSJTM92EH7NKCZTH4H" ]]; then
+            echo "This workflow is fixed to tnt_01KYR7EBDSJTM92EH7NKCZTH4H"
+            exit 1
+          fi
+          if [[ "$EXECUTE_REPAIR" != "true" && "$EXECUTE_REPAIR" != "false" ]]; then
+            echo "execute must be true or false"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Diagnose or repair fixed tenant
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' EXECUTE_REPAIR='$EXECUTE_REPAIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [[ "$TENANT_ID" != "tnt_01KYR7EBDSJTM92EH7NKCZTH4H" ]]; then
+            echo "tenant_id failed remote fixed-scope validation"
+            exit 1
+          fi
+
+          if [[ "$EXECUTE_REPAIR" == "true" ]]; then
+            TX_MODE="READ WRITE"
+          else
+            TX_MODE="READ ONLY"
+          fi
+
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" \
+            -v execute_repair="$EXECUTE_REPAIR" \
+            -v tx_mode="$TX_MODE" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+
+          BEGIN TRANSACTION :tx_mode;
+          SELECT set_config('app.tenant_id', :'tenant_id', true);
+
+          CREATE TEMP TABLE bad_upload_projection ON COMMIT DROP AS
+          SELECT rp.id AS raw_parsed_id,
+                 ra.id AS raw_artifact_id,
+                 ra.sha256 AS content_sha256,
+                 ra.source_ref->>'filename' AS filename,
+                 rp.parser,
+                 rp.parser_version,
+                 rp.extracted->>'object_type' AS object_type,
+                 rp.confidence
+            FROM raw_parsed rp
+            JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
+           WHERE rp.tenant_id = :'tenant_id'
+             AND ra.tenant_id = :'tenant_id'
+             AND rp.parser = 'bank_statement_upload_v1'
+             AND lower(COALESCE(ra.source_ref->>'filename', '')) LIKE '%ar%aging%';
+
+          \echo 'bad parsed rows'
+          SELECT raw_parsed_id, raw_artifact_id, filename, parser, parser_version, object_type, confidence
+            FROM bad_upload_projection
+           ORDER BY raw_parsed_id;
+
+          \echo 'pre repair compact rows sourced from bad parsed rows'
+          SELECT 'ledger_accounts' AS table_name, count(*)::int AS count
+            FROM ledger_accounts
+           WHERE owner_id = :'tenant_id'
+             AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[]
+          UNION ALL
+          SELECT 'ledger_transactions', count(*)::int
+            FROM ledger_transactions
+           WHERE owner_id = :'tenant_id'
+             AND (
+               evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[]
+               OR source_ids && ARRAY(SELECT raw_artifact_id FROM bad_upload_projection)::text[]
+             )
+          UNION ALL
+          SELECT 'canonical_account', count(*)::int
+            FROM canonical_account
+           WHERE tenant_id = :'tenant_id'
+             AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[]
+          UNION ALL
+          SELECT 'canonical_transaction', count(*)::int
+            FROM canonical_transaction
+           WHERE tenant_id = :'tenant_id'
+             AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[];
+
+          \echo 'pre repair ledger totals'
+          SELECT count(*)::int AS transaction_count,
+                 COALESCE(sum(amount) FILTER (WHERE direction = 'inflow'), 0)::numeric(28,2) AS inflows,
+                 COALESCE(sum(amount) FILTER (WHERE direction = 'outflow'), 0)::numeric(28,2) AS outflows
+            FROM ledger_transactions
+           WHERE owner_id = :'tenant_id';
+
+          \if :execute_repair
+            DELETE FROM ledger_transactions
+             WHERE owner_id = :'tenant_id'
+               AND (
+                 evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[]
+                 OR source_ids && ARRAY(SELECT raw_artifact_id FROM bad_upload_projection)::text[]
+               );
+
+            DELETE FROM ledger_accounts
+             WHERE owner_id = :'tenant_id'
+               AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[];
+
+            DELETE FROM canonical_transaction
+             WHERE tenant_id = :'tenant_id'
+               AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[];
+
+            DELETE FROM canonical_account
+             WHERE tenant_id = :'tenant_id'
+               AND evidence_ids && ARRAY(SELECT raw_parsed_id FROM bad_upload_projection)::text[];
+
+            DELETE FROM canonical_projection_log
+             WHERE tenant_id = :'tenant_id'
+               AND raw_parsed_id IN (SELECT raw_parsed_id FROM bad_upload_projection);
+
+            UPDATE raw_artifacts
+               SET projection_status = 'pending',
+                   projection_status_updated_at = now()
+             WHERE tenant_id = :'tenant_id'
+               AND id IN (SELECT raw_artifact_id FROM bad_upload_projection);
+
+            UPDATE extraction_jobs ej
+               SET status = 'queued',
+                   parsed_id = NULL,
+                   confidence = NULL,
+                   error = NULL,
+                   attempt_count = 0,
+                   next_attempt_at = NULL,
+                   locked_at = NULL,
+                   locked_by = NULL,
+                   started_at = NULL,
+                   finished_at = NULL,
+                   requested_by = 'sys_prod_ar_misclassification_repair',
+                   updated_at = now()
+              FROM bad_upload_projection bad
+             WHERE ej.tenant_id = :'tenant_id'
+               AND ej.raw_id = bad.raw_artifact_id
+               AND ej.content_sha256 = bad.content_sha256
+               AND ej.status <> 'running';
+          \endif
+
+          \echo 'post repair job state'
+          SELECT ej.raw_id, ej.status, ej.parsed_id, ej.attempt_count, ej.requested_by
+            FROM extraction_jobs ej
+            JOIN bad_upload_projection bad ON bad.raw_artifact_id = ej.raw_id
+           WHERE ej.tenant_id = :'tenant_id'
+           ORDER BY ej.updated_at DESC;
+
+          COMMIT;
+          SQL
+
+          if [[ "$EXECUTE_REPAIR" == "true" ]]; then
+            echo "Waiting for worker to reprocess the repaired upload..."
+            sleep 90
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SELECT set_config('app.tenant_id', :'tenant_id', true);
+
+            \echo 'post worker parsed rows for AR artifact'
+            SELECT rp.id, rp.parser, rp.parser_version, rp.extracted->>'object_type' AS object_type,
+                   rp.confidence, ra.projection_status, ra.source_ref->>'filename' AS filename
+              FROM raw_parsed rp
+              JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
+             WHERE rp.tenant_id = :'tenant_id'
+               AND lower(COALESCE(ra.source_ref->>'filename', '')) LIKE '%ar%aging%'
+             ORDER BY rp.extracted_at DESC;
+
+            \echo 'post worker ledger totals'
+            SELECT count(*)::int AS transaction_count,
+                   COALESCE(sum(amount) FILTER (WHERE direction = 'inflow'), 0)::numeric(28,2) AS inflows,
+                   COALESCE(sum(amount) FILTER (WHERE direction = 'outflow'), 0)::numeric(28,2) AS outflows
+              FROM ledger_transactions
+             WHERE owner_id = :'tenant_id';
+
+            \echo 'post worker phantom AR bank rows'
+            SELECT count(*)::int AS phantom_accounts
+              FROM ledger_accounts
+             WHERE owner_id = :'tenant_id'
+               AND evidence_ids && ARRAY(
+                 SELECT rp.id
+                   FROM raw_parsed rp
+                   JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
+                  WHERE rp.tenant_id = :'tenant_id'
+                    AND rp.parser = 'bank_statement_upload_v1'
+                    AND lower(COALESCE(ra.source_ref->>'filename', '')) LIKE '%ar%aging%'
+               )::text[];
+
+            COMMIT;
+          SQL
+          fi
+          REMOTE

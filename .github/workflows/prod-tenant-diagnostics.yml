@@ -1,0 +1,107 @@
+name: prod-tenant-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Production tenant id to inspect, e.g. tnt_..."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: run fixed production tenant diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-tenant-diagnostics
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+    steps:
+      - name: Validate tenant id
+        shell: bash
+        run: |
+          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed diagnostics
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "tenant_id failed remote validation"
+            exit 1
+          fi
+
+          echo "::group::worker runtime"
+          echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA || true)"
+          echo "document extraction worker configured log lines:"
+          cd ~/brain-core
+          docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml \
+            logs --tail=200 worker | grep "document extraction worker configured" | tail -n 5 || true
+          echo "::endgroup::"
+
+          echo "::group::tenant diagnostics"
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+
+          \echo 'tenant'
+          SELECT id, kind, sandbox, created_via, created_at
+            FROM tenants
+           WHERE id = :'tenant_id';
+
+          \echo 'audit action counts'
+          SELECT action, COUNT(*) AS count
+            FROM audit_events
+           WHERE tenant_id = :'tenant_id'
+           GROUP BY action
+           ORDER BY action;
+
+          \echo 'raw source counts'
+          SELECT type,
+                 status,
+                 metadata->>'demo_seed_kind' AS demo_seed_kind,
+                 COUNT(*) AS count
+            FROM raw_sources
+           WHERE tenant_id = :'tenant_id'
+           GROUP BY type, status, metadata->>'demo_seed_kind'
+           ORDER BY type, status, demo_seed_kind;
+
+          \echo 'raw artifact counts by file'
+          SELECT source_type,
+                 source_ref->>'filename' AS filename,
+                 bytes,
+                 COUNT(*) AS count
+            FROM raw_artifacts
+           WHERE tenant_id = :'tenant_id'
+           GROUP BY source_type, source_ref->>'filename', bytes
+           ORDER BY filename, bytes, source_type;
+
+          COMMIT;
+          SQL
+          echo "::endgroup::"
+          REMOTE

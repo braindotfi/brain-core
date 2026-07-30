@@ -100,6 +100,7 @@ import {
   resourceMetadataUrl,
 } from "./well-known/oauth-protected-resource.js";
 import { registerDocsRoutes } from "./docs/routes.js";
+import { registerAssistantQuestionsRoute } from "./assistant/questions-route.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
@@ -115,7 +116,7 @@ import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
 import { startWikiRegenerationWorker } from "./wiki/regeneration-worker.js";
 import {
-  createUploadIngestPipelineDrain,
+  createDebouncedUploadIngestPipelineDrain,
   runUploadProjectionSideEffects,
 } from "./uploads/post-ingest-pipeline.js";
 
@@ -168,6 +169,7 @@ import {
   registerExecutionRoutes,
   registerEvidenceResolveRoutes,
   registerMemberRoutes,
+  registerActionRoutes,
   registerPaymentIntentRoutes,
   registerProposalReadRoutes,
   ApprovalService,
@@ -209,11 +211,12 @@ import {
   registerAuditRoutes,
   registerWebhookRoutes,
   publishAnchor,
+  publishPendingAnchor,
   startAnchorReconciler,
   startAuditConsistencyVerifier,
   startWebhookDispatchWorker,
 } from "@brain/audit";
-import type { AuditDeps } from "@brain/audit";
+import type { AuditAnchorRow, AuditDeps } from "@brain/audit";
 
 import {
   sandboxEvaluateLegacyPolicy,
@@ -1711,7 +1714,7 @@ async function main(): Promise<void> {
     audit,
     log,
   });
-  rawDeps.afterIngest = createUploadIngestPipelineDrain({
+  rawDeps.afterIngest = createDebouncedUploadIngestPipelineDrain({
     rawWorkerPool,
     appPool: pool,
     canonicalProjectorPool,
@@ -1728,6 +1731,7 @@ async function main(): Promise<void> {
     await runUploadProjectionSideEffects(
       {
         ledgerProjectorPool,
+        appPool: pool,
         tenantDiscoveryPool: tenantDeletionPool,
         audit,
         pageService: wikiPageService,
@@ -1959,6 +1963,7 @@ async function main(): Promise<void> {
         );
         await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
         await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
+        await v1.register(async (child) => registerAssistantQuestionsRoute(child, { pool, log }));
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
         await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));
@@ -2003,6 +2008,7 @@ async function main(): Promise<void> {
           recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
         });
         await v1.register(async (child) => {
+          await registerActionRoutes(child, piService);
           await registerPaymentIntentRoutes(child, piService, invoiceShortcut, (ctx, id) =>
             getPaymentIntentAgent(pool, ctx, id),
           );
@@ -2193,6 +2199,7 @@ async function main(): Promise<void> {
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
             ...(deliverSetPasswordEmail !== undefined ? { deliverSetPasswordEmail } : {}),
+            demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
           }),
         );
         await v1.register(async (child) =>
@@ -3248,6 +3255,26 @@ async function main(): Promise<void> {
       const now = new Date();
       const periodStart = new Date(now.getTime() - intervalMs);
       try {
+        const pending = await auditVerifierPool.query<AuditAnchorRow>(
+          `SELECT id, tenant_id, merkle_root, event_count, period_start, period_end,
+                  onchain_tx_hash, onchain_block_number, onchain_status, created_at
+             FROM audit_anchors
+            WHERE onchain_tx_hash IS NULL
+              AND onchain_status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 10`,
+        );
+        for (const row of pending.rows) {
+          try {
+            await publishPendingAnchor(pool, anchorBroadcaster, row);
+          } catch (err) {
+            log.error(
+              { err, tenantId: row.tenant_id, anchorId: row.id },
+              "pending anchor retry failed",
+            );
+          }
+        }
+
         // Cross-tenant ENUMERATION only: MUST use a BYPASSRLS pool (the
         // audit-publisher role, scoped to SELECT on audit_events). The app pool
         // connects as brain_app under FORCE RLS, so without a tenant scope this

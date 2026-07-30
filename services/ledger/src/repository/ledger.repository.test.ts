@@ -7,6 +7,7 @@ import { findDocumentById, listDocuments } from "./documents.js";
 import { findInvoiceById, listInvoices } from "./invoices.js";
 import { findObligationById, listObligations } from "./obligations.js";
 import { findTransferById, listTransfers } from "./transfers.js";
+import { countAccounts } from "./accounts.js";
 import { listCounterparties } from "./counterparties.js";
 
 type FakeClient = TenantScopedClient & { _log: { sql: string; values: unknown[] }[] };
@@ -70,6 +71,25 @@ describe("listTransactions", () => {
     const { _log, ...client } = fakeClient();
     await listTransactions(client, { limit: 1 });
     expect(_log[0]!.sql).toMatch(/ORDER BY transaction_date DESC/);
+  });
+});
+
+// ---- balances ----
+
+describe("countAccounts", () => {
+  it("counts accounts using the same list filters without cursor paging", async () => {
+    const { _log, ...client } = fakeClient([{ total_count: 1 }]);
+    const count = await countAccounts(client, {
+      status: "active",
+      account_type: "bank_checking",
+    });
+
+    expect(count).toBe(1);
+    expect(_log[0]!.sql).toContain("SELECT count(*)::int AS total_count FROM ledger_accounts");
+    expect(_log[0]!.sql).toContain("status = $1");
+    expect(_log[0]!.sql).toContain("account_type = $2");
+    expect(_log[0]!.sql).not.toContain("ORDER BY");
+    expect(_log[0]!.values).toEqual(["active", "bank_checking"]);
   });
 });
 
@@ -173,16 +193,26 @@ describe("listCounterparties", () => {
   it("adds verified_status filter", async () => {
     const { _log, ...client } = fakeClient();
     await listCounterparties(client, { verified_status: "unverified", limit: 20 });
-    expect(_log[0]!.sql).toContain("verified_status = $1");
+    expect(_log[0]!.sql).toContain("cp.verified_status = $1");
     expect(_log[0]!.values).toEqual(["unverified", 20]);
   });
 
   it("searches normalized names and aliases", async () => {
     const { _log, ...client } = fakeClient();
     await listCounterparties(client, { q: "Acme Trading", limit: 20 });
-    expect(_log[0]!.sql).toContain("LOWER(COALESCE(normalized_name, '')) LIKE $1");
-    expect(_log[0]!.sql).toContain("FROM unnest(aliases) AS alias");
+    expect(_log[0]!.sql).toContain("LOWER(COALESCE(cp.normalized_name, '')) LIKE $1");
+    expect(_log[0]!.sql).toContain("FROM unnest(cp.aliases) AS alias");
     expect(_log[0]!.values).toEqual(["%acme_trading%", "Acme Trading", 20]);
+  });
+
+  it("adds outflow payment rollups to counterparty list rows", async () => {
+    const { _log, ...client } = fakeClient();
+    await listCounterparties(client, { type: "vendor", limit: 20 });
+    expect(_log[0]!.sql).toContain("LEFT JOIN");
+    expect(_log[0]!.sql).toContain("FROM ledger_transactions");
+    expect(_log[0]!.sql).toContain("direction = 'outflow'");
+    expect(_log[0]!.sql).toContain("status IN ('posted', 'cleared')");
+    expect(_log[0]!.sql).toContain("payment_total");
   });
 });
 

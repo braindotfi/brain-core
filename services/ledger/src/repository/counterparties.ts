@@ -17,6 +17,8 @@ export interface CounterpartyRow extends LedgerRowCommon {
   /** Tenant-scoped, off-chain structured context with no dedicated column
    *  (e.g. demo vendor ceiling / customer enrichment). Defaults to {}. */
   metadata: Record<string, unknown>;
+  payment_count?: number | string | null;
+  payment_total?: string | null;
 }
 
 export interface CounterpartyListFilters {
@@ -39,8 +41,22 @@ export async function findCounterpartyById(
   id: string,
 ): Promise<CounterpartyRow | null> {
   const { rows } = await client.query<CounterpartyRow>(
-    `SELECT * FROM ledger_counterparties
-      WHERE id = $1 AND owner_id = current_setting('app.tenant_id', true)
+    `SELECT cp.*,
+            COALESCE(payment_rollup.payment_count, 0)::int AS payment_count,
+            COALESCE(payment_rollup.payment_total, '0') AS payment_total
+       FROM ledger_counterparties cp
+       LEFT JOIN (
+         SELECT counterparty_id,
+                count(*)::int AS payment_count,
+                COALESCE(sum(amount), 0)::text AS payment_total
+           FROM ledger_transactions
+          WHERE owner_id = current_setting('app.tenant_id', true)
+            AND counterparty_id IS NOT NULL
+            AND direction = 'outflow'
+            AND status IN ('posted', 'cleared')
+          GROUP BY counterparty_id
+       ) payment_rollup ON payment_rollup.counterparty_id = cp.id
+      WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)
       LIMIT 1`,
     [id],
   );
@@ -51,24 +67,24 @@ export async function listCounterparties(
   client: TenantScopedClient,
   filters: CounterpartyListFilters,
 ): Promise<CounterpartyRow[]> {
-  const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
+  const where: string[] = [`cp.owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
   if (filters.type !== undefined) {
     values.push(filters.type);
-    where.push(`type = $${values.length}`);
+    where.push(`cp.type = $${values.length}`);
   }
   if (filters.verified_status !== undefined) {
     values.push(filters.verified_status);
-    where.push(`verified_status = $${values.length}`);
+    where.push(`cp.verified_status = $${values.length}`);
   }
   if (filters.q !== undefined && filters.q !== "") {
     const normalized = normalizeName(filters.q);
     values.push(`%${normalized}%`);
     where.push(
-      `(LOWER(COALESCE(normalized_name, '')) LIKE $${values.length}
+      `(LOWER(COALESCE(cp.normalized_name, '')) LIKE $${values.length}
         OR EXISTS (
           SELECT 1
-            FROM unnest(aliases) AS alias
+            FROM unnest(cp.aliases) AS alias
            WHERE LOWER(alias) = LOWER($${values.length + 1})
         ))`,
     );
@@ -78,14 +94,29 @@ export async function listCounterparties(
     values.push(filters.cursor.sort, filters.cursor.id);
     const sortIdx = values.length - 1;
     const idIdx = values.length;
-    where.push(`(name > $${sortIdx} OR (name = $${sortIdx} AND id > $${idIdx}))`);
+    where.push(`(cp.name > $${sortIdx} OR (cp.name = $${sortIdx} AND cp.id > $${idIdx}))`);
   }
   values.push(filters.limit);
   const limitIdx = values.length;
   const whereSql = where.length === 0 ? "" : `WHERE ${where.join(" AND ")}`;
   const { rows } = await client.query<CounterpartyRow>(
-    `SELECT * FROM ledger_counterparties ${whereSql}
-     ORDER BY name ASC, id ASC
+    `SELECT cp.*,
+            COALESCE(payment_rollup.payment_count, 0)::int AS payment_count,
+            COALESCE(payment_rollup.payment_total, '0') AS payment_total
+       FROM ledger_counterparties cp
+       LEFT JOIN (
+         SELECT counterparty_id,
+                count(*)::int AS payment_count,
+                COALESCE(sum(amount), 0)::text AS payment_total
+           FROM ledger_transactions
+          WHERE owner_id = current_setting('app.tenant_id', true)
+            AND counterparty_id IS NOT NULL
+            AND direction = 'outflow'
+            AND status IN ('posted', 'cleared')
+          GROUP BY counterparty_id
+       ) payment_rollup ON payment_rollup.counterparty_id = cp.id
+     ${whereSql}
+     ORDER BY cp.name ASC, cp.id ASC
      LIMIT $${limitIdx}`,
     values,
   );

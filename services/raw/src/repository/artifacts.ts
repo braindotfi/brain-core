@@ -6,6 +6,13 @@
 import type { TenantScopedClient } from "@brain/shared";
 import type { IngestEnvelopeFields } from "../envelope.js";
 
+export type RawArtifactProjectionStatus =
+  | "pending"
+  | "projecting"
+  | "projected"
+  | "projection_timed_out"
+  | "projection_failed";
+
 export interface RawArtifactRow {
   id: string;
   tenant_id: string;
@@ -30,6 +37,8 @@ export interface RawArtifactRow {
   source_id: string | null;
   source_version: string | null;
   idempotency_key: string | null;
+  projection_status: RawArtifactProjectionStatus | null;
+  projection_status_updated_at: Date | null;
 }
 
 export interface InsertArtifactInput {
@@ -63,6 +72,7 @@ export async function insertOrReuseArtifact(
 ): Promise<{ row: RawArtifactRow; deduplicated: boolean }> {
   const sha = Buffer.from(input.sha256Hex, "hex");
   const env = input.envelope ?? {};
+  const projectionStatus = env.sourceSchema === "brain.upload.document.v1" ? "pending" : null;
 
   if (env.idempotencyKey !== undefined) {
     const existing = await findArtifactByIdempotencyKey(client, env.idempotencyKey);
@@ -74,12 +84,20 @@ export async function insertOrReuseArtifact(
       `INSERT INTO raw_artifacts
          (id, tenant_id, sha256, source_type, source_ref, blob_uri, mime_type, bytes, ingested_by,
           source_schema, object_type, external_id, operation, effective_at, observed_at,
-          original_source, intermediaries, source_id, source_version, idempotency_key)
+          original_source, intermediaries, source_id, source_version, idempotency_key,
+          projection_status, projection_status_updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-               $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+               $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+               $21, CASE WHEN $21::text IS NULL THEN NULL ELSE now() END)
        ON CONFLICT (tenant_id, sha256) DO UPDATE SET
          source_ref = raw_artifacts.source_ref,
-         source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema)
+         source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema),
+         projection_status = COALESCE(raw_artifacts.projection_status, EXCLUDED.projection_status),
+         projection_status_updated_at = CASE
+           WHEN raw_artifacts.projection_status IS NULL AND EXCLUDED.projection_status IS NOT NULL
+             THEN now()
+           ELSE raw_artifacts.projection_status_updated_at
+         END
        RETURNING *`,
       [
         input.id,
@@ -102,6 +120,7 @@ export async function insertOrReuseArtifact(
         env.sourceId ?? null,
         env.sourceVersion ?? null,
         env.idempotencyKey ?? null,
+        projectionStatus,
       ],
     );
     const row = rows[0];
@@ -120,6 +139,21 @@ export async function insertOrReuseArtifact(
     }
     throw err;
   }
+}
+
+export async function setArtifactProjectionStatus(
+  client: TenantScopedClient,
+  id: string,
+  status: RawArtifactProjectionStatus,
+): Promise<void> {
+  await client.query(
+    `UPDATE raw_artifacts
+        SET projection_status = $1,
+            projection_status_updated_at = now()
+      WHERE id = $2
+        AND tenant_id = current_setting('app.tenant_id', true)`,
+    [status, id],
+  );
 }
 
 function isUniqueViolation(err: unknown, constraint: string): boolean {

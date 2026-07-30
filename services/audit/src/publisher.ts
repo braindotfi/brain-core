@@ -101,33 +101,38 @@ export async function publishAnchor(
     return inserted;
   });
 
-  // Nothing more to do for a row that already reached a terminal state:
-  //   - onchain_tx_hash set  → confirmed (a valid anchor tx mined), or
-  //   - onchain_status reverted → the contract rejected this window for good
-  //     (RootAlreadyPublished §5.3 with no recoverable winner, etc.).
-  // Re-broadcasting a terminal row is exactly the loop that burned testnet
-  // nonces/ETH before this fix.
-  if (result === null || result.onchain_tx_hash !== null || result.onchain_status === "reverted") {
-    return result;
-  }
+  if (result === null) return null;
+  return publishPendingAnchor(pool, broadcaster, result);
+}
 
+export async function publishPendingAnchor(
+  pool: Pool,
+  broadcaster: AnchorBroadcaster,
+  row: AuditAnchorRow,
+): Promise<AuditAnchorRow | null> {
+  // Nothing more to do for a row that already reached a terminal state:
+  //   - onchain_tx_hash set means confirmed, a valid anchor tx mined, or
+  //   - onchain_status reverted means the contract rejected this window for good.
+  if (row.onchain_tx_hash !== null || row.onchain_status === "reverted") {
+    return row;
+  }
   const broadcast = await broadcaster({
-    tenantId: opts.tenantId,
-    merkleRoot: result.merkle_root,
-    eventCount: result.event_count,
-    periodStart: result.period_start,
-    periodEnd: result.period_end,
+    tenantId: row.tenant_id,
+    merkleRoot: row.merkle_root,
+    eventCount: row.event_count,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
   });
 
-  const finalized = await withTenantScope(pool, opts.tenantId, async (c) => {
+  const finalized = await withTenantScope(pool, row.tenant_id, async (c) => {
     if (broadcast.status === "reverted") {
-      // Deterministic on-chain revert — terminal. Record it and stop retrying.
-      await setAnchorReverted(c, result.id);
+      // Deterministic on-chain revert. Record it and stop retrying.
+      await setAnchorReverted(c, row.id);
     } else {
-      // confirmed | already_anchored — both carry a valid on-chain anchor tx.
-      await setAnchorTxHash(c, result.id, broadcast.txHash, broadcast.blockNumber);
+      // confirmed | already_anchored both carry a valid on-chain anchor tx.
+      await setAnchorTxHash(c, row.id, broadcast.txHash, broadcast.blockNumber);
     }
-    return findAnchorByRootLocal(c, result.merkle_root);
+    return findAnchorByRootLocal(c, row.merkle_root);
   });
   return finalized;
 }

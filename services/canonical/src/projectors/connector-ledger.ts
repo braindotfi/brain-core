@@ -563,8 +563,12 @@ export function projectBankStatementUploadLedger(
       continue;
     }
     const counterpartyName = str(tx["counterparty_name"]);
+    const normalizedCounterpartyName =
+      counterpartyName === null ? "" : normalizeName(counterpartyName);
     const counterpartyKey =
-      counterpartyName === null ? null : `upload_counterparty:${normalizeName(counterpartyName)}`;
+      normalizedCounterpartyName === ""
+        ? null
+        : `upload_counterparty:${normalizedCounterpartyName}`;
     if (counterpartyName !== null && counterpartyKey !== null) {
       out.push({
         kind: "counterparty",
@@ -572,7 +576,7 @@ export function projectBankStatementUploadLedger(
           sourceSystem: "document_upload",
           sourceNaturalKey: counterpartyKey,
           name: counterpartyName,
-          normalizedName: normalizeName(counterpartyName) || null,
+          normalizedName: normalizedCounterpartyName,
           type: "merchant",
           email: null,
           extensions: { document_upload: { object_type: "bank_statement" } },
