@@ -84,8 +84,12 @@ jobs:
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
             'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
-          scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
-          scp -i ~/.ssh/id_deploy Caddyfile "azureuser@$VM_HOST:~/brain-core/Caddyfile"
+          if [ -f docker-compose.caddy.yml ]; then
+            scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
+          fi
+          if [ -f Caddyfile ]; then
+            scp -i ~/.ssh/id_deploy Caddyfile "azureuser@$VM_HOST:~/brain-core/Caddyfile"
+          fi
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
