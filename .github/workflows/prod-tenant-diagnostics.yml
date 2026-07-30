@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ""
+      proposal_read_model_smoke:
+        description: "When true, mint an execution:read session and smoke GET /v1/proposals serialization"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,6 +53,7 @@ jobs:
       WIKI_QUESTION_SINCE: ${{ inputs.wiki_question_since }}
       WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
+      PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
     steps:
       - name: Validate tenant id
         shell: bash
@@ -87,7 +93,7 @@ jobs:
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -250,4 +256,148 @@ jobs:
           COMMIT;
           SQL
           echo "::endgroup::"
+
+          if [[ "$PROPOSAL_READ_MODEL_SMOKE" == "true" ]]; then
+            echo "::group::proposal read-model HTTP smoke"
+            cd ~/brain-core
+            set -a
+            # Keep the platform secret on the VM. The workflow only prints sanitized
+            # proposal field summaries from the authenticated read response.
+            . ./.env.prod
+            set +a
+            if [[ -z "${BRAIN_PLATFORM_SERVICE_SECRET:-}" ]]; then
+              echo "BRAIN_PLATFORM_SERVICE_SECRET is not configured on the VM"
+              exit 1
+            fi
+
+            external_ref="$(
+              docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+                -v ON_ERROR_STOP=1 \
+                -v tenant_id="$TENANT_ID" <<'SQL'
+              SELECT l.external_ref
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+               WHERE l.tenant_id = :'tenant_id'
+                 AND l.surface = 'platform'
+                 AND m.status = 'active'
+               ORDER BY CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END,
+                        l.linked_at ASC
+               LIMIT 1;
+          SQL
+            )"
+            if [[ -z "$external_ref" ]]; then
+              echo "No active platform identity link found for tenant"
+              exit 1
+            fi
+
+            session_json="$(
+              EXTERNAL_REF="$external_ref" node -e '
+                const externalRef = process.env.EXTERNAL_REF;
+                process.stdout.write(JSON.stringify({
+                  external_ref: externalRef,
+                  scopes: ["execution:read"],
+                }));
+              ' | curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+                -X POST https://api.brain.fi/v1/sessions \
+                -H "Content-Type: application/json" \
+                -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+                --data-binary @-
+            )"
+            token="$(
+              printf '%s' "$session_json" | node -e '
+                let body = "";
+                process.stdin.on("data", (chunk) => { body += chunk; });
+                process.stdin.on("end", () => {
+                  const parsed = JSON.parse(body);
+                  if (typeof parsed.token !== "string" || parsed.token.length === 0) {
+                    process.exit(1);
+                  }
+                  process.stdout.write(parsed.token);
+                });
+              '
+            )"
+            proposals_json="$(
+              curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+                "https://api.brain.fi/v1/proposals?status=pending&limit=100" \
+                -H "Authorization: Bearer ${token}"
+            )"
+            cat > /tmp/proposal-read-model-smoke.js <<'NODE'
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => {
+              const parsed = JSON.parse(body);
+              const proposals = Array.isArray(parsed.proposals) ? parsed.proposals : [];
+              const targets = [
+                "flag_transaction",
+                "cash_forecast",
+                "treasury",
+                "flag_subscription",
+                "notify",
+              ];
+              const fieldNames = [
+                "details",
+                "policy",
+                "presentation",
+                "available_decisions",
+                "stored_action_type",
+              ];
+
+              const meaningful = (value) => {
+                if (value === null || value === undefined) return false;
+                if (typeof value === "string") return value.trim().length > 0;
+                if (typeof value === "number" || typeof value === "boolean") return true;
+                if (Array.isArray(value)) return value.length > 0;
+                if (typeof value === "object") {
+                  return Object.values(value).some((child) => meaningful(child));
+                }
+                return false;
+              };
+              const matchesTarget = (proposal, target) =>
+                proposal.stored_action_type === target ||
+                proposal.type === target ||
+                proposal.details?.type === target ||
+                proposal.details?.kind === target ||
+                proposal.details?.agent_role === target ||
+                proposal.details?.agent_id === target;
+
+              const failures = [];
+              const summaries = [];
+              for (const target of targets) {
+                const proposal = proposals.find((candidate) => matchesTarget(candidate, target));
+                if (proposal === undefined) {
+                  failures.push(`${target}: no matching pending proposal returned`);
+                  continue;
+                }
+                const missing = fieldNames.filter((field) => !meaningful(proposal[field]));
+                if (missing.length > 0) {
+                  failures.push(`${target}: empty fields ${missing.join(", ")}`);
+                }
+                summaries.push({
+                  target,
+                  id: proposal.id,
+                  type: proposal.type,
+                  status: proposal.status,
+                  stored_action_type: proposal.stored_action_type,
+                  details_keys: Object.keys(proposal.details ?? {}).slice(0, 12),
+                  policy_decision: proposal.policy?.decision ?? null,
+                  policy_id: proposal.policy?.policy_id ?? null,
+                  matched_rule_id: proposal.policy?.matched_rule_id ?? null,
+                  available_decisions: (proposal.available_decisions ?? []).map((item) => item.id),
+                  presentation_headline: proposal.presentation?.headline ?? null,
+                  presentation_key_fact_count: proposal.presentation?.key_facts?.length ?? 0,
+                });
+              }
+              console.log(JSON.stringify({ checked: targets, summaries }, null, 2));
+              if (failures.length > 0) {
+                console.error(JSON.stringify({ failures }, null, 2));
+                process.exit(1);
+              }
+            });
+          NODE
+            printf '%s' "$proposals_json" | node /tmp/proposal-read-model-smoke.js
+            rm -f /tmp/proposal-read-model-smoke.js
+            echo "::endgroup::"
+          fi
           REMOTE
