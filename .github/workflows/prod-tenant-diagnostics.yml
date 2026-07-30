@@ -176,7 +176,7 @@ jobs:
            GROUP BY 1, 2
            ORDER BY 1, 2;
 
-          \echo 'proposal details for transaction flags, collections, and payment'
+          \echo 'proposal details for transaction flags, collections, payment, and reconciliation'
           SELECT p.id,
                  p.created_at,
                  p.proposing_agent,
@@ -192,15 +192,17 @@ jobs:
                  p.action->>'merchant' AS merchant,
                  p.action->>'amount' AS amount,
                  p.action->>'currency' AS currency,
+                 p.action->>'confidence' AS confidence,
                  p.action->>'transaction_id' AS transaction_id,
                  p.action->>'payment_intent_id' AS payment_intent_id,
+                 p.action AS action_payload,
                  p.action->'evidence_ids' AS evidence_ids,
                  p.action->'evidence_refs' AS evidence_refs,
                  p.policy_trace
             FROM proposals p
            WHERE p.tenant_id = :'tenant_id'
              AND COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'kind', ''), 'unknown')
-                 IN ('flag_transaction', 'collections', 'payment')
+                 IN ('flag_transaction', 'collections', 'payment', 'reconciliation')
            ORDER BY p.created_at DESC, p.id DESC
            LIMIT 50;
 

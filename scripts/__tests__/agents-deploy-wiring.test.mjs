@@ -101,15 +101,19 @@ test("main workflow builds app and agents images before deployment", () => {
 test("staging and production deploy recreates include the agents service", () => {
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote", promoteWorkflow);
-  const serviceTargets = "api worker agents";
+  const serviceTargets = "api worker agents surface-gateway";
   assert.match(deployStagingJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
-  assert.match(promoteProductionJob, new RegExp(`up -d --no-deps --no-build ${serviceTargets}`));
+  assert.match(promoteProductionJob, /for service in api worker agents surface-gateway; do/);
+  assert.match(
+    promoteProductionJob,
+    /\\?\$compose_agents up -d --no-deps --no-build \\?\$app_services/,
+  );
 });
 
 test("staging deploy starts infra without pulling service dependencies", () => {
   const deployStagingJob = workflowJob("deploy_staging");
   const coldStartCommand =
-    /up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup jwks caddy/;
+    /up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup caddy/;
   assert.match(deployStagingJob, coldStartCommand);
   assert.match(deployStagingJob, /Staging API key acceptance/);
   assert.match(deployStagingJob, /scripts\/ops\/staging_api_key_acceptance\.py/);
@@ -123,12 +127,18 @@ test("staging and production deploy rerun db role grants after migrations", () =
     ["deploy_staging", deployStagingJob],
     ["promote_production", promoteProductionJob],
   ]) {
+    assert.match(job, /tools\/migrate\/dist\/cli\.js up/, `${name} must apply migrations`);
+    assert.match(job, /run --rm --no-deps db-roles/, `${name} must rerun db-roles`);
     assert.match(
       job,
-      /tools\/migrate\/dist\/cli\.js up && \\\s+docker compose [\s\S]*?run --rm --no-deps db-roles && \\\s+\(docker compose [\s\S]*?up -d --no-deps --no-build api worker agents/,
-      `${name} must apply migrations, rerun db-roles, then recreate services`,
+      /up -d --no-deps --no-build (api worker agents surface-gateway|\\?\$app_services)/,
+      `${name} must recreate app services`,
     );
-    assert.match(job, /logs --tail=200 api worker agents/, `${name} must print deploy logs`);
+    assert.match(
+      job,
+      /logs --tail=200 (api worker agents surface-gateway|\\?\$app_services)/,
+      `${name} must print deploy logs`,
+    );
   }
 });
 
