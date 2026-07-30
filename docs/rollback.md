@@ -26,8 +26,10 @@ last deploy overwrote `brain-core:prod` and `brain-agents:prod`.
 - The failing deploy has run through the workflow, which tags the previous
   images as `brain-core:prod-rollback-<timestamp>` and
   `brain-agents:prod-rollback-<timestamp>` before pulling the new images.
-- Rollback images are pruned after 3 days, so rollback targets older than
-  that are not guaranteed to exist on the box.
+- Rollback images are pruned after 24 hours, so rollback targets older than
+  that are not guaranteed to exist on the box. Recover an older target from
+  GHCR by commit SHA: pull `ghcr.io/braindotfi/brain-core:<sha>` and retag
+  it to `brain-core:prod`.
 
 ### Procedure
 
