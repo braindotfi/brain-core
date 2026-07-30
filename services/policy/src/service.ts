@@ -394,7 +394,7 @@ function highRiskAgentActionFallback(
   };
 }
 
-const HIGH_RISK_AGENT_KEYS = new Set(["fraud_anomaly", "vendor_risk"]);
+const HIGH_RISK_AGENT_KEYS = new Set(["collections", "fraud_anomaly", "vendor_risk"]);
 const HIGH_RISK_AGENT_ACTION_TYPES = new Set([
   "block_payment",
   "create_dispute_draft",

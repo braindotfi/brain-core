@@ -51,6 +51,7 @@ const ctx: ServiceCallContext = { tenantId: newTenantId(), actor: newAgentId() }
 
 describe("PolicyService.evaluateLegacy", () => {
   it.each([
+    ["collections", "collections"],
     ["fraud_anomaly", "flag_transaction"],
     ["vendor_risk", "block_payment"],
   ])("routes unmatched high-risk %s proposals to confirmation", async (agentId, actionType) => {
@@ -128,6 +129,41 @@ describe("PolicyService.evaluateLegacy", () => {
     });
   });
 
+  it("keeps payment proposals fail-closed when unmatched", async () => {
+    const { pool } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "default-agent-action-requires-review",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        type: "payment",
+        agent_id: "payment",
+        agent_role: "payment",
+        confidence: 0.4,
+        evidence_score: 1,
+        risk_level: "high",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "reject",
+      matched_rule_id: null,
+      required_approvers: [],
+    });
+  });
+
   it("leaves high-risk proposals that match a real rule unchanged", async () => {
     const { pool } = poolWithActivePolicy({
       version: 1,
@@ -159,6 +195,41 @@ describe("PolicyService.evaluateLegacy", () => {
     ).resolves.toMatchObject({
       outcome: "confirm",
       matched_rule_id: "review-low-confidence-agent-actions",
+      required_approvers: ["signer"],
+    });
+  });
+
+  it("leaves collections proposals that match a real rule unchanged", async () => {
+    const { pool } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "review-low-confidence-collections",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.3 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        type: "collections",
+        agent_id: "collections",
+        agent_role: "collections",
+        confidence: 0.4,
+        evidence_score: 1,
+        risk_level: "medium",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "review-low-confidence-collections",
       required_approvers: ["signer"],
     });
   });
