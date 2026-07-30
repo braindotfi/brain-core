@@ -15,8 +15,10 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { scopesForAgentRole } from "@brain/internal-agents";
 import {
   brainError,
+  computeAgentScopeHash,
   isBrainId,
   newProposalId,
   requireScope,
@@ -246,6 +248,20 @@ export async function registerExecutionRoutes(
       const b = request.body ?? {};
       if (b.agent_id === undefined || b.role === undefined || b.display_name === undefined) {
         throw brainError("request_body_invalid", "agent_id, role, display_name required");
+      }
+      // A caller-supplied scope_hash must be the canonical derivation for the
+      // supplied role, or a bare insert here could plant a non-canonical hash
+      // (the same class of bug the seed-golden-path seeder had). An omitted
+      // scope_hash still stores null, unchanged from the prior contract.
+      if (b.scope_hash !== undefined) {
+        const canonical = computeAgentScopeHash(scopesForAgentRole(b.role!)).slice(2);
+        if (b.scope_hash.toLowerCase() !== canonical.toLowerCase()) {
+          throw brainError(
+            "agent_scope_hash_mismatch",
+            "scope_hash is not the canonical derivation for role " + b.role!,
+            { details: { role: b.role!, supplied_hash: b.scope_hash!, canonical_hash: canonical } },
+          );
+        }
       }
       const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         insertAgent(c, {

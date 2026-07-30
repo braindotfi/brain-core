@@ -101,7 +101,14 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain(
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links",
     );
-    expect(SQL).toContain("member_invites, session_refresh_tokens, api_keys TO brain_resolver");
+    // Single contiguous assertion pinning the END of the whole grant list, so
+    // a future edit cannot silently insert a money-path table (e.g.
+    // ledger_payment_intents) between the two halves and stay green.
+    expect(SQL).toContain(
+      "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,\n" +
+        "  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,\n" +
+        "  oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;",
+    );
     const artifactGrant = SQL.match(
       /GRANT SELECT \(([\s\S]*?)\) ON raw_artifacts TO brain_mcp_reader/,
     );
@@ -130,6 +137,53 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(insertRevoke).not.toBeNull();
     expect(insertRevoke?.[0]).toContain("brain_privileged");
     expect(insertRevoke?.[0]).not.toContain("brain_app");
+  });
+
+  it("pins brain_auth's containment properties (finding 6)", () => {
+    // NOBYPASSRLS: tenant-scoped per request like brain_app, not a
+    // cross-tenant bypass role like the §4 roles above.
+    expect(SQL).toMatch(
+      /ALTER ROLE brain_auth\s+WITH LOGIN PASSWORD :'brain_auth_password' NOBYPASSRLS/,
+    );
+    // No DELETE grant anywhere: codes and tokens are marked consumed or
+    // revoked, never deleted. Scan every GRANT statement that names
+    // brain_auth as a standalone target -- \b naturally excludes
+    // brain_auth_audit_writer, since there is no word boundary at the `_`
+    // that continues it.
+    const grantsToBrainAuth = (SQL.match(/GRANT[^;]*;/g) ?? []).filter((g) =>
+      /\bbrain_auth\b/.test(g),
+    );
+    expect(grantsToBrainAuth.length).toBeGreaterThan(0);
+    for (const grant of grantsToBrainAuth) {
+      expect(grant, `unexpected DELETE grant reaching brain_auth: ${grant}`).not.toMatch(/DELETE/);
+    }
+    // Column-list UPDATE on users is the containment argument's other load-
+    // bearing property: the AS can flip password_hash (Path 1 login) and
+    // account-lifecycle columns, but never email, tenant_id, or role.
+    expect(SQL).toContain(
+      "GRANT UPDATE (password_hash, email_verified_at, status) ON users TO brain_auth;",
+    );
+  });
+
+  it("grants both append-only audit-writer roles SELECT and INSERT, never UPDATE/DELETE/TRUNCATE (finding 1)", () => {
+    // PostgresAuditEmitter.emit reads the hash-chain predecessor
+    // (SELECT event_hash ... LIMIT 1) before every insert. INSERT-only on
+    // either writer role 42501s that read on every emit -- verified live
+    // against brain_auth_audit_writer. Append-only is enforced by the
+    // REVOKE UPDATE, DELETE, TRUNCATE assertion below, not by omitting
+    // SELECT.
+    for (const role of ["brain_surface_audit_writer", "brain_auth_audit_writer"] as const) {
+      expect(SQL, `${role} missing SELECT, INSERT ON audit_events`).toContain(
+        `GRANT SELECT, INSERT ON audit_events TO ${role};`,
+      );
+      expect(SQL, `${role} must not hold a standalone UPDATE/DELETE/TRUNCATE grant`).not.toMatch(
+        new RegExp(`GRANT[^;]*(UPDATE|DELETE|TRUNCATE)[^;]*TO ${role}\\b`),
+      );
+    }
+    const revoke = SQL.match(/REVOKE UPDATE, DELETE, TRUNCATE ON audit_events\s+FROM[\s\S]*?;/);
+    expect(revoke).not.toBeNull();
+    expect(revoke?.[0]).toContain("brain_surface_audit_writer");
+    expect(revoke?.[0]).toContain("brain_auth_audit_writer");
   });
 
   it("keeps forensic state off-limits to every new role except the verifier", () => {

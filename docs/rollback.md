@@ -9,7 +9,7 @@ Brain currently deploys each environment to a single Docker VM through
   environment approval, uses `VM_HOST`, `.env.prod`, and project `brain-prod`.
 - Both jobs ship the same SHA-tagged `brain-core` and `brain-agents` images,
   retag them locally as `brain-core:prod` and `brain-agents:prod`, run
-  `tools/migrate up`, then recreate `api`, `worker`, and `agents`.
+  `tools/migrate up`, then recreate `api`, `worker`, `agents`, and `auth`.
 
 The forward-only migration rule in [Post-Rollback](#post-rollback) applies to
 both environments.
@@ -63,7 +63,7 @@ last deploy overwrote `brain-core:prod` and `brain-agents:prod`.
      -f docker-compose.prod.yml \
      -f docker-compose.caddy.yml \
      --profile agents \
-     up -d --no-deps --no-build api worker agents
+     up -d --no-deps --no-build api worker agents auth
    ```
 
    For production:
@@ -74,7 +74,7 @@ last deploy overwrote `brain-core:prod` and `brain-agents:prod`.
      -f docker-compose.prod.yml \
      -f docker-compose.caddy.yml \
      --profile agents \
-     up -d --no-deps --no-build api worker agents
+     up -d --no-deps --no-build api worker agents auth
    ```
 
 5. Verify the service health and commit.

@@ -138,6 +138,17 @@ jobs:
       # brain_app is NOBYPASSRLS and not the table owner, so it is the one
       # connection in this job that Postgres actually subjects to RLS.
       DATABASE_URL_APP: postgres://brain_app:brain_app@localhost:5432/brain
+      # services/auth's human-auth integration suite drives the AS through its
+      # real least-privilege connections, the same reason DATABASE_URL_APP
+      # exists above -- brain_auth (NOBYPASSRLS) actually proves RLS tenant
+      # isolation; brain_resolver is the sanctioned cross-tenant reader.
+      DATABASE_URL_AUTH: postgres://brain_auth:brain_auth@localhost:5432/brain
+      DATABASE_URL_RESOLVER: postgres://brain_resolver:brain_resolver@localhost:5432/brain
+      # audit-writer.integration.test.ts: proves PostgresAuditEmitter actually
+      # completes through brain_auth_audit_writer's real, narrow grant (finding
+      # 1) instead of only through human-auth.integration.test.ts's
+      # InMemoryAuditEmitter + blanket schema grant.
+      DATABASE_URL_AUTH_AUDIT: postgres://brain_auth_audit_writer:brain_auth_audit_writer@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -189,6 +200,8 @@ jobs:
             -v brain_tenant_deletion_password="brain_tenant_deletion" \
             -v brain_surface_gateway_password="brain_surface_gateway" \
             -v brain_surface_audit_writer_password="brain_surface_audit_writer" \
+            -v brain_auth_password="brain_auth" \
+            -v brain_auth_audit_writer_password="brain_auth_audit_writer" \
             -f infra/db-roles.sql
 
       - name: Integration tests

@@ -249,6 +249,15 @@ jobs:
       # the repo-tracked paths compose depends on, before any compose
       # invocation below. Host-only files (VM_ENV_FILE, docker-compose.caddy.yml)
       # are left untouched, they are not in this repo.
+      #
+      # Do NOT ship Caddyfile or docker-compose.caddy.yml here. Both are
+      # vendored from the PRODUCTION VM and contain only api.brain.fi,
+      # mcp.brain.fi, and auth.brain.fi. Staging (VM_HOST_STAGING) is a
+      # different box with its own host-only Caddyfile carrying a
+      # staging-api.brain.fi block that is not in git and has no backup;
+      # scp'ing the prod file over it would take staging-api.brain.fi down
+      # with no way to recover the original. See promote-prod.yml, which
+      # deploys to the prod VM the file was actually read from.
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
@@ -338,7 +347,7 @@ jobs:
              docker tag ghcr.io/braindotfi/brain-core:${{ github.sha }} brain-core:prod && \
              docker tag ghcr.io/braindotfi/brain-agents:${{ github.sha }} brain-agents:prod"
 
-      # Cold-start safety: bring up infra + jwks + caddy if the box is fresh.
+      # Cold-start safety: bring up infra + caddy if the box is fresh.
       # Idempotent on a warm box — --no-recreate leaves running containers
       # (incl. postgres) untouched; depends_on sequences a cold box correctly.
       #
@@ -355,20 +364,64 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup jwks caddy"
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup caddy"
+
+      # No Caddy reload step here. Staging's Caddyfile is host-only and never
+      # shipped by this job (see the comment above the sync step), so there is
+      # nothing new for Caddy to pick up. Reload runs only in
+      # promote-prod.yml, against the prod VM the vendored Caddyfile came from.
 
       # The VM's ~/brain-core is a copied tree (not a git checkout) that
-      # already holds the stage env file and docker-compose.caddy.yml (both
-      # host-only, not in this repo). Migrations are idempotent, so running `up`
-      # on every deploy is safe even when there are no new migrations.
-      - name: Migrate + recreate api/worker/agents on VM
+      # already holds the stage env file (host-only, not in this repo).
+      # Migrations are idempotent, so running `up` on every deploy is safe
+      # even when there are no new migrations.
+      # `auth` is now the single JWKS source for api/worker/surface-gateway
+      # (Phase 4, OAUTH-AS-PLAN.md section 8), and it boots behind five
+      # independent process.exit(1) fences (AUTH_SIGN_KEY, AUTH_COOKIE_SECRET,
+      # a valid AUTH_ISSUER, the three BRAIN_*_DB_URL role URLs, and the
+      # EMAIL_ENDPOINT/EMAIL_API_KEY pair) where the retired `jwks` sidecar had
+      # exactly one. `docker compose up -d` exits 0 even when the container
+      # dies moments later, so recreate `auth` alone first and prove it is
+      # actually listening (next step) BEFORE recreating anything that
+      # verifies tokens against it. /health below is unauthenticated and
+      # would report the new commit even with auth dead, so it cannot stand
+      # in for this gate.
+      - name: Migrate + recreate auth on VM
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
-             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents || \
-              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents && false))"
+             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-deps --no-build auth || \
+              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 auth && false))"
+
+      # Pre-flight gate. auth opens three Postgres pools before it starts
+      # listening, so give it a bounded wait rather than a single curl.
+      # auth.brain.fi DNS does not resolve yet, so this SSHes into the VM and
+      # curls the container's 127.0.0.1-bound port directly instead of going
+      # over Caddy/DNS (same approach as promote-prod.yml's auth smoke test).
+      - name: Wait for auth healthy on VM before recreating verifiers
+        run: |
+          expected="${{ github.sha }}"
+          last_commit=""
+          for i in $(seq 1 10); do
+            body=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" 'curl -s http://localhost:3003/healthz' || true)
+            last_commit=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
+            [ "$last_commit" = "$expected" ] && exit 0
+            sleep 6
+          done
+          echo "auth /healthz never reported commit=$expected before recreating api/worker/surface-gateway (last seen: '$last_commit')"
+          exit 1
+
+      # --no-deps here too: auth was just recreated above and proven healthy,
+      # so it is deliberately left out of this list rather than recreated
+      # twice.
+      - name: Recreate api/worker/agents/surface-gateway on VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents surface-gateway || \
+              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents surface-gateway && false))"
 
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so

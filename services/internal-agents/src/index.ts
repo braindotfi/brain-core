@@ -18,3 +18,4 @@ export {
   allManifests,
 } from "./registry.js";
 export * from "./registration.js";
+export { scopesForAgentRole } from "./agent-role-scopes.js";

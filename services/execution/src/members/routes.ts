@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomBytes } from "node:crypto";
 import {
   brainError,
   decodeKeysetCursor,
   encodeKeysetCursor,
+  hashToken,
+  newSecretToken,
   newUserId,
   requireScope,
   withTenantScope,
@@ -447,14 +448,6 @@ async function revokeOutstandingInvites(
         AND revoked_at IS NULL`,
     [memberId],
   );
-}
-
-function newSecretToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 function requireString(value: unknown, name: string): string {

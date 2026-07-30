@@ -20,7 +20,15 @@ export interface SignOptions {
 export class JwtSigner {
   public constructor(private readonly opts: SignOptions) {}
 
-  public async sign(principal: Principal): Promise<string> {
+  /**
+   * `audience` overrides `opts.audience` for this one token. Used by the
+   * OAuth authorization server (RFC 8707 `resource`): an MCP-bound token
+   * mints `aud: ["brain-api", "https://mcp.brain.fi"]` rather than the plain
+   * string every other minting path uses. `jose`'s audience check on verify
+   * passes when ANY array entry matches, so existing single-string verifiers
+   * are unaffected (see shared/src/auth/jwt.test.ts's array-audience test).
+   */
+  public async sign(principal: Principal, audience?: string | readonly string[]): Promise<string> {
     const key = await importJWK(this.opts.key, this.opts.algorithm);
     return new SignJWT({
       tenant_id: principal.tenantId,
@@ -30,7 +38,7 @@ export class JwtSigner {
       .setProtectedHeader({ alg: this.opts.algorithm })
       .setIssuedAt()
       .setIssuer(this.opts.issuer)
-      .setAudience(this.opts.audience)
+      .setAudience(audience !== undefined ? [...audience] : this.opts.audience)
       .setExpirationTime(principal.expiresAt)
       .setSubject(principal.id)
       .setJti(principal.tokenId)

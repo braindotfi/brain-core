@@ -265,6 +265,30 @@ describe("TenantDeletionService", () => {
     expect(enqueueIdx).toBeLessThan(commitIdx);
   });
 
+  it("deletes a tenant holding rows in all three oauth tables (finding 1)", async () => {
+    const pool = fakePool({
+      oauth_authorization_codes: 1,
+      oauth_refresh_tokens: 2,
+      oauth_consent_grants: 1,
+    });
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    const result = await svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT);
+
+    expect(result.deletedRows.oauth_authorization_codes).toBe(1);
+    expect(result.deletedRows.oauth_refresh_tokens).toBe(2);
+    expect(result.deletedRows.oauth_consent_grants).toBe(1);
+    // The transaction committed rather than rolling back on a 23503 FK
+    // violation, which is what happened before these tables were added to
+    // TENANT_SCOPED_TABLES: the tenants row deleted before its oauth_*
+    // children, tripping the FK.
+    const client = await pool.connect();
+    const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("COMMIT");
+    expect(calls).not.toContain("ROLLBACK");
+  });
+
   it("deletes the surface-gateway tables, keyed on their own tenant column", async () => {
     const pool = fakePool({
       surface_proposals: 2,
@@ -333,11 +357,13 @@ function repoRoot(): string {
 }
 
 // Derived from disk rather than a fixed array. A hardcoded service list is
-// exactly how services/surface-gateway went unscanned: it shipped eleven
-// tenant-scoped surface_* tables and this guard never saw one of them, so a
-// GDPR erasure left every Slack/Teams install token and proposal payload
-// behind. Reading services/*/ means the next new service's migrations are
-// scanned automatically, with no list to remember to update.
+// exactly how "auth" and "surface-gateway" each went unscanned in turn:
+// services/auth shipped a migration with three tenant-scoped oauth_* tables,
+// and separately services/surface-gateway shipped eleven tenant-scoped
+// surface_* tables, and this guard never saw either set until both were
+// added to TENANT_SCOPED_TABLES. Reading services/*/ means the next new
+// service's migrations are scanned automatically, with no list to remember
+// to update -- and no per-service exclusion to go stale once a gap is fixed.
 function listMigrationFiles(): string[] {
   const servicesDir = join(repoRoot(), "services");
   const services = readdirSync(servicesDir, { withFileTypes: true })

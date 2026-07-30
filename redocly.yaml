@@ -9,3 +9,18 @@ rules:
   # /execution/execute is intentionally disabled and only returns 422. Adding a
   # fake 2xx response would overstate the legacy route's behavior.
   operation-2xx-response: off
+
+# Decorators only run at `bundle` time (never during `lint`), so this has no
+# effect on `pnpm run lint:openapi` -- it exists solely so clients/sdk's
+# codegen script (`openapi-typescript --redocly redocly.yaml`) can bundle a
+# copy of this spec with `x-sdk-exclude: true` path items removed before
+# generating SDK types. Deliberately NOT `x-internal` (Scalar's own renderer
+# hides `x-internal`/`x-scalar-ignore` client-side, and these paths must stay
+# fully visible in GET /v1/docs -- only the generated SDK should exclude
+# them). See the "OAuth Authorization Server" tag paths in
+# Brain_API_Specification.yaml for what this marks: those endpoints live on
+# a different origin (auth.brain.fi) that the SDK's single-baseUrl client
+# must never be typed to call.
+decorators:
+  remove-x-internal:
+    internalFlagProperty: x-sdk-exclude

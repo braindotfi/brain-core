@@ -50,7 +50,7 @@ x-brain-common-env: &brain-common-env
   # build time (git describe; see Dockerfile). Setting it via environment: or an
   # env_file would override the image's baked value and re-pin a stale version.
   BRAIN_BASE_CHAIN_ID: "84532"
-  AUTH_JWKS_URL: http://jwks:8085/.well-known/jwks.json
+  AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
   AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
   AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
   DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
@@ -208,6 +208,8 @@ services:
           -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}" \
           -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}" \
           -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}" \
+          -v brain_auth_password="${BRAIN_AUTH_DB_PASSWORD:-brain_auth}" \
+          -v brain_auth_audit_writer_password="${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -240,31 +242,86 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
-  # Static JWKS sidecar (C1). Publishes the PUBLIC half of AUTH_SIGN_KEY at
-  # /.well-known/jwks.json so the API's JWKS verifier has a key source without
-  # an external IdP. The same AUTH_SIGN_KEY signs SIWX tokens and is what
-  # tools/dev-token mints test JWTs with. Generate a key with:
-  #   pnpm --filter @brain/static-jwks run generate   (→ set AUTH_SIGN_KEY in .env.prod)
-  jwks:
+  # `auth`: the OAuth 2.0 authorization server at AUTH_ISSUER (auth.brain.fi).
+  # RFC 8414 metadata + JWKS discovery, real /authorize and /token (PKCE,
+  # consent, code exchange, refresh rotation) via oauthCore, DCR registration,
+  # and human /login + /set-password + /forgot-password (OAUTH-AS-PLAN.md
+  # section 8, Phases 1-3 all shipped -- main.ts always wires oauthCore now;
+  # the 503 stubs in server.ts only fire in the oauthCore === undefined branch,
+  # which this compose service never takes). Phase 4 retired the standalone
+  # `jwks` sidecar (tools/static-jwks) that used to publish the same
+  # AUTH_SIGN_KEY on :8085; `auth` is now the single JWKS source, and
+  # api/worker/surface-gateway's AUTH_JWKS_URL above points at it directly.
+  #
+  # Deliberately NOT env_file: `${BRAIN_ENV_FILE:-.env.prod}` (unlike
+  # surface-gateway) and NOT `<<: *brain-common-env`. This process needs
+  # AUTH_SIGN_KEY, AUTH_COOKIE_SECRET, a valid AUTH_ISSUER, the three
+  # BRAIN_*_DB_URL role URLs below, and the EMAIL_ENDPOINT/EMAIL_API_KEY pair
+  # (all boot-fenced with process.exit(1) in services/auth/src/main.ts -- see
+  # .env.prod.example's C1 and C8 for the operator-facing version of this);
+  # env_file would load the entire production secret set (AUDIT_PUBLISHER_KEY,
+  # BRAIN_SESSION_KEY, every *_DB_PASSWORD, OPENAI_API_KEY, Slack/Teams
+  # credentials) into it for no reason, and it becomes a public browser-facing
+  # origin in Phase 2a (CLAUDE.md "Runtime isolation"). DATABASE_URL/REDIS_URL
+  # below are unused placeholders required only because loadConfig()'s shared
+  # schema validates them as URLs for every service; this service never dials
+  # either. AUTH_JWKS_URL below is likewise never dialed by this process
+  # itself (it publishes JWKS, it does not verify against one) -- it is set to
+  # auth's own in-network address purely so the shared schema's URL validation
+  # passes, not because auth calls it. Bound to 127.0.0.1 (not
+  # brain-common-env's api/worker pattern of a public port): reachable only
+  # through Caddy TLS, plus curl-able from the VM itself for the
+  # promote-prod.yml/main.yml smokes.
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: brain-core:${BRAIN_IMAGE_TAG:-prod}
-    container_name: brain-prod-jwks
+    container_name: brain-prod-auth
     restart: unless-stopped
-    command: ["node", "tools/static-jwks/dist/server.js"]
-    env_file:
-      - path: ${BRAIN_ENV_FILE:-.env.prod}
-        required: false
+    command: ["node", "services/auth/dist/main.js"]
+    ports:
+      - "127.0.0.1:3003:3000"
     environment:
-      PORT: "8085"
-    # AUTH_SIGN_KEY (private signing JWK) comes from .env.prod; the server exits
-    # at boot if it is unset, so a misconfigured deploy fails fast.
+      NODE_ENV: production
+      PORT: "3000"
+      SERVICE_NAME: brain-auth
+      # DATABASE_URL and REDIS_URL below remain placeholders: loadConfig()
+      # requires them to parse as URLs, but this service never dials either --
+      # DB access goes through BRAIN_AUTH_DB_URL / BRAIN_RESOLVER_DB_URL /
+      # BRAIN_AUTH_AUDIT_DB_URL below on their own least-privilege roles, and
+      # there is no Redis dependency (rate limiting is in-memory, single
+      # container, per OAUTH-AS-PLAN.md section 2). This service deliberately
+      # has no env_file, so no production secret beyond what is explicitly
+      # listed here reaches what is a public browser-facing origin.
+      DATABASE_URL: postgres://unused:unused@localhost:5432/unused
+      REDIS_URL: redis://localhost:6379
+      AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
+      AUTH_SIGN_KEY: ${AUTH_SIGN_KEY}
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET}
+      BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:-brain_auth}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
+      BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}@postgres:5432/brain
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-roles:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
         - node
         - -e
-        - "fetch('http://localhost:8085/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 10s
       timeout: 5s
+      start_period: 40s
       retries: 12
 
   api:
@@ -280,7 +337,7 @@ services:
     # BRAIN_SESSION_KEY, BASE_RPC_URL, BRAIN_ONCHAIN_SMART_ACCOUNT,
     # AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS, contract addresses,
     # OPENAI_API_KEY, etc. See .env.prod.example. (AUTH_JWKS_URL/ISSUER/AUDIENCE
-    # are set below — they point at the in-network jwks sidecar.)
+    # are set below -- they point at the in-network auth service.)
     env_file:
       - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
@@ -297,6 +354,9 @@ services:
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
       BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
       BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
+    # No `auth: condition: service_healthy` here: both deploy workflows recreate
+    # this service with --no-deps, so compose would ignore the condition anyway
+    # (the ordering is enforced by the workflow steps instead, not by compose).
     depends_on:
       postgres:
         condition: service_healthy
@@ -308,8 +368,6 @@ services:
         condition: service_completed_successfully
       minio-setup:
         condition: service_completed_successfully
-      jwks:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -415,6 +473,9 @@ services:
       EMAIL_DOMAIN_DKIM_PUBLIC_KEY: ${EMAIL_DOMAIN_DKIM_PUBLIC_KEY:-}
       BRAIN_SURFACE_SMOKE_ENABLED: ${BRAIN_SURFACE_SMOKE_ENABLED:-false}
       BRAIN_SURFACE_SMOKE_SECRET: ${BRAIN_SURFACE_SMOKE_SECRET:-}
+    # No `auth: condition: service_healthy` here: both deploy workflows recreate
+    # this service with --no-deps, so compose would ignore the condition anyway
+    # (the ordering is enforced by the workflow steps instead, not by compose).
     depends_on:
       postgres:
         condition: service_healthy
@@ -424,8 +485,6 @@ services:
         condition: service_completed_successfully
       db-roles:
         condition: service_completed_successfully
-      jwks:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD

@@ -61,7 +61,10 @@ import {
 
 import { registerSiwxRoutes, StubAgentRegistry, PostgresAgentRegistry } from "./auth/siwx.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
-import { buildVerificationEmailDelivery } from "./onboarding/email-delivery.js";
+import {
+  buildVerificationEmailDelivery,
+  buildSetPasswordEmailDelivery,
+} from "./onboarding/email-delivery.js";
 import { registerPasswordLoginRoute, PostgresUserCredentialReader } from "./onboarding/login.js";
 import { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";
 import {
@@ -1327,6 +1330,13 @@ async function main(): Promise<void> {
       : undefined;
 
   // -- MCP server -----------------------------------------------------
+  // Hoisted above the dev-bypass ternary: PostgresAgentRegistry (SIWX) also
+  // needs an on-chain reader for its scope-hash acceptance check, whether or
+  // not MCP itself is running in dev-bypass mode.
+  const onchainScopeChecker = createViemScopeChecker({
+    rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+    contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+  });
   const mcpAuthVerifier =
     cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV !== "production"
       ? new FakeAuthVerifier({
@@ -1338,16 +1348,12 @@ async function main(): Promise<void> {
           role: "dev",
         })
       : (() => {
-          const scopeChecker = createViemScopeChecker({
-            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
-            contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
-          });
           // Boot-time registry self-check. `getOnchainScopeHash` fails closed to
           // null on an ABI/layout skew, so a stale MCP_AGENT_REGISTRY_ADDRESS
           // would silently 401 every MCP call (agent_not_registered_onchain)
           // instead of surfacing. Probe once at boot and log loudly on mismatch.
           // Fire-and-forget so a slow RPC never blocks server start.
-          void scopeChecker
+          void onchainScopeChecker
             .selfCheck()
             .then((res) => {
               if (res.ok) {
@@ -1365,7 +1371,7 @@ async function main(): Promise<void> {
               }
             })
             .catch((err) => log.error({ err }, "MCP agent registry self-check threw"));
-          return new McpAuthVerifier(pool, scopeChecker);
+          return new McpAuthVerifier(pool, onchainScopeChecker);
         })();
 
   const agentService = new AgentService({
@@ -2170,7 +2176,18 @@ async function main(): Promise<void> {
         });
         const agentRegistry = cfg.BRAIN_DEMO_MODE
           ? new StubAgentRegistry()
-          : new PostgresAgentRegistry(pool);
+          : new PostgresAgentRegistry(pool, onchainScopeChecker);
+        // AUTH-PATHS-PLAN.md section 2 hard prerequisite: every founder minted
+        // by POST /tenants needs a set-password invite or they can never
+        // authenticate at auth.brain.fi. Lenient (undefined, not a throw) when
+        // ESP creds are absent -- this route has no feature flag to gate it
+        // off, unlike self-serve signup's boot fence.
+        const deliverSetPasswordEmail = buildSetPasswordEmailDelivery({
+          emailEndpoint: cfg.EMAIL_ENDPOINT,
+          emailApiKey: cfg.EMAIL_API_KEY,
+          emailFrom: cfg.EMAIL_FROM,
+          authIssuer: cfg.AUTH_ISSUER,
+        });
         await v1.register(async (child) =>
           registerProductionTenancyRoutes(child, {
             pool,
@@ -2181,6 +2198,7 @@ async function main(): Promise<void> {
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),
+            ...(deliverSetPasswordEmail !== undefined ? { deliverSetPasswordEmail } : {}),
             demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
           }),
         );

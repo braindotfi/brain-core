@@ -29,8 +29,10 @@ import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fa
 import type { Redis } from "ioredis";
 import type { Pool } from "pg";
 import { SiweMessage, generateNonce } from "siwe";
-import { internalAgentDefinitions } from "@brain/internal-agents";
-import { brainError, brainId, newAgentId, newTokenId, PAYMENT_AGENT_SCOPES } from "@brain/shared";
+import { scopesForAgentRole } from "@brain/internal-agents";
+import { assertScopeHashAcceptable } from "@brain/mcp";
+import type { OnchainScopeChecker } from "@brain/mcp";
+import { brainError, brainId, newAgentId, newTokenId } from "@brain/shared";
 import type { JwtSigner, Scope } from "@brain/shared";
 import { OWNER_SCOPES } from "../onboarding/login.js";
 import type { ResolvedWalletIdentity } from "../onboarding/wallet-identities.js";
@@ -307,83 +309,11 @@ interface AgentLookupRow {
 }
 
 /**
- * Scope set per agent role. Agents register with a role; SIWX issues a JWT
- * carrying these scopes. The scope_hash in the agents table must match the
- * hash of this set as registered on-chain in BrainMCPAgentRegistry.
+ * Scope set per agent role now lives in @brain/internal-agents
+ * (scopesForAgentRole) so services/execution can reuse the identical
+ * role -> Scope[] mapping when validating agent registration, without a
+ * cross-service import cycle back to @brain/api.
  */
-function scopesForRole(role: string): Scope[] {
-  switch (role) {
-    case "dispute":
-    case "fraud_anomaly":
-    case "vendor_risk":
-      return [...catalogReadableScopesForRole(role), "execution:propose"];
-    case "reconciliation":
-      return ["ledger:read", "wiki:read", "raw:write", "execution:propose"];
-    case "payment":
-      // Canonical set shared with the demo seed + on-chain registration tooling
-      // so the JWT scopes and the on-chain scope_hash never diverge.
-      return [...PAYMENT_AGENT_SCOPES];
-    case "anomaly":
-      return ["ledger:read", "wiki:read"];
-    case "partner":
-      // Default partner role (batch 10 H-3): READ + PROPOSE + APPROVE only.
-      // The role was previously broadened to include `payment_intent:execute`
-      // for the BrainSaaS Playground convenience, but that means any partner
-      // address registered on-chain implicitly carried execute power. Demos
-      // that need execute now use the explicit `partner_execute` role below
-      // (or mint their own scoped token via /v1/demo/provision-run, which
-      // post-C-1 issues read+propose tokens only). Tightening this default
-      // means a leaked partner key cannot drain funds; the worst case is a
-      // proposed-and-approved intent that still requires a tenant-side
-      // execute call.
-      return [
-        "ledger:read",
-        "wiki:read",
-        "raw:write",
-        "policy:read",
-        "payment_intent:propose",
-        "payment_intent:approve",
-        "execution:propose",
-        "audit:read",
-      ];
-    case "partner_execute":
-      // Opt-in partner role (batch 10 H-3): adds `payment_intent:execute`
-      // to the default partner scope set. Operators must explicitly register
-      // an agent with this role for it to mint a tokenable execute scope; a
-      // partner row created with the default `partner` role does NOT auto-
-      // upgrade. The scope-hash check against BrainMCPAgentRegistry covers
-      // the role-to-scope mapping, so a partner_execute scope_hash differs
-      // from a plain partner scope_hash and cannot be cross-impersonated.
-      return [
-        "ledger:read",
-        "wiki:read",
-        "raw:write",
-        "policy:read",
-        "payment_intent:propose",
-        "payment_intent:approve",
-        "payment_intent:execute",
-        "execution:propose",
-        "audit:read",
-      ];
-    default:
-      // dev / unknown -- read-heavy, no execution
-      return ["ledger:read", "wiki:read", "policy:read", "audit:read"];
-  }
-}
-
-function catalogReadableScopesForRole(role: "dispute" | "fraud_anomaly" | "vendor_risk"): Scope[] {
-  const definition = internalAgentDefinitions[role];
-  if (definition === undefined) {
-    throw new Error(`${role} must exist in the internal-agent catalog before SIWX can mint it`);
-  }
-  const scopes = definition.readable_data.filter((scope): scope is Scope =>
-    scope.endsWith(":read"),
-  );
-  if (!scopes.includes("raw:read")) {
-    throw new Error(`${role} must declare raw:read before SIWX can mint it`);
-  }
-  return scopes;
-}
 
 /**
  * Production agent registry. Queries the agents table by onchain_address
@@ -391,7 +321,10 @@ function catalogReadableScopesForRole(role: "dispute" | "fraud_anomaly" | "vendo
  * point; the connection user bypasses RLS for this privileged route).
  */
 export class PostgresAgentRegistry implements AgentRegistryLookup {
-  public constructor(private readonly pool: Pool) {}
+  public constructor(
+    private readonly pool: Pool,
+    private readonly onchain: OnchainScopeChecker,
+  ) {}
 
   public async resolveByAddress(address: string): Promise<AgentResolution | null> {
     const { rows } = await this.pool.query<AgentLookupRow>(
@@ -404,10 +337,22 @@ export class PostgresAgentRegistry implements AgentRegistryLookup {
     );
     const row = rows[0];
     if (row === undefined) return null;
+    const scopes = scopesForAgentRole(row.role);
+    // Fails closed (throws) when agents.scope_hash disagrees with the
+    // on-chain attestation (agent registered on-chain) or with the canonical
+    // role derivation (agent not yet registered on-chain). Without this, an
+    // edit to scopesForAgentRole silently widens every existing agent's
+    // minted token with no mismatch ever detected.
+    await assertScopeHashAcceptable({
+      agentId: row.id,
+      scopeHash: row.scope_hash,
+      expectedScopes: scopes,
+      onchain: this.onchain,
+    });
     return {
       agentId: row.id,
       tenantId: row.tenant_id,
-      scopes: scopesForRole(row.role),
+      scopes,
       scopeHash:
         row.scope_hash !== null
           ? `0x${Buffer.from(row.scope_hash).toString("hex")}`

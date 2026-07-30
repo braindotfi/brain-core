@@ -194,6 +194,60 @@ services:
       start_period: 40s
       retries: 10
 
+  # The OAuth 2.0 authorization server (Phase 1: RFC 8414 metadata + JWKS
+  # discovery only, see OAUTH-AS-PLAN.md §8). Off by default: needs
+  # AUTH_SIGN_KEY on the host to publish JWKS, and without it the container
+  # exits at boot, same fail-closed behavior `auth` has in prod (which dev
+  # does not run at all, since BRAIN_DEMO_MODE uses a static HS256 secret) --
+  # matching the `agents`/`libs-watch` profile-gated precedent
+  # below rather than leaving every developer with a permanently-exited
+  # container on a plain `up`. Enable with: --profile auth
+  # Generate a key with: pnpm --filter @brain/static-jwks run generate
+  auth:
+    profiles: ["auth"]
+    build:
+      context: .
+      target: dev
+    container_name: brain-auth
+    working_dir: /app
+    command: >-
+      sh -c "pnpm install --frozen-lockfile
+      && pnpm -C services/auth run dev"
+    ports:
+      - "3003:3000"
+    environment:
+      NODE_ENV: development
+      SERVICE_NAME: brain-auth
+      PORT: "3000"
+      DATABASE_URL: postgres://brain:brain@postgres:5432/brain
+      REDIS_URL: redis://redis:6379
+      AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
+      AUTH_SIGN_KEY: ${AUTH_SIGN_KEY:-}
+      # Phase 2a increment 2 (/login, /set-password, /forgot-password). No
+      # BRAIN_AUTH_DB_URL / BRAIN_RESOLVER_DB_URL here -- dev has no db-roles
+      # step, so both fall back to DATABASE_URL (the superuser role) with a
+      # boot warning, same posture as every other role URL in this file.
+      # AUTH_COOKIE_SECRET and the EMAIL_* pair are hard boot requirements
+      # (services/auth/src/email.ts fails loudly rather than silently no-op'ing
+      # a misconfigured /forgot-password) -- set them to use --profile auth.
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:-}
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    volumes:
+      - .:/app
+      - bc_node_modules:/app/node_modules
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 10
+
   # Python agents pointed at the in-network API. Off by default; needs an
   # OpenAI key and a dev JWT. Enable with: --profile agents
   agents:

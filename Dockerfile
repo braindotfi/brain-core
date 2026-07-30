@@ -40,6 +40,7 @@ COPY services/internal-agents/package.json services/internal-agents/tsconfig.jso
 COPY services/mcp/package.json services/mcp/tsconfig.json services/mcp/
 COPY services/audit/package.json services/audit/tsconfig.json services/audit/
 COPY services/surface-gateway/package.json services/surface-gateway/tsconfig.json services/surface-gateway/
+COPY services/auth/package.json services/auth/tsconfig.json services/auth/
 COPY clients/sdk/package.json clients/sdk/tsconfig.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/tsconfig.json tools/migrate/
 COPY tools/static-jwks/package.json tools/static-jwks/tsconfig.json tools/static-jwks/
@@ -104,6 +105,7 @@ COPY services/internal-agents/package.json services/internal-agents/
 COPY services/mcp/package.json services/mcp/
 COPY services/audit/package.json services/audit/
 COPY services/surface-gateway/package.json services/surface-gateway/
+COPY services/auth/package.json services/auth/
 COPY clients/sdk/package.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/
 COPY tools/static-jwks/package.json tools/static-jwks/
@@ -145,6 +147,7 @@ COPY --from=builder /app/services/internal-agents/dist services/internal-agents/
 COPY --from=builder /app/services/mcp/dist services/mcp/dist
 COPY --from=builder /app/services/audit/dist services/audit/dist
 COPY --from=builder /app/services/surface-gateway/dist services/surface-gateway/dist
+COPY --from=builder /app/services/auth/dist services/auth/dist
 COPY --from=builder /app/clients/sdk/dist clients/sdk/dist
 COPY --from=builder /app/tools/migrate/dist tools/migrate/dist
 COPY --from=builder /app/tools/static-jwks/dist tools/static-jwks/dist
@@ -157,6 +160,7 @@ COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
 # build stage's `COPY . .` does not survive into this stage.
 COPY --from=builder /app/services/api/migrations services/api/migrations
 COPY --from=builder /app/services/audit/migrations services/audit/migrations
+COPY --from=builder /app/services/auth/migrations services/auth/migrations
 COPY --from=builder /app/services/canonical/migrations services/canonical/migrations
 COPY --from=builder /app/services/execution/migrations services/execution/migrations
 COPY --from=builder /app/services/ledger/migrations services/ledger/migrations

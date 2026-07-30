@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@brain/shared": "workspace:*",
+    "@brain/internal-agents": "workspace:*",
     "@brain/schemas": "workspace:*",
     "@brain/policy": "workspace:*",
     "@brain/ledger": "workspace:*",

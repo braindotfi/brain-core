@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildVerificationEmailDelivery } from "./email-delivery.js";
+import { buildVerificationEmailDelivery, buildSetPasswordEmailDelivery } from "./email-delivery.js";
 
 describe("buildVerificationEmailDelivery", () => {
   it("fails boot when signup hides tokens and no ESP credentials are configured", () => {
@@ -69,5 +69,65 @@ describe("buildVerificationEmailDelivery", () => {
     });
     expect(body.text).toContain("verify-token-123");
     expect(body.html).toContain("verify-token-123");
+  });
+});
+
+describe("buildSetPasswordEmailDelivery", () => {
+  it("returns undefined when ESP credentials are absent (lenient, not a boot fence)", () => {
+    expect(buildSetPasswordEmailDelivery({ authIssuer: "https://auth.brain.fi" })).toBeUndefined();
+  });
+
+  it("sends a set-password URL, not a bare code, through the shared HTTP email client", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ messageId: "msg_123" })),
+    );
+    const deliver = buildSetPasswordEmailDelivery({
+      emailEndpoint: "https://esp.example.test/send",
+      emailApiKey: "test-api-key",
+      emailFrom: "invite@brain.fi",
+      authIssuer: "https://auth.brain.fi/",
+      fetchImpl,
+    });
+
+    expect(deliver).toBeDefined();
+    await deliver?.({
+      tenantId: "tnt_01J0000000000000000000000Z",
+      userId: "user_01J0000000000000000000000A",
+      email: "founder@example.com",
+      token: "raw-token-abc",
+      expiresAt: new Date("2026-07-09T00:00:00.000Z"),
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const firstCall = fetchImpl.mock.calls[0];
+    if (firstCall === undefined) throw new Error("expected email provider call");
+    const [, init] = firstCall;
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(body.subject).toBe("Set your Brain account password");
+    const expectedLink =
+      "https://auth.brain.fi/set-password?tid=tnt_01J0000000000000000000000Z&t=raw-token-abc";
+    expect(body.text).toContain(expectedLink);
+    expect(body.html).toContain(expectedLink.replaceAll("&", "&amp;"));
+    // The old bare-code sender's message never appears here.
+    expect(body.text).not.toContain("verification token");
+  });
+
+  it("propagates a non-ok ESP response as dependency_unavailable", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response("nope", { status: 500 }));
+    const deliver = buildSetPasswordEmailDelivery({
+      emailEndpoint: "https://esp.example.test/send",
+      emailApiKey: "test-api-key",
+      authIssuer: "https://auth.brain.fi",
+      fetchImpl,
+    });
+    await expect(
+      deliver?.({
+        tenantId: "tnt_01J0000000000000000000000Z",
+        userId: "user_01J0000000000000000000000A",
+        email: "founder@example.com",
+        token: "raw-token-abc",
+        expiresAt: new Date(),
+      }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 });

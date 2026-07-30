@@ -177,6 +177,34 @@ describe("verifyWithKey", () => {
   });
 });
 
+// RFC 8707 `resource`: the OAuth authorization server mints
+// aud: ["brain-api", "https://mcp.brain.fi"] for MCP-bound tokens
+// (OAUTH-AS-PLAN.md section 3). `jose`'s audience check must still accept
+// this against every existing single-string verifier.
+describe("verifyWithKey with an array aud claim (RFC 8707 resource)", () => {
+  it("accepts a token whose aud is an array containing the configured audience", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const tenant = newTenantId();
+    const token = await new SignJWT({
+      tenant_id: tenant,
+      principal_type: "agent",
+      scopes: ["ledger:read"],
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "test-kid" })
+      .setIssuer("https://auth.brain.fi")
+      .setAudience(["brain-api", "https://mcp.brain.fi"])
+      .setIssuedAt()
+      .setExpirationTime(Math.floor(Date.now() / 1000) + 60)
+      .setSubject(newAgentId())
+      .setJti(newTokenId())
+      .sign(privateKey);
+
+    const principal = await verifyWithKey(token, async () => publicKey, BASE_OPTS);
+    expect(principal.type).toBe("agent");
+    expect(principal.tenantId).toBe(tenant);
+  });
+});
+
 // Cover the JwtVerifier constructor path at least once (returns a class
 // wrapping createRemoteJWKSet — can't verify live without a network).
 describe("JwtVerifier construction", () => {

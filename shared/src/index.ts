@@ -47,6 +47,13 @@ export { JwtSigner, type SignOptions } from "./auth/signer.js";
 export { toPublicJwk, jwksFromPrivate, generateSignKeyJwk } from "./auth/jwks.js";
 export { hashPassword, verifyPassword, PasswordInputError } from "./auth/password.js";
 export {
+  mintHmacToken,
+  verifyHmacToken,
+  type MintedHmacToken,
+  type VerifyHmacTokenResult,
+} from "./auth/hmac-token.js";
+export { newSecretToken, hashToken } from "./auth/opaque-token.js";
+export {
   RedisRevocationStore,
   InMemoryRevocationStore,
   redisRevocationKey,

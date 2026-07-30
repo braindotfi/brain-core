@@ -1,9 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   brainError,
+  hashToken,
   isValidScope,
+  newSecretToken,
   newTenantId,
   newTokenId,
   newUserId,
@@ -27,6 +29,13 @@ import {
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
+// AUTH-PATHS-PLAN.md section 2: same TTL as onboarding/routes.ts's
+// VERIFICATION_TTL_MS, reusing the same email_verifications table verbatim
+// (no `purpose` column -- see that file's header for why a replay of an old
+// signup-verification email against /set-password is not a real objection).
+const SET_PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+/** A founder email that resolves to bootstrapPlaceholderEmail's undeliverable pattern. */
+const BOOTSTRAP_PLACEHOLDER_EMAIL_SUFFIX = "@brain.invalid";
 const MEMBER_SESSION_SCOPES = [
   "ledger:read",
   "ledger:write",
@@ -47,6 +56,22 @@ export interface ProductionTenancyRoutesDeps {
   revocation?: RevocationStore;
   platformSecret?: string;
   smartAccount?: string;
+  /**
+   * AUTH-PATHS-PLAN.md section 2 hard prerequisite: without this, every
+   * founder created by POST /tenants has a users row with no password and no
+   * way to ever authenticate at auth.brain.fi. Optional (not a boot fence)
+   * because this route has no feature flag to gate it off the way self-serve
+   * signup does -- a missing delivery dependency must not fail tenant
+   * creation, only leave the invite unsent (recorded in the response and the
+   * tenant.created audit event, never silent).
+   */
+  deliverSetPasswordEmail?: (input: {
+    readonly tenantId: string;
+    readonly userId: string;
+    readonly email: string;
+    readonly token: string;
+    readonly expiresAt: Date;
+  }) => Promise<void>;
   demoSeeder?: ProductionTenantDemoSeeder;
 }
 
@@ -160,6 +185,14 @@ export async function registerProductionTenancyRoutes(
     const smartAccount =
       deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
 
+    // AUTH-PATHS-PLAN.md section 2 hard prerequisite: the founder's users row
+    // is created with no password (below); without a set-password invite, that
+    // founder is born unable to ever authenticate at auth.brain.fi. Minted and
+    // inserted in the same transaction as the tenant, mirroring
+    // onboarding/provision.ts's email_verifications insert.
+    const setPasswordToken = newSecretToken();
+    const setPasswordTokenExpiresAt = new Date(Date.now() + SET_PASSWORD_TOKEN_TTL_MS);
+
     const agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
       await client.query(
         `INSERT INTO tenants (id, kind, sandbox, created_via)
@@ -171,6 +204,11 @@ export async function registerProductionTenancyRoutes(
            VALUES ($1, $2, $3, 'owner')
            ON CONFLICT DO NOTHING`,
         [memberId, tenantId, founderEmail],
+      );
+      await client.query(
+        `INSERT INTO email_verifications (token_hash, user_id, tenant_id, expires_at)
+           VALUES ($1, $2, $3, $4)`,
+        [hashToken(setPasswordToken), memberId, tenantId, setPasswordTokenExpiresAt],
       );
       await insertBootstrapAdminMember(client, {
         tenantId,
@@ -190,13 +228,46 @@ export async function registerProductionTenancyRoutes(
     if (member === null) throw brainError("internal_server_error", "bootstrap member missing");
     const token = await signMemberToken(deps.signer, sessionSeed);
     const agentToken = await signAgentToken(deps.signer, agentResult.agentToken);
+
+    // Sending happens after commit, same as onboarding/routes.ts: a failure
+    // here must never look like tenant creation itself failed (the tenant,
+    // member, and agent already exist). bootstrapPlaceholderEmail's
+    // "@brain.invalid" pattern is guaranteed undeliverable -- skip the send
+    // attempt for it rather than calling an ESP that will only bounce. Either
+    // way the outcome is recorded on tenant.created below, never silent.
+    let founderInviteEmail: "sent" | "not_sent" | "undeliverable_address" = "not_sent";
+    if (founderEmail.endsWith(BOOTSTRAP_PLACEHOLDER_EMAIL_SUFFIX)) {
+      founderInviteEmail = "undeliverable_address";
+    } else if (deps.deliverSetPasswordEmail !== undefined) {
+      try {
+        await deps.deliverSetPasswordEmail({
+          tenantId,
+          userId: memberId,
+          email: founderEmail,
+          token: setPasswordToken,
+          expiresAt: setPasswordTokenExpiresAt,
+        });
+        founderInviteEmail = "sent";
+      } catch (err) {
+        request.log.warn(
+          { err },
+          "founder set-password invite email failed to send; tenant creation still succeeded",
+        );
+      }
+    }
+
     await deps.audit.emit({
       tenantId,
       layer: "execution",
       actor: memberId,
       action: "tenant.created",
       inputs: { company_name: typeof body?.company_name === "string" ? body.company_name : null },
-      outputs: { tenant_id: tenantId, member_id: memberId, agent_id: agentResult.agentId },
+      outputs: {
+        tenant_id: tenantId,
+        member_id: memberId,
+        agent_id: agentResult.agentId,
+        founder_invite_email: founderInviteEmail,
+      },
     });
     await deps.audit.emit({
       tenantId,
@@ -257,6 +328,7 @@ export async function registerProductionTenancyRoutes(
         expires_in: ACCESS_TOKEN_TTL_SECONDS,
       },
       agent: serializeAgentToken(agentResult.agentId, agentToken, agentResult.agentToken),
+      founder_invite_email: founderInviteEmail,
       ...(demoSeed !== null ? { demo_seed: serializeDemoSeed(demoSeed) } : {}),
     };
   };
@@ -474,6 +546,27 @@ export async function registerProductionTenancyRoutes(
             details: { reason: lockedReason },
           });
         }
+        // AUTH-PATHS-PLAN.md section 1: users is the authentication principal,
+        // members is the authority, joined by (tenant_id, id) equality. Invite
+        // consume today only ever touches `members` -- an invited colleague has
+        // no `users` row and so no way to ever authenticate at auth.brain.fi's
+        // password login. password_hash stays NULL (keeping it out of the
+        // users_login_email_unique partial index) until the member separately
+        // runs /forgot-password. No migration: users already has this shape
+        // (services/execution/migrations/0021_users_auth_columns.sql).
+        //
+        // ON CONFLICT (id) DO NOTHING, not a bare ON CONFLICT DO NOTHING: the
+        // bare form also swallows a `users_tenant_id_email_key` violation (a
+        // different email already claimed this (tenant_id, id) pair's row) as
+        // if it were the intended "row already exists" idempotency case. No
+        // reachable path to that state today (each invite mints a fresh
+        // member_id), but the id-only target is free and precise.
+        await client.query(
+          `INSERT INTO users (id, tenant_id, email, role)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (id) DO NOTHING`,
+          [invite.member_id, invite.tenant_id, invite.email, invite.role],
+        );
         await insertPlatformIdentityLink(client, invite.tenant_id, invite.member_id, externalRef);
         const updated = await activateInvitedMember(client, invite.member_id, displayName);
         await client.query(
@@ -850,14 +943,6 @@ function resolveRequestedScopes(raw: unknown, entitlements: readonly Scope[]): r
 function normalizeStoredScopes(scopes: readonly Scope[] | undefined): readonly Scope[] {
   if (scopes === undefined) return MEMBER_SESSION_SCOPES;
   return scopes.filter((scope): scope is Scope => isValidScope(scope));
-}
-
-export function newSecretToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-export function hashToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 function isPast(value: Date | string): boolean {
