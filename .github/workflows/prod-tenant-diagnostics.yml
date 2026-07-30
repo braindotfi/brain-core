@@ -318,11 +318,22 @@ jobs:
                 });
               '
             )"
-            proposals_json="$(
-              curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+            proposals_response="$(
+              curl -sS --retry 2 --connect-timeout 10 --max-time 30 \
                 "https://api.brain.fi/v1/proposals?status=pending&limit=100" \
-                -H "Authorization: Bearer ${token}"
+                -H "Authorization: Bearer ${token}" \
+                -w $'\n%{http_code}'
             )"
+            proposals_status="${proposals_response##*$'\n'}"
+            proposals_json="${proposals_response%$'\n'*}"
+            if [[ "$proposals_status" != "200" ]]; then
+              echo "GET /v1/proposals returned HTTP $proposals_status"
+              printf '%s\n' "$proposals_json"
+              echo "recent api logs:"
+              docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml \
+                logs --tail=200 api | tail -n 120 || true
+              exit 1
+            fi
             cat > /tmp/proposal-read-model-smoke.js <<'NODE'
             let body = "";
             process.stdin.on("data", (chunk) => { body += chunk; });
