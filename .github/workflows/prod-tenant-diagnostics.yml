@@ -7,6 +7,26 @@ on:
         description: "Production tenant id to inspect, e.g. tnt_..."
         required: true
         type: string
+      wiki_question_event_id:
+        description: "Optional evt_... id for one wiki.question audit row"
+        required: false
+        type: string
+        default: ""
+      wiki_question_since:
+        description: "Optional ISO timestamp lower bound for wiki.question audit rows"
+        required: false
+        type: string
+        default: ""
+      wiki_question_until:
+        description: "Optional ISO timestamp upper bound for wiki.question audit rows"
+        required: false
+        type: string
+        default: ""
+      wiki_question_search:
+        description: "Optional case-insensitive substring for inputs.question"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -24,12 +44,30 @@ jobs:
       VM_HOST: ${{ secrets.VM_HOST }}
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
       TENANT_ID: ${{ inputs.tenant_id }}
+      WIKI_QUESTION_EVENT_ID: ${{ inputs.wiki_question_event_id }}
+      WIKI_QUESTION_SINCE: ${{ inputs.wiki_question_since }}
+      WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
+      WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
     steps:
       - name: Validate tenant id
         shell: bash
         run: |
           if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
+            exit 1
+          fi
+          if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "wiki_question_event_id must match ^evt_[0-9A-HJKMNP-TV-Z]{26}$ when provided"
+            exit 1
+          fi
+          for value in "$WIKI_QUESTION_SINCE" "$WIKI_QUESTION_UNTIL"; do
+            if [[ -n "$value" && ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+              echo "wiki_question_since/wiki_question_until must be ISO UTC timestamps when provided"
+              exit 1
+            fi
+          done
+          if [[ ${#WIKI_QUESTION_SEARCH} -gt 160 ]]; then
+            echo "wiki_question_search must be 160 characters or less"
             exit 1
           fi
 
@@ -44,12 +82,35 @@ jobs:
       - name: Run fixed diagnostics
         shell: bash
         run: |
+          wiki_question_event_id_b64="$(printf '%s' "$WIKI_QUESTION_EVENT_ID" | base64 | tr -d '\n')"
+          wiki_question_since_b64="$(printf '%s' "$WIKI_QUESTION_SINCE" | base64 | tr -d '\n')"
+          wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
+          wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' bash -s" <<'REMOTE'
           set -euo pipefail
+
+          WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
+          WIKI_QUESTION_SINCE="$(printf '%s' "$WIKI_QUESTION_SINCE_B64" | base64 -d)"
+          WIKI_QUESTION_UNTIL="$(printf '%s' "$WIKI_QUESTION_UNTIL_B64" | base64 -d)"
+          WIKI_QUESTION_SEARCH="$(printf '%s' "$WIKI_QUESTION_SEARCH_B64" | base64 -d)"
 
           if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id failed remote validation"
+            exit 1
+          fi
+          if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "wiki_question_event_id failed remote validation"
+            exit 1
+          fi
+          for value in "$WIKI_QUESTION_SINCE" "$WIKI_QUESTION_UNTIL"; do
+            if [[ -n "$value" && ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+              echo "wiki question timestamp failed remote validation"
+              exit 1
+            fi
+          done
+          if [[ ${#WIKI_QUESTION_SEARCH} -gt 160 ]]; then
+            echo "wiki_question_search failed remote validation"
             exit 1
           fi
 
@@ -64,7 +125,11 @@ jobs:
           echo "::group::tenant diagnostics"
           docker exec -i brain-prod-postgres psql -U brain -d brain \
             -v ON_ERROR_STOP=1 \
-            -v tenant_id="$TENANT_ID" <<'SQL'
+            -v tenant_id="$TENANT_ID" \
+            -v wiki_question_event_id="$WIKI_QUESTION_EVENT_ID" \
+            -v wiki_question_since="$WIKI_QUESTION_SINCE" \
+            -v wiki_question_until="$WIKI_QUESTION_UNTIL" \
+            -v wiki_question_search="$WIKI_QUESTION_SEARCH" <<'SQL'
           \pset pager off
           \pset null '(null)'
           BEGIN TRANSACTION READ ONLY;
@@ -100,6 +165,42 @@ jobs:
            WHERE tenant_id = :'tenant_id'
            GROUP BY source_type, source_ref->>'filename', bytes
            ORDER BY filename, bytes, source_type;
+
+          \echo 'proposal status counts'
+          SELECT COALESCE(NULLIF(action->>'type', ''), NULLIF(action->>'kind', ''), 'unknown')
+                   AS type,
+                 status,
+                 COUNT(*) AS count
+            FROM proposals
+           WHERE tenant_id = :'tenant_id'
+           GROUP BY 1, 2
+           ORDER BY 1, 2;
+
+          \echo 'wiki.question audit payloads'
+          SELECT id,
+                 created_at,
+                 actor,
+                 event_type,
+                 severity,
+                 inputs,
+                 outputs,
+                 policy_decision_id
+            FROM audit_events
+           WHERE tenant_id = :'tenant_id'
+             AND action = 'wiki.question'
+             AND (:'wiki_question_event_id' = '' OR id = :'wiki_question_event_id')
+             AND (
+               NULLIF(:'wiki_question_since', '') IS NULL
+               OR created_at >= NULLIF(:'wiki_question_since', '')::timestamptz
+             )
+             AND (
+               NULLIF(:'wiki_question_until', '') IS NULL
+               OR created_at <= NULLIF(:'wiki_question_until', '')::timestamptz
+             )
+             AND (:'wiki_question_search' = ''
+                  OR inputs->>'question' ILIKE '%' || :'wiki_question_search' || '%')
+           ORDER BY created_at DESC
+           LIMIT 20;
 
           COMMIT;
           SQL

@@ -77,6 +77,8 @@ interface LedgerCandidate {
   excerpt: string;
 }
 
+type QuestionIntent = "accounts_receivable" | "reconciliation" | "generic";
+
 export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResult> {
   const key = dedupKey(opts);
   const cached = await deps.redis.get(cacheKey(key));
@@ -90,7 +92,8 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 
   // 1. Pull a bounded slice of recent Ledger state. Phase 5 layers in
   //    wiki_pages embeddings; Phase 3 keeps the retrieval surface narrow.
-  const candidates = await retrieveLedgerCandidates(deps.client, opts.asOf);
+  const intent = classifyQuestionIntent(opts.question);
+  const candidates = await retrieveLedgerCandidates(deps.client, opts.asOf, intent);
 
   // 2. Compose evidence context.
   const evidenceContext = composeEvidenceContext(candidates);
@@ -153,7 +156,15 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 async function retrieveLedgerCandidates(
   client: TenantScopedClient,
   asOf: Date | null,
+  intent: QuestionIntent,
 ): Promise<LedgerCandidate[]> {
+  if (intent === "reconciliation") {
+    return retrieveReconciliationCandidates(client, asOf);
+  }
+  if (intent === "accounts_receivable") {
+    return retrieveAccountsReceivableCandidates(client, asOf);
+  }
+
   const txClause = asOf === null ? "" : "AND transaction_date <= $1";
   const txValues: unknown[] = asOf === null ? [MAX_TRANSACTIONS] : [asOf, MAX_TRANSACTIONS];
   const txLimitParam = asOf === null ? "$1" : "$2";
@@ -236,6 +247,229 @@ async function retrieveLedgerCandidates(
     });
   }
   return out;
+}
+
+async function retrieveAccountsReceivableCandidates(
+  client: TenantScopedClient,
+  asOf: Date | null,
+): Promise<LedgerCandidate[]> {
+  const dueClause = asOf === null ? "" : "AND due_date <= $1";
+  const values: unknown[] = asOf === null ? [MAX_OBLIGATIONS] : [asOf, MAX_OBLIGATIONS];
+  const limitParam = asOf === null ? "$1" : "$2";
+
+  const oblRes = await client.query<{
+    id: string;
+    type: string;
+    amount_due: string;
+    currency: string;
+    due_date: Date;
+    status: string;
+    counterparty_id: string;
+  }>(
+    `SELECT id, type, amount_due, currency, due_date, status, counterparty_id
+       FROM ledger_obligations
+      WHERE status IN ('upcoming','due','overdue')
+        AND direction = 'receivable'
+        AND type = 'invoice'
+        ${dueClause}
+      ORDER BY due_date ASC
+      LIMIT ${limitParam}`,
+    values,
+  );
+
+  const counterpartyIds = [...new Set(oblRes.rows.map((r) => r.counterparty_id))];
+  const cpRes =
+    counterpartyIds.length === 0
+      ? { rows: [] as Array<{ id: string; name: string; type: string; risk_level: string | null }> }
+      : await client.query<{
+          id: string;
+          name: string;
+          type: string;
+          risk_level: string | null;
+        }>(
+          `SELECT id, name, type, risk_level
+             FROM ledger_counterparties
+            WHERE id = ANY($1::text[])
+            ORDER BY updated_at DESC
+            LIMIT $2`,
+          [counterpartyIds, MAX_COUNTERPARTIES],
+        );
+
+  return [
+    ...oblRes.rows.map((r) => ({
+      type: "obligation" as const,
+      id: r.id,
+      excerpt: `${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status} cp=${r.counterparty_id}`,
+    })),
+    ...cpRes.rows.map((r) => {
+      const risk = r.risk_level !== null ? ` risk=${r.risk_level}` : "";
+      return { type: "counterparty" as const, id: r.id, excerpt: `${r.type} "${r.name}"${risk}` };
+    }),
+  ];
+}
+
+async function retrieveReconciliationCandidates(
+  client: TenantScopedClient,
+  asOf: Date | null,
+): Promise<LedgerCandidate[]> {
+  const matchDateClause = asOf === null ? "" : "AND m.created_at <= $1";
+  const matchValues: unknown[] = asOf === null ? [MAX_OBLIGATIONS] : [asOf, MAX_OBLIGATIONS];
+  const matchLimitParam = asOf === null ? "$1" : "$2";
+
+  const matchRes = await client.query<{
+    match_id: string;
+    match_type: string;
+    match_status: string;
+    confidence_score: number;
+    explanation: string | null;
+    transaction_id: string | null;
+    amount: string | null;
+    currency: string | null;
+    direction: string | null;
+    transaction_date: Date | null;
+    description_normalized: string | null;
+    description_raw: string | null;
+    obligation_id: string | null;
+    obligation_type: string | null;
+    amount_due: string | null;
+    due_date: Date | null;
+    obligation_status: string | null;
+    counterparty_id: string | null;
+    counterparty_name: string | null;
+  }>(
+    `SELECT m.id AS match_id,
+            m.match_type,
+            m.status AS match_status,
+            m.confidence_score,
+            m.explanation,
+            tx.id AS transaction_id,
+            tx.amount::text AS amount,
+            tx.currency,
+            tx.direction,
+            tx.transaction_date,
+            tx.description_normalized,
+            tx.description_raw,
+            COALESCE(obl.id, inv.id) AS obligation_id,
+            COALESCE(obl.type, 'invoice') AS obligation_type,
+            COALESCE(obl.amount_due, inv.amount_due)::text AS amount_due,
+            COALESCE(obl.due_date, inv.due_date) AS due_date,
+            COALESCE(obl.status, inv.status) AS obligation_status,
+            COALESCE(obl.counterparty_id, inv.counterparty_id, tx.counterparty_id) AS counterparty_id,
+            cp.name AS counterparty_name
+       FROM ledger_reconciliation_matches m
+       LEFT JOIN ledger_transactions tx
+         ON tx.owner_id = m.owner_id
+        AND tx.id = CASE
+              WHEN m.left_entity_type = 'transaction' THEN m.left_entity_id
+              WHEN m.right_entity_type = 'transaction' THEN m.right_entity_id
+              ELSE NULL
+            END
+       LEFT JOIN ledger_obligations obl
+         ON obl.owner_id = m.owner_id
+        AND obl.id = CASE
+              WHEN m.left_entity_type = 'obligation' THEN m.left_entity_id
+              WHEN m.right_entity_type = 'obligation' THEN m.right_entity_id
+              ELSE NULL
+            END
+       LEFT JOIN ledger_invoices inv
+         ON inv.owner_id = m.owner_id
+        AND inv.id = CASE
+              WHEN m.left_entity_type = 'invoice' THEN m.left_entity_id
+              WHEN m.right_entity_type = 'invoice' THEN m.right_entity_id
+              ELSE NULL
+            END
+       LEFT JOIN ledger_counterparties cp
+         ON cp.owner_id = m.owner_id
+        AND cp.id = COALESCE(obl.counterparty_id, inv.counterparty_id, tx.counterparty_id)
+      WHERE m.status IN ('matched','partially_matched','duplicate_possible','disputed')
+        ${matchDateClause}
+      ORDER BY m.updated_at DESC, m.id DESC
+      LIMIT ${matchLimitParam}`,
+    matchValues,
+  );
+
+  const txClause = asOf === null ? "" : "AND transaction_date <= $1";
+  const txValues: unknown[] = asOf === null ? [MAX_TRANSACTIONS] : [asOf, MAX_TRANSACTIONS];
+  const txLimitParam = asOf === null ? "$1" : "$2";
+  const unmatchedRes = await client.query<{
+    id: string;
+    amount: string;
+    currency: string;
+    direction: string;
+    transaction_date: Date;
+    description_normalized: string | null;
+    description_raw: string | null;
+    counterparty_id: string | null;
+  }>(
+    `SELECT id, amount, currency, direction, transaction_date,
+            description_normalized, description_raw, counterparty_id
+       FROM ledger_transactions
+      WHERE status IN ('posted','cleared')
+        AND reconciliation_status = 'unreconciled'
+        ${txClause}
+      ORDER BY transaction_date DESC
+      LIMIT ${txLimitParam}`,
+    txValues,
+  );
+
+  const out: LedgerCandidate[] = [];
+  for (const r of matchRes.rows) {
+    const cp = r.counterparty_name ?? r.counterparty_id ?? "unknown counterparty";
+    const explanation = r.explanation !== null ? ` explanation=${r.explanation}` : "";
+    if (r.transaction_id !== null) {
+      const memo = r.description_normalized ?? r.description_raw ?? "";
+      const date = r.transaction_date?.toISOString().slice(0, 10) ?? "unknown date";
+      out.push({
+        type: "transaction",
+        id: r.transaction_id,
+        excerpt:
+          `reconciled via ${r.match_type} ${r.match_status} confidence=${r.confidence_score} match=${r.match_id} ${r.direction ?? "transaction"} ${r.amount ?? "unknown amount"} ${r.currency ?? ""} on ${date} cp=${cp} matched_to=${r.obligation_id ?? "unknown"} ${memo}${explanation}`.trim(),
+      });
+    }
+    if (r.obligation_id !== null) {
+      const due = r.due_date?.toISOString().slice(0, 10) ?? "unknown due date";
+      out.push({
+        type: "obligation",
+        id: r.obligation_id,
+        excerpt:
+          `reconciled via ${r.match_type} ${r.match_status} confidence=${r.confidence_score} match=${r.match_id} ${r.obligation_type ?? "obligation"} due ${due} amount ${r.amount_due ?? "unknown amount"} ${r.currency ?? ""} status=${r.obligation_status ?? "unknown"} cp=${cp} matched_to=${r.transaction_id ?? "unknown"}${explanation}`.trim(),
+      });
+    }
+  }
+  for (const r of unmatchedRes.rows) {
+    const cp = r.counterparty_id !== null ? ` cp=${r.counterparty_id}` : "";
+    const memo = r.description_normalized ?? r.description_raw ?? "";
+    out.push({
+      type: "transaction",
+      id: r.id,
+      excerpt:
+        `unreconciled ${r.direction} ${r.amount} ${r.currency} on ${r.transaction_date.toISOString().slice(0, 10)}${cp} ${memo}`.trim(),
+    });
+  }
+  return out;
+}
+
+function classifyQuestionIntent(question: string): QuestionIntent {
+  const q = question.toLowerCase();
+  if (
+    /\breconcil/.test(q) ||
+    /\bunreconciled\b/.test(q) ||
+    /\bmatch(?:es|ed|ing)?\b/.test(q) ||
+    /\bpayment\b.*\binvoice\b/.test(q) ||
+    /\binvoice\b.*\bpayment\b/.test(q)
+  ) {
+    return "reconciliation";
+  }
+  if (
+    /\baccounts receivable\b/.test(q) ||
+    /\bar\b/.test(q) ||
+    /\breceivables?\b/.test(q) ||
+    /\boutstanding invoices?\b/.test(q) ||
+    /\btotal outstanding\b.*\binvoices?\b/.test(q)
+  ) {
+    return "accounts_receivable";
+  }
+  return "generic";
 }
 
 function composeEvidenceContext(candidates: ReadonlyArray<LedgerCandidate>): string {

@@ -75,6 +75,12 @@ describe("POST /wiki/question audit emission", () => {
         max_evidence_depth: 2,
         model: "test-model",
       },
+      outputs: {
+        answer: "Revenue increased.",
+        evidence_count: 0,
+        input_tokens: 10,
+        output_tokens: 4,
+      },
     });
 
     await app.close();
