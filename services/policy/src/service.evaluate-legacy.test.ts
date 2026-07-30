@@ -50,6 +50,119 @@ function poolWithActivePolicy(content: PolicyDocument): {
 const ctx: ServiceCallContext = { tenantId: newTenantId(), actor: newAgentId() };
 
 describe("PolicyService.evaluateLegacy", () => {
+  it.each([
+    ["fraud_anomaly", "flag_transaction"],
+    ["vendor_risk", "block_payment"],
+  ])("routes unmatched high-risk %s proposals to confirmation", async (agentId, actionType) => {
+    const { pool, queries } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "default-agent-action-requires-review",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        type: actionType,
+        agent_id: agentId,
+        agent_role: agentId,
+        confidence: 0.4,
+        evidence_score: 1,
+        risk_level: "high",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: null,
+      required_approvers: ["signer"],
+    });
+
+    const insert = queries.find((q) => q.sql.includes("INSERT INTO policy_decisions"));
+    expect(insert?.values[6]).toBe("confirm");
+    expect(insert?.values[7]).toBeNull();
+    expect(insert?.values[8]).toEqual(["signer"]);
+  });
+
+  it("keeps low-stakes unmatched proposal types rejected", async () => {
+    const { pool } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "default-agent-action-requires-review",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        type: "cash_forecast",
+        agent_id: "cash_forecast",
+        agent_role: "cash_forecast",
+        confidence: 0.4,
+        evidence_score: 1,
+        risk_level: "low",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "reject",
+      matched_rule_id: null,
+      required_approvers: [],
+    });
+  });
+
+  it("leaves high-risk proposals that match a real rule unchanged", async () => {
+    const { pool } = poolWithActivePolicy({
+      version: 1,
+      rules: [
+        {
+          id: "review-low-confidence-agent-actions",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.3 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+      ],
+    });
+    const svc = new PolicyService({
+      pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await expect(
+      svc.evaluateLegacy(ctx, {
+        kind: "agent_action",
+        type: "flag_transaction",
+        agent_id: "fraud_anomaly",
+        agent_role: "fraud_anomaly",
+        confidence: 0.4,
+        evidence_score: 1,
+        risk_level: "high",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "review-low-confidence-agent-actions",
+      required_approvers: ["signer"],
+    });
+  });
+
   it("threads agent confidence, evidence, risk, and id into legacy agent evaluation", async () => {
     const { pool } = poolWithActivePolicy({
       version: 1,

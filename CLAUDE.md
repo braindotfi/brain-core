@@ -172,6 +172,10 @@ Done
   `POST /v1/governance/reports/snapshot` is BFF-only and uses a route-local
   idempotency wrapper against the same store, scoped by explicit `tenant_id` and
   the full snapshot request parameters.
+- Unmatched high-risk `agent_action` proposals from fraud and vendor-risk
+  workflows fail to human review, not silent rejection. The policy VM still
+  default-denies unmatched rules; `PolicyService.evaluateLegacy` converts only
+  scoped high-risk proposal fallthroughs to `confirm` with a signer requirement.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent
