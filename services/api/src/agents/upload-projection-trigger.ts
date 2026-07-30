@@ -97,10 +97,24 @@ async function selectTargets(
   if (event.summary.receivables > 0) out.push("collections");
   if (event.summary.transactions > 0) out.push("cash_forecast", "treasury");
   if (event.summary.newCounterparties > 0) out.push("vendor_risk");
-  if (event.summary.transactions > 0 && (await tenantHasReceivables(pool, event.tenantId))) {
+  const hasReceivables =
+    event.summary.transactions > 0 ? await tenantHasReceivables(pool, event.tenantId) : false;
+  const hasTransactions =
+    event.summary.receivables > 0 ? await tenantHasTransactions(pool, event.tenantId) : false;
+  if (shouldTriggerReconciliation(event.summary, hasReceivables, hasTransactions)) {
     out.push("reconciliation");
   }
   return out;
+}
+
+export function shouldTriggerReconciliation(
+  summary: LedgerUploadProjectedEvent["summary"],
+  hasReceivables: boolean,
+  hasTransactions: boolean,
+): boolean {
+  return (
+    (summary.transactions > 0 && hasReceivables) || (summary.receivables > 0 && hasTransactions)
+  );
 }
 
 async function tenantHasReceivables(pool: Pool, tenantId: string): Promise<boolean> {
@@ -110,6 +124,20 @@ async function tenantHasReceivables(pool: Pool, tenantId: string): Promise<boole
          SELECT 1 FROM ledger_obligations
           WHERE owner_id = current_setting('app.tenant_id', true)
             AND direction = 'receivable'
+          LIMIT 1
+       )`,
+    );
+    return rows[0]?.exists ?? false;
+  });
+}
+
+async function tenantHasTransactions(pool: Pool, tenantId: string): Promise<boolean> {
+  return withTenantScope(pool, tenantId, async (client) => {
+    const { rows } = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM ledger_transactions
+          WHERE owner_id = current_setting('app.tenant_id', true)
+            AND reconciliation_status = 'unreconciled'
           LIMIT 1
        )`,
     );
@@ -329,7 +357,16 @@ async function reconciliationContext(
               AND o.status IN ('due', 'overdue', 'upcoming')
          ) candidates ON true
         WHERE tx.owner_id = current_setting('app.tenant_id', true)
-          AND $1 = ANY(tx.source_ids)
+          AND (
+            $1 = ANY(tx.source_ids)
+            OR EXISTS (
+              SELECT 1 FROM ledger_obligations o
+               WHERE o.owner_id = tx.owner_id
+                 AND $1 = ANY(o.source_ids)
+                 AND o.currency = tx.currency
+                 AND o.amount_due = tx.amount
+            )
+          )
           AND tx.reconciliation_status = 'unreconciled'
         ORDER BY tx.transaction_date ASC, tx.id ASC
         LIMIT 1`,

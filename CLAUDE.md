@@ -337,6 +337,11 @@ Pending Dmitriy sign-off
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
+  Known upload PDFs are classified before parser selection: bank statement PDFs
+  must clear the bank-statement confidence floor, while AR aging and payroll
+  PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
+  emit the upload-projected hook so compact AP/AR rebuilds and projection status
+  are not stranded.
 - Production tenancy is governed by
   `docs/contracts/production-tenancy.md`. Production tenants are created only by
   `POST /v1/tenants` with the platform service credential. The route creates
