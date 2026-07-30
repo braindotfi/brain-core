@@ -179,6 +179,22 @@ function nextLoginIp(): string {
   return `203.0.113.${loginIpCounter}`;
 }
 
+/**
+ * Consent-page CSRF field. Splits the null check from the index access rather
+ * than asserting through an optional chain
+ * (@typescript-eslint/no-non-null-asserted-optional-chain forbids the latter,
+ * correctly): a missing field means the body under test is not the consent
+ * page at all, usually a 429 or an error page, and failing here saying so
+ * beats letting an undefined token resurface later as a confusing 403. The
+ * trailing index assertion mirrors this file's existing login() helper and is
+ * required by noUncheckedIndexedAccess (tsconfig.base.json).
+ */
+function readConsentCsrf(body: string): string {
+  const match = body.match(/name="csrf" value="([^"]*)"/);
+  if (match === null) throw new Error("no csrf field on consent page");
+  return match[1]!;
+}
+
 /** Full password login via a fresh CSRF carrier; returns the session cookie value. */
 async function login(fastify: FastifyInstance, email: string): Promise<string> {
   const ip = nextLoginIp();
@@ -481,7 +497,7 @@ DESCRIBE(
         })}`,
         headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` },
       });
-      const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1]!;
+      const consentCsrf = readConsentCsrf(authorizeRes.body);
 
       const consentRes = await app.inject({
         method: "POST",
@@ -601,7 +617,7 @@ DESCRIBE(
         })}`,
         headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` },
       });
-      const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1]!;
+      const consentCsrf = readConsentCsrf(authorizeRes.body);
       const consentRes = await app.inject({
         method: "POST",
         url: "/authorize/consent",
@@ -801,7 +817,7 @@ DESCRIBE(
         })}`,
         headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` },
       });
-      const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1]!;
+      const consentCsrf = readConsentCsrf(authorizeRes.body);
       const consentRes = await app.inject({
         method: "POST",
         url: "/authorize/consent",
@@ -1088,7 +1104,7 @@ DESCRIBE(
         })}`,
         headers: { cookie: `${SESSION_COOKIE_NAME}=${sessionCookie}` },
       });
-      const consentCsrf = authorizeRes.body.match(/name="csrf" value="([^"]*)"/)?.[1]!;
+      const consentCsrf = readConsentCsrf(authorizeRes.body);
       const consentRes = await app.inject({
         method: "POST",
         url: "/authorize/consent",
