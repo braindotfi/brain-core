@@ -17,7 +17,11 @@ export const vendorRiskDefinition: InternalAgentDefinition = {
   readable_data: ["ledger:read", "wiki:read", "raw:read"],
   risk_level: "high",
   minimum_confidence: 0.8,
-  required_evidence: ["vendor", "payment_destination", "counterparty_history"],
+  required_evidence: [
+    { kind: "vendor", weight: 0.8, required: true },
+    { kind: "payment_destination", weight: 0.1, required: false },
+    { kind: "counterparty_history", weight: 0.1, required: false },
+  ],
   default_authority: "propose",
   enabled_by_default: true,
   // High-risk: no default_action — max execution_mode is confirm/reject (INV-4).
