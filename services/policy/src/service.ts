@@ -76,7 +76,7 @@ export class PolicyService {
       timestamp: new Date(),
     };
 
-    const decision = evaluate(active.content, action);
+    const decision = highRiskAgentActionFallback(evaluate(active.content, action), action, raw);
     const snapshotHash = sha256Action(raw);
     const subjectId = legacySubjectId(raw, snapshotHash);
     const id = newPolicyDecisionId();
@@ -372,6 +372,48 @@ function legacySubjectId(raw: Record<string, unknown>, snapshotHash: string): st
 
 function sha256Action(action: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(action)).digest("hex");
+}
+
+function highRiskAgentActionFallback(
+  decision: ReturnType<typeof evaluate>,
+  action: Action,
+  raw: Record<string, unknown>,
+): ReturnType<typeof evaluate> {
+  if (
+    decision.outcome !== "reject" ||
+    decision.matched_rule_id !== null ||
+    action.kind !== "agent_action" ||
+    !isHighRiskAgentAction(raw)
+  ) {
+    return decision;
+  }
+  return {
+    ...decision,
+    outcome: "confirm",
+    required_approvers: ["signer"],
+  };
+}
+
+const HIGH_RISK_AGENT_KEYS = new Set(["fraud_anomaly", "vendor_risk"]);
+const HIGH_RISK_AGENT_ACTION_TYPES = new Set([
+  "block_payment",
+  "create_dispute_draft",
+  "escalate",
+  "flag_transaction",
+  "flag_vendor_risk",
+  "freeze_card",
+  "require_approval",
+]);
+
+function isHighRiskAgentAction(raw: Record<string, unknown>): boolean {
+  const agentId = rawString(raw, "agent_id");
+  const agentRole = rawString(raw, "agent_role");
+  const type = rawString(raw, "type");
+  return (
+    (agentId !== null && HIGH_RISK_AGENT_KEYS.has(agentId)) ||
+    (agentRole !== null && HIGH_RISK_AGENT_KEYS.has(agentRole)) ||
+    (type !== null && HIGH_RISK_AGENT_ACTION_TYPES.has(type))
+  );
 }
 
 function intentToApplyTo(actionType: string): ApplyTo {
