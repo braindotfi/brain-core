@@ -267,6 +267,10 @@ GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
 -- brain_audit_publisher: cross-tenant audit_events enumeration only (the
 -- per-tenant publish runs on brain_app under RLS).
 GRANT SELECT ON audit_events TO brain_audit_publisher;
+-- The scheduled publisher derives each tenant's next window from
+-- MAX(period_end) over its own anchors, so coverage survives a restart
+-- instead of always re-deriving a fixed "last intervalMs" window.
+GRANT SELECT ON audit_anchors TO brain_audit_publisher;
 GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receipts
   TO brain_audit_publisher;
 
@@ -432,6 +436,54 @@ REVOKE DELETE, TRUNCATE ON ledger_obligations FROM brain_ledger_projector;
 -- does, instead of leaving a live database holding a wider grant than the
 -- worker needs.
 REVOKE DELETE, TRUNCATE ON canonical_projection_log FROM brain_raw_worker;
+
+-- Policy proof-table immutability. audit_events gets an explicit
+-- REVOKE UPDATE, DELETE, TRUNCATE above because the blanket DML grant and the
+-- default privileges otherwise hand brain_app and brain_privileged full
+-- mutation rights on every table. The two POLICY proof tables were never given
+-- the same treatment, even though the section 6 gate treats both as evidence:
+--
+--   policies.content / policies.content_hash is the SIGNED document the gate
+--   enforces. Activation verifies EIP-712 signatures against the on-chain
+--   tenant-signer allowlist, but nothing re-signed a row that was UPDATEd after
+--   activation, so a direct content write handed the gate an unsigned policy.
+--   getActive (services/policy/src/repository.ts) is the application-side half
+--   of this pair: it recomputes contentHashHex(content) on every read and fails
+--   closed on drift. This grant is the storage-side half, so the drift cannot
+--   be introduced through a runtime connection in the first place.
+--
+--   policy_decisions is the proof artifact the gate requires before a
+--   PaymentIntent can reach executed, and the row the Proof API and the
+--   governance reports read back. A post-hoc UPDATE of `outcome` rewrites the
+--   recorded justification for money that already moved.
+--
+-- policies still needs a narrow UPDATE: setSigners writes `signers`, the
+-- section 8.3 state machine writes `state` / `activated_at` / `deactivated_at`,
+-- and the demo activate route writes `onchain_tx` / `onchain_version`. Those
+-- are the ONLY columns any runtime path updates (verified by grepping every
+-- `UPDATE policies` call site), so revoking the blanket privilege and
+-- re-granting exactly that column list leaves behaviour unchanged while making
+-- content and content_hash immutable after INSERT. A column-list UPDATE grant
+-- is the same containment shape already used for brain_auth on users.
+REVOKE UPDATE, DELETE, TRUNCATE ON policies
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_surface_gateway, brain_surface_audit_writer,
+       brain_auth, brain_auth_audit_writer;
+GRANT UPDATE (state, signers, activated_at, deactivated_at, onchain_tx, onchain_version)
+  ON policies TO brain_app;
+
+-- policy_decisions is INSERT-only to every runtime role. brain_app keeps
+-- SELECT + INSERT (evaluateLegacy / evaluateForGate write the proof row and the
+-- gate, Proof API and governance reports read it back); nothing legitimately
+-- updates or deletes a recorded decision.
+REVOKE UPDATE, DELETE, TRUNCATE ON policy_decisions
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_surface_gateway, brain_surface_audit_writer,
+       brain_auth, brain_auth_audit_writer;
 
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation

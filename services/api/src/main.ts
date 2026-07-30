@@ -725,6 +725,7 @@ async function main(): Promise<void> {
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
         }),
     confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,
+    lintReject: cfg.BRAIN_POLICY_LINT_REJECT,
   };
 
   const policyService = new PolicyService({
@@ -3248,12 +3249,15 @@ async function main(): Promise<void> {
   if (composition.workers.has("audit") && anchorBroadcaster !== undefined) {
     const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
     let anchorRunning = false;
+    // Caps a single catch-up window (a long-dormant or newly-backfilled
+    // tenant) so one cycle never builds one enormous Merkle tree; it closes
+    // the backlog over successive cycles instead.
+    const MAX_ANCHOR_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
     const runAnchor = async (): Promise<void> => {
       if (anchorRunning) return;
       anchorRunning = true;
       const now = new Date();
-      const periodStart = new Date(now.getTime() - intervalMs);
       try {
         const pending = await auditVerifierPool.query<AuditAnchorRow>(
           `SELECT id, tenant_id, merkle_root, event_count, period_start, period_end,
@@ -3276,20 +3280,78 @@ async function main(): Promise<void> {
         }
 
         // Cross-tenant ENUMERATION only: MUST use a BYPASSRLS pool (the
-        // audit-publisher role, scoped to SELECT on audit_events). The app pool
+        // audit-publisher role, scoped to SELECT on audit_events and, for the
+        // covered_to join below, SELECT on audit_anchors). The app pool
         // connects as brain_app under FORCE RLS, so without a tenant scope this
-        // DISTINCT returns zero rows and the scheduled anchor would silently
+        // query returns zero rows and the scheduled anchor would silently
         // never fire in production (the manual endpoint works because it is
         // request-scoped to a tenant).
-        const res = await auditPublisherPool.query<{ tenant_id: string }>(
-          "SELECT DISTINCT tenant_id FROM audit_events WHERE created_at >= $1",
-          [periodStart],
+        //
+        // Each tenant's window is derived from what is already anchored
+        // (MAX(period_end) over its non-reverted anchors) rather than a fixed
+        // "last intervalMs" window -- a fixed window leaves everything emitted
+        // while the process was down (a deploy, a crash, a restart) permanently
+        // unanchored. covered_to IS NULL means the tenant has never been
+        // anchored, so the window starts at its oldest unanchored event.
+        const res = await auditPublisherPool.query<{
+          tenant_id: string;
+          oldest_unanchored: Date;
+          covered_to: Date | null;
+        }>(
+          `SELECT e.tenant_id,
+                  MIN(e.created_at) AS oldest_unanchored,
+                  a.covered_to
+             FROM audit_events e
+             LEFT JOIN (
+               SELECT tenant_id, MAX(period_end) AS covered_to
+                 FROM audit_anchors
+                WHERE onchain_status <> 'reverted'
+                GROUP BY tenant_id
+             ) a ON a.tenant_id = e.tenant_id
+            WHERE a.covered_to IS NULL OR e.created_at > a.covered_to
+            GROUP BY e.tenant_id, a.covered_to`,
         );
+
+        // Worst-case coverage lag across every tenant with a backlog, emitted
+        // BEFORE publishing since it describes the backlog this cycle is about
+        // to work on. 0 when there is no backlog at all, so the hole this fix
+        // closes is never silently invisible again.
+        const oldestUnanchoredAgeSeconds =
+          res.rows.length === 0
+            ? 0
+            : Math.max(
+                ...res.rows.map((row) => (now.getTime() - row.oldest_unanchored.getTime()) / 1000),
+              );
+        metrics.gauge(
+          "brain.audit.anchor.oldest_unanchored_age_seconds",
+          oldestUnanchoredAgeSeconds,
+        );
+
         for (const row of res.rows) {
           try {
+            const periodStart =
+              row.covered_to === null
+                ? row.oldest_unanchored
+                : // +1ms is deliberate: listEventsForAnchor uses an inclusive
+                  // created_at >= start AND created_at <= end, and emitter
+                  // timestamps are millisecond-precision JS ISO strings, so +1ms
+                  // starts the next window strictly after the previous window's
+                  // end without re-anchoring the boundary event.
+                  new Date(row.covered_to.getTime() + 1);
+            let periodEnd = now;
+            // Bound catch-up so a long-dormant or newly-backfilled tenant closes
+            // its backlog over successive cycles instead of building one
+            // enormous Merkle tree in a single request.
+            if (periodEnd.getTime() - periodStart.getTime() > MAX_ANCHOR_WINDOW_MS) {
+              periodEnd = new Date(periodStart.getTime() + MAX_ANCHOR_WINDOW_MS);
+              log.info(
+                { tenantId: row.tenant_id, periodStart, periodEnd },
+                "anchor catch-up window clamped",
+              );
+            }
             // Per-tenant PUBLISH goes through the RLS-enforced app `pool`, NOT
             // the privileged pool. publishAnchor scopes events via
-            // withTenantScope(tenantId) + RLS — but RLS is inert for the
+            // withTenantScope(tenantId) + RLS -- but RLS is inert for the
             // BYPASSRLS brain_privileged role, so listEventsForAnchor (which
             // filters only by created_at) would return EVERY tenant's events,
             // giving each tenant's anchor an inflated event_count and a Merkle
@@ -3300,7 +3362,7 @@ async function main(): Promise<void> {
             await publishAnchor(pool, anchorBroadcaster, {
               tenantId: row.tenant_id,
               periodStart,
-              periodEnd: now,
+              periodEnd,
             });
           } catch (err) {
             log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");

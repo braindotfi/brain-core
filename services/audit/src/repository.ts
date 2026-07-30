@@ -218,6 +218,29 @@ export async function findLatestAnchor(client: TenantScopedClient): Promise<Audi
   return rows[0] ?? null;
 }
 
+/**
+ * The anchor whose window CONTAINS `at`, preferring the earliest such window.
+ * `/audit/event/:id` used findLatestAnchor, so an event outside the newest
+ * window returned a null root and an empty proof even though its own window
+ * had been anchored on chain. Windows are currently doubly inclusive, so a
+ * boundary event can sit in two anchors; the earliest containing window is the
+ * one the publisher built first and is the stable answer.
+ */
+export async function findAnchorForEvent(
+  client: TenantScopedClient,
+  at: Date,
+): Promise<AuditAnchorRow | null> {
+  const { rows } = await client.query<AuditAnchorRow>(
+    `SELECT * FROM audit_anchors
+      WHERE period_start <= $1 AND period_end >= $1
+        AND onchain_status <> 'reverted'
+      ORDER BY period_end ASC
+      LIMIT 1`,
+    [at],
+  );
+  return rows[0] ?? null;
+}
+
 export async function findAnchorByRoot(
   client: TenantScopedClient,
   root: Buffer,

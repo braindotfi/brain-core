@@ -94,15 +94,23 @@ export async function reconcileOrphanedAnchors(
       console.warn(
         `[anchorReconciler] orphan anchor ${row.id} unmatched on-chain after ${Math.round(ageMs / 1000)}s`,
       );
+      // Idempotency key collapses this to ONE audit event per orphan across
+      // cycles instead of one every 5 minutes forever (this repo already had a
+      // production incident of exactly this shape -- an outbox retry loop that
+      // spammed for 11 days). age_seconds changes every cycle, so it stays out
+      // of the hashed payload (inputs) and lives only in the console.warn
+      // above -- keeping it in inputs would make the same key hash to a
+      // different payload each cycle and raise audit_idempotency_conflict
+      // instead of deduping.
       await deps.audit.emit({
         tenantId: row.tenant_id,
         layer: "audit",
         actor: "sys_anchor_reconciler",
         action: "audit.anchor.orphan_detected",
+        idempotencyKey: `audit.anchor.orphan_detected:${row.id}`,
         inputs: {
           anchor_id: row.id,
           merkle_root: row.merkle_root.toString("hex"),
-          age_seconds: Math.round(ageMs / 1000),
         },
         outputs: {},
       });

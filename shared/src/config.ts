@@ -299,6 +299,17 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default("false"),
+  /**
+   * Emergency rollback switch for policy-activation lint enforcement (H-18):
+   * when true, POST /policy/:tenant_id/sign rejects activation on ANY
+   * lintPolicy ERROR finding, not only the confidence-floor codes. Defaults
+   * true (fail closed), matching BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED's
+   * posture. A production tenant enforces regardless of this flag.
+   */
+  BRAIN_POLICY_LINT_REJECT: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("true"),
 
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: optionalNonEmptyString(),

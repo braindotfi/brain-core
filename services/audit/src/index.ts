@@ -33,13 +33,17 @@ export {
 export {
   checkAuditConsistency,
   verifyContentHashCursor,
+  verifyAnchorRoots,
   reportVerifierHealth,
   startAuditConsistencyVerifier,
   CONTENT_HASH_VERIFIER_NAME,
+  ANCHOR_ROOT_VERIFIER_NAME,
   type AuditConsistencyDeps,
   type AuditConsistencyResult,
   type ContentHashVerifyResult,
+  type AnchorRootVerifyResult,
   type AuditVerifierHealth,
+  type AnchorRootVerifierHealth,
   type AuditConsistencyVerifier,
 } from "./audit-consistency.js";
 export {

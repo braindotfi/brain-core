@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TenantScopedClient } from "@brain/shared";
+import { contentHashHex } from "./dsl.js";
 import {
   getActive,
   getByVersion,
@@ -34,7 +35,7 @@ const stubPolicy = {
   tenant_id: "t1",
   version: 1,
   content: { version: 1, rules: [] },
-  content_hash: Buffer.from("ab", "hex"),
+  content_hash: Buffer.from(contentHashHex({ version: 1, rules: [] }), "hex"),
   quorum_required: 2,
   state: "draft" as const,
   created_by: "user_1",
@@ -86,11 +87,28 @@ describe("getActive", () => {
     expect(client._log[0]!.sql).toContain("state = 'active'");
   });
 
-  it("returns the active row when found", async () => {
+  it("returns the active row when its content_hash matches its content", async () => {
     const active = { ...stubPolicy, state: "active" };
     const client = fakeClient([active]);
     const result = await getActive(client);
     expect(result).toBe(active);
+  });
+
+  it("throws (not a not-found) when content_hash no longer matches content", async () => {
+    // Simulates a direct DB write, bad migration, or restore that mutated
+    // `content` after activation without recomputing content_hash -- the
+    // read-side half of the signature chain must catch this, not return null
+    // (which would misleadingly read as "tenant has no active policy").
+    const tampered = {
+      ...stubPolicy,
+      state: "active",
+      content: { version: 1, rules: [{ id: "x", applies_to: ["any"], when: {}, execute: "auto" }] },
+    };
+    const client = fakeClient([tampered]);
+    await expect(getActive(client)).rejects.toMatchObject({
+      code: "policy_not_active",
+      message: expect.stringContaining("content_hash does not match"),
+    });
   });
 });
 

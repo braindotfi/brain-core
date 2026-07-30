@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedActionsFor, canonicalize, contentHashHex } from "./dsl.js";
+import { allowedActionsFor, canonicalize, contentHashHex, type PolicyDocument } from "./dsl.js";
 
 describe("canonicalize", () => {
   it("is key-order independent", () => {
@@ -48,6 +48,46 @@ describe("contentHashHex", () => {
       agent_actions: { payment: ["pay_invoice"] },
     });
     expect(a).not.toBe(b);
+  });
+});
+
+describe("contentHashHex -- migration 0006 pin (H-P0-4)", () => {
+  it("hashes the migration 0006 default document to the hash that migration recomputed and hardcoded", () => {
+    // services/policy/migrations/0006_default_policy_agent_action_review.sql
+    // upgrades every already-active default policy to this exact document and
+    // stores this exact hash. If a future change to canonicalize() ever
+    // altered this value, every live upgraded tenant would fail
+    // getActive()'s read-time hash verification (repository.ts) and start
+    // denying every gate call -- this test exists so that change fails here
+    // in CI instead of in production.
+    const migratedDoc = {
+      version: 1,
+      rules: [
+        {
+          id: "default-money-requires-confirmation",
+          applies_to: ["outbound_payment", "onchain_tx"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+        {
+          id: "default-agent-action-requires-review",
+          applies_to: ["agent_action"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "confirm",
+          require: "single_signer",
+        },
+        {
+          id: "default-non-money-confidence-floor",
+          applies_to: ["inbound_payment", "ledger_write"],
+          when: { "agent.confidence.gte": 0.6 },
+          execute: "auto",
+        },
+      ],
+    };
+    expect(contentHashHex(migratedDoc as PolicyDocument)).toBe(
+      "253834354481d08401efabbe4e0ed643b60d9f5a80169ed9440f05fd25401d6e",
+    );
   });
 });
 

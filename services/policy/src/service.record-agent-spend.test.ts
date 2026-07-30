@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import type { AuditEmitter, TenantScopedClient } from "@brain/shared";
 import { PolicyService } from "./service.js";
-import type { PolicyDocument, PolicyRule } from "./dsl.js";
+import { contentHashHex, type PolicyDocument, type PolicyRule } from "./dsl.js";
 
 function policyDoc(rules: PolicyRule[]): PolicyDocument {
   return { version: 1, rules };
@@ -26,7 +26,7 @@ function activeRow(content: PolicyDocument): Record<string, unknown> {
     tenant_id: "tnt_1",
     version: 1,
     content,
-    content_hash: Buffer.from(""),
+    content_hash: Buffer.from(contentHashHex(content), "hex"),
     signers: null,
     state: "active",
     quorum_required: 1,

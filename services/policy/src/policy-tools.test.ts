@@ -207,6 +207,44 @@ describe("lintPolicy", () => {
     const errors = lintPolicy(safe).filter((x) => x.severity === "ERROR");
     expect(errors).toEqual([]);
   });
+
+  it("the provisioned default policy document is lint-clean under full enforcement (H-18 safety property)", () => {
+    // Mirrors services/api/src/onboarding/provision.ts buildDefaultPolicyDocument()
+    // at DEFAULT_CONFIDENCE_FLOOR=0.6, and the identical three-rule document
+    // migration 0006 activates for every already-upgraded tenant. Kept as a
+    // literal here since @brain/policy does not depend on @brain/api; if that
+    // function's shape changes, this literal (and the migration) must move
+    // together. This is the property that makes routes.ts blocking on ALL
+    // ERROR findings (not only the confidence-floor codes) safe to ship:
+    // neither a freshly provisioned tenant nor an already-upgraded tenant is
+    // newly blocked from activating its own default policy.
+    const defaultDoc = doc([
+      {
+        id: "default-money-requires-confirmation",
+        applies_to: ["outbound_payment", "onchain_tx"],
+        when: { "agent.confidence.gte": 0.6 },
+        execute: "confirm",
+        require: "single_signer",
+      },
+      {
+        id: "default-agent-action-requires-review",
+        applies_to: ["agent_action"],
+        when: { "agent.confidence.gte": 0.6 },
+        execute: "confirm",
+        require: "single_signer",
+      },
+      {
+        id: "default-non-money-confidence-floor",
+        applies_to: ["inbound_payment", "ledger_write"],
+        when: { "agent.confidence.gte": 0.6 },
+        execute: "auto",
+      },
+    ]);
+    const errors = lintPolicy(defaultDoc, { confidenceFloorReject: true }).filter(
+      (x) => x.severity === "ERROR",
+    );
+    expect(errors).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -2,15 +2,15 @@
 
 Query audit events, pull a Merkle inclusion proof, verify a proof independently, walk the full history for any Ledger entity, export, and pull the canonical **Proof** for an action. All event payloads land in the append-only hash chain and are batch-anchored to `BrainAuditAnchor` on Base.
 
-| Operation                         | Endpoint                                        |
-| --------------------------------- | ----------------------------------------------- |
-| Get the latest anchor             | `GET  /v1/audit/anchor/latest`                  |
-| Walk an entity's history          | `GET  /v1/audit/entity/{entityType}/{entityId}` |
-| Get one event (+ inclusion proof) | `GET  /v1/audit/event/{event_id}`               |
-| Query events                      | `GET  /v1/audit/events`                         |
-| Export                            | `POST /v1/audit/export`                         |
-| Independent verification          | `POST /v1/audit/verify`                         |
-| Canonical Proof for an action     | See the [Proof API](proof-api.md)               |
+| Operation                           | Endpoint                                        |
+| ----------------------------------- | ----------------------------------------------- |
+| Get the latest anchor               | `GET  /v1/audit/anchor/latest`                  |
+| Walk an entity's history            | `GET  /v1/audit/entity/{entityType}/{entityId}` |
+| Get one event (+ inclusion proof)   | `GET  /v1/audit/event/{event_id}`               |
+| Query events                        | `GET  /v1/audit/events`                         |
+| Export (not implemented, see below) | `POST /v1/audit/export`                         |
+| Independent verification            | `POST /v1/audit/verify`                         |
+| Canonical Proof for an action       | See the [Proof API](proof-api.md)               |
 
 ### Get the Latest Anchor
 
@@ -120,26 +120,18 @@ paths to the same conclusion.
 
 ### Export
 
+`POST /v1/audit/export` is a declared stub. It validates the request shape and
+then always returns `501` (error code `dependency_unavailable`) -- there is
+no job row, worker, or status/download route behind it. Use the working
+tenant export instead:
+
 ```http
-POST /v1/audit/export
+POST /v1/tenants/{tenant_id}/export
 Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "format":  "jsonl",
-  "since":   "2026-01-01",
-  "until":   "2026-05-28",
-  "layers":  ["agent", "execution"]
-}
 ```
 
-`format` is `jsonl` or `csv`. Response (`202 Accepted`):
-
-```json
-{ "job_id": "exp_4711", "status_url": "https://api.brain.fi/v1/audit/export/exp_4711" }
-```
-
-Poll `status_url` until the job is ready (the URL is returned by the API; the spec does not pin a fixed `/exports/{id}` shape).
+Poll `GET /v1/tenants/{tenant_id}/export/{job_id}` for status and fetch the
+result from `GET /v1/tenants/{tenant_id}/export/{job_id}/download` once ready.
 
 ### The Canonical Proof for an Action
 

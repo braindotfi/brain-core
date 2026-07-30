@@ -104,7 +104,10 @@ const MATRIX: ReadonlyArray<{
   },
   {
     role: "brain_audit_publisher",
-    can: [["audit_events", "SELECT"]],
+    can: [
+      ["audit_events", "SELECT"],
+      ["audit_anchors", "SELECT"],
+    ],
     cannot: [
       ["audit_events", "INSERT"],
       ["audit_integrity_findings", "SELECT"],

@@ -185,14 +185,20 @@ export class AuditResource {
     };
   }
 
+  /**
+   * Not implemented server-side: POST /audit/export returns 501. No worker
+   * materializes an audit export and no status or download route ever redeemed
+   * the job id it used to hand back, so the endpoint is a declared stub. Use the
+   * tenant export routes instead: POST /v1/tenants/{tenant_id}/export, then
+   * GET .../export/{job_id} and .../export/{job_id}/download. Kept on the
+   * surface so its removal is not a silent break; the call always throws
+   * BrainAPIError with the server 501.
+   */
   async export(req: ExportAuditRequest): Promise<ExportAuditJob> {
-    const { data, error, response } = await this.http.POST("/audit/export", {
+    const { error, response } = await this.http.POST("/audit/export", {
       body: req,
     });
-    const body = unwrap(data, error, response.status);
-    return {
-      jobId: body.job_id,
-    };
+    throw new BrainAPIError(response.status, error);
   }
 
   async verify(req: VerifyAuditRequest): Promise<VerifyAuditResult> {

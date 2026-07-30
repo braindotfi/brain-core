@@ -1,11 +1,14 @@
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ANCHOR_ROOT_VERIFIER_NAME,
   checkAuditConsistency,
   reportVerifierHealth,
   startAuditConsistencyVerifier,
+  verifyAnchorRoots,
   verifyContentHashCursor,
 } from "./audit-consistency.js";
+import { buildTree } from "./merkle.js";
 
 /** Pool that returns a count per structural query (fork / gap / genesis). */
 function fakePool(counts: { forks: number; gaps: number; invalidGenesis?: number }): {
@@ -258,10 +261,244 @@ describe("verifyContentHashCursor (content, paged)", () => {
   });
 });
 
+interface FakeAnchorRow {
+  id: string;
+  tenant_id: string;
+  merkle_root: Buffer;
+  event_count: number;
+  period_start: Date;
+  period_end: Date;
+}
+
+/**
+ * Cursor-aware fake for verifyAnchorRoots: a connect()-able client for the
+ * checkpoint transaction (keyset SELECT + per-anchor window reads + the
+ * checkpoint UPDATE), plus a direct pool.query for the post-commit
+ * pass-cleanliness gauge read. The checkpoint state is mutable in-closure so
+ * consecutive calls to verifyAnchorRoots against the SAME fake behave like
+ * consecutive cycles against a real durable cursor.
+ */
+function fakeAnchorRootCursorPool(opts: {
+  /** All confirmed on-chain anchors, in period_end ASC order. */
+  anchors: FakeAnchorRow[];
+  /** anchor id -> the event_hash rows CURRENTLY in that anchor's window. */
+  eventsByAnchor: Record<string, Buffer[]>;
+  pageSize: number;
+}): { pool: Pool; sql: string[]; seenTenantIds: string[] } {
+  const sql: string[] = [];
+  const seenTenantIds: string[] = [];
+  let cursorPeriodEnd: Date | null = null;
+  let cursorAnchorId: string | null = null;
+  let passFailureAccum = 0;
+  let passStatus: "never" | "clean" | "failed" = "never";
+  let hasHadCleanPass = false;
+
+  const client = {
+    query: vi.fn(async (text: string, params: unknown[] = []) => {
+      sql.push(text);
+      if (text.includes("FOR UPDATE")) {
+        return {
+          rows: [
+            {
+              last_created_at: cursorPeriodEnd,
+              last_event_id: cursorAnchorId,
+              current_pass_failure_count: passFailureAccum,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (text.startsWith("SELECT id, tenant_id, merkle_root")) {
+        const remaining = opts.anchors.filter((a) => {
+          if (cursorAnchorId === null || cursorPeriodEnd === null) return true;
+          if (a.period_end.getTime() !== cursorPeriodEnd.getTime()) {
+            return a.period_end.getTime() > cursorPeriodEnd!.getTime();
+          }
+          return a.id > cursorAnchorId!;
+        });
+        const page = remaining.slice(0, opts.pageSize);
+        return { rows: page, rowCount: page.length };
+      }
+      if (text.includes("FROM audit_events") && text.includes("tenant_id = $1")) {
+        const tenantId = params[0] as string;
+        seenTenantIds.push(tenantId);
+        const anchor = opts.anchors.find((a) => a.tenant_id === tenantId);
+        const hashes = anchor === undefined ? [] : (opts.eventsByAnchor[anchor.id] ?? []);
+        return { rows: hashes.map((h) => ({ event_hash: h })), rowCount: hashes.length };
+      }
+      if (text.includes("UPDATE audit_verifier_checkpoint")) {
+        if (text.includes("completed_passes = completed_passes + 1")) {
+          // Wrap: params = [verifierName, rootMismatches, cleanPass ? "clean" : "failed"].
+          passStatus = params[2] as "clean" | "failed";
+          cursorPeriodEnd = null;
+          cursorAnchorId = null;
+          passFailureAccum = 0;
+          if (passStatus === "clean") hasHadCleanPass = true;
+        } else {
+          // Page-advance: params = [verifierName, period_end, id, rootMismatches, passFailuresSoFar].
+          cursorPeriodEnd = params[1] as Date;
+          cursorAnchorId = params[2] as string;
+          passFailureAccum = params[4] as number;
+        }
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 }; // BEGIN / INSERT checkpoint / INSERT finding / COMMIT
+    }),
+    release: vi.fn(),
+  };
+  const pool = {
+    connect: async () => client,
+    query: vi.fn(async (text: string) => {
+      sql.push(text);
+      if (text.includes("last_pass_status")) {
+        return {
+          rows: [
+            {
+              last_pass_status: passStatus,
+              seconds_since_clean: hasHadCleanPass ? 0 : null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    }),
+  } as unknown as Pool;
+  return { pool, sql, seenTenantIds };
+}
+
+describe("verifyAnchorRoots (durable keyset cursor)", () => {
+  it("verifies the oldest page on the first cycle and continues past it (not re-checking) on the second", async () => {
+    const leavesA = [1, 2].map((n) => Buffer.alloc(32, n));
+    const leavesB = [3, 4].map((n) => Buffer.alloc(32, n));
+    const anchorA: FakeAnchorRow = {
+      id: "anchor_a",
+      tenant_id: "tnt_a",
+      merkle_root: buildTree(leavesA).root,
+      event_count: 2,
+      period_start: new Date("2026-01-01T00:00:00Z"),
+      period_end: new Date("2026-01-02T00:00:00Z"),
+    };
+    const anchorB: FakeAnchorRow = {
+      id: "anchor_b",
+      tenant_id: "tnt_b",
+      merkle_root: buildTree(leavesB).root,
+      event_count: 2,
+      period_start: new Date("2026-01-03T00:00:00Z"),
+      period_end: new Date("2026-01-04T00:00:00Z"),
+    };
+    const { pool, seenTenantIds } = fakeAnchorRootCursorPool({
+      anchors: [anchorA, anchorB],
+      eventsByAnchor: { anchor_a: leavesA, anchor_b: leavesB },
+      pageSize: 1,
+    });
+
+    const cycle1 = await verifyAnchorRoots({ privilegedPool: pool, anchorScanLimit: 1 });
+    expect(cycle1.anchorsVerified).toBe(1);
+    expect(cycle1.rootMismatches).toBe(0);
+    expect(seenTenantIds).toEqual(["tnt_a"]);
+
+    const cycle2 = await verifyAnchorRoots({ privilegedPool: pool, anchorScanLimit: 1 });
+    expect(cycle2.anchorsVerified).toBe(1);
+    // The stored cursor moved past anchor_a: cycle 2 checks anchor_b, not a repeat of anchor_a.
+    expect(seenTenantIds).toEqual(["tnt_a", "tnt_b"]);
+  });
+
+  it("wraps the cursor to the start after a short page (advancing completed_passes), so the next cycle re-verifies from the beginning", async () => {
+    const leaves = [1, 2].map((n) => Buffer.alloc(32, n));
+    const anchor: FakeAnchorRow = {
+      id: "anchor_only",
+      tenant_id: "tnt_only",
+      merkle_root: buildTree(leaves).root,
+      event_count: 2,
+      period_start: new Date("2026-01-01T00:00:00Z"),
+      period_end: new Date("2026-01-02T00:00:00Z"),
+    };
+    const { pool, seenTenantIds } = fakeAnchorRootCursorPool({
+      anchors: [anchor],
+      eventsByAnchor: { anchor_only: leaves },
+      pageSize: 25,
+    });
+
+    const cycle1 = await verifyAnchorRoots({ privilegedPool: pool });
+    expect(cycle1.completedPass).toBe(true); // 1 row < pageSize 25 -> wrapped already
+    expect(cycle1.anchorsVerified).toBe(1);
+
+    const cycle2 = await verifyAnchorRoots({ privilegedPool: pool });
+    // Cursor wrapped to NULL, not left pointing past the only anchor, so it is
+    // re-verified rather than skipped.
+    expect(cycle2.anchorsVerified).toBe(1);
+    expect(seenTenantIds).toEqual(["tnt_only", "tnt_only"]);
+  });
+
+  it("ends a pass with a failed status (and never advances the clean-pass gauge) when any page has a mismatch", async () => {
+    const leaves = [1, 2, 3].map((n) => Buffer.alloc(32, n));
+    const storedRoot = buildTree(leaves).root; // anchor was built from all 3 rows
+    const anchor: FakeAnchorRow = {
+      id: "anchor_bad",
+      tenant_id: "tnt_bad",
+      merkle_root: storedRoot,
+      event_count: 3,
+      period_start: new Date("2026-01-01T00:00:00Z"),
+      period_end: new Date("2026-01-02T00:00:00Z"),
+    };
+    const { pool, sql } = fakeAnchorRootCursorPool({
+      anchors: [anchor],
+      eventsByAnchor: { anchor_bad: leaves.slice(0, 2) }, // newest row missing -> mismatch
+      pageSize: 25,
+    });
+    const metrics = { gauge: vi.fn(), increment: vi.fn(), histogram: vi.fn(), duration: vi.fn() };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await verifyAnchorRoots({ privilegedPool: pool, metrics: metrics as never });
+
+    expect(res.completedPass).toBe(true);
+    expect(res.rootMismatches).toBe(1);
+    expect(sql.some((s) => s.includes("INSERT INTO audit_integrity_findings"))).toBe(true);
+    expect(metrics.gauge).toHaveBeenCalledWith(
+      "brain.audit.consistency.anchor_root_last_pass_clean",
+      0,
+    );
+    // Never had a clean pass, so the seconds-since-clean gauge is never emitted
+    // (last_clean_pass_at was never advanced by this failed pass).
+    expect(
+      metrics.gauge.mock.calls.some(
+        ([name]) => name === "brain.audit.consistency.anchor_root_seconds_since_clean_full_pass",
+      ),
+    ).toBe(false);
+    errSpy.mockRestore();
+  });
+
+  it("only selects confirmed on-chain anchors, so pending and reverted rows are skipped", async () => {
+    const { pool, sql } = fakeAnchorRootCursorPool({
+      anchors: [],
+      eventsByAnchor: {},
+      pageSize: 25,
+    });
+
+    const res = await verifyAnchorRoots({ privilegedPool: pool });
+
+    expect(res).toEqual({
+      anchorsVerified: 0,
+      rootMismatches: 0,
+      completedPass: true,
+      currentPassFailureCount: 0,
+    });
+    const anchorQuery = sql.find((s) => s.startsWith("SELECT id, tenant_id, merkle_root"));
+    expect(anchorQuery).toBeDefined();
+    expect(anchorQuery).toContain("onchain_tx_hash IS NOT NULL");
+    expect(anchorQuery).toContain("onchain_status = 'confirmed'");
+  });
+});
+
 describe("reportVerifierHealth", () => {
-  function healthPool(opts: { checkpoint?: Record<string, unknown> | null; open?: number }): Pool {
+  function healthPool(opts: {
+    checkpoint?: Record<string, unknown> | null;
+    anchorCheckpoint?: Record<string, unknown> | null;
+    open?: number;
+  }): Pool {
     return {
-      query: vi.fn(async (text: string) => {
+      query: vi.fn(async (text: string, params?: unknown[]) => {
         // F-1 regression lock: the health reader must NEVER scan audit_events —
         // the version counts come from the checkpoint, where the verifier
         // persisted them. A per-request scan of the largest table is the bug.
@@ -269,11 +506,14 @@ describe("reportVerifierHealth", () => {
           throw new Error("reportVerifierHealth must not query audit_events");
         }
         if (text.includes("FROM audit_verifier_checkpoint")) {
-          return {
-            rows:
-              opts.checkpoint === null || opts.checkpoint === undefined ? [] : [opts.checkpoint],
-            rowCount: 1,
-          };
+          // Two separate rows, one per verifier_name -- branch on the bound
+          // param so the content-hash and anchor-root reads don't collide.
+          const verifierName = (params ?? [])[0];
+          const row =
+            verifierName === ANCHOR_ROOT_VERIFIER_NAME
+              ? (opts.anchorCheckpoint ?? opts.checkpoint)
+              : opts.checkpoint;
+          return { rows: row === null || row === undefined ? [] : [row], rowCount: 1 };
         }
         if (text.includes("FROM audit_integrity_findings")) {
           return { rows: [{ n: String(opts.open ?? 0) }], rowCount: 1 };
@@ -308,6 +548,42 @@ describe("reportVerifierHealth", () => {
     // verifier cycle), not from a live audit_events scan.
     expect(h.legacyUnverifiable).toBe(3);
     expect(h.unsupportedVersion).toBe(0);
+  });
+
+  it("reads the anchor-root verifier's pass state from its OWN checkpoint row, distinct from content-hash", async () => {
+    const pool = healthPool({
+      checkpoint: {
+        last_pass_status: "clean",
+        last_clean_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        last_failed_pass_at: null,
+        last_full_pass_at: new Date("2026-06-08T00:00:00.000Z"),
+        completed_passes: "7",
+        current_pass_failure_count: "0",
+        unsupported_version_count: "0",
+        legacy_unverifiable_count: "3",
+        seconds_since_clean: 12,
+      },
+      anchorCheckpoint: {
+        last_pass_status: "failed",
+        last_clean_pass_at: null,
+        last_full_pass_at: new Date("2026-07-01T00:00:00.000Z"),
+        completed_passes: "2",
+        current_pass_failure_count: "1",
+        seconds_since_clean: null,
+      },
+      open: 0,
+    });
+    const h = await reportVerifierHealth({ privilegedPool: pool });
+    // Content-hash verifier's own state is untouched by the anchor row.
+    expect(h.lastPassStatus).toBe("clean");
+    expect(h.completedPasses).toBe(7);
+    // The anchor-root sub-object reflects its OWN, different row.
+    expect(h.anchorRoot.lastPassStatus).toBe("failed");
+    expect(h.anchorRoot.lastCleanPassAt).toBeNull();
+    expect(h.anchorRoot.lastFullPassAt).toBe("2026-07-01T00:00:00.000Z");
+    expect(h.anchorRoot.completedPasses).toBe(2);
+    expect(h.anchorRoot.currentPassFailureCount).toBe(1);
+    expect(h.anchorRoot.secondsSinceCleanFullPass).toBeNull();
   });
 
   it("reports 'never' with null timestamps before the verifier has ever run", async () => {

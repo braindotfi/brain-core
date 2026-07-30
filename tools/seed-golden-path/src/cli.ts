@@ -14,9 +14,9 @@
  *   node tools/seed-golden-path/dist/cli.js
  */
 
-import { createHash } from "node:crypto";
 import { Pool } from "pg";
 import { InMemoryAuditEmitter, withTenantScope, newPolicyId, newAgentId } from "@brain/shared";
+import { contentHash, type PolicyDocument } from "@brain/policy";
 import { seedGoldenPath } from "./index.js";
 import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
 
@@ -28,7 +28,7 @@ import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
  * Skipped when BRAIN_SEED_DEMO_GOVERNANCE=false. Idempotent (deactivates any
  * prior active policy; replaces the demo agent).
  */
-const DEMO_POLICY = {
+const DEMO_POLICY: PolicyDocument = {
   version: 1,
   rules: [
     {
@@ -66,7 +66,11 @@ async function seedDemoGovernance(
   const smartAccount =
     process.env.BRAIN_ONCHAIN_SMART_ACCOUNT ?? "0x0000000000000000000000000000000000000000";
   const policyJson = JSON.stringify(DEMO_POLICY);
-  const policyHash = createHash("sha256").update(policyJson).digest();
+  // Canonical hash, NOT sha256(JSON.stringify(doc)); see the same note in
+  // services/api/src/demo/brainsaas-seed.ts. getActive recomputes content_hash on
+  // read and fails closed on drift, so a naive digest here would take the seeded
+  // golden-path tenant's policy offline.
+  const policyHash = contentHash(DEMO_POLICY);
   const scopeHash = demoAgentScopeHash();
   const policyId = newPolicyId();
   const agentId = newAgentId();

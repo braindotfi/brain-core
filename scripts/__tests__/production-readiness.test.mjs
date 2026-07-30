@@ -292,7 +292,7 @@ test("risk section is populated from docs/risk-register.json", () => {
   assert.ok(risks.length > 0, "risks section should not be empty");
   // Every row carries the [PRIO status] prefix in note.
   for (const row of risks) {
-    assert.match(row.note, /\[(P0|P1|P2) (open|mitigating)\]/);
+    assert.match(row.note, /\[(P0|P1|P2|P3) (open|mitigating)\]/);
   }
 });
 

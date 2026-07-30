@@ -3152,13 +3152,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Request an audit export (async)
-         * @description Requires `audit:read` (not `audit:write` — exporting is a read
-         *     operation on the log). Only `format` is required; `since`/`until`
-         *     are optional (unbounded if omitted). `layers` is not implemented
-         *     and is ignored if sent — this endpoint currently enqueues the job
-         *     only, the BullMQ worker that materializes the export file is a
-         *     separate follow-up.
+         * Audit export (declared stub, not implemented)
+         * @description Requires `audit:read`. This endpoint is a declared stub: it validates
+         *     the request shape and then always returns 501, since there is no job
+         *     row, worker, or status/download route behind it. Use the real,
+         *     working tenant export instead:
+         *     `POST /v1/tenants/{tenant_id}/export` (with its
+         *     `GET /v1/tenants/{tenant_id}/export/{job_id}` status route and
+         *     `GET /v1/tenants/{tenant_id}/export/{job_id}/download` download route).
          */
         post: operations["exportAudit"];
         delete?: never;
@@ -10652,24 +10653,17 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Export job created */
-            202: {
+            /** @description `format` must be `jsonl` or `csv`. Error code `request_body_invalid`. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @description Not a Brain ID — currently `exp_<timestamp36>` */
-                        job_id?: string;
-                        /** @enum {string} */
-                        format?: "jsonl" | "csv";
-                        /** @enum {string} */
-                        status?: "enqueued";
-                    };
+                    "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `format` must be `jsonl` or `csv`. Error code `request_body_invalid`. */
-            400: {
+            /** @description Not implemented. Error code `dependency_unavailable`. Use `POST /v1/tenants/{tenant_id}/export` instead. */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

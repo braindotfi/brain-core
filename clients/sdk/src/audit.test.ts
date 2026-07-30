@@ -110,22 +110,25 @@ describe("Brain.audit", () => {
     expect(result.events).toEqual([]);
   });
 
-  it("export posts a job request and returns jobId", async () => {
-    const { fetch, calls } = mockFetch(202, {
-      job_id: "job_1",
-      format: "jsonl",
-      status: "enqueued",
+  // POST /audit/export is a declared server-side stub that returns 501: no worker
+  // ever materialized an export and no status or download route redeemed the job id
+  // it used to hand back. The SDK method is kept so its removal is not a silent
+  // break, but it always surfaces the server error rather than a fabricated job.
+  it("export surfaces the server 501 instead of returning a job", async () => {
+    const { fetch, calls } = mockFetch(501, {
+      error: { code: "dependency_unavailable", message: "audit export is not implemented" },
     });
     const brain = new Brain({ token: "k", fetch });
 
-    const job = await brain.audit.export({
-      format: "jsonl",
-      since: "2026-01-01T00:00:00Z",
-      until: "2026-02-01T00:00:00Z",
-      layers: ["raw", "execution"],
-    });
+    await expect(
+      brain.audit.export({
+        format: "jsonl",
+        since: "2026-01-01T00:00:00Z",
+        until: "2026-02-01T00:00:00Z",
+        layers: ["raw", "execution"],
+      }),
+    ).rejects.toBeInstanceOf(BrainAPIError);
 
-    expect(job.jobId).toBe("job_1");
     const request = calls[0]!;
     expect(request.method).toBe("POST");
     expect(request.url).toContain("/audit/export");

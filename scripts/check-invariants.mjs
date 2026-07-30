@@ -505,9 +505,39 @@ check(
   policyLinterSource.includes("confidence_floor_missing") &&
     policyLinterSource.includes("confidence_floor_too_low") &&
     policyLinterSource.includes("floor.value > 0.5") &&
-    policyRoutesSource.includes("confidenceFloorReject: deps.confidenceFloorReject === true") &&
-    policyRoutesSource.includes("policy confidence floor failed activation"),
+    policyRoutesSource.includes(
+      'deps.confidenceFloorReject === true || tenantKind === "production"',
+    ) &&
+    policyRoutesSource.includes("policy failed activation lint"),
   "policy activation must warn or reject when agent.confidence.gte is missing or not strictly greater than 0.5",
+);
+
+// Activation must block on EVERY ERROR finding, not only the confidence floor.
+// The linter produced eight other ERROR codes that activation computed and then
+// silently discarded, so a tenant could activate an unbounded auto-executing
+// `any` money-movement rule as long as some other rule in the document carried a
+// confidence floor. Pin the enforcement switch and the fact that the non-confidence
+// ERRORs reach the blocking list, so that regression cannot return unnoticed.
+check(
+  "policy activation blocks on every lint ERROR",
+  policyRoutesSource.includes('deps.lintReject === true || tenantKind === "production"') &&
+    policyRoutesSource.includes("otherErrorFindings") &&
+    policyRoutesSource.includes("...(lintEnforce ? otherErrorFindings : [])"),
+  "policy activation must block on all ERROR lint findings, not only confidence_floor_*",
+);
+
+// The read side of the signed-policy chain of trust. Activation verifies EIP-712
+// signatures, but nothing re-signed a row whose content was written or mutated by
+// another path, so getActive must recompute the canonical content hash and fail
+// closed on drift rather than handing the section 6 gate an unverified document.
+// It must THROW, never return null: null reads as "tenant has no policy" and
+// callers turn that into policy_not_found, which misdiagnoses a tamper event.
+const policyRepositorySource = read("services/policy/src/repository.ts");
+check(
+  "getActive verifies the active policy content hash",
+  policyRepositorySource.includes("contentHashHex(row.content)") &&
+    policyRepositorySource.includes("content_hash does not match content"),
+  "getActive must recompute content_hash on read and fail closed when it does not match content",
 );
 
 const agentApiSource = read("services/agent-router/src/agent-api.ts");

@@ -35,7 +35,7 @@ function poolWithActivePolicy(content: PolicyDocument): Pool {
     tenant_id: "tnt_01TEST0000000000000000000",
     version: 1,
     content,
-    content_hash: Buffer.from("00", "hex"),
+    content_hash: Buffer.from(contentHashHex(content), "hex"),
     quorum_required: 1,
     state: "active",
     created_by: "usr_01TEST0000000000000000000",

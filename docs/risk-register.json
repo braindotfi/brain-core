@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.brain.fi/schemas/risk-register-v1.json",
   "schema_version": "v1",
-  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 → red row in the aggregator; open + P1 → yellow; mitigating + P0 → yellow; closed → not surfaced. When this file changes, update the .md mirror in the same PR.",
+  "comment": "Machine-readable mirror of docs/risk-register.md. Read by scripts/production-readiness.mjs. Open + P0 \u2192 red row in the aggregator; open + P1 \u2192 yellow; mitigating + P0 \u2192 yellow; closed \u2192 not surfaced. When this file changes, update the .md mirror in the same PR.",
   "risks": [
     {
       "id": "R-01",
@@ -74,12 +74,12 @@
       "title": "Full money-movement E2E not yet enforced in CI",
       "priority": "P1",
       "status": "mitigating",
-      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the §6 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). audit-before->after linkage is now asserted in strict mode (the executed PI's proof must contain payment_intent.execute.before preceding payment_intent.execute.after, with the after event chained via prev_event_hash). Remaining: localstack-in-CI for the blob path (EC1) and full strict-proof (on-chain merkle anchor) mode, which needs a CI-available Base RPC; receivable-direction / low-confidence negatives are layerable follow-ups.",
+      "mitigation_summary": "A money_movement_e2e job now runs on EVERY PR (.github/workflows/pr.yml) against a real pg+redis stack + booted demo API: the full chain provision->ingest->normalize->propose->policy->execute, plus assertions that the \u00a76 gate ran checks 8/9.5/11.5 (none not_applicable, read from the proof's gate_checks) and that three negatives are actively rejected (duplicate payment, excessive-amount policy reject, missing-approval). audit-before->after linkage is now asserted in strict mode (the executed PI's proof must contain payment_intent.execute.before preceding payment_intent.execute.after, with the after event chained via prev_event_hash). Remaining: localstack-in-CI for the blob path (EC1) and full strict-proof (on-chain merkle anchor) mode, which needs a CI-available Base RPC; receivable-direction / low-confidence negatives are layerable follow-ups.",
       "exit_criteria": [
         "deterministic local-stack-in-CI (pg+redis+localstack+boot binary in GH Actions)",
         "golden-path demo runs in strict mode on every PR",
-        "any §6 check 8 / 9.5 / 11.5 going not_applicable fails the build",
-        "audit-before → audit-after linkage asserted"
+        "any \u00a76 check 8 / 9.5 / 11.5 going not_applicable fails the build",
+        "audit-before \u2192 audit-after linkage asserted"
       ],
       "owner": "engineering+infra",
       "evidence": [
@@ -138,7 +138,7 @@
       "status": "mitigating",
       "mitigation_summary": "Batch 8 P5: error-path coverage added to onchainExecutor (read/write error propagation, receipt-hash sourcing), plaidClient (Plaid API error verbatim), and x402Client (full lifecycle: decimals read, transfer revert, receipt timeout, facilitator 5xx + network error, idempotency-key forwarding, chain selection). PostgresSourceRepository was already at 16-test coverage (reviewer's claim of near-zero was stale). 23 rail-adapter unit tests now pass (was 6). Per-file >=80% line/function/statement coverage gates are now wired into services/api/vitest.config.ts for each money-touching rail adapter (onchainExecutor, plaidClient, x402Client), so a single adapter regressing below 80% fails CI even while the aggregate stays high (verified: forcing onchainExecutor's gate above its real coverage fails the run). The first exit criterion (line-coverage parity wired into test:coverage) is met; the second now has gated scaffolding (R-14): tests/e2e/onchain-executor.testnet.e2e.test.ts drives the real rail against a deployed BrainSmartAccount via the opt-in testnet_onchain_executor_e2e CI job, runnable once testnet fixtures are provisioned (R-03-adjacent).",
       "exit_criteria": [
-        "Coverage parity with the §6 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
+        "Coverage parity with the \u00a76 gate measured at >=80% line coverage on the adapter files (next step: wire coverage gates into test:coverage)",
         "Integration tests on testnet for at least the onchain executor end-to-end (scaffolding shipped in R-14; runs once testnet fixtures/secrets are provisioned)"
       ],
       "owner": "engineering",
@@ -205,9 +205,9 @@
       "status": "closed",
       "closed_at": "2026-06-19",
       "closed_by": "least-privilege DB role split",
-      "mitigation_summary": "Three reviews flagged that the API runtime used ONE broad brain_privileged BYPASSRLS role for every cross-tenant background job and resolver, so a confused-deputy bug or compromise in any one privileged path had the cross-tenant power of all of them (raw, canonical, ledger, audit, execution, tenant-deletion). Closed by replacing it with eight least-privilege BYPASSRLS roles (infra/db-roles.sql §4), each granted only its layer's tables: brain_raw_worker (raw_*), brain_canonical_projector (canonical_* + read raw_parsed), brain_ledger_projector (read canonical_*, write only the three ledger projection targets, NOT the money-path ledger_* tables), brain_execution_worker (execution_outbox claim/mark only; the settle re-enters tenant scope on brain_app), brain_audit_verifier (audit_events read + verifier cursor/findings, findings un-erasable), brain_audit_publisher (audit_events read only), brain_resolver (cross-tenant SELECT only), brain_tenant_deletion (GDPR erasure broad DELETE, route-gated; audit_events/anchors preserved). Each connects via its own BRAIN_*_DB_URL (all eight required in production, fenced by db-isolation.ts; dev falls back to DATABASE_URL with a warning). The boot-time assertDbRoles check proves each pool connects as its expected role with a forbidden-privilege list (e.g. the ledger projector cannot INSERT ledger_payment_intents; tenant_deletion cannot DELETE audit_events). brain_privileged no longer runs in the API runtime; it survives only for the deploy-time seed one-shot. The audit append-only and forensic-table REVOKEs were extended to every new role. The runtime-as-role integration test (tests/invariants/integration/db-role-grants.integration.test.ts) applies the real db-roles.sql to a live DB and uses SET ROLE to prove each role both HOLDS its worker's privileges (not too tight) and LACKS the forbidden ones (not too loose); it runs in CI under a superuser DATABASE_URL and skips otherwise.",
+      "mitigation_summary": "Three reviews flagged that the API runtime used ONE broad brain_privileged BYPASSRLS role for every cross-tenant background job and resolver, so a confused-deputy bug or compromise in any one privileged path had the cross-tenant power of all of them (raw, canonical, ledger, audit, execution, tenant-deletion). Closed by replacing it with eight least-privilege BYPASSRLS roles (infra/db-roles.sql \u00a74), each granted only its layer's tables: brain_raw_worker (raw_*), brain_canonical_projector (canonical_* + read raw_parsed), brain_ledger_projector (read canonical_*, write only the three ledger projection targets, NOT the money-path ledger_* tables), brain_execution_worker (execution_outbox claim/mark only; the settle re-enters tenant scope on brain_app), brain_audit_verifier (audit_events read + verifier cursor/findings, findings un-erasable), brain_audit_publisher (audit_events read only), brain_resolver (cross-tenant SELECT only), brain_tenant_deletion (GDPR erasure broad DELETE, route-gated; audit_events/anchors preserved). Each connects via its own BRAIN_*_DB_URL (all eight required in production, fenced by db-isolation.ts; dev falls back to DATABASE_URL with a warning). The boot-time assertDbRoles check proves each pool connects as its expected role with a forbidden-privilege list (e.g. the ledger projector cannot INSERT ledger_payment_intents; tenant_deletion cannot DELETE audit_events). brain_privileged no longer runs in the API runtime; it survives only for the deploy-time seed one-shot. The audit append-only and forensic-table REVOKEs were extended to every new role. The runtime-as-role integration test (tests/invariants/integration/db-role-grants.integration.test.ts) applies the real db-roles.sql to a live DB and uses SET ROLE to prove each role both HOLDS its worker's privileges (not too tight) and LACKS the forbidden ones (not too loose); it runs in CI under a superuser DATABASE_URL and skips otherwise.",
       "evidence": [
-        "infra/db-roles.sql (§4 roles + per-role grant matrix + REVOKEs)",
+        "infra/db-roles.sql (\u00a74 roles + per-role grant matrix + REVOKEs)",
         "services/api/src/composition/db-isolation.ts (eight-URL production fence)",
         "services/api/src/main.ts (per-role pools + per-pool boot role assertions)",
         "services/api/src/composition/db-roles-sql.test.ts (grant-matrix drift guard)",
@@ -314,6 +314,38 @@
         "services/raw/src/__integration__/rls.integration.test.ts",
         "infra/db-roles.sql"
       ]
+    },
+    {
+      "id": "R-19",
+      "title": "Audit anchor windows are doubly inclusive, so a boundary event can land in two anchors",
+      "priority": "P2",
+      "status": "open",
+      "mitigation_summary": "listEventsForAnchor filters created_at >= periodStart AND created_at <= periodEnd (inclusive on both ends), while publisher.ts's own docstring describes the anchor flow as covering events in [periodStart, periodEnd), a half-open window. A boundary event whose created_at exactly equals one anchor's period_end therefore lands in BOTH that window and the next anchored window, inflating event_count and appearing as a leaf in two separate Merkle trees. This PR's scheduled-publisher fix (services/api/src/main.ts runAnchor) derives each new window's periodStart as the previous confirmed anchor's period_end + 1ms specifically so the boundary event is not re-anchored going forward, which makes the SCHEDULED publisher path harmless in practice. It does not change the inclusive SQL predicate itself, and the manual on-demand route (POST /audit/anchor/publish, services/audit/src/routes.ts) still always computes periodStart as now() - 24h with no offset relative to any prior anchor, so it can still overlap an already-anchored window.",
+      "exit_criteria": [
+        "listEventsForAnchor's window predicate and publisher.ts's docstring agree on inclusive vs half-open semantics",
+        "POST /audit/anchor/publish cannot produce a window that re-anchors an event already covered by a prior confirmed anchor for that tenant",
+        "a regression test proves a boundary-timestamp event is anchored in exactly one confirmed window"
+      ],
+      "owner": "engineering",
+      "evidence": [
+        "services/audit/src/repository.ts",
+        "services/audit/src/publisher.ts",
+        "services/api/src/main.ts",
+        "services/audit/src/routes.ts"
+      ]
+    },
+    {
+      "id": "R-20",
+      "title": "Audit chain created_at derives from the application clock, not the database clock, so cross-process clock skew can fork the hash chain",
+      "priority": "P3",
+      "status": "open",
+      "mitigation_summary": "shared/src/audit/emitter.ts stamps each audit event's created_at from new Date().toISOString() (the emitting process's wall clock), not the database's now(). The per-tenant advisory lock (pg_advisory_xact_lock) serializes the read-then-insert sequence for concurrent emits against one tenant so they cannot race, but it does not impose a total order on created_at values across MULTIPLE emitting processes: with more than one process emitting for the same tenant (two API replicas, or the API and a worker), clock skew between hosts can give a chronologically later event an earlier created_at than the current chain head. If the next emit selects its predecessor by that ordering, two events can chain off the same predecessor, which is the FORK condition checkAuditConsistency exists to detect. No change was made in this PR; the existing per-tenant advisory lock and the existing structural fork check are the only mitigations, and both predate this change set.",
+      "exit_criteria": [
+        "the emitter derives created_at (or the value used to select the chain predecessor) from a single authoritative clock, such as the database's now(), or a per-tenant monotonic sequence, rather than each process's wall clock",
+        "a test proves that two emitting processes with simulated clock skew cannot produce a fork"
+      ],
+      "owner": "engineering",
+      "evidence": ["shared/src/audit/emitter.ts", "services/audit/src/audit-consistency.ts"]
     }
   ]
 }

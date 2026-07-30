@@ -308,6 +308,16 @@ function compareBigNumeric(a: string, b: string): number {
  * (plus comma lists). Real cron semantics (ranges, steps, named months) are
  * post-MVP. The spec hint is "time_window: <cron_expr>" — we honor the
  * tight subset that covers the design-partner interview patterns.
+ *
+ * Unsupported syntax is rejected at validation time (see
+ * validateCronExpression below, wired into validate.ts) rather than
+ * partially matched here: matchField used to silently mis-parse a range
+ * (Number.parseInt of "9-17" returns 9) or a step expression (returns NaN),
+ * so a rule an operator reads as "9am to 5pm, Monday to Friday" would
+ * quietly evaluate as "9am only, Monday only" with no error. Once an
+ * expression has passed validateCronExpression at compose/sign time, this
+ * matcher never sees a range, a step, or a name -- only "*" or bare
+ * comma-separated integers, so it cannot silently mis-evaluate one.
  */
 export function matchesCron(expr: string, at: Date): boolean {
   const parts = expr.trim().split(/\s+/);
@@ -321,6 +331,62 @@ export function matchesCron(expr: string, at: Date): boolean {
     matchField(mon ?? "*", utc.getUTCMonth() + 1) &&
     matchField(dow ?? "*", utc.getUTCDay(), true)
   );
+}
+
+/**
+ * Reject any time_window syntax matchesCron does not actually support, so an
+ * author never signs a range/step/name expecting real cron semantics and
+ * silently gets a different schedule. Exactly 5 whitespace-separated fields;
+ * each field must be "*" or a comma-separated list of bare integers within
+ * that field's range (minute 0-59, hour 0-23, day-of-month 1-31, month
+ * 1-12, day-of-week 0-7). Anything containing "-", "/", "?", "L", "W", "#",
+ * or a non-numeric token is rejected, naming the unsupported construct.
+ */
+export function validateCronExpression(expr: string): void {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) {
+    throw new Error(
+      "must have exactly 5 space-separated fields (minute hour day-of-month month day-of-week); got " +
+        fields.length,
+    );
+  }
+  const FIELD_NAMES = ["minute", "hour", "day-of-month", "month", "day-of-week"];
+  const FIELD_RANGES: ReadonlyArray<readonly [number, number]> = [
+    [0, 59],
+    [0, 23],
+    [1, 31],
+    [1, 12],
+    [0, 7],
+  ];
+  fields.forEach((field, idx) => {
+    if (field === "*") return;
+    const name = FIELD_NAMES[idx]!;
+    if (/[-/?LW#]/.test(field)) {
+      throw new Error(
+        name +
+          ' field "' +
+          field +
+          '" uses an unsupported construct -- ranges, steps, and names are not supported, only "*" and comma-separated integers',
+      );
+    }
+    const [lo, hi] = FIELD_RANGES[idx]!;
+    for (const token of field.split(",")) {
+      if (!/^\d+$/.test(token)) {
+        throw new Error(
+          name +
+            ' field "' +
+            field +
+            '" has non-numeric token "' +
+            token +
+            '" -- only "*" and comma-separated integers are supported',
+        );
+      }
+      const n = Number.parseInt(token, 10);
+      if (n < lo || n > hi) {
+        throw new Error(name + " value " + n + " is out of range " + lo + "-" + hi);
+      }
+    }
+  });
 }
 
 function matchField(field: string, value: number, isDayOfWeek = false): boolean {

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import type { PolicyDocument } from "./dsl.js";
-import { addDecimal, compareDecimal, evaluate, matchesCron, parseRequire } from "./vm.js";
+import {
+  addDecimal,
+  compareDecimal,
+  evaluate,
+  matchesCron,
+  parseRequire,
+  validateCronExpression,
+} from "./vm.js";
 
 import type { Action } from "./vm.js";
 
@@ -82,6 +89,35 @@ describe("matchesCron (5-field subset)", () => {
     // 7 must not match a non-Sunday.
     const monday = new Date("2026-05-25T09:00:00Z");
     expect(matchesCron("0 9 * * 7", monday)).toBe(false);
+  });
+});
+
+describe("validateCronExpression (H-P1-2)", () => {
+  it("rejects a range (Number.parseInt would silently truncate it to the start)", () => {
+    expect(() => validateCronExpression("0 9-17 * * 1-5")).toThrow(/unsupported construct/);
+  });
+  it("rejects a step expression (Number.parseInt would return NaN)", () => {
+    expect(() => validateCronExpression("*/15 * * * *")).toThrow(/unsupported construct/);
+  });
+  it("accepts the equivalent comma-list expression", () => {
+    expect(() => validateCronExpression("0 9,13,17 * * 1,2,3,4,5")).not.toThrow();
+  });
+  it("rejects a 4-field expression", () => {
+    expect(() => validateCronExpression("* * * *")).toThrow(/exactly 5 space-separated fields/);
+  });
+  it("rejects a 6-field expression", () => {
+    expect(() => validateCronExpression("* * * * * *")).toThrow(/exactly 5 space-separated fields/);
+  });
+  it("rejects an out-of-range value", () => {
+    expect(() => validateCronExpression("0 25 * * *")).toThrow(/out of range/);
+  });
+  it("does not change matchesCron evaluation semantics for an accepted expression", () => {
+    // Same accepted expression from above, at a known timestamp: Wednesday
+    // 2026-04-22 13:00 UTC is within "9,13,17" hours and "1,2,3,4,5" weekdays.
+    const expr = "0 9,13,17 * * 1,2,3,4,5";
+    expect(() => validateCronExpression(expr)).not.toThrow();
+    expect(matchesCron(expr, new Date("2026-04-22T13:00:00Z"))).toBe(true);
+    expect(matchesCron(expr, new Date("2026-04-22T14:00:00Z"))).toBe(false);
   });
 });
 
