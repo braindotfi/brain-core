@@ -1463,10 +1463,105 @@
           "auth": "bearer",
           "required_scope": "execution:read",
           "enforcement": "route_scope_check_enforced",
-          "request_shape": "query filters plus limit and cursor",
-          "response_shape": "200 proposals page",
+          "request_shape": "query filters type/status/risk_band/min_confidence plus limit and cursor",
+          "response_shape": "200 { proposals: ProposalReadItem[], next_cursor }. ProposalReadItem keeps compact fields and adds stored_action_type, details, policy, presentation, available_decisions. Public types: vendor_risk, payment, collections, treasury, cash_forecast, dispute, compliance, revenue_intel, reconciliation, subscription, fraud_anomaly, personal_budget, financial_health, purchase_advisor, tax_prep, travel_finance, bill_management, debt_optimization, savings.",
           "example_request": "GET /v1/proposals",
-          "example_response": { "proposals": [], "next_cursor": null },
+          "example_response": {
+            "proposals": [
+              {
+                "id": "prop_example",
+                "type": "vendor_risk",
+                "created_at": "2026-07-30T00:00:00.000Z",
+                "status": "pending",
+                "risk_band": "high",
+                "confidence": 0.91,
+                "mode": "propose",
+                "narrative": "Vendor risk increased.",
+                "evidence": [{ "kind": "counterparty", "ref": "cp_example", "resolvable": true }],
+                "agent": {
+                  "id": "agent_example",
+                  "kind": "internal",
+                  "display_name": "Vendor Risk"
+                },
+                "payment_intent_id": null,
+                "action_type": null,
+                "stored_action_type": "block_payment",
+                "details": {
+                  "vendor_name": "Example Vendor",
+                  "risk_score": 1,
+                  "ranked_signals": [
+                    { "id": "identity_unresolved", "label": "identity unresolved", "score": 1 }
+                  ],
+                  "recommended_action": "hold"
+                },
+                "policy": {
+                  "decision": "confirm",
+                  "policy_id": "pol_example",
+                  "policy_version": 3,
+                  "matched_rule_id": "vendor-risk-hold",
+                  "explanation": "High vendor risk requires review.",
+                  "required_approvers": ["single_signer"],
+                  "trace": []
+                },
+                "presentation": {
+                  "headline": "Example Vendor vendor risk is high; recommend hold.",
+                  "recommendation": "hold",
+                  "key_facts": [{ "label": "Vendor Name", "value": "Example Vendor" }],
+                  "confidence_band": "high",
+                  "policy": {
+                    "decision": "confirm",
+                    "policy_id": "pol_example",
+                    "policy_version": 3,
+                    "matched_rule_id": "vendor-risk-hold",
+                    "explanation": "High vendor risk requires review.",
+                    "required_approvers": ["single_signer"],
+                    "trace": []
+                  },
+                  "consequences": {
+                    "approve": "The vendor risk hold is cleared for this proposal.",
+                    "reject": "The vendor action remains held for follow-up verification.",
+                    "acknowledge": null
+                  },
+                  "actions": [
+                    {
+                      "id": "approve",
+                      "label": "Clear vendor",
+                      "meaning": "Allow the proposed vendor action."
+                    },
+                    {
+                      "id": "reject",
+                      "label": "Hold vendor",
+                      "meaning": "Keep the vendor action blocked."
+                    }
+                  ],
+                  "technical_detail": {
+                    "1_ingest": { "evidence_refs": [] },
+                    "2_extract": {},
+                    "3_classify": {
+                      "public_type": "vendor_risk",
+                      "stored_action_type": "block_payment"
+                    },
+                    "4_score": { "risk_band": "high", "confidence": 0.91 },
+                    "5_policy": {},
+                    "6_propose": { "status": "pending", "mode": "propose" }
+                  }
+                },
+                "available_decisions": [
+                  {
+                    "id": "approve",
+                    "label": "Clear vendor",
+                    "meaning": "Allow the proposed vendor action."
+                  },
+                  {
+                    "id": "reject",
+                    "label": "Hold vendor",
+                    "meaning": "Keep the vendor action blocked."
+                  }
+                ]
+              }
+            ],
+            "next_cursor": null
+          },
           "openapi": "documented:/proposals"
         },
         {
@@ -1476,9 +1571,17 @@
           "required_scope": "execution:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "path { id }",
-          "response_shape": "200 proposal",
+          "response_shape": "200 ProposalReadItem with compact fields plus stored_action_type, details, policy, presentation, available_decisions",
           "example_request": "GET /v1/proposals/prop_example",
-          "example_response": { "id": "prop_example" },
+          "example_response": {
+            "id": "prop_example",
+            "type": "vendor_risk",
+            "stored_action_type": "block_payment",
+            "details": {},
+            "policy": {},
+            "presentation": {},
+            "available_decisions": []
+          },
           "openapi": "documented:/proposals/{id}"
         },
         {

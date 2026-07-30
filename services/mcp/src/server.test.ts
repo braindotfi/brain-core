@@ -249,6 +249,67 @@ const PROPOSAL_FIXTURE: ProposalReadItem = {
   agent: { id: AGENT_ID, kind: "collections", display_name: "Collections" },
   payment_intent_id: null,
   action_type: null,
+  stored_action_type: null,
+  details: {},
+  policy: {
+    decision: null,
+    policy_id: null,
+    policy_version: null,
+    matched_rule_id: null,
+    explanation: null,
+    required_approvers: [],
+    trace: null,
+  },
+  presentation: {
+    headline: "Collections recommendation",
+    recommendation: "Invoice is overdue.",
+    key_facts: [],
+    confidence_band: "high",
+    policy: {
+      decision: null,
+      policy_id: null,
+      policy_version: null,
+      matched_rule_id: null,
+      explanation: null,
+      required_approvers: [],
+      trace: null,
+    },
+    consequences: {
+      approve: null,
+      reject: null,
+      acknowledge: "Record review of the informational finding.",
+    },
+    actions: [
+      {
+        id: "acknowledge",
+        label: "Acknowledge",
+        meaning: "Record review of the informational finding.",
+      },
+    ],
+    technical_detail: {
+      "1_ingest": {},
+      "2_extract": {},
+      "3_classify": {},
+      "4_score": {},
+      "5_policy": {
+        decision: null,
+        policy_id: null,
+        policy_version: null,
+        matched_rule_id: null,
+        explanation: null,
+        required_approvers: [],
+        trace: null,
+      },
+      "6_propose": {},
+    },
+  },
+  available_decisions: [
+    {
+      id: "acknowledge",
+      label: "Acknowledge",
+      meaning: "Record review of the informational finding.",
+    },
+  ],
 };
 
 function fakeProposals(): ProposalToolService {

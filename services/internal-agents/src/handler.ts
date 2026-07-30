@@ -96,26 +96,97 @@ export function requireCurrency(context: Record<string, unknown>, field: string)
 /** Shared helper: shape a non-financial agent proposal from context + evidence. */
 export function agentProposal(input: HandlerInput): ProposedAction {
   const definition = input.definition;
+  const agentKey = definition?.agent_key ?? null;
+  const context = compactContext(input.context);
+  const subject = primarySubject(input.context);
   return {
     channel: "agent",
     action: {
       type: input.action,
       kind: "agent_action",
+      agent_kind: agentKey,
+      domain: agentKey,
+      subject,
+      subject_refs: subjectRefs(input.context),
+      context,
+      recommended_action: input.action,
       invoice_id: str(input.context.invoice_id) || null,
       counterparty_id: str(input.context.counterparty_id) || null,
+      narrative: narrativeForGenericProposal(input.action, agentKey, subject),
+      summary: summaryForGenericProposal(input.action, agentKey, subject),
       evidence_refs: evidenceRefsForAction(input.evidence.items),
       confidence: policyConfidenceForEvidence(input.evidence, input.confidence),
       evidence_score: validUnit(input.evidence.evidence_score)
         ? input.evidence.evidence_score
         : null,
       risk_level: definition?.risk_level ?? null,
-      agent_id: definition?.agent_key ?? null,
-      agent_role: definition?.agent_key ?? null,
+      agent_id: agentKey,
+      agent_role: agentKey,
       missing_required_evidence: [...input.evidence.missing_required_evidence],
       critical_missing: input.evidence.critical_missing,
       mode: definition?.default_authority === "notify_only" ? "notify_only" : "propose",
     },
   };
+}
+
+function compactContext(context: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(context).filter(([, value]) => value !== undefined && value !== null),
+  );
+}
+
+function primarySubject(context: Record<string, unknown>): { kind: string; ref: string } | null {
+  for (const [field, kind] of SUBJECT_FIELDS) {
+    const ref = str(context[field]);
+    if (ref.length > 0) return { kind, ref };
+  }
+  return null;
+}
+
+function subjectRefs(context: Record<string, unknown>): Array<{ kind: string; ref: string }> {
+  return SUBJECT_FIELDS.map(([field, kind]) => {
+    const ref = str(context[field]);
+    return ref.length > 0 ? { kind, ref } : null;
+  }).filter((item): item is { kind: string; ref: string } => item !== null);
+}
+
+const SUBJECT_FIELDS: ReadonlyArray<readonly [string, string]> = [
+  ["invoice_id", "invoice"],
+  ["obligation_id", "obligation"],
+  ["transaction_id", "transaction"],
+  ["account_id", "account"],
+  ["source_account_id", "account"],
+  ["counterparty_id", "counterparty"],
+  ["vendor_id", "counterparty"],
+  ["document_id", "document"],
+  ["raw_artifact_id", "raw_artifact"],
+  ["policy_decision_id", "policy_decision"],
+  ["goal_id", "goal"],
+  ["budget_id", "budget"],
+  ["trip_id", "trip"],
+  ["debt_account_id", "account"],
+];
+
+function narrativeForGenericProposal(
+  action: string,
+  agentKey: string | null,
+  subject: { kind: string; ref: string } | null,
+): string {
+  const agentLabel = agentKey !== null ? agentKey.replaceAll("_", " ") : "agent";
+  const actionLabel = action.replaceAll("_", " ");
+  const subjectLabel = subject !== null ? ` for ${subject.kind} ${subject.ref}` : "";
+  return `${agentLabel} recommends ${actionLabel}${subjectLabel}.`;
+}
+
+function summaryForGenericProposal(
+  action: string,
+  agentKey: string | null,
+  subject: { kind: string; ref: string } | null,
+): string {
+  const actionLabel = action.replaceAll("_", " ");
+  const agentLabel = agentKey !== null ? agentKey.replaceAll("_", " ") : "agent";
+  const subjectLabel = subject !== null ? ` on ${subject.kind}` : "";
+  return `${agentLabel} ${actionLabel}${subjectLabel}.`;
 }
 
 export function evidenceRefsForAction(

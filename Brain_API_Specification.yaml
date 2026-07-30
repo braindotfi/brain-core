@@ -8304,6 +8304,14 @@ components:
         - reconciliation
         - subscription
         - fraud_anomaly
+        - personal_budget
+        - financial_health
+        - purchase_advisor
+        - tax_prep
+        - travel_finance
+        - bill_management
+        - debt_optimization
+        - savings
 
     ProposalRiskBand:
       type: string
@@ -8336,6 +8344,94 @@ components:
         resolvable:
           type: boolean
           description: True when this ref kind is supported by `POST /v1/evidence/resolve`. Existence is checked by the resolver endpoint via `not_found`.
+
+    ProposalDecisionAction:
+      type: object
+      required: [id, label, meaning]
+      properties:
+        id:
+          type: string
+          enum: [approve, reject, acknowledge, undo]
+        label:
+          type: string
+          description: Domain label for the decision, such as Clear vendor, Hold transaction, or Accept match.
+        meaning:
+          type: string
+          description: Human-readable consequence summary for this decision.
+
+    ProposalKeyFact:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value:
+          description: Typed value copied from stored proposal details.
+
+    ProposalPolicySummary:
+      type: object
+      required: [decision, policy_id, policy_version, matched_rule_id, explanation, required_approvers, trace]
+      properties:
+        decision: { type: [string, "null"] }
+        policy_id: { type: [string, "null"] }
+        policy_version: { type: [integer, "null"] }
+        matched_rule_id: { type: [string, "null"] }
+        explanation: { type: [string, "null"] }
+        required_approvers:
+          type: array
+          items: { type: string }
+        trace:
+          description: Stored policy trace when available.
+
+    ProposalPresentation:
+      type: object
+      required:
+        - headline
+        - recommendation
+        - key_facts
+        - confidence_band
+        - policy
+        - consequences
+        - actions
+        - technical_detail
+      properties:
+        headline: { type: string }
+        recommendation: { type: [string, "null"] }
+        key_facts:
+          type: array
+          items: { $ref: '#/components/schemas/ProposalKeyFact' }
+        confidence_band: { type: [string, "null"], enum: [high, medium, low, null] }
+        policy: { $ref: '#/components/schemas/ProposalPolicySummary' }
+        consequences:
+          type: object
+          required: [approve, reject, acknowledge]
+          properties:
+            approve: { type: [string, "null"] }
+            reject: { type: [string, "null"] }
+            acknowledge: { type: [string, "null"] }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/ProposalDecisionAction' }
+        technical_detail:
+          type: object
+          required: [1_ingest, 2_extract, 3_classify, 4_score, 5_policy, 6_propose]
+          properties:
+            1_ingest:
+              type: object
+              additionalProperties: true
+            2_extract:
+              type: object
+              additionalProperties: true
+            3_classify:
+              type: object
+              additionalProperties: true
+            4_score:
+              type: object
+              additionalProperties: true
+            5_policy:
+              $ref: '#/components/schemas/ProposalPolicySummary'
+            6_propose:
+              type: object
+              additionalProperties: true
 
     EvidenceResolveRef:
       type: object
@@ -8404,6 +8500,11 @@ components:
         - agent
         - payment_intent_id
         - action_type
+        - stored_action_type
+        - details
+        - policy
+        - presentation
+        - available_decisions
       properties:
         id: { type: string }
         type: { $ref: '#/components/schemas/ProposalType' }
@@ -8430,6 +8531,18 @@ components:
         action_type:
           type: [string, "null"]
           description: Present for money-path proposals backed by PaymentIntent.
+        stored_action_type:
+          type: [string, "null"]
+          description: Original stored action type, for example `flag_transaction`, `block_payment`, or a PaymentIntent action_type.
+        details:
+          type: object
+          additionalProperties: true
+          description: Stored action fields, or PaymentIntent Ledger columns shaped as action details.
+        policy: { $ref: '#/components/schemas/ProposalPolicySummary' }
+        presentation: { $ref: '#/components/schemas/ProposalPresentation' }
+        available_decisions:
+          type: array
+          items: { $ref: '#/components/schemas/ProposalDecisionAction' }
 
     PaymentIntent:
       allOf:

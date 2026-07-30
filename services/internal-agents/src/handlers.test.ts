@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { evaluate, type Action, type PolicyDocument } from "@brain/policy";
 import type { IAgentService, IPaymentIntentService, ServiceCallContext } from "@brain/shared";
 import type { EvidenceBundle } from "./evidence.js";
-import { proposeAction, type ProposedAction } from "./handler.js";
+import { agentProposal, proposeAction, type ProposedAction } from "./handler.js";
 import { collectionsHandler } from "./collections/handler.js";
 import { collectionsDefinition } from "./collections/definition.js";
 import { revenueIntelDefinition } from "./revenue_intel/definition.js";
@@ -13,6 +13,7 @@ import { reconciliationHandler } from "./reconciliation/handler.js";
 import { reconciliationDefinition } from "./reconciliation/definition.js";
 import { paymentHandler } from "./payment/handler.js";
 import { paymentDefinition } from "./payment/definition.js";
+import { travelFinanceDefinition } from "./travel_finance/definition.js";
 
 const CTX: ServiceCallContext = { tenantId: "tnt_acme", actor: "agent_1" };
 const EVIDENCE: EvidenceBundle = {
@@ -131,6 +132,44 @@ describe("Collections handler", () => {
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
       expect(proposed.action.mode).toBe("notify_only");
+    }
+  });
+});
+
+describe("Generic advisory proposal helper", () => {
+  it("stores domain context and subject refs instead of only invoice placeholders", () => {
+    const proposed = agentProposal({
+      action: "recommend_card",
+      context: {
+        trip_id: "trip_1",
+        merchant: "Airline",
+        amount: "450.00",
+        currency: "USD",
+      },
+      evidence: EVIDENCE,
+      definition: { ...travelFinanceDefinition, default_authority: "notify_only" },
+      confidence: 0.8,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action).toMatchObject({
+        type: "recommend_card",
+        agent_kind: "travel_finance",
+        domain: "travel_finance",
+        recommended_action: "recommend_card",
+        subject: { kind: "trip", ref: "trip_1" },
+        subject_refs: [{ kind: "trip", ref: "trip_1" }],
+        context: {
+          trip_id: "trip_1",
+          merchant: "Airline",
+          amount: "450.00",
+          currency: "USD",
+        },
+        invoice_id: null,
+        counterparty_id: null,
+        mode: "notify_only",
+      });
     }
   });
 });

@@ -4420,7 +4420,7 @@ export interface components {
             linked_transaction_ids?: string[];
         };
         /** @enum {string} */
-        ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly";
+        ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly" | "personal_budget" | "financial_health" | "purchase_advisor" | "tax_prep" | "travel_finance" | "bill_management" | "debt_optimization" | "savings";
         /** @enum {string} */
         ProposalRiskBand: "low" | "standard" | "elevated" | "high";
         /** @enum {string} */
@@ -4438,6 +4438,61 @@ export interface components {
             ref: string;
             /** @description True when this ref kind is supported by `POST /v1/evidence/resolve`. Existence is checked by the resolver endpoint via `not_found`. */
             resolvable: boolean;
+        };
+        ProposalDecisionAction: {
+            /** @enum {string} */
+            id: "approve" | "reject" | "acknowledge" | "undo";
+            /** @description Domain label for the decision, such as Clear vendor, Hold transaction, or Accept match. */
+            label: string;
+            /** @description Human-readable consequence summary for this decision. */
+            meaning: string;
+        };
+        ProposalKeyFact: {
+            label: string;
+            /** @description Typed value copied from stored proposal details. */
+            value: unknown;
+        };
+        ProposalPolicySummary: {
+            decision: string | null;
+            policy_id: string | null;
+            policy_version: number | null;
+            matched_rule_id: string | null;
+            explanation: string | null;
+            required_approvers: string[];
+            /** @description Stored policy trace when available. */
+            trace: unknown;
+        };
+        ProposalPresentation: {
+            headline: string;
+            recommendation: string | null;
+            key_facts: components["schemas"]["ProposalKeyFact"][];
+            /** @enum {string|null} */
+            confidence_band: "high" | "medium" | "low" | null;
+            policy: components["schemas"]["ProposalPolicySummary"];
+            consequences: {
+                approve: string | null;
+                reject: string | null;
+                acknowledge: string | null;
+            };
+            actions: components["schemas"]["ProposalDecisionAction"][];
+            technical_detail: {
+                "1_ingest": {
+                    [key: string]: unknown;
+                };
+                "2_extract": {
+                    [key: string]: unknown;
+                };
+                "3_classify": {
+                    [key: string]: unknown;
+                };
+                "4_score": {
+                    [key: string]: unknown;
+                };
+                "5_policy": components["schemas"]["ProposalPolicySummary"];
+                "6_propose": {
+                    [key: string]: unknown;
+                };
+            };
         };
         EvidenceResolveRef: {
             /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch. */
@@ -4483,6 +4538,15 @@ export interface components {
             payment_intent_id: string | null;
             /** @description Present for money-path proposals backed by PaymentIntent. */
             action_type: string | null;
+            /** @description Original stored action type, for example `flag_transaction`, `block_payment`, or a PaymentIntent action_type. */
+            stored_action_type: string | null;
+            /** @description Stored action fields, or PaymentIntent Ledger columns shaped as action details. */
+            details: {
+                [key: string]: unknown;
+            };
+            policy: components["schemas"]["ProposalPolicySummary"];
+            presentation: components["schemas"]["ProposalPresentation"];
+            available_decisions: components["schemas"]["ProposalDecisionAction"][];
         };
         PaymentIntent: components["schemas"]["LedgerCommonFields"] & {
             created_by_agent_id?: string;
