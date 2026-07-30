@@ -308,6 +308,84 @@ Done
 - Production tenant creation is also available at
   `POST /v1/orgs/{orgId}/tenants`, using the same persistent production tenant
   flow as `POST /v1/tenants`.
+- Policy activation blocks on every linter ERROR finding, not only the
+  confidence floor. Activation previously computed the other eight ERROR codes
+  (`auto_no_amount_cap`, `auto_no_counterparty_constraint`,
+  `auto_no_verified_counterparty`, `no_approval_path_high_value`,
+  `unsupported_currency`, `invalid_approval_role`, `auto_no_risk_bound`,
+  `broad_any_auto`) and discarded them, so an unbounded auto-executing `any`
+  money-movement rule could be activated as long as some other rule carried a
+  confidence floor. The rollback flag is `BRAIN_POLICY_LINT_REJECT`; it
+  defaults true, and a `tenant.kind='production'` tenant always enforces
+  regardless of the flag. `POST /policy/:tenant_id/lint` applies the identical
+  options so it is a faithful preview of activation rather than reporting WARN
+  for what activation rejects. Consequence to know: 14 of the
+  `services/internal-agents/src/*/policy.template.json` reference templates are
+  NOT activatable under this rule (they declare `applies_to: ["any"]` with
+  `execute: "auto"`, and `any` matches `outbound_payment` in the VM, so the
+  finding is a true positive). Their current ERROR codes are pinned in
+  `services/internal-agents/src/policy-template-lint-inventory.test.ts` so the
+  list shrinks deliberately; narrowing each agent's authority envelope is an
+  open product decision.
+- Submitted policy documents are structurally validated by
+  `validatePolicyDocument` (`services/policy/src/validate.ts`) at compose, lint,
+  simulate-historical, and again at activation against the stored row. It
+  rejects rule shape errors, duplicate rule ids, malformed amount literals,
+  out-of-range unit-interval bounds, unsupported spend and tx window names,
+  unknown `when` keys, message-template placeholders outside
+  `allowed_variables`, and dangling `counterparty.in` / `counterparty.not_in`
+  list references. Unsupported cron syntax is rejected by
+  `validateCronExpression` rather than partially matched: the documented matcher
+  subset is `*` plus comma-separated integers only, so ranges, steps and names
+  now fail at validation instead of silently evaluating wrong.
+- The signed-policy chain of trust is enforced on READ as well as write.
+  `getActive` recomputes the canonical content hash and throws
+  `policy_not_active` on drift, deliberately failing closed rather than
+  returning null (null would read as "no policy" and get misreported as
+  `policy_not_found`). The storage half is in `infra/db-roles.sql`: blanket
+  UPDATE on `policies` is revoked from every runtime role and re-granted as the
+  column list `state, signers, activated_at, deactivated_at, onchain_tx,
+onchain_version`, so `content` and `content_hash` are immutable after INSERT;
+  `policy_decisions` is insert-only to every runtime role. `brain_tenant_deletion`
+  keeps its DELETE for erasure. Both properties are asserted by
+  `check-invariants`.
+- Because that read check is fail-closed, any `policies` row whose
+  `content_hash` was not written by `contentHash` is fatal on deploy. Two demo
+  seeders wrote `sha256(JSON.stringify(doc))` (insertion order) instead of the
+  canonical sorted-key hash; both are fixed, but rows they already wrote must be
+  re-stamped BEFORE deploying, with
+  `node scripts/ops/repair-policy-content-hash.mjs` (dry run by default). It
+  refuses to re-stamp a row with signatures, since those were collected over the
+  stored digest. See the pre-deploy step in
+  `docs/r03-staging-deploy-runbook.md`.
+- Audit anchor coverage is derived per tenant from `MAX(period_end)` over its
+  non-reverted anchors, not from a fixed `now - AUDIT_ANCHOR_INTERVAL_MS`
+  window. The fixed window left every event emitted while the process was down
+  (any deploy or restart) permanently unanchored and invisible. A 7 day
+  catch-up clamp bounds one cycle's tree, and
+  `brain.audit.anchor.oldest_unanchored_age_seconds` makes the backlog
+  observable. `brain_audit_publisher` holds SELECT on `audit_anchors` for the
+  coverage join.
+- Published anchors are re-proved, so tail truncation is detectable. The fork,
+  gap, genesis and content-hash checks all pass if the newest events of a
+  tenant's chain are deleted. `verifyAnchorRoots` recomputes each confirmed
+  anchor's Merkle root from the rows currently in its window and records a
+  durable `audit_integrity_findings` row on mismatch, paging oldest-first
+  through its own `audit_verifier_checkpoint` cursor so every anchor is
+  eventually re-proved rather than only the newest slice. No migration: both
+  tables are keyed by `verifier_name`. Pass state rolls into
+  `/internal/audit/health` beside the content verifier.
+- Inclusion proofs resolve against the anchor window CONTAINING the event
+  (`findAnchorForEvent`), in both `GET /audit/event/:id` and the strict-proof
+  path in `services/api/src/proof/fetchProofSources.ts`. Both previously used
+  the newest anchor only, so every historical event returned a null root and an
+  empty proof despite having been anchored.
+- `POST /audit/export` returns 501 and names `POST /v1/tenants/{id}/export`. It
+  used to return 202 and a `job_id` that no worker, table or status route could
+  redeem. The SDK method surfaces the server error rather than a fabricated job.
+- `POST /audit/anchor/publish` derives its per-tenant cooldown from the latest
+  `audit_anchors` row rather than in-process state, so it survives restart, is
+  not per-replica, and a failed publish no longer consumes the window.
 
 Pending Dmitriy sign-off
 

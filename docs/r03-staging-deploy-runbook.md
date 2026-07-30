@@ -60,6 +60,27 @@ environment approval is the manual promote gate.
    - `BRAIN_MCP_READER_DB_PASSWORD` for the `brain_mcp_reader` role
    - the normal production-mode database, auth, rail, blob, and on-chain values
 
+## Pre-Deploy: policy content_hash repair (one-time)
+
+Before deploying a commit that changes `getActive`'s content_hash drift check
+(services/policy/src/repository.ts) or any policy seeder's hash computation,
+run the repair script first, in this order. Ordering matters: pre-deploy
+`getActive` does not verify content_hash, so there is no window where a
+legacy row is fatal until after the deploy ships, which makes it safe to
+repair before promoting rather than racing the deploy.
+
+The script is plain `node`, not `pnpm exec tsx`, deliberately: it is a
+`.mjs` script like every other `scripts/*.mjs` guard in this repo, and
+needs no `tsx` module-resolution step to run.
+
+1. `DATABASE_URL=<staging owner/migration role> node scripts/ops/repair-policy-content-hash.mjs`
+   (dry run against staging).
+2. `DATABASE_URL=<staging owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply`.
+3. Deploy.
+4. Re-run the dry run against staging and confirm it exits 0 (zero rows
+   outstanding). Any row it reports blocked by a signature needs a manual
+   re-sign, not this script, before the deploy is safe.
+
 ## Deploy Flow
 
 Merge to `main` or manually re-run the `main` workflow.
