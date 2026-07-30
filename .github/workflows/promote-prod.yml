@@ -135,7 +135,15 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate postgres redis minio minio-setup caddy"
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             compose=\"docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files\"; \
+             services=\$(\$compose --profile agents config --services); \
+             up_services=''; \
+             for service in postgres redis minio minio-setup jwks caddy; do \
+               echo \"\$services\" | grep -qx \"\$service\" && up_services=\"\$up_services \$service\"; \
+             done; \
+             [ -n \"\$up_services\" ] && \$compose up -d --no-build --no-recreate \$up_services"
 
       # `auth` is now the single JWKS source for api/worker/surface-gateway
       # (Phase 4, OAUTH-AS-PLAN.md section 8), and it boots behind five
@@ -150,10 +158,18 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml run --rm --no-deps db-roles && \
-             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-deps --no-build auth || \
-              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 auth && false))"
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             compose=\"docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files\"; \
+             services=\$(\$compose --profile agents config --services); \
+             \$compose run --rm --no-deps migrate node tools/migrate/dist/cli.js up && \
+             \$compose run --rm --no-deps db-roles && \
+             if echo \"\$services\" | grep -qx auth; then \
+               (\$compose up -d --no-deps --no-build auth || \
+                (\$compose logs --tail=200 auth && false)); \
+             else \
+               echo 'auth service not defined by target compose; skipping auth recreate'; \
+             fi"
 
       # Pre-flight gate, not the post-recreate smoke below (that one stays
       # where it is). auth opens three Postgres pools before it starts
@@ -164,6 +180,15 @@ jobs:
       - name: Wait for auth healthy on VM before recreating verifiers
         run: |
           expected="${{ steps.resolve.outputs.sha }}"
+          has_auth=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files --profile agents config --services | grep -qx auth && echo yes || echo no")
+          if [ "$has_auth" != "yes" ]; then
+            echo "auth service not defined by target compose; skipping auth health gate"
+            exit 0
+          fi
           last_commit=""
           for i in $(seq 1 10); do
             body=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" 'curl -s http://localhost:3003/healthz' || true)
@@ -181,8 +206,17 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents surface-gateway || \
-              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents surface-gateway && false))"
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             compose=\"docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files\"; \
+             compose_agents=\"\$compose --profile agents\"; \
+             services=\$(\$compose_agents config --services); \
+             app_services=''; \
+             for service in api worker agents surface-gateway; do \
+               echo \"\$services\" | grep -qx \"\$service\" && app_services=\"\$app_services \$service\"; \
+             done; \
+             ( [ -n \"\$app_services\" ] && \$compose_agents up -d --no-deps --no-build \$app_services || exit 1 ) || \
+              (\$compose_agents logs --tail=200 \$app_services && false)"
 
       # The Caddyfile shipped above is bind-mounted read-only into the caddy
       # container; a plain scp does not make Caddy re-read it, and the infra
@@ -210,9 +244,17 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             compose=\"docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files\"; \
+             services=\$(\$compose --profile agents config --services); \
+             if ! echo \"\$services\" | grep -qx caddy; then \
+               echo 'caddy service not defined by target compose; skipping caddy reload'; \
+               exit 0; \
+             fi; \
              ok=0; \
              for i in 1 2 3 4 5; do \
-               docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile && ok=1 && break; \
+               \$compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile && ok=1 && break; \
                sleep 3; \
              done; \
              [ \$ok -eq 1 ]"
@@ -243,6 +285,15 @@ jobs:
       - name: Smoke test auth /healthz
         run: |
           expected="${{ steps.resolve.outputs.sha }}"
+          has_auth=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files --profile agents config --services | grep -qx auth && echo yes || echo no")
+          if [ "$has_auth" != "yes" ]; then
+            echo "auth service not defined by target compose; skipping auth smoke test"
+            exit 0
+          fi
           last_commit=""
           for i in $(seq 1 10); do
             body=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" 'curl -s http://localhost:3003/healthz' || true)
