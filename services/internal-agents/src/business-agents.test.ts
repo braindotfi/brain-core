@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { evaluate, type Action, type Decision, type PolicyDocument } from "@brain/policy";
 import { resolveExecutionMode, type DecisionVerdict } from "@brain/shared";
 import type { InternalAgentDefinition } from "@brain/schemas";
-import type { EvidenceBundle } from "./evidence.js";
+import { scoreEvidence, type EvidenceBundle } from "./evidence.js";
 import type { InternalAgentHandler, ProposedAction } from "./handler.js";
 import { paymentDefinition } from "./payment/definition.js";
 import { paymentHandler } from "./payment/handler.js";
@@ -243,6 +243,17 @@ describe("high-risk agents", () => {
       expect(mode).toBe("confirm");
     },
   );
+
+  it("vendor_risk accepts upload-created vendor evidence without destination history", () => {
+    const bundle = scoreEvidence(
+      [{ kind: "vendor", ref: "cp_upload_vendor", confidence: 0.8 }],
+      vendorRiskDefinition.required_evidence,
+    );
+
+    expect(bundle.missing_required_evidence).toEqual([]);
+    expect(bundle.critical_missing).toBe(false);
+    expect(bundle.evidence_score).toBeCloseTo(0.8, 10);
+  });
 });
 
 describe("integration", () => {
