@@ -3663,6 +3663,17 @@ export interface components {
             };
         };
         /**
+         * @description RFC 6749 §5.2 / 7009 / 7591 flat error shape used by the OAuth
+         *     authorization server (`https://auth.brain.fi`) -- deliberately NOT
+         *     the Error envelope above, which is this API's own convention.
+         */
+        OAuthError: {
+            /** @description RFC-defined error code, e.g. invalid_request, invalid_client, invalid_grant, unauthorized_client, invalid_scope, unsupported_grant_type, invalid_redirect_uri, invalid_client_metadata, server_error. */
+            error: string;
+            /** @description Optional human-readable detail. Not present on every error. */
+            error_description?: string;
+        };
+        /**
          * @description One reconciled, provider-named artifact source vocabulary: the eight connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
          * @enum {string}
          */

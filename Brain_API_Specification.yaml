@@ -39,6 +39,7 @@ servers:
 
 security:
   - bearerAuth: []
+  - oauth2: [ledger:read, wiki:read, raw:read, raw:write, payment_intent:propose, execution:propose]
 
 tags:
   - name: Raw
@@ -91,6 +92,25 @@ tags:
     description: Public, read-only API documentation surface — the interactive reference UI and the raw OpenAPI contract it renders.
   - name: Reference
     description: Public, tenant-agnostic reference data with no truth or provenance coupling.
+  - name: OAuth Authorization Server
+    description: |
+      RFC 6749/6750/7009/7591/8414/9700 (OAuth 2.1-style) authorization server
+      at `https://auth.brain.fi` -- a separate deployable on a separate origin
+      from the rest of this API, not mounted under `/v1`. It mints
+      propose-only agent tokens for third-party clients (chiefly MCP hosts)
+      via the standard authorization-code + PKCE flow; it never mints
+      `payment_intent:approve`, `payment_intent:execute`, `*:admin`, or
+      `policy:sign` (see the `oauth2` security scheme's `scopes`, sourced
+      directly from `AGENT_PERMITTED_SCOPES`). `GET/POST /login`,
+      `/set-password`, `/forgot-password`, and `POST /authorize/consent` are
+      server-rendered, CSRF-protected HTML form flows for a human browser --
+      not JSON APIs -- and are documented here only so their existence and
+      shape are discoverable; do not call them programmatically. `POST
+      /login` here is a **different endpoint on a different origin** from
+      `POST /auth/login` above (the Auth tag) -- that one is `api.brain.fi`'s
+      JSON password-login route returning an owner JWT; this one is
+      `auth.brain.fi`'s HTML login page that starts or resumes an OAuth
+      `/authorize` flow.
 
 paths:
   /docs:
@@ -396,6 +416,571 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  #############################################################################
+  # OAUTH AUTHORIZATION SERVER (auth.brain.fi) -- a separate deployable on a
+  # separate origin, not mounted under /v1. Every path below carries its own
+  # `servers:` override for exactly that reason: without it, Scalar (and any
+  # generated client) would resolve these against the default
+  # https://api.brain.fi/v1 servers above, which do not serve them.
+  #############################################################################
+
+  /.well-known/oauth-authorization-server:
+    x-sdk-exclude: true # bundle-time-only marker (redocly.yaml decorator) -- excluded from clients/sdk codegen, still fully rendered at GET /v1/docs
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: RFC 8414 authorization server metadata
+      description: |
+        Public, unauthenticated discovery document. `issuer` and `jwks_uri`
+        are derived solely from `AUTH_ISSUER`.
+      operationId: getAuthorizationServerMetadata
+      security: [] # public
+      responses:
+        '200':
+          description: Authorization server metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - issuer
+                  - authorization_endpoint
+                  - token_endpoint
+                  - jwks_uri
+                  - scopes_supported
+                  - response_types_supported
+                  - grant_types_supported
+                  - code_challenge_methods_supported
+                  - token_endpoint_auth_methods_supported
+                  - revocation_endpoint
+                  - revocation_endpoint_auth_methods_supported
+                  - registration_endpoint
+                properties:
+                  issuer: { type: string, example: https://auth.brain.fi }
+                  authorization_endpoint: { type: string, example: https://auth.brain.fi/authorize }
+                  token_endpoint: { type: string, example: https://auth.brain.fi/token }
+                  jwks_uri: { type: string, example: https://auth.brain.fi/.well-known/jwks.json }
+                  scopes_supported:
+                    type: array
+                    items: { type: string }
+                    description: AGENT_PERMITTED_SCOPES verbatim -- the same set as the `oauth2` security scheme's scopes.
+                  response_types_supported: { type: array, items: { type: string, enum: [code] } }
+                  grant_types_supported: { type: array, items: { type: string, enum: [authorization_code, refresh_token] } }
+                  code_challenge_methods_supported: { type: array, items: { type: string, enum: [S256] } }
+                  token_endpoint_auth_methods_supported: { type: array, items: { type: string, enum: [none] }, description: Public clients only. }
+                  revocation_endpoint: { type: string, example: https://auth.brain.fi/revoke }
+                  revocation_endpoint_auth_methods_supported: { type: array, items: { type: string, enum: [none] } }
+                  registration_endpoint: { type: string, example: https://auth.brain.fi/register }
+
+  /.well-known/jwks.json:
+    x-sdk-exclude: true # see the note on the previous path
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: JSON Web Key Set
+      description: Public, unauthenticated. The signing key set access tokens minted by this authorization server verify against. Cacheable (`max-age=300`).
+      operationId: getAuthorizationServerJwks
+      security: [] # public
+      responses:
+        '200':
+          description: JWKS document
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+
+  /authorize:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: Authorization request (RFC 6749 + PKCE, mandatory S256)
+      description: |
+        Returns **HTML** (a login or consent page), or a 302 redirect back
+        to `redirect_uri` -- never JSON. Not intended for programmatic use;
+        a client fetches this URL by opening it in a browser (or a system
+        webview), it does not parse the response body.
+
+        Security rule (checked before anything else on this request): an
+        unknown `client_id`, or a `redirect_uri` that does not exactly
+        match one of the client's registered values, renders an HTML error
+        page and **never** redirects. Every other validation failure (bad
+        `response_type`, missing/invalid PKCE params, an unrecognized
+        `resource`) is instead returned as a 302 redirect to `redirect_uri`
+        carrying `?error=...&state=...`.
+
+        If the browser has no valid session cookie, the response is a 302
+        to `/login?continue=<opaque>` and the flow resumes here after
+        sign-in. If the session is valid but does not resolve to an active
+        tenant-admin member, the response is a 302 with `error=access_denied`.
+        Otherwise a consent page is rendered offering, per eligible agent,
+        the intersection of `scope` with that agent's registered scopes and
+        `AGENT_PERMITTED_SCOPES` -- see `POST /authorize/consent`.
+      operationId: authorize
+      security: [] # public -- session cookie or redirect to /login gates it
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema: { type: string, enum: [code] }
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: redirect_uri
+          in: query
+          required: true
+          schema: { type: string }
+          description: Must exactly match one of the client's registered redirect_uris (loopback port variance excepted, RFC 8252 §7.3).
+        - name: scope
+          in: query
+          schema: { type: string }
+          description: Space-delimited requested scopes. Unrecognized scope tokens are silently dropped, never rejected.
+        - name: state
+          in: query
+          schema: { type: string }
+          description: Opaque value echoed back verbatim on every redirect (success or error).
+        - name: code_challenge
+          in: query
+          required: true
+          schema: { type: string }
+          description: PKCE code challenge. Required -- this authorization server never allows the bare (no-PKCE) authorization_code flow.
+        - name: code_challenge_method
+          in: query
+          required: true
+          schema: { type: string, enum: [S256] }
+          description: Only S256 is accepted. plain is rejected (invalid_request); it is unstorable at the database layer too.
+        - name: resource
+          in: query
+          schema: { type: string }
+          description: RFC 8707 resource indicator. Unlike at POST /token, this endpoint fails closed if present, rejecting any value other than the one recognized MCP resource URL with a redirect carrying error=invalid_target -- it is not silently ignored or narrowed the way an unrecognized resource is at the token endpoint.
+      responses:
+        '200':
+          description: HTML login or consent page.
+          content:
+            text/html:
+              schema: { type: string }
+        '302':
+          description: Redirect to /login (no session), or to redirect_uri with an authorization code or `?error=...&state=...`.
+
+  /authorize/consent:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Consent decision (browser-only form POST)
+      description: |
+        Server-rendered, CSRF-protected HTML `<form>` submission from the
+        consent page GET /authorize renders -- not a JSON API, not intended
+        for programmatic use. Requires the same session cookie and CSRF
+        token minted by that page. On `decision=allow`, issues a single-use
+        authorization code and redirects to `redirect_uri?code=...`; on any
+        other decision, or on a denied/unresolved admin authority, redirects
+        to `redirect_uri?error=access_denied`. A tampered `agent_id` naming
+        an agent outside the caller's tenant (or inactive) is treated as a
+        security violation, not a normal denial, and renders a 404 HTML
+        error page instead of redirecting.
+      operationId: authorizeConsent
+      security: [] # public -- session cookie + CSRF token gate it
+      responses:
+        '200':
+          description: CSRF or session-expired HTML error page (re-rendered form).
+          content:
+            text/html:
+              schema: { type: string }
+        '302':
+          description: Redirect to redirect_uri with `code` (and `state`) on allow, or `error=access_denied` on deny.
+        '404':
+          description: Selected agent not found in the caller's tenant, or inactive.
+          content:
+            text/html:
+              schema: { type: string }
+        '409':
+          description: The selected agent's on-chain scope-hash attestation could not be verified.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /token:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Token endpoint -- authorization_code and refresh_token grants
+      description: |
+        `application/x-www-form-urlencoded` body, RFC 6749 §5.1/§6. Both
+        grant types are documented together since they share this one
+        endpoint and response shape.
+
+        `grant_type=authorization_code`: single-use code exchange with
+        mandatory PKCE `code_verifier`. Also mints a `refresh_token`, but
+        only when the client is registered with `refresh_token` in its
+        `grant_types` -- otherwise the response omits it entirely. The
+        `resource` param (RFC 8707) is honored again here and determines
+        the minted access token's audience; a code replay (already-consumed
+        or racing double-spend) revokes every outstanding refresh token in
+        that grant's family.
+
+        `grant_type=refresh_token`: rotate-on-use. A client not registered
+        for `refresh_token` gets `unauthorized_client`. Presenting an
+        already-rotated refresh token is treated as reuse (compromise
+        evidence) and revokes the whole token family, checked before expiry
+        so an old stolen token cannot dodge detection by simply being late.
+        An optional `scope` param may only narrow, never widen, the
+        original grant -- attempting to add a scope not already held
+        returns `invalid_scope`. `resource` is accepted here too and
+        re-derives the audience per request rather than reusing whatever
+        was stored at issuance.
+      operationId: oauthToken
+      security: [] # public -- PKCE/refresh-token possession authenticates
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, client_id]
+              properties:
+                grant_type: { type: string, enum: [authorization_code, refresh_token] }
+                client_id: { type: string }
+                code: { type: string, description: authorization_code grant only. }
+                redirect_uri: { type: string, description: authorization_code grant only -- must match the value sent to GET /authorize. }
+                code_verifier: { type: string, description: authorization_code grant only -- PKCE verifier for the code's S256 challenge. }
+                resource: { type: string, description: 'RFC 8707 resource indicator, either grant.' }
+                refresh_token: { type: string, description: refresh_token grant only. }
+                scope: { type: string, description: 'refresh_token grant only -- space-delimited; may only narrow the original grant, never widen it.' }
+      responses:
+        '200':
+          description: Access token issued (and rotated refresh token, where applicable).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, expires_in, scope]
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, enum: [Bearer] }
+                  expires_in: { type: integer, description: 'Seconds. Default 3600; RFC 6749 §5.1 ceiling is 1h.' }
+                  refresh_token: { type: string, description: Present only when the client is registered for the refresh_token grant type. }
+                  scope: { type: string, description: Space-delimited granted scopes actually issued (may be narrower than requested). }
+        '400':
+          description: |
+            `invalid_request` (missing required param), `invalid_grant`
+            (unknown/expired/replayed/reused/mismatched code or refresh
+            token, or the agent is inactive/quarantined, or its on-chain
+            scope hash has drifted since consent), `unauthorized_client`
+            (client not registered for the `refresh_token` grant type), or
+            `invalid_scope` (refresh request tried to widen scope).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '401':
+          description: invalid_client -- unknown or disabled client_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /revoke:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Token revocation (RFC 7009)
+      description: |
+        `application/x-www-form-urlencoded` body. **Always returns 200
+        with an empty body**, regardless of whether `token` existed,
+        was already revoked, or belonged to a different client -- RFC 7009
+        §2.2 requires this so the endpoint cannot become an existence
+        oracle for tokens the caller does not already hold. This is not a
+        claim of full timing-side-channel freedom (a real revoke does a
+        tenant-scoped round trip plus an audit emit; a miss does one
+        indexed lookup) -- but a caller must already possess the raw token
+        to reach either branch, so a timing difference only confirms "what
+        I hold is live," nothing an attacker does not already know. Access
+        tokens are stateless JWTs, not rows this endpoint holds, so
+        revoking one is a no-op accepted the same way as an unknown token
+        rather than returning a distinguishable `unsupported_token_type`.
+      operationId: oauthRevoke
+      security: [] # public -- every registered client is public (auth_method none)
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: 'A refresh token. Any other value (an access token, an unknown token) is silently accepted and ignored.' }
+                client_id: { type: string, description: 'Optional. If present and it names a different client than the one the token belongs to, the revoke is refused (silently -- the response is unchanged).' }
+      responses:
+        '200':
+          description: Always -- see description. Empty body.
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /register:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Dynamic Client Registration (RFC 7591)
+      description: |
+        Unauthenticated and open by design -- an MCP host discovers this
+        authorization server and registers with zero prior credential, so
+        there is nothing to gate this route on. Rate-limited to 5/minute
+        per IP instead. Public clients only:
+        `token_endpoint_auth_method` must be `"none"` if present at all --
+        any other explicit value is rejected rather than silently
+        downgraded. Requires `Content-Type: application/json` (a plain HTML
+        `<form>` POST is refused, since it would otherwise be a
+        cross-site-forgeable, unauthenticated registration vector with no
+        per-caller rate-limit key). RFC 7592 client management (GET/PUT/
+        DELETE on a registered client, a registration access token) is
+        deliberately not implemented -- there is no way to look up, update,
+        or delete a client after registering it.
+      operationId: registerOauthClient
+      security: [] # public by design
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [redirect_uris]
+              properties:
+                redirect_uris:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items: { type: string, maxLength: 2048 }
+                  description: Each must be https://, or a loopback http:// literal (127.0.0.1/::1), with no fragment.
+                token_endpoint_auth_method:
+                  type: string
+                  enum: [none]
+                  description: Only "none" is accepted. Defaults to "none" when omitted.
+                grant_types:
+                  type: array
+                  items: { type: string, enum: [authorization_code, refresh_token] }
+                  description: Defaults to ["authorization_code"] when omitted. refresh_token requires authorization_code also be present.
+                response_types:
+                  type: array
+                  items: { type: string, enum: [code] }
+                  description: Must be exactly ["code"] if present.
+                client_name: { type: string, maxLength: 200, description: 'Rendered verbatim (HTML-escaped at render time) on the consent page.' }
+                software_id: { type: string, maxLength: 100 }
+                software_version: { type: string, maxLength: 100 }
+      responses:
+        '201':
+          description: Client registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [client_id, client_id_issued_at, redirect_uris, grant_types, response_types, token_endpoint_auth_method]
+                properties:
+                  client_id: { type: string }
+                  client_id_issued_at: { type: integer, description: Unix seconds. }
+                  redirect_uris: { type: array, items: { type: string } }
+                  grant_types: { type: array, items: { type: string } }
+                  response_types: { type: array, items: { type: string } }
+                  token_endpoint_auth_method: { type: string, enum: [none] }
+                  client_name: { type: string }
+                  software_id: { type: string }
+                  software_version: { type: string }
+              example:
+                client_id: client_01H...
+                client_id_issued_at: 1750000000
+                redirect_uris: ["https://host.example/callback"]
+                grant_types: [authorization_code, refresh_token]
+                response_types: [code]
+                token_endpoint_auth_method: none
+                client_name: Example MCP Host
+        '400':
+          description: '`invalid_redirect_uri` (missing/malformed/too many redirect_uris) or `invalid_client_metadata` (any other metadata rule violated, e.g. an unsupported grant_types/response_types/token_endpoint_auth_method combination, or a non-JSON Content-Type).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /login:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: Human login page (browser-only HTML)
+      description: |
+        Server-rendered HTML login form, not a JSON API -- not intended for
+        programmatic use. **This is a different endpoint on a different
+        origin from `POST /auth/login`** (the Auth tag, `api.brain.fi`):
+        that one is a JSON password-login route returning an owner JWT;
+        this one is `auth.brain.fi`'s HTML page a browser opens (typically
+        via GET /authorize's redirect here when no session cookie is
+        present) and submits a real `<form method="post">` to.
+      operationId: getLoginPage
+      security: [] # public
+      parameters:
+        - name: continue
+          in: query
+          schema: { type: string }
+          description: Opaque blob carrying a pending GET /authorize request to resume after successful login.
+        - name: notice
+          in: query
+          schema: { type: string, enum: [password_set] }
+      responses:
+        '200':
+          description: HTML login page.
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Human login submit (browser-only HTML form)
+      description: |
+        CSRF-protected `<form method="post">` submission from GET /login.
+        Not a JSON API. Email + password, scrypt-verified with anti-
+        enumeration timing equalization (an unknown email and a wrong
+        password render the identical error). On success, sets a session
+        cookie and either redirects to the resumed `/authorize` flow (when
+        `continue` was carried) or renders a plain signed-in page.
+      operationId: submitLoginPage
+      security: [] # public
+      responses:
+        '200':
+          description: Re-rendered form with an error (bad CSRF, invalid credentials, unverified email), or a plain signed-in page on success with no pending flow.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Resumes a pending GET /authorize flow after successful login.
+        '401':
+          description: Invalid email or password.
+          content:
+            text/html:
+              schema: { type: string }
+        '403':
+          description: Credentials valid but the account is not active or its email is unverified.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /set-password:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: Set-password page (browser-only HTML)
+      description: Server-rendered HTML, not a JSON API. Opened from an emailed link carrying `tid` (tenant id) and `t` (single-use token).
+      operationId: getSetPasswordPage
+      security: [] # public
+      parameters:
+        - name: tid
+          in: query
+          required: true
+          schema: { type: string }
+        - name: t
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: HTML set-password form.
+          content:
+            text/html:
+              schema: { type: string }
+        '404':
+          description: Invalid, expired, or already-used token -- same page shown for every dead-token cause, deliberately (no oracle).
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Set-password submit (browser-only HTML form)
+      description: |
+        CSRF-protected `<form method="post">` submission from GET
+        /set-password. Not a JSON API. On success the token is burned
+        (single-use, and every other outstanding token for the user is
+        invalidated too), the account is activated, and the browser is
+        redirected to `/login` -- setting a password never itself creates a
+        session.
+      operationId: submitSetPasswordPage
+      security: [] # public
+      responses:
+        '303':
+          description: Redirect to /login?notice=password_set on success.
+        '400':
+          description: Bad CSRF, or password shorter than 12 characters.
+          content:
+            text/html:
+              schema: { type: string }
+        '404':
+          description: Invalid, expired, or already-used token, or the account is disabled -- same page for every cause (no oracle).
+          content:
+            text/html:
+              schema: { type: string }
+
+  /forgot-password:
+    x-sdk-exclude: true # see the note on the first path in this section
+    servers:
+      - url: https://auth.brain.fi
+        description: OAuth authorization server (production)
+    get:
+      tags: [OAuth Authorization Server]
+      summary: Forgot-password page (browser-only HTML)
+      description: Server-rendered HTML, not a JSON API.
+      operationId: getForgotPasswordPage
+      security: [] # public
+      responses:
+        '200':
+          description: HTML forgot-password form.
+          content:
+            text/html:
+              schema: { type: string }
+    post:
+      tags: [OAuth Authorization Server]
+      summary: Forgot-password submit (browser-only HTML form)
+      description: |
+        CSRF-protected `<form method="post">` submission from GET
+        /forgot-password. Not a JSON API. Always returns the same 202 page
+        regardless of whether the email resolves to an account -- anti-
+        enumeration, same posture as `POST /revoke`. The reset email (if
+        any) is sent fire-and-forget after the response.
+      operationId: submitForgotPasswordPage
+      security: [] # public
+      responses:
+        '202':
+          description: Always -- see description.
+          content:
+            text/html:
+              schema: { type: string }
+        '400':
+          description: Bad CSRF.
+          content:
+            text/html:
+              schema: { type: string }
 
   #############################################################################
   # TENANCY: production tenant creation, sessions, invites
@@ -3300,6 +3885,51 @@ paths:
               schema: { $ref: '#/components/schemas/JsonRpcResponse' }
 
         '400': { $ref: '#/components/responses/BadRequest' }
+
+  /.well-known/oauth-protected-resource:
+    # Excluded from clients/sdk codegen (redocly.yaml remove-x-internal).
+    # openapi-fetch concatenates baseUrl + path, and the SDK baseUrl is
+    # https://api.brain.fi/v1, so a generated call would hit /v1/.well-known/
+    # and 404: this route is mounted on the root app, not the /v1 router.
+    # Discovery clients fetch it directly after a 401, not through the SDK.
+    x-sdk-exclude: true
+    servers:
+      - url: https://api.brain.fi
+        description: Root-mounted on this API's own origin, NOT under /v1 (Caddy on mcp.brain.fi proxies this path straight through to here).
+    get:
+      tags: [MCP]
+      summary: RFC 9728 protected-resource metadata for the MCP surface
+      description: |
+        Public, unauthenticated. This is how an MCP client discovers which
+        authorization server issues tokens for the MCP resource, before it
+        has any token at all: POST /agents/mcp's 401 challenge
+        (`WWW-Authenticate`) points here, and a client that gets that 401
+        fetches this document to learn `authorization_servers`, then
+        proceeds to that server's own RFC 8414 metadata (`GET
+        https://auth.brain.fi/.well-known/oauth-authorization-server`) to
+        start the OAuth flow.
+      operationId: getOAuthProtectedResourceMetadata
+      security: [] # public
+      responses:
+        '200':
+          description: Protected-resource metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resource, authorization_servers, scopes_supported, bearer_methods_supported]
+                properties:
+                  resource: { type: string, description: The canonical public MCP origin (MCP_PUBLIC_RESOURCE_URL). }
+                  authorization_servers:
+                    type: array
+                    items: { type: string }
+                    example: [https://auth.brain.fi]
+                  scopes_supported:
+                    type: array
+                    items: { type: string }
+                    description: AGENT_PERMITTED_SCOPES verbatim -- the same set as the oauth2 security scheme's scopes.
+                  bearer_methods_supported: { type: array, items: { type: string, enum: [header] } }
+
   /agents/route:
     post:
       tags: [Agent]
@@ -6127,9 +6757,42 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        JWT bearer token issued by Brain's auth service.
-        Contains tenant_id and scopes. See Engineering Standards
-        section 2 for the full auth model.
+        JWT bearer token. Contains tenant_id and scopes. For agent
+        principals, tokens are issued either by the sandbox/testnet-only
+        `POST /auth/service-token` (this API), the production tenancy paths
+        (`POST /tenants`, `POST /tenants/{tenant_id}/agent-token`), or the
+        separate OAuth authorization server at `https://auth.brain.fi` (see
+        the `oauth2` scheme below) -- all verified against that server's
+        published JWKS (`GET https://auth.brain.fi/.well-known/jwks.json`).
+        An OAuth-minted token is structurally incapable of approving or
+        executing a payment: its scope set is bounded by
+        `AGENT_PERMITTED_SCOPES`, which contains no `payment_intent:approve`,
+        `payment_intent:execute`, `*:admin`, or `policy:sign`. See
+        Engineering Standards section 2 for the full auth model.
+    oauth2:
+      type: oauth2
+      description: |
+        Authorization-code + PKCE (S256, mandatory) flow against the
+        authorization server at `https://auth.brain.fi` -- a separate
+        deployable on a separate origin, not `api.brain.fi`. Mints
+        propose-only agent tokens only; the scopes below are the full
+        consentable set (`AGENT_PERMITTED_SCOPES`,
+        shared/src/auth/scopes.ts), the hard ceiling an OAuth-minted token
+        can ever carry. See the "OAuth Authorization Server" tag for the
+        authorization server's own endpoints (`/authorize`, `/token`,
+        `/revoke`, `/register`, discovery).
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.brain.fi/authorize
+          tokenUrl: https://auth.brain.fi/token
+          refreshUrl: https://auth.brain.fi/token
+          scopes:
+            ledger:read: Read normalized financial truth -- accounts, balances, transactions, counterparties, obligations.
+            wiki:read: Read human-readable memory pages, search, and Q&A.
+            raw:read: Read immutable ingested evidence (uploaded documents, connector payloads).
+            raw:write: Ingest new raw evidence (upload documents, submit raw records).
+            payment_intent:propose: Propose a payment intent for human approval. Cannot approve or execute one.
+            execution:propose: Propose a non-financial agent action for human approval (the MCP agent.action.propose tool; the on-the-wire name for §3.2's agent:propose).
 
   parameters:
     RawId:
@@ -6499,6 +7162,21 @@ components:
             docs_url:
               type: string
               description: Link to the published error reference for this code, e.g. https://docs.brain.fi/resources/errors#{code}
+
+    OAuthError:
+      type: object
+      required: [error]
+      description: |
+        RFC 6749 §5.2 / 7009 / 7591 flat error shape used by the OAuth
+        authorization server (`https://auth.brain.fi`) -- deliberately NOT
+        the Error envelope above, which is this API's own convention.
+      properties:
+        error:
+          type: string
+          description: RFC-defined error code, e.g. invalid_request, invalid_client, invalid_grant, unauthorized_client, invalid_scope, unsupported_grant_type, invalid_redirect_uri, invalid_client_metadata, server_error.
+        error_description:
+          type: string
+          description: Optional human-readable detail. Not present on every error.
 
     #
     # Raw layer
