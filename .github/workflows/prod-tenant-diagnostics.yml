@@ -293,7 +293,7 @@ jobs:
             fi
 
             session_json="$(
-              EXTERNAL_REF="$external_ref" node -e '
+              docker exec -e EXTERNAL_REF="$external_ref" brain-prod-api node -e '
                 const externalRef = process.env.EXTERNAL_REF;
                 process.stdout.write(JSON.stringify({
                   external_ref: externalRef,
@@ -306,7 +306,7 @@ jobs:
                 --data-binary @-
             )"
             token="$(
-              printf '%s' "$session_json" | node -e '
+              printf '%s' "$session_json" | docker exec -i brain-prod-api node -e '
                 let body = "";
                 process.stdin.on("data", (chunk) => { body += chunk; });
                 process.stdin.on("end", () => {
@@ -407,7 +407,9 @@ jobs:
               }
             });
           NODE
-            printf '%s' "$proposals_json" | node /tmp/proposal-read-model-smoke.js
+            docker cp /tmp/proposal-read-model-smoke.js brain-prod-api:/tmp/proposal-read-model-smoke.js
+            printf '%s' "$proposals_json" | docker exec -i brain-prod-api node /tmp/proposal-read-model-smoke.js
+            docker exec brain-prod-api rm -f /tmp/proposal-read-model-smoke.js
             rm -f /tmp/proposal-read-model-smoke.js
             echo "::endgroup::"
           fi
