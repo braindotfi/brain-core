@@ -414,6 +414,128 @@ describe("upload document interpreters", () => {
     expect(extracted.transactions.at(-1)?.running_balance).toBe("398220.20");
   });
 
+  it("parses the Solstice July bank statement PDF fixture as bank transactions", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("bank_statement_2026-07.pdf"),
+      ctx({
+        rawArtifactId: "raw_solstice_bank",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        sourceRef: { account_id: "acct_solstice", institution: "Union Point Bank" },
+        mimeType: "application/pdf",
+      }),
+    );
+
+    expect(out!.parser).toBe("bank_statement_upload_v1");
+    const extracted = out!.extracted as {
+      account: { current_balance: string | null };
+      transactions: Array<{
+        amount: string;
+        description: string;
+        direction: "inflow" | "outflow";
+      }>;
+    };
+    expect(extracted.transactions).toHaveLength(16);
+    expect(extracted.account.current_balance).toBe("70197.57");
+    const deposits = extracted.transactions
+      .filter((tx) => tx.direction === "inflow")
+      .reduce((sum, tx) => sum + Number(tx.amount), 0);
+    const withdrawals = extracted.transactions
+      .filter((tx) => tx.direction === "outflow")
+      .reduce((sum, tx) => sum + Number(tx.amount), 0);
+    expect(deposits.toFixed(2)).toBe("57020.00");
+    expect(withdrawals.toFixed(2)).toBe("171142.98");
+    expect((184320.55 + deposits - withdrawals).toFixed(2)).toBe("70197.57");
+    expect(
+      extracted.transactions.filter((tx) => tx.description.includes("Vantage Point Consulting")),
+    ).toHaveLength(2);
+  });
+
+  it("classifies the Solstice AR aging PDF as document records, not a bank statement", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("ar_aging_report_2026-07-25.pdf"),
+      ctx({
+        rawArtifactId: "raw_solstice_ar",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        mimeType: "application/pdf",
+      }),
+    );
+
+    expect(out!.parser).toBe("document_records_upload_v1");
+    const extracted = out!.extracted as {
+      object_type: string;
+      receivables: Array<{
+        invoice_ref: string;
+        counterparty_name: string;
+        amount: string;
+        aging_bucket: string | null;
+        status: string;
+      }>;
+    };
+    expect(extracted.object_type).toBe("ar_aging");
+    expect(extracted.receivables).toHaveLength(9);
+    expect(extracted.receivables.every((r) => /^INV-\d+$/.test(r.invoice_ref))).toBe(true);
+    expect(extracted.receivables.every((r) => Number(r.amount) > 0)).toBe(true);
+    expect(extracted.receivables.find((r) => r.invoice_ref === "INV-1987")).toMatchObject({
+      counterparty_name: "Palisade Home Goods",
+      amount: "11250",
+      aging_bucket: "90+ days",
+      status: "Disputed",
+    });
+  });
+
+  it("classifies the Solstice payroll PDF as run-level document records", () => {
+    const out = uploadDocumentInterpreter(
+      fixtureBytes("payroll_report_2026-07.pdf"),
+      ctx({
+        rawArtifactId: "raw_solstice_payroll",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "pdf_upload",
+        mimeType: "application/pdf",
+      }),
+    );
+
+    expect(out!.parser).toBe("document_records_upload_v1");
+    const extracted = out!.extracted as {
+      object_type: string;
+      obligations: Array<{
+        counterparty_name: string;
+        run_ref: string;
+        amount: string;
+        net_amount: string | null;
+        tax_amount: string | null;
+        due_date: string;
+      }>;
+    };
+    expect(extracted.object_type).toBe("payroll_register");
+    expect(extracted.obligations).toEqual([
+      expect.objectContaining({
+        counterparty_name: "Payroll",
+        run_ref: "pay-period-1",
+        amount: "33204",
+        net_amount: "33204",
+        tax_amount: "6496",
+        due_date: "2026-07-05",
+      }),
+      expect.objectContaining({
+        counterparty_name: "Payroll",
+        run_ref: "pay-period-2",
+        amount: "33204",
+        net_amount: "33204",
+        tax_amount: "6496",
+        due_date: "2026-07-19",
+      }),
+      expect.objectContaining({
+        counterparty_name: "Payroll Tax",
+        amount: "2500",
+        tax_amount: "2500",
+        due_date: "2026-08-15",
+      }),
+    ]);
+    expect(JSON.stringify(out!.extracted)).not.toContain("Danielle Ortiz");
+  });
+
   it("scopes bank statement token rows to the transaction detail section", () => {
     const text = [
       "NORTHLIGHT MANUFACTURING",

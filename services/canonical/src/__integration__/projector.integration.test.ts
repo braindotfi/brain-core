@@ -395,6 +395,96 @@ DESCRIBE("canonical upload projector audit integration (requires DATABASE_URL)",
   });
 });
 
+DESCRIBE("canonical doc obligation upload hook integration (requires DATABASE_URL)", () => {
+  let pool: Pool;
+  const tenant = newTenantId();
+  const rawId = newRawArtifactId();
+  const parsedId = newRawParsedId();
+  const audit = new InMemoryAuditEmitter();
+  const uploadEvents: LedgerUploadProjectedEvent[] = [];
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await pool.query(
+      `INSERT INTO raw_artifacts (id, tenant_id, sha256, source_type, blob_uri, bytes, ingested_by)
+       VALUES ($1,$2,$3,'pdf_upload',$4,$5,'sys_test')`,
+      [rawId, tenant, Buffer.from(rawId), `blob://${rawId}`, 1],
+    );
+    await pool.query(
+      `INSERT INTO raw_parsed (id, raw_artifact_id, tenant_id, parser, parser_version, extracted, confidence)
+       VALUES ($1,$2,$3,'doc_obligation_v1','1.0.0',$4::jsonb,0.5)`,
+      [
+        parsedId,
+        rawId,
+        tenant,
+        JSON.stringify({
+          counterparty_name: "Payroll Tax",
+          direction: "payable",
+          type: "payroll_tax",
+          amount: "2500.00",
+          currency: "USD",
+          due_date: "2026-08-15",
+          description: "Employer Payroll Tax Remittance",
+        }),
+      ],
+    );
+  }, 60_000);
+
+  afterAll(async () => {
+    if (pool === undefined) return;
+    await pool.query(`DELETE FROM canonical_obligation WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_counterparty WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM canonical_projection_log WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_parsed WHERE tenant_id = $1`, [tenant]);
+    await pool.query(`DELETE FROM raw_artifacts WHERE tenant_id = $1`, [tenant]);
+    await pool.end();
+  });
+
+  it("emits ledger.upload.projected and calls the upload projection hook for doc obligations", async () => {
+    await runProjectionCycle(
+      {
+        pool,
+        audit,
+        onUploadProjected: async (event) => {
+          uploadEvents.push(event);
+        },
+      },
+      { batchSize: 50 },
+    );
+
+    expect(audit.events.find((event) => event.action === "ledger.upload.projected")).toMatchObject({
+      tenantId: tenant,
+      layer: "ledger",
+      eventType: "system_activity",
+      severity: "info",
+      inputs: {
+        raw_artifact_id: rawId,
+        raw_parsed_id: parsedId,
+        projector: "doc_obligation_canonical_v1",
+      },
+      outputs: {
+        summary: expect.objectContaining({
+          obligations: 1,
+          newCounterparties: 1,
+        }),
+      },
+    });
+    expect(uploadEvents).toEqual([
+      expect.objectContaining({
+        event: "ledger.upload.projected",
+        tenantId: tenant,
+        rawArtifactId: rawId,
+        rawParsedId: parsedId,
+        projector: "doc_obligation_canonical_v1",
+        summary: expect.objectContaining({
+          obligations: 1,
+          newCounterparties: 1,
+        }),
+      }),
+    ]);
+  });
+});
+
 DESCRIBE("canonical projector re-projects a corrected payload (requires DATABASE_URL)", () => {
   let pool: Pool;
   const tenant = newTenantId();
