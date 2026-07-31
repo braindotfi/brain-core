@@ -6,6 +6,39 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.10 (proposal read model expansion)
+
+Backward-compatible API read-model expansion. No new route or API version was
+introduced because existing compact fields remain in place and all new fields
+are additive.
+
+#### Changed. Proposals and evidence
+
+- **`GET /v1/proposals` and `GET /v1/proposals/{id}` now return richer proposal
+  cards.** In addition to the compact fields, each proposal includes
+  `stored_action_type`, `details`, `policy`, `presentation`, and
+  `available_decisions`. `presentation.technical_detail` uses stable six-layer
+  keys: `1_ingest`, `2_extract`, `3_classify`, `4_score`, `5_policy`, and
+  `6_propose`.
+- **Public proposal types are now complete across first-party agents and payment
+  intents.** The full public set is `vendor_risk`, `payment`, `collections`,
+  `treasury`, `cash_forecast`, `dispute`, `compliance`, `revenue_intel`,
+  `reconciliation`, `subscription`, `fraud_anomaly`, `personal_budget`,
+  `financial_health`, `purchase_advisor`, `tax_prep`, `travel_finance`,
+  `bill_management`, `debt_optimization`, and `savings`.
+- **Stored action names map deterministically to public proposal types.** Direct
+  public types win first, then agent role or kind, then the explicit stored-action
+  map. Examples: `flag_transaction -> fraud_anomaly`,
+  `block_payment -> vendor_risk`, `propose_match -> reconciliation`,
+  `recommend_card -> travel_finance`, `tag_tax_item -> tax_prep`,
+  `remind -> bill_management`, and `recommend_savings_transfer -> savings`.
+  Ambiguous names such as `notify`, `escalate`, `create_task`, and
+  `recommend_action` resolve through agent role or kind.
+- **High-risk unmatched non-money actions surface for review.** Unmatched
+  `collections`, `fraud_anomaly`, and `vendor_risk` `agent_action` proposals now
+  fall back to `confirm` with a signer requirement. Low-stakes proposal types and
+  `payment` remain fail-closed when no policy rule matches.
+
 ### v0.5.9 (surface onboarding admin auth)
 
 - Surface onboarding endpoints for Slack OAuth install, Teams install and

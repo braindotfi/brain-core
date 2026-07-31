@@ -210,12 +210,26 @@ List customer-facing agent proposals across payment intents and non-money findin
 
 | Argument         | Type    | Description                                      |
 | ---------------- | ------- | ------------------------------------------------ |
-| `type`           | string  | Optional: one of the eleven agent types.         |
+| `type`           | string  | Optional: one of the public proposal types.      |
 | `status`         | string  | Optional: lifecycle status filter.               |
 | `risk_band`      | string  | Optional: `low`, `standard`, `elevated`, `high`. |
 | `min_confidence` | number  | Optional: float in `[0, 1]`.                     |
 | `limit`          | integer | Optional: `1` to `100`.                          |
 | `cursor`         | string  | Optional: pagination cursor.                     |
+
+Public proposal types are `vendor_risk`, `payment`, `collections`, `treasury`,
+`cash_forecast`, `dispute`, `compliance`, `revenue_intel`, `reconciliation`,
+`subscription`, `fraud_anomaly`, `personal_budget`, `financial_health`,
+`purchase_advisor`, `tax_prep`, `travel_finance`, `bill_management`,
+`debt_optimization`, and `savings`.
+
+Each returned proposal mirrors the HTTP read model, including the compact fields
+plus `stored_action_type`, `details`, `policy`, `presentation`, and
+`available_decisions`. Stored action names are mapped to public proposal types by
+Brain Core before they are returned. For example, `flag_transaction` returns as
+`fraud_anomaly`, `block_payment` as `vendor_risk`, and `propose_match` as
+`reconciliation`; ambiguous names such as `notify` resolve through the agent
+role.
 
 #### `proposals.get`
 
