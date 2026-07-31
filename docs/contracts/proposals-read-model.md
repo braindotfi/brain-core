@@ -9,27 +9,27 @@ fields are retained for existing clients. New clients should use `details`,
 
 The public `type` field is one of:
 
-| Type                | Source                                                                                      | Action set                      |
-| ------------------- | ------------------------------------------------------------------------------------------- | ------------------------------- |
-| `bill_management`   | Bill Management advisory proposals and its payment intent rows when created by that agent   | Approve, Reject                 |
-| `cash_forecast`     | Cash Forecasting advisory proposals                                                         | Approve, Reject                 |
-| `collections`       | Collections follow-up, task, escalation, and payment-plan proposals                         | Approve, Reject                 |
-| `compliance`        | Compliance notifications and policy-violation findings                                      | Acknowledge                     |
-| `debt_optimization` | Debt Optimization advisory proposals and its payment intent rows when created by that agent | Approve, Reject                 |
-| `dispute`           | Dispute evidence, response, escalation, and packet proposals                                | Proceed, Dismiss                |
-| `financial_health`  | Financial Health advisory proposals                                                         | Approve, Reject                 |
-| `fraud_anomaly`     | Fraud and anomaly transaction holds or review proposals                                     | Mark reviewed, Hold transaction |
-| `payment`           | Payment agent proposals and payment intents without a more specific public agent role       | Approve, Reject                 |
-| `personal_budget`   | Personal Budget advisory proposals                                                          | Approve, Reject                 |
-| `purchase_advisor`  | Purchase Advisor advisory proposals                                                         | Approve, Reject                 |
-| `reconciliation`    | Reconciliation match proposals and discrepancy reviews                                      | Accept match, Reject match      |
-| `revenue_intel`     | Revenue Intelligence follow-up, churn, expansion, and summary proposals                     | Approve, Reject                 |
-| `savings`           | Savings advisory proposals and its payment intent rows when created by that agent           | Approve, Reject                 |
-| `subscription`      | Subscription detection, cancel, vendor-email, and savings report proposals                  | Approve, Reject                 |
-| `tax_prep`          | Tax Prep tagging, summary, missing-evidence, and export proposals                           | Approve, Reject                 |
-| `travel_finance`    | Travel Finance card, fee, trip-spend, and notification proposals                            | Approve, Reject                 |
-| `treasury`          | Treasury advisory proposals and treasury-created payment intents                            | Approve, Reject                 |
-| `vendor_risk`       | Vendor Risk holds, verification, and escalation proposals                                   | Clear vendor, Hold vendor       |
+| Type                | Source                                                                                      | Action set                   |
+| ------------------- | ------------------------------------------------------------------------------------------- | ---------------------------- |
+| `bill_management`   | Bill Management advisory proposals and its payment intent rows when created by that agent   | Approve, Reject              |
+| `cash_forecast`     | Cash Forecasting advisory proposals                                                         | Approve, Reject              |
+| `collections`       | Collections follow-up, task, escalation, and payment-plan proposals                         | Approve, Reject              |
+| `compliance`        | Compliance notifications and policy-violation findings                                      | Acknowledge                  |
+| `debt_optimization` | Debt Optimization advisory proposals and its payment intent rows when created by that agent | Approve, Reject              |
+| `dispute`           | Dispute evidence, response, escalation, and packet proposals                                | Proceed, Dismiss             |
+| `financial_health`  | Financial Health advisory proposals                                                         | Approve, Reject              |
+| `fraud_anomaly`     | Fraud and anomaly findings. Background-triggered `flag_transaction` rows are notify-only.   | Acknowledge for trigger rows |
+| `payment`           | Payment agent proposals and payment intents without a more specific public agent role       | Approve, Reject              |
+| `personal_budget`   | Personal Budget advisory proposals                                                          | Approve, Reject              |
+| `purchase_advisor`  | Purchase Advisor advisory proposals                                                         | Approve, Reject              |
+| `reconciliation`    | Reconciliation match proposals and discrepancy reviews                                      | Accept match, Reject match   |
+| `revenue_intel`     | Revenue Intelligence follow-up, churn, expansion, and summary proposals                     | Approve, Reject              |
+| `savings`           | Savings advisory proposals and its payment intent rows when created by that agent           | Approve, Reject              |
+| `subscription`      | Subscription detection, cancel, vendor-email, and savings report proposals                  | Approve, Reject              |
+| `tax_prep`          | Tax Prep tagging, summary, missing-evidence, and export proposals                           | Approve, Reject              |
+| `travel_finance`    | Travel Finance card, fee, trip-spend, and notification proposals                            | Approve, Reject              |
+| `treasury`          | Treasury advisory proposals and treasury-created payment intents                            | Approve, Reject              |
+| `vendor_risk`       | Vendor Risk holds, verification, and escalation proposals                                   | Clear vendor, Hold vendor    |
 
 Money-moving actions still go through PaymentIntent and the existing policy and
 approval rails. When the creating agent has a public role such as `treasury`,
@@ -107,6 +107,20 @@ yet.
 ## Policy Notes
 
 Compliance proposals are notify-only by default. Acknowledge marks the finding as
-acknowledged and does not unblock an original blocked action. Vendor Risk and
-Fraud Anomaly use domain labels for their decisions, but the write route remains
-`approve`, `reject`, `acknowledge`, or `undo` for compatibility.
+acknowledged and does not unblock an original blocked action.
+
+Fraud Anomaly background triggers such as `transaction.unusual`,
+`merchant.risk_detected`, and `duplicate_charge.detected` create
+`flag_transaction` proposals with `mode: "notify_only"`. Those proposals expose
+only `available_decisions: [{ id: "acknowledge", ... }]` through the public read
+model, even when `details.recommended_action` is `hold` or `review`. The
+recommendation is informational for those rows and is not an executable hold or
+block decision.
+
+The read model still defines Mark reviewed and Hold transaction labels for
+propose-mode `fraud_anomaly` rows. Those labels apply only when a stored fraud
+proposal is actually in `mode: "propose"`; they are not available on
+background-triggered `flag_transaction` findings.
+
+Vendor Risk uses domain labels for its propose-mode decisions, but the write
+route remains `approve`, `reject`, `acknowledge`, or `undo` for compatibility.
