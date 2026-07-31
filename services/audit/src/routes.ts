@@ -16,6 +16,7 @@ import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/shared";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import { publishAnchor } from "./publisher.js";
 import {
+  findAnchorForEvent,
   findEvent,
   findEventsByEntity,
   findLatestAnchor,
@@ -74,7 +75,10 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       const result = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
         const event = await findEvent(c, request.params.id);
         if (event === null) return null;
-        const anchor = await findLatestAnchor(c);
+        // The anchor whose window CONTAINS this event, not just the newest
+        // anchor -- an event outside the newest window was still on-chain,
+        // just under an older window, and deserves a real proof.
+        const anchor = await findAnchorForEvent(c, event.created_at);
         // Build proof against the anchor's event window.
         let proofHex: string[] = [];
         let rootHex: string | null = null;
@@ -159,14 +163,18 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     },
   );
 
-  // POST /audit/export — queue a JSONL/CSV export job. Returns a job id.
+  // POST /audit/export — declared stub. There is no job row, no worker, and
+  // no status/download route behind this endpoint, so a previous 202 handed
+  // callers a job_id that could never be redeemed. Fail fast instead of
+  // pretending: validate the request shape (still a real 400), then refuse
+  // with 501 pointing at the real, working export at
+  // POST /v1/tenants/{tenant_id}/export (status + download routes included).
   app.post(
     "/audit/export",
     async (
       request: FastifyRequest<{
         Body: { format?: "jsonl" | "csv"; since?: string; until?: string };
       }>,
-      reply,
     ) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, READ);
@@ -174,19 +182,11 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       if (body.format !== "jsonl" && body.format !== "csv") {
         throw brainError("request_body_invalid", "format must be jsonl or csv");
       }
-      // Stage-7 enqueues the job; the actual BullMQ worker that materializes
-      // the export file lands alongside the object-store writer in stage-8.
-      const jobId = `exp_${Date.now().toString(36)}`;
-      await deps.audit.emit({
-        tenantId: principal.tenantId,
-        layer: "audit",
-        actor: principal.id,
-        action: "audit.export.enqueued",
-        inputs: { format: body.format, since: body.since ?? null, until: body.until ?? null },
-        outputs: { job_id: jobId },
-      });
-      reply.status(202);
-      return { job_id: jobId, format: body.format, status: "enqueued" };
+      throw brainError(
+        "dependency_unavailable",
+        "audit export is not implemented; use POST /v1/tenants/{tenant_id}/export",
+        { statusOverride: 501 },
+      );
     },
   );
 
@@ -216,22 +216,36 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     const broadcaster = deps.broadcaster;
     // Per-tenant cooldown to prevent rapid re-anchoring and runaway on-chain spend.
     const PUBLISH_COOLDOWN_MS = 60_000;
-    const lastPublishTime = new Map<string, number>();
 
     app.post("/audit/anchor/publish", async (request, reply) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, "audit:admin" as Scope);
 
-      const lastRun = lastPublishTime.get(principal.tenantId) ?? 0;
-      const msUntilReady = lastRun + PUBLISH_COOLDOWN_MS - Date.now();
-      if (msUntilReady > 0) {
-        throw brainError(
-          "rate_limited",
-          `anchor cooling down — retry in ${Math.ceil(msUntilReady / 1000)}s`,
-          { details: { retry_after_seconds: Math.ceil(msUntilReady / 1000) } },
+      // The anchor row itself is the durable cooldown source, not in-process
+      // state. An in-process Map resets on every restart (bypassable across a
+      // deploy) and is per-replica, and it also had a bug where a FAILED
+      // publish still consumed the cooldown because the Map was set BEFORE
+      // the broadcast. This endpoint spends real ETH (the anchor key drains
+      // fast), so the guard has to survive a restart. withTenantScope is used
+      // deliberately: RLS scopes `max(created_at)` to this tenant's own
+      // anchors, so one tenant can never read or be throttled by another
+      // tenant's publish history.
+      const lastAnchorAt = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
+        const { rows } = await c.query<{ last_at: Date | null }>(
+          `SELECT max(created_at) AS last_at FROM audit_anchors`,
         );
+        return rows[0]?.last_at ?? null;
+      });
+      if (lastAnchorAt !== null) {
+        const msUntilReady = lastAnchorAt.getTime() + PUBLISH_COOLDOWN_MS - Date.now();
+        if (msUntilReady > 0) {
+          throw brainError(
+            "rate_limited",
+            `anchor cooling down — retry in ${Math.ceil(msUntilReady / 1000)}s`,
+            { details: { retry_after_seconds: Math.ceil(msUntilReady / 1000) } },
+          );
+        }
       }
-      lastPublishTime.set(principal.tenantId, Date.now());
 
       const now = new Date();
       const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);

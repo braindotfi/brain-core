@@ -41,14 +41,19 @@ function principal(): Principal {
     id: "user_01TEST000000000000000000",
     type: "user",
     tenantId: TENANT,
-    scopes: ["policy:sign"] as Scope[],
+    scopes: ["policy:sign", "policy:read"] as Scope[],
     tokenId: "tok_01TEST0000000000000000000",
     expiresAt: Math.floor(Date.now() / 1000) + 900,
   };
 }
 
+const MINIMAL_VALID_CONTENT = {
+  version: 1,
+  rules: [{ id: "default-reject", applies_to: ["any"], when: {}, execute: "reject" }],
+};
+
 function fakePool(
-  content: unknown = { version: 1, rules: [] },
+  content: unknown = MINIMAL_VALID_CONTENT,
   tenantKind: "production" | "demo" = "demo",
 ): Pool {
   const pending = {
@@ -93,6 +98,7 @@ function buildDeps(authorized: Set<string>, over: Partial<PolicyDeps> = {}): Pol
     ...(over.confidenceFloorReject !== undefined
       ? { confidenceFloorReject: over.confidenceFloorReject }
       : {}),
+    ...(over.lintReject !== undefined ? { lintReject: over.lintReject } : {}),
   };
 }
 
@@ -202,7 +208,7 @@ describe("POST /policy/:tenant_id/sign — quorum binding (security)", () => {
     const b = newAccount();
     const app = await buildApp(
       buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
-        pool: fakePool({ version: 1, rules: [] }, "production"),
+        pool: fakePool(MINIMAL_VALID_CONTENT, "production"),
       }),
     );
 
@@ -248,6 +254,119 @@ describe("POST /policy/:tenant_id/sign — quorum binding (security)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().activated).toBe(true);
     expect(res.json().warnings).toEqual([]);
+    await app.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-18: activation blocks on ALL lintPolicy ERROR findings, not only the
+// confidence-floor codes. Before this fix, a document could satisfy the
+// confidence floor with one rule while another rule in the same document was
+// an unbounded auto-executing "any" money mover -- every other ERROR finding
+// the linter produces (auto_no_amount_cap, auto_no_counterparty_constraint,
+// auto_no_verified_counterparty, no_approval_path_high_value,
+// unsupported_currency, invalid_approval_role, auto_no_risk_bound,
+// broad_any_auto) was computed and silently discarded at the only gate that
+// matters.
+// ---------------------------------------------------------------------------
+const UNBOUNDED_WITH_FLOOR_ELSEWHERE = {
+  version: 1,
+  rules: [
+    { id: "unbounded-mover", applies_to: ["any"], when: {}, execute: "auto" },
+    {
+      id: "floor-elsewhere",
+      applies_to: ["agent_action"],
+      when: { "agent.confidence.gte": 0.9 },
+      execute: "reject",
+    },
+  ],
+};
+
+describe("POST /policy/:tenant_id/sign -- blocks on ALL ERROR lint findings (H-18)", () => {
+  it("blocks an unbounded auto money-mover even though the document satisfies the confidence floor, when lint enforcement is on", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        pool: fakePool(UNBOUNDED_WITH_FLOOR_ELSEWHERE),
+        lintReject: true,
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe("policy_rule_invalid");
+    const codes = (res.json().error.details.findings as Array<{ code: string }>).map((f) => f.code);
+    expect(codes).toContain("auto_no_amount_cap");
+    expect(codes).not.toContain("confidence_floor_missing");
+    await app.close();
+  });
+
+  it("activates the same document for a non-production tenant when lint enforcement is rolled back", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        pool: fakePool(UNBOUNDED_WITH_FLOOR_ELSEWHERE),
+        lintReject: false,
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().activated).toBe(true);
+    await app.close();
+  });
+
+  it("still blocks a production tenant even when lint enforcement is rolled back", async () => {
+    const a = newAccount();
+    const b = newAccount();
+    const app = await buildApp(
+      buildDeps(new Set([a.address.toLowerCase(), b.address.toLowerCase()]), {
+        pool: fakePool(UNBOUNDED_WITH_FLOOR_ELSEWHERE, "production"),
+        lintReject: false,
+      }),
+    );
+
+    const res = await postSign(app, [
+      { address: a.address, signature: await sign(a) },
+      { address: b.address, signature: await sign(b) },
+    ]);
+
+    expect(res.statusCode).toBe(422);
+    await app.close();
+  });
+});
+
+describe("POST /policy/:tenant_id/lint -- mirrors sign enforcement options (H-18)", () => {
+  it("applies the production-tenant confidence-floor override, matching what sign would reject", async () => {
+    const app = await buildApp(
+      buildDeps(new Set(), { pool: fakePool(MINIMAL_VALID_CONTENT, "production") }),
+    );
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/policy/${TENANT}/lint`,
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ policy_content: MINIMAL_VALID_CONTENT }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const finding = (res.json().findings as Array<{ code: string; severity: string }>).find(
+      (f) => f.code === "confidence_floor_missing",
+    );
+    // Previously this endpoint only ever used deps.confidenceFloorReject
+    // (false by default in this harness), so a production tenant would see
+    // WARN here for a finding sign rejects as ERROR.
+    expect(finding?.severity).toBe("ERROR");
     await app.close();
   });
 });

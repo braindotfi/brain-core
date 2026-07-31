@@ -6367,14 +6367,15 @@ paths:
   /audit/export:
     post:
       tags: [Audit]
-      summary: Request an audit export (async)
+      summary: Audit export (declared stub, not implemented)
       description: |
-        Requires `audit:read` (not `audit:write` — exporting is a read
-        operation on the log). Only `format` is required; `since`/`until`
-        are optional (unbounded if omitted). `layers` is not implemented
-        and is ignored if sent — this endpoint currently enqueues the job
-        only, the BullMQ worker that materializes the export file is a
-        separate follow-up.
+        Requires `audit:read`. This endpoint is a declared stub: it validates
+        the request shape and then always returns 501, since there is no job
+        row, worker, or status/download route behind it. Use the real,
+        working tenant export instead:
+        `POST /v1/tenants/{tenant_id}/export` (with its
+        `GET /v1/tenants/{tenant_id}/export/{job_id}` status route and
+        `GET /v1/tenants/{tenant_id}/export/{job_id}/download` download route).
       operationId: exportAudit
       requestBody:
         required: true
@@ -6388,19 +6389,15 @@ paths:
                 since: { type: string, format: date-time }
                 until: { type: string, format: date-time }
       responses:
-        '202':
-          description: Export job created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  job_id: { type: string, description: 'Not a Brain ID — currently `exp_<timestamp36>`' }
-                  format: { type: string, enum: [jsonl, csv] }
-                  status: { type: string, enum: [enqueued] }
-
         '400':
           description: '`format` must be `jsonl` or `csv`. Error code `request_body_invalid`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '501':
+          description: >
+            Not implemented. Error code `dependency_unavailable`. Use
+            `POST /v1/tenants/{tenant_id}/export` instead.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

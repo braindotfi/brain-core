@@ -13,6 +13,7 @@ import {
   type Scope,
 } from "@brain/shared";
 import { contentHash, type PolicyDocument } from "./dsl.js";
+import { validatePolicyDocument } from "./validate.js";
 import { buildTypedData } from "./signing.js";
 import {
   getActive,
@@ -32,6 +33,15 @@ import type { PolicyDeps } from "./deps.js";
 const READ: Scope = "policy:read";
 const WRITE: Scope = "policy:write";
 const SIGN: Scope = "policy:sign";
+
+/**
+ * Cap on historical actions replayed by /simulate-historical. The DB fetch
+ * used to run with no LIMIT on the request thread, holding every row in
+ * memory; a wide period on a busy tenant was an unbounded allocation
+ * reachable by any caller with policy:read. Fetches one row past the cap so
+ * the handler can tell "exactly at the cap" apart from "more rows exist".
+ */
+const SIMULATE_HISTORICAL_ROW_LIMIT = 5000;
 
 export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDeps): Promise<void> {
   // GET /policy/:tenant_id
@@ -72,15 +82,19 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
       reply,
     ) => {
       const tenant = assertTenantAccess(request, request.params.tenant_id, WRITE);
-      const content = request.body?.content;
-      if (
-        content === undefined ||
-        !Array.isArray(content.rules) ||
-        typeof content.version !== "number"
-      ) {
-        throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
+      // validatePolicyDocument throws policy_rule_invalid (400) on the first
+      // structural problem it finds (missing applies_to, unknown when key,
+      // dangling counterparty.in list reference, a bad amount literal, etc).
+      // The DB CHECK on quorum_required is the backstop, not the primary
+      // defense: without this call, a malformed rule reached vm.ts at
+      // evaluation time instead, throwing a 500 on every payment intent for
+      // the tenant. This turns that into a normal 400 here.
+      const content = validatePolicyDocument(request.body?.content);
+      const quorumRaw = request.body?.quorum_required;
+      if (quorumRaw !== undefined && (!Number.isInteger(quorumRaw) || quorumRaw < 1)) {
+        throw brainError("policy_rule_invalid", "quorum_required must be an integer >= 1");
       }
-      const quorum = request.body?.quorum_required ?? 1;
+      const quorum = quorumRaw ?? 1;
 
       const id = newPolicyId();
       const hash = contentHash(content);
@@ -201,25 +215,58 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
 
         await setSigners(c, r.id, body.signatures!);
 
+        // Defense in depth: re-validate the row loaded from the database, not
+        // just the document this route composed. Rows can be written by paths
+        // other than compose (migrations, seeds, the demo activate route), and
+        // activating a document that vm.ts cannot evaluate is exactly the
+        // failure that bricks the whole money path for a tenant (every
+        // evaluateForGate call throws instead of returning a decision), so
+        // this runs before any activation logic below.
+        validatePolicyDocument(r.content);
+
         let activatedRow: PolicyRow = r;
         let activationWarnings: ReturnType<typeof lintPolicy> = [];
         if (body.signatures!.length >= r.quorum_required) {
           const tenantKind = await findTenantKind(c, tenant);
-          const findings = lintPolicy(r.content, {
-            confidenceFloorReject:
-              deps.confidenceFloorReject === true || tenantKind === "production",
-          });
+          // Confidence-floor enforcement (H-16) and the broader lint gate
+          // (H-18, below) are independently controllable so either can be
+          // rolled back without touching the other. Both fail closed for a
+          // production tenant regardless of the env flags.
+          const confidenceEnforce =
+            deps.confidenceFloorReject === true || tenantKind === "production";
+          const lintEnforce = deps.lintReject === true || tenantKind === "production";
+          const findings = lintPolicy(r.content, { confidenceFloorReject: confidenceEnforce });
           const confidenceFindings = findings.filter(
             (f) => f.code === "confidence_floor_missing" || f.code === "confidence_floor_too_low",
           );
-          const blocking = confidenceFindings.filter((f) => f.severity === "ERROR");
+          // Every OTHER ERROR finding used to be computed here and silently
+          // discarded (auto_no_amount_cap, auto_no_counterparty_constraint,
+          // auto_no_verified_counterparty, no_approval_path_high_value,
+          // unsupported_currency, invalid_approval_role, auto_no_risk_bound,
+          // broad_any_auto) -- a tenant could activate an unbounded
+          // auto-executing "any" rule as long as some other rule in the
+          // document happened to carry a confidence floor. Block on those too
+          // when lint enforcement is on.
+          const otherErrorFindings = findings.filter(
+            (f) =>
+              f.severity === "ERROR" &&
+              f.code !== "confidence_floor_missing" &&
+              f.code !== "confidence_floor_too_low",
+          );
+          const blocking = [
+            ...confidenceFindings.filter((f) => f.severity === "ERROR"),
+            ...(lintEnforce ? otherErrorFindings : []),
+          ];
           if (blocking.length > 0) {
-            throw brainError("policy_rule_invalid", "policy confidence floor failed activation", {
+            throw brainError("policy_rule_invalid", "policy failed activation lint", {
               statusOverride: 422,
               details: { findings: blocking },
             });
           }
-          activationWarnings = confidenceFindings.filter((f) => f.severity === "WARN");
+          // Surface every WARN finding, not only the confidence-floor ones, so
+          // an operator activating a policy also sees unreachable/dead-rule
+          // warnings.
+          activationWarnings = findings.filter((f) => f.severity === "WARN");
           activatedRow = await transition(c, r.id, "pending_signatures", "active");
         }
         return {
@@ -314,8 +361,14 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
     ) => {
       const tenant = assertTenantAccess(request, request.params.tenant_id, READ);
       const content = parsePolicyContent(request.body?.policy_content);
+      // Mirror sign's enforcement options exactly, including the
+      // production-tenant override, so this advisory endpoint is a faithful
+      // preview of activation. Previously this always used
+      // deps.confidenceFloorReject alone, so a production tenant saw a WARN
+      // here for a finding that sign would reject as an ERROR.
+      const tenantKind = await withTenantScope(deps.pool, tenant, (c) => findTenantKind(c, tenant));
       const findings = lintPolicy(content, {
-        confidenceFloorReject: deps.confidenceFloorReject === true,
+        confidenceFloorReject: deps.confidenceFloorReject === true || tenantKind === "production",
       });
       reply.status(200);
       return {
@@ -376,8 +429,11 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
         throw brainError("request_body_invalid", "period_start and period_end must be ISO dates");
       }
 
-      const { actions, active } = await withTenantScope(deps.pool, tenant, async (c) => {
+      const { actions, active, truncated } = await withTenantScope(deps.pool, tenant, async (c) => {
         // Policy reads Ledger state (sanctioned §6 read; never Wiki). RLS scopes it.
+        // Fetch one past the cap: if the cap+1'th row comes back, more rows
+        // exist and the reply must say so rather than silently covering only
+        // part of the requested period.
         const { rows } = await c.query<{
           id: string;
           action_type: string;
@@ -389,11 +445,14 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
           `SELECT id, action_type, amount, currency, destination_counterparty_id, created_at
              FROM ledger_payment_intents
             WHERE created_at >= $1 AND created_at <= $2
-            ORDER BY created_at ASC`,
-          [start, end],
+            ORDER BY created_at ASC
+            LIMIT $3`,
+          [start, end, SIMULATE_HISTORICAL_ROW_LIMIT + 1],
         );
+        const truncated = rows.length > SIMULATE_HISTORICAL_ROW_LIMIT;
+        const bounded = truncated ? rows.slice(0, SIMULATE_HISTORICAL_ROW_LIMIT) : rows;
         const activeRow = await getActive(c);
-        const replay: ReplayAction[] = rows.map((r) => ({
+        const replay: ReplayAction[] = bounded.map((r) => ({
           id: r.id,
           action: {
             kind: railKindForActionType(r.action_type),
@@ -403,7 +462,7 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
             timestamp: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
           },
         }));
-        return { actions: replay, active: activeRow?.content ?? null };
+        return { actions: replay, active: activeRow?.content ?? null, truncated };
       });
 
       const result = simulateHistorical(candidate, active, actions);
@@ -417,10 +476,14 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
           period_end: end.toISOString(),
           replayed: actions.length,
         },
-        outputs: { would_allow: result.would_allow, would_reject: result.would_reject },
+        outputs: {
+          would_allow: result.would_allow,
+          would_reject: result.would_reject,
+          truncated,
+        },
       });
       reply.status(200);
-      return result;
+      return { ...result, truncated, replayed: actions.length };
     },
   );
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import { InMemoryAuditEmitter, type ServiceCallContext } from "@brain/shared";
-import type { PolicyDocument } from "@brain/policy";
+import { contentHash, type PolicyDocument } from "@brain/policy";
 import type { ApprovalService as ExecutionApprovalService } from "@brain/execution";
 import {
   ApprovalService,
@@ -453,7 +453,9 @@ function policyPool(policy: PolicyDocument): Pool {
           tenant_id: TENANT_ID,
           version: 1,
           content: policy,
-          content_hash: Buffer.from("hash"),
+          // Real canonical hash: getActive recomputes contentHashHex(content) on read
+          // and fails closed on drift, so a placeholder digest is not a usable fixture.
+          content_hash: contentHash(policy),
           signers: null,
           state: "active",
           quorum_required: 1,

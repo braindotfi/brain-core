@@ -34,7 +34,6 @@
  * the golden-path seed does.
  */
 
-import { createHash } from "node:crypto";
 import {
   recordTransactionRow,
   upsertAccountRow,
@@ -58,6 +57,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import { contentHash, type PolicyDocument } from "@brain/policy";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
 
 // ---------------------------------------------------------------------------
@@ -858,7 +858,17 @@ async function seedPolicy(
     ],
   };
   const policyJson = JSON.stringify(policy);
-  const policyHash = createHash("sha256").update(policyJson).digest();
+  // Canonical hash, NOT sha256(JSON.stringify(doc)). content_hash is the hash the
+  // EIP-712 signing payload commits to (buildTypedData in services/policy), and
+  // canonicalize() sorts keys recursively, so a raw JSON.stringify digest does not
+  // correspond to the document under the scheme every verifier uses. getActive now
+  // recomputes content_hash on read and fails closed on drift, so a naive digest
+  // here would take every seeded demo tenant's policy offline.
+  // The cast is needed because this seed document carries an extra top-level
+  // `params` key (a Treasury parameter the demo reads) that PolicyDocument does not
+  // declare, and the rule literals widen to string[]. canonicalize() walks every
+  // key regardless, so the hash covers `params` too.
+  const policyHash = contentHash(policy as unknown as PolicyDocument);
   const policyId = newPolicyId();
   let version = 1;
 

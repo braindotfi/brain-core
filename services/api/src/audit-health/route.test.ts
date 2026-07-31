@@ -19,24 +19,26 @@ function principal(scopes: Scope[]): Principal {
   };
 }
 
-/** Privileged pool serving the 3 verifier queries + the 1 outbox query. */
+/** Privileged pool serving the 4 verifier queries (2 checkpoints + findings + outbox). */
 function fakePool(opts: {
   checkpoint?: Record<string, unknown> | null;
+  anchorCheckpoint?: Record<string, unknown> | null;
   open?: number;
   pending?: number;
   exhausted?: number;
 }): Pool {
   return {
-    query: vi.fn(async (text: string) => {
+    query: vi.fn(async (text: string, params?: unknown[]) => {
       // F-1 regression lock: the health endpoint must never scan audit_events.
       if (text.includes("FROM audit_events")) {
         throw new Error("audit-health must not query audit_events");
       }
       if (text.includes("FROM audit_verifier_checkpoint")) {
-        return {
-          rows: opts.checkpoint === null || opts.checkpoint === undefined ? [] : [opts.checkpoint],
-          rowCount: 1,
-        };
+        // Two rows, one per verifier_name -- branch on the bound param so the
+        // content-hash and anchor-root reads don't collide.
+        const verifierName = (params ?? [])[0];
+        const row = verifierName === "anchor_root" ? opts.anchorCheckpoint : opts.checkpoint;
+        return { rows: row === null || row === undefined ? [] : [row], rowCount: 1 };
       }
       if (text.includes("FROM audit_integrity_findings")) {
         return { rows: [{ n: String(opts.open ?? 0) }], rowCount: 1 };
@@ -93,6 +95,14 @@ describe("deriveAuditHealthStatus", () => {
     openFindings: 0,
     unsupportedVersion: 0,
     legacyUnverifiable: 0,
+    anchorRoot: {
+      lastPassStatus: "clean",
+      lastCleanPassAt: "2026-06-08T00:00:00.000Z",
+      lastFullPassAt: "2026-06-08T00:00:00.000Z",
+      completedPasses: 5,
+      currentPassFailureCount: 0,
+      secondsSinceCleanFullPass: 30,
+    },
   };
   const outbox: AuditOutboxHealth = {
     pending: 0,
@@ -128,11 +138,48 @@ describe("deriveAuditHealthStatus", () => {
       "degraded",
     );
   });
+
+  it("is critical when the anchor-root verifier's last pass failed", () => {
+    expect(
+      deriveAuditHealthStatus(
+        { ...base, anchorRoot: { ...base.anchorRoot, lastPassStatus: "failed" } },
+        outbox,
+      ),
+    ).toBe("critical");
+  });
+
+  it("is critical when the anchor-root verifier's clean pass is stale", () => {
+    expect(
+      deriveAuditHealthStatus(
+        { ...base, anchorRoot: { ...base.anchorRoot, secondsSinceCleanFullPass: 31 * 60 } },
+        outbox,
+      ),
+    ).toBe("critical");
+  });
+
+  it("is degraded when the anchor-root verifier has never completed a pass", () => {
+    expect(
+      deriveAuditHealthStatus(
+        {
+          ...base,
+          anchorRoot: {
+            ...base.anchorRoot,
+            lastPassStatus: "never",
+            secondsSinceCleanFullPass: null,
+          },
+        },
+        outbox,
+      ),
+    ).toBe("degraded");
+  });
 });
 
 describe("GET /internal/audit/health", () => {
   it("returns 200 + a safe snapshot for an audit:admin principal", async () => {
-    const app = await buildApp(fakePool({ checkpoint: cleanCheckpoint }), ["audit:admin"]);
+    const app = await buildApp(
+      fakePool({ checkpoint: cleanCheckpoint, anchorCheckpoint: cleanCheckpoint }),
+      ["audit:admin"],
+    );
     const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -142,9 +189,31 @@ describe("GET /internal/audit/health", () => {
     expect(body.outbox.exhausted).toBe(0);
   });
 
+  it("rolls up to critical when the anchor-root verifier alone has a failed pass", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = await buildApp(
+      fakePool({
+        checkpoint: cleanCheckpoint,
+        anchorCheckpoint: { ...cleanCheckpoint, last_pass_status: "failed" },
+      }),
+      ["audit:admin"],
+    );
+    const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // The content-hash verifier is clean; only the anchor-root pass failed.
+    expect(body.verifier.lastPassStatus).toBe("clean");
+    expect(body.verifier.anchorRoot.lastPassStatus).toBe("failed");
+    expect(body.status).toBe("critical");
+    errSpy.mockRestore();
+  });
+
   it("rolls up to critical when an integrity finding is open", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const app = await buildApp(fakePool({ checkpoint: cleanCheckpoint, open: 1 }), ["audit:admin"]);
+    const app = await buildApp(
+      fakePool({ checkpoint: cleanCheckpoint, anchorCheckpoint: cleanCheckpoint, open: 1 }),
+      ["audit:admin"],
+    );
     const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe("critical");
@@ -153,9 +222,10 @@ describe("GET /internal/audit/health", () => {
 
   it("does not emit a critical log per poll, even when exhausted evidence exists (quiet)", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const app = await buildApp(fakePool({ checkpoint: cleanCheckpoint, exhausted: 2 }), [
-      "audit:admin",
-    ]);
+    const app = await buildApp(
+      fakePool({ checkpoint: cleanCheckpoint, anchorCheckpoint: cleanCheckpoint, exhausted: 2 }),
+      ["audit:admin"],
+    );
     const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe("critical"); // exhausted > 0 still rolls up
@@ -164,7 +234,10 @@ describe("GET /internal/audit/health", () => {
   });
 
   it("forbids a principal without audit:admin (audit:read is not enough)", async () => {
-    const app = await buildApp(fakePool({ checkpoint: cleanCheckpoint }), ["audit:read"]);
+    const app = await buildApp(
+      fakePool({ checkpoint: cleanCheckpoint, anchorCheckpoint: cleanCheckpoint }),
+      ["audit:read"],
+    );
     const res = await app.inject({ method: "GET", url: "/internal/audit/health" });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe("auth_scope_insufficient");

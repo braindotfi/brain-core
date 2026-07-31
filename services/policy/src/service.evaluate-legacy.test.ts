@@ -7,7 +7,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import { PolicyService } from "./service.js";
-import type { PolicyDocument } from "./dsl.js";
+import { contentHashHex, type PolicyDocument } from "./dsl.js";
 
 function poolWithActivePolicy(content: PolicyDocument): {
   pool: Pool;
@@ -19,7 +19,7 @@ function poolWithActivePolicy(content: PolicyDocument): {
     tenant_id: "tnt_01TEST0000000000000000000",
     version: 1,
     content,
-    content_hash: Buffer.from("00", "hex"),
+    content_hash: Buffer.from(contentHashHex(content), "hex"),
     quorum_required: 1,
     state: "active",
     created_by: "usr_01TEST0000000000000000000",

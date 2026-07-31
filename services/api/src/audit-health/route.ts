@@ -45,19 +45,31 @@ export interface AuditHealthResponse {
 }
 
 /**
- * Roll the two snapshots into one operator-facing status:
+ * Roll the two snapshots into one operator-facing status. The content-hash and
+ * anchor-root verifiers are checked SYMMETRICALLY (same rules, same
+ * AUDIT_VERIFIER_STALE_AFTER_SECONDS threshold, reused rather than a second
+ * one invented) so a stale or failing anchor-root pass rolls up exactly like a
+ * stale or failing content-hash pass:
  *   critical: an active integrity break or undelivered mandatory evidence:
- *              a failed last pass, any open finding, exhausted outbox row, or
- *              stale verifier heartbeat.
- *   degraded: no clean pass yet, missing staleness data, or events this build
- *              cannot content-verify.
- *   safe: last pass clean, no open findings, no exhausted evidence.
+ *              a failed last pass (either verifier), any open finding,
+ *              exhausted outbox row, or a stale clean-pass heartbeat (either
+ *              verifier).
+ *   degraded: no clean pass yet (either verifier), missing staleness data, or
+ *              events this build cannot content-verify.
+ *   safe: both verifiers' last pass clean, no open findings, no exhausted
+ *          evidence.
  */
 export function deriveAuditHealthStatus(
   verifier: AuditVerifierHealth,
   outbox: AuditOutboxHealth,
 ): AuditHealthStatus {
-  if (verifier.lastPassStatus === "failed" || verifier.openFindings > 0 || outbox.exhausted > 0) {
+  const anchorRoot = verifier.anchorRoot;
+  if (
+    verifier.lastPassStatus === "failed" ||
+    anchorRoot.lastPassStatus === "failed" ||
+    verifier.openFindings > 0 ||
+    outbox.exhausted > 0
+  ) {
     return "critical";
   }
   if (
@@ -68,10 +80,19 @@ export function deriveAuditHealthStatus(
     return "critical";
   }
   if (
+    anchorRoot.lastPassStatus === "clean" &&
+    anchorRoot.secondsSinceCleanFullPass !== null &&
+    anchorRoot.secondsSinceCleanFullPass > AUDIT_VERIFIER_STALE_AFTER_SECONDS
+  ) {
+    return "critical";
+  }
+  if (
     verifier.lastPassStatus === "never" ||
     verifier.secondsSinceCleanFullPass === null ||
     verifier.unsupportedVersion > 0 ||
-    verifier.legacyUnverifiable > 0
+    verifier.legacyUnverifiable > 0 ||
+    anchorRoot.lastPassStatus === "never" ||
+    anchorRoot.secondsSinceCleanFullPass === null
   ) {
     return "degraded";
   }

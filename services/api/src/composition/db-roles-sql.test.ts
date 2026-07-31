@@ -98,6 +98,9 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
 
   it("scopes the read-only roles to SELECT", () => {
     expect(SQL).toContain("GRANT SELECT ON audit_events TO brain_audit_publisher");
+    // The scheduled publisher derives each tenant's next window from its own
+    // anchors, so it needs SELECT on audit_anchors alongside audit_events.
+    expect(SQL).toContain("GRANT SELECT ON audit_anchors TO brain_audit_publisher");
     expect(SQL).toContain(
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links",
     );

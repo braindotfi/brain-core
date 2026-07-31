@@ -194,10 +194,12 @@ export async function fetchProofSources(
     railReceipt = rcRes.rows[0]?.rail_receipt ?? null;
   }
 
-  // 8 — Merkle proof + anchor against the latest anchored window.
+  // 8 — Merkle proof + anchor against the window that CONTAINS the leaf event.
+  const leafEvent = beforeEvent ?? evRes.rows[0];
   const { merkleRoot, merkleProof, chainAnchor } = await buildMerkleProof(
     client,
-    beforeEvent?.id ?? evRes.rows[0]?.id ?? null,
+    leafEvent?.id ?? null,
+    leafEvent?.created_at ?? null,
     opts,
   );
 
@@ -248,18 +250,24 @@ export async function fetchProofSources(
   };
 }
 
-/** Build the inclusion proof for `leafEventId` against the latest anchor window. */
+/** Build the inclusion proof for `leafEventId` against the anchor window that contains it. */
 async function buildMerkleProof(
   client: Client,
   leafEventId: string | null,
+  leafCreatedAt: Date | string | null,
   opts: FetchProofOptions,
 ): Promise<{ merkleRoot: string; merkleProof: string[]; chainAnchor: ProofChainAnchor | null }> {
-  if (leafEventId === null) return { merkleRoot: "", merkleProof: [], chainAnchor: null };
+  if (leafEventId === null || leafCreatedAt === null) {
+    return { merkleRoot: "", merkleProof: [], chainAnchor: null };
+  }
 
-  // Anchor against the latest CONFIRMED window. Filtering on a non-null tx hash
-  // keeps a freshly-inserted `pending` row (or a terminal `reverted` one) from
-  // shadowing the most recent on-chain anchor, so `chain_anchor` populates
-  // whenever any window has actually landed on-chain.
+  // Anchor against the window that CONTAINS the leaf, not just the latest
+  // window -- selecting only the newest anchor meant every event outside that
+  // window got an empty proof and a null root even though its own window had
+  // already landed on chain. Filtering on a non-null tx hash keeps a
+  // freshly-inserted `pending` row (or a terminal `reverted` one) from
+  // shadowing a real anchor, so `chain_anchor` populates whenever a
+  // containing window has actually landed on-chain.
   const anchorRes = await client.query<{
     period_start: Date | string;
     period_end: Date | string;
@@ -269,8 +277,9 @@ async function buildMerkleProof(
     `SELECT period_start, period_end, onchain_tx_hash, onchain_block_number
        FROM audit_anchors
       WHERE onchain_tx_hash IS NOT NULL
-      ORDER BY period_end DESC LIMIT 1`,
-    [],
+        AND period_start <= $1 AND period_end >= $1
+      ORDER BY period_end ASC LIMIT 1`,
+    [leafCreatedAt],
   );
   const anchor = anchorRes.rows[0];
   if (anchor === undefined) return { merkleRoot: "", merkleProof: [], chainAnchor: null };

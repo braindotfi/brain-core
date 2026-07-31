@@ -12,7 +12,7 @@
 
 import type { TenantScopedClient } from "@brain/shared";
 import { brainError } from "@brain/shared";
-import type { PolicyDocument } from "./dsl.js";
+import { contentHashHex, type PolicyDocument } from "./dsl.js";
 
 export type PolicyState =
   | "draft"
@@ -73,11 +73,41 @@ export async function insertPolicy(
   return row;
 }
 
+/**
+ * Load the tenant's active policy row, then re-verify it before returning.
+ *
+ * This is the read-side half of the signature chain: composing and signing a
+ * policy proves the content is what a quorum of authorized signers approved,
+ * but that proof is only ever checked at write time. Nothing today re-checks,
+ * on read, that `content` still hashes to the stored `content_hash` -- so a
+ * direct DB write, a bad migration, or a restore that mutates `content` after
+ * activation would silently hand the section 6 gate an unsigned document that
+ * the gate then enforces as authoritative.
+ *
+ * On a hash mismatch this THROWS rather than returning null. Returning null
+ * would read as "tenant has no active policy", and PolicyService.evaluateForGate
+ * turns that into policy_not_found -- a misleading diagnosis for a tamper or
+ * corruption event, and one that could tempt a caller to fall back to some
+ * default instead of denying. Throwing a distinct error propagates out of
+ * evaluateForGate untouched, so the gate denies the action instead of
+ * evaluating a document nobody actually signed. This function must never be
+ * changed to degrade the mismatch case to null.
+ */
 export async function getActive(client: TenantScopedClient): Promise<PolicyRow | null> {
   const { rows } = await client.query<PolicyRow>(
     `SELECT * FROM policies WHERE state = 'active' LIMIT 1`,
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (row === undefined) return null;
+
+  const recomputed = contentHashHex(row.content);
+  const stored = Buffer.from(row.content_hash).toString("hex");
+  if (recomputed !== stored) {
+    throw brainError("policy_not_active", "active policy content_hash does not match content", {
+      details: { policy_id: row.id, stored_hash: stored, recomputed_hash: recomputed },
+    });
+  }
+  return row;
 }
 
 export async function getById(client: TenantScopedClient, id: string): Promise<PolicyRow | null> {

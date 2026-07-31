@@ -84,6 +84,19 @@ describe("reconcileOrphanedAnchors", () => {
     );
   });
 
+  it("emits ONE audit event, not two, across two consecutive cycles over the same unmatched orphan", async () => {
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h ago
+    const staticOrphan = orphan({ created_at: old });
+    const { pool } = fakePool([staticOrphan]);
+    const audit = new InMemoryAuditEmitter();
+
+    await reconcileOrphanedAnchors({ privilegedPool: pool, reader: readerReturning(null), audit });
+    await reconcileOrphanedAnchors({ privilegedPool: pool, reader: readerReturning(null), audit });
+
+    const orphanEvents = audit.events.filter((e) => e.action === "audit.anchor.orphan_detected");
+    expect(orphanEvents).toHaveLength(1);
+  });
+
   it("does not flag a fresh unmatched orphan (still within the grace window)", async () => {
     const { pool } = fakePool([orphan({ created_at: new Date() })]);
     const audit = new InMemoryAuditEmitter();

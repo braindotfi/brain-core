@@ -17,6 +17,9 @@ importers:
 
   .:
     devDependencies:
+      '@brain/policy':
+        specifier: workspace:*
+        version: link:services/policy
       '@brain/shared':
         specifier: workspace:*
         version: link:shared
@@ -1049,6 +1052,9 @@ importers:
       '@brain/ledger':
         specifier: workspace:*
         version: link:../../services/ledger
+      '@brain/policy':
+        specifier: workspace:*
+        version: link:../../services/policy
       '@brain/shared':
         specifier: workspace:*
         version: link:../../shared
