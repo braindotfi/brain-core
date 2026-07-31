@@ -1464,7 +1464,7 @@
           "required_scope": "execution:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query filters type/status/risk_band/min_confidence plus limit and cursor",
-          "response_shape": "200 { proposals: ProposalReadItem[], next_cursor }. ProposalReadItem keeps compact fields and adds stored_action_type, details, policy, presentation, available_decisions. Public types: vendor_risk, payment, collections, treasury, cash_forecast, dispute, compliance, revenue_intel, reconciliation, subscription, fraud_anomaly, personal_budget, financial_health, purchase_advisor, tax_prep, travel_finance, bill_management, debt_optimization, savings.",
+          "response_shape": "200 { proposals: ProposalReadItem[], next_cursor }. ProposalReadItem keeps compact fields and adds stored_action_type, details, policy, presentation, available_decisions. Public types: vendor_risk, payment, collections, treasury, cash_forecast, dispute, compliance, revenue_intel, reconciliation, subscription, fraud_anomaly, personal_budget, financial_health, purchase_advisor, tax_prep, travel_finance, bill_management, debt_optimization, savings. Background-triggered fraud_anomaly flag_transaction rows are notify-only and expose only acknowledge in available_decisions; Mark reviewed or Hold transaction labels apply only to fraud rows stored in propose mode.",
           "example_request": "GET /v1/proposals",
           "example_response": {
             "proposals": [
