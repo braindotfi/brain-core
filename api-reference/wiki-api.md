@@ -207,7 +207,23 @@ Authorization: Bearer <token>
 }
 ```
 
-`page_type` enum: `account | counterparty | obligation | invoice | agent | policy | monthly_summary | cash_flow`.
+`page_type` enum: `account | counterparty | obligation | invoice | agent |
+policy | monthly_summary | cash_flow`.
+
+| Page type         | Subject                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| `account`         | One Ledger account and its balances, transactions, and evidence      |
+| `counterparty`    | One customer, vendor, merchant, bank, wallet, or related party       |
+| `obligation`      | One payable, receivable, payroll, tax, subscription, loan, or bill   |
+| `invoice`         | One invoice-shaped receivable with linked documents and transactions |
+| `agent`           | One agent definition or run context page                             |
+| `policy`          | One policy document or active-policy summary                         |
+| `monthly_summary` | One month of tenant cash movement, balances, invoices, and bills     |
+| `cash_flow`       | A cash-flow period or forecast page                                  |
+
+These are the same page types proposal evidence may cite as `wiki_entity`
+targets. Ledger-backed evidence is still resolved through the Ledger evidence
+resolver first; Wiki pages provide narrative context, not financial truth.
 
 Get one page by slug or id:
 

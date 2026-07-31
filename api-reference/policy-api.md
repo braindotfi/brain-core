@@ -192,6 +192,23 @@ Content-Type: application/json
 
 Casing is **lowercase**. `allow | confirm | reject`. The historical-simulation counters mirror it (`would_allow`, `would_confirm`, `would_reject`).
 
+#### Unmatched high-risk agent actions
+
+The policy VM remains deny-by-default. A normal unmatched rule evaluation still
+returns `reject`, and low-stakes or money-path proposal types keep their existing
+fail-closed behavior.
+
+There is one compatibility wrapper for reviewable high-risk non-money proposals:
+`PolicyService.evaluateLegacy` converts unmatched `agent_action` fallthroughs
+for `collections`, `fraud_anomaly`, and `vendor_risk` to `confirm` with
+`required_approvers: ["signer"]`. The same fallback also applies to stored
+high-risk action types such as `flag_transaction`, `block_payment`,
+`flag_vendor_risk`, `freeze_card`, `create_dispute_draft`, `require_approval`,
+and `escalate`. This keeps suspicious transactions, vendor-risk holds, and
+collections follow-ups visible for human review instead of silently closing them
+as policy rejections. `payment` proposals are deliberately not included in this
+fallback.
+
 #### Decision vocabulary across surfaces
 
 `allow | confirm | reject` is the canonical protocol decision. The rule-level `execute` field and the SDK use aliases that map 1:1; the PaymentIntent status reflects the same outcome:
@@ -218,6 +235,14 @@ The evaluate `action.kind` is one of the following. There is no `rail` field on 
 | `any`              | Only valid inside a rule's `applies_to` catch-all |
 
 A rule's `applies_to` accepts the same `kind` values, including `any`. (The PaymentIntent layer uses a separate, broader `action_type` set. `ach_outbound`, `wire`, `x402_settle`, etc.. Those map onto the `kind` values internally.)
+
+Proposal read APIs expose a separate public proposal `type`. Stored agent
+`action_type` values are preserved as `stored_action_type` and then mapped to a
+public proposal type through the proposal read model. For example,
+`flag_transaction` maps to `fraud_anomaly`, `block_payment` maps to
+`vendor_risk`, and `propose_match` maps to `reconciliation`. Ambiguous stored
+actions such as `notify`, `escalate`, `create_task`, and `recommend_action` use
+the agent role or kind instead of action-name guessing.
 
 ### Lint a Draft
 

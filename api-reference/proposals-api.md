@@ -38,7 +38,7 @@ Tenant-scoped and cursor-paginated. Every filter is optional.
 
 | Query parameter  | Type    | Description                                                             |
 | ---------------- | ------- | ----------------------------------------------------------------------- |
-| `type`           | string  | One of the eleven agent types (see below).                              |
+| `type`           | string  | One of the public proposal types (see below).                           |
 | `status`         | string  | Lifecycle status filter (see below).                                    |
 | `risk_band`      | string  | `low`, `standard`, `elevated`, or `high`.                               |
 | `min_confidence` | number  | Float in `[0, 1]`. Returns proposals at or above this agent confidence. |
@@ -65,7 +65,86 @@ Tenant-scoped and cursor-paginated. Every filter is optional.
       ],
       "agent": { "id": "agt_collections", "kind": "collections", "display_name": "Collections" },
       "payment_intent_id": null,
-      "action_type": null
+      "action_type": null,
+      "stored_action_type": "draft_followup",
+      "details": {
+        "invoice_id": "inv_2231",
+        "counterparty_id": "cp_88",
+        "days_overdue": 34,
+        "recommended_tone": "firm"
+      },
+      "policy": {
+        "decision": "confirm",
+        "policy_id": "pol_8231",
+        "policy_version": 4,
+        "matched_rule_id": "default-agent-action-requires-review",
+        "explanation": "Collections follow-up requires human confirmation.",
+        "required_approvers": ["signer"],
+        "trace": []
+      },
+      "presentation": {
+        "headline": "Follow up on overdue invoice INV-2231.",
+        "recommendation": "Send a second-notice collections follow-up.",
+        "key_facts": [
+          { "label": "Invoice", "value": "INV-2231" },
+          { "label": "Days overdue", "value": 34 }
+        ],
+        "confidence_band": "high",
+        "policy": {
+          "decision": "confirm",
+          "policy_id": "pol_8231",
+          "policy_version": 4,
+          "matched_rule_id": "default-agent-action-requires-review",
+          "explanation": "Collections follow-up requires human confirmation.",
+          "required_approvers": ["signer"],
+          "trace": []
+        },
+        "consequences": {
+          "approve": "Brain records the human approval and lets the internal workflow continue.",
+          "reject": "Brain closes the proposal without continuing the workflow.",
+          "acknowledge": null
+        },
+        "actions": [
+          {
+            "id": "approve",
+            "label": "Approve",
+            "meaning": "Approve this proposed action."
+          },
+          {
+            "id": "reject",
+            "label": "Reject",
+            "meaning": "Reject this proposed action."
+          }
+        ],
+        "technical_detail": {
+          "1_ingest": { "evidence": [{ "kind": "invoice", "ref": "inv_2231" }] },
+          "2_extract": { "days_overdue": 34 },
+          "3_classify": { "type": "collections", "stored_action_type": "draft_followup" },
+          "4_score": { "confidence": 0.82, "confidence_band": "high" },
+          "5_policy": {
+            "decision": "confirm",
+            "policy_id": "pol_8231",
+            "policy_version": 4,
+            "matched_rule_id": "default-agent-action-requires-review",
+            "explanation": "Collections follow-up requires human confirmation.",
+            "required_approvers": ["signer"],
+            "trace": []
+          },
+          "6_propose": { "status": "pending_approval", "mode": "propose" }
+        }
+      },
+      "available_decisions": [
+        {
+          "id": "approve",
+          "label": "Approve",
+          "meaning": "Approve this proposed action."
+        },
+        {
+          "id": "reject",
+          "label": "Reject",
+          "meaning": "Reject this proposed action."
+        }
+      ]
     }
   ],
   "next_cursor": "eyJvIjoxMjV9"
@@ -76,10 +155,46 @@ Tenant-scoped and cursor-paginated. Every filter is optional.
 `payment_intent_id` and `action_type`; a non-money finding leaves both `null`.
 `confidence` and `risk_band` are `null` when the agent did not score them.
 
-### The eleven agent types
+The compact fields remain stable for existing clients. The read model also
+returns the additive fields below for rich proposal cards:
+
+| Field                 | Description                                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stored_action_type`  | Original stored action type, for example `flag_transaction`, `block_payment`, `draft_followup`, or a PaymentIntent `action_type`.                    |
+| `details`             | Stored action fields or PaymentIntent Ledger columns shaped as proposal details. Common keys include `risk_score`, `ranked_signals`, and entity ids. |
+| `policy`              | Policy decision summary: `decision`, `policy_id`, `policy_version`, `matched_rule_id`, `explanation`, `required_approvers`, and `trace`.             |
+| `presentation`        | Normalized UI card data: `headline`, `recommendation`, `key_facts`, `confidence_band`, `policy`, `consequences`, `actions`, and technical detail.    |
+| `available_decisions` | Semantic decisions accepted by `POST /v1/proposals/{id}/decide`, with labels and meanings for the current proposal type.                             |
+
+`presentation.technical_detail` always uses the six stable layer keys
+`1_ingest`, `2_extract`, `3_classify`, `4_score`, `5_policy`, and `6_propose`.
+
+### Public proposal types
 
 `vendor_risk`, `payment`, `collections`, `treasury`, `cash_forecast`, `dispute`,
-`compliance`, `revenue_intel`, `reconciliation`, `subscription`, `fraud_anomaly`.
+`compliance`, `revenue_intel`, `reconciliation`, `subscription`,
+`fraud_anomaly`, `personal_budget`, `financial_health`, `purchase_advisor`,
+`tax_prep`, `travel_finance`, `bill_management`, `debt_optimization`,
+`savings`.
+
+The public `type` is resolved deterministically:
+
+1. A stored action type that is already a public proposal type is used directly.
+2. Otherwise Brain uses the agent role or agent kind from the stored action or
+   joined agent row.
+3. Otherwise Brain uses the explicit stored-action map. Examples:
+   `flag_transaction -> fraud_anomaly`, `block_payment -> vendor_risk`,
+   `propose_match -> reconciliation`, `recommend_card -> travel_finance`,
+   `tag_tax_item -> tax_prep`, `remind -> bill_management`, and
+   `recommend_savings_transfer -> savings`.
+
+Ambiguous stored action names such as `notify`, `escalate`, `create_task`, and
+`recommend_action` resolve through the agent role. Brain does not guess their
+public type from the action name alone.
+
+This expansion is backward-compatible. No new API version or route was
+introduced because all compact fields remain in place and the richer fields are
+additive.
 
 ### Lifecycle status values
 
