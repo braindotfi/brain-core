@@ -12,11 +12,16 @@ export type { AuditDeps } from "./deps.js";
 export * from "./merkle.js";
 export { verifyInclusion } from "./verify.js";
 export {
+  createPendingAnchor,
   publishAnchor,
+  publishPendingAnchorBatch,
   publishPendingAnchor,
+  type AnchorBatchBroadcaster,
   type AnchorBroadcaster,
+  type BroadcastBatchResult,
   type BroadcastInput,
   type BroadcastResult,
+  type PublishPendingAnchorBatchSummary,
   type PublishOptions,
 } from "./publisher.js";
 export type { AuditAnchorRow } from "./repository.js";

@@ -210,7 +210,9 @@ import { buildX402Client } from "./rails/x402Client.js";
 import {
   registerAuditRoutes,
   registerWebhookRoutes,
+  createPendingAnchor,
   publishAnchor,
+  publishPendingAnchorBatch,
   publishPendingAnchor,
   startAnchorReconciler,
   startAuditConsistencyVerifier,
@@ -1276,6 +1278,7 @@ async function main(): Promise<void> {
           maxEventScanBlockSpan: cfg.AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS,
           gasSafetyFactor: cfg.AUDIT_ANCHOR_GAS_SAFETY_FACTOR,
           walletBalanceAlertWei: cfg.AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI,
+          maxBatchSize: cfg.AUDIT_ANCHOR_BATCH_SIZE,
           metrics,
           log,
           nodeEnv: cfg.NODE_ENV,
@@ -3279,16 +3282,36 @@ async function main(): Promise<void> {
             WHERE onchain_tx_hash IS NULL
               AND onchain_status = 'pending'
             ORDER BY created_at ASC
-            LIMIT 10`,
+            LIMIT $1`,
+          [cfg.AUDIT_ANCHOR_BATCH_SIZE],
         );
-        for (const row of pending.rows) {
+        const pendingDepth = await auditVerifierPool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+             FROM audit_anchors
+            WHERE onchain_tx_hash IS NULL
+              AND onchain_status = 'pending'`,
+        );
+        metrics.gauge(
+          "brain.audit.anchor.pending_backlog_depth",
+          Number(pendingDepth.rows[0]?.count ?? 0),
+        );
+        if (pending.rows.length > 0) {
           try {
-            await publishPendingAnchor(pool, anchorBroadcaster, row);
+            if ("broadcastAnchorBatch" in anchorBroadcaster) {
+              const summary = await publishPendingAnchorBatch(
+                pool,
+                anchorBroadcaster.broadcastAnchorBatch,
+                pending.rows,
+                metrics,
+              );
+              log.info(summary, "pending anchor retry batch completed");
+            } else {
+              for (const row of pending.rows) {
+                await publishPendingAnchor(pool, anchorBroadcaster, row);
+              }
+            }
           } catch (err) {
-            log.error(
-              { err, tenantId: row.tenant_id, anchorId: row.id },
-              "pending anchor retry failed",
-            );
+            log.error({ err, batchSize: pending.rows.length }, "pending anchor retry batch failed");
           }
         }
 
@@ -3340,6 +3363,7 @@ async function main(): Promise<void> {
           oldestUnanchoredAgeSeconds,
         );
 
+        const newAnchorRows: AuditAnchorRow[] = [];
         for (const row of res.rows) {
           try {
             const periodStart =
@@ -3372,13 +3396,36 @@ async function main(): Promise<void> {
             // makes withTenantScope actually isolate, matching the manual
             // POST /v1/audit/anchor/publish route. (§1 principle 2: tenant
             // isolation at the storage layer, not a query-layer tenant_id filter.)
-            await publishAnchor(pool, anchorBroadcaster, {
+            const pendingAnchor = await createPendingAnchor(pool, {
               tenantId: row.tenant_id,
               periodStart,
               periodEnd,
             });
+            if (pendingAnchor !== null) newAnchorRows.push(pendingAnchor);
           } catch (err) {
             log.error({ err, tenantId: row.tenant_id }, "anchor publish failed");
+          }
+        }
+        if (newAnchorRows.length > 0) {
+          try {
+            if ("broadcastAnchorBatch" in anchorBroadcaster) {
+              const batches = chunkRows(newAnchorRows, cfg.AUDIT_ANCHOR_BATCH_SIZE);
+              for (const batch of batches) {
+                const summary = await publishPendingAnchorBatch(
+                  pool,
+                  anchorBroadcaster.broadcastAnchorBatch,
+                  batch,
+                  metrics,
+                );
+                log.info(summary, "anchor publish batch completed");
+              }
+            } else {
+              for (const row of newAnchorRows) {
+                await publishPendingAnchor(pool, anchorBroadcaster, row);
+              }
+            }
+          } catch (err) {
+            log.error({ err, batchSize: newAnchorRows.length }, "anchor publish batch failed");
           }
         }
       } catch (err) {
@@ -3583,6 +3630,15 @@ function emailFromMetadata(metadata: Record<string, unknown>): string | null {
   }
   const email = metadata["email"];
   return typeof email === "string" && email.includes("@") ? email.toLowerCase() : null;
+}
+
+function chunkRows<T>(rows: T[], size: number): T[][] {
+  const chunkSize = Math.max(1, Math.floor(size));
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    chunks.push(rows.slice(i, i + chunkSize));
+  }
+  return chunks;
 }
 
 main().catch((err) => {

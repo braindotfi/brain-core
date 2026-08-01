@@ -399,6 +399,14 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   funds throws `InsufficientAnchorFundsError`, leaves the anchor pending for
   retry, emits `brain.audit.anchor.publisher_wallet_insufficient_funds.count`,
   and never marks the row `reverted`.
+- Audit anchor publishing uses `BrainAuditAnchor.anchorBatch` on Base Sepolia.
+  The scheduler first creates each tenant's one-row anchor record under
+  tenant-scoped RLS, then broadcasts bounded batches of up to
+  `AUDIT_ANCHOR_BATCH_SIZE` rows, default 50, so a normal cycle is one on-chain
+  tx instead of one tx per tenant. Metrics include
+  `brain.audit.anchor.pending_backlog_depth`, `brain.audit.anchor.batch_size`,
+  and `brain.audit.anchor.batch_tx.count`. Mainnet anchoring remains fenced
+  until the additive batch function completes external audit.
 - Published anchors are re-proved, so tail truncation is detectable. The fork,
   gap, genesis and content-hash checks all pass if the newest events of a
   tenant's chain are deleted. `verifyAnchorRoots` recomputes each confirmed

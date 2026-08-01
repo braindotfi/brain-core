@@ -94,7 +94,7 @@ rejections, zero-amount, unknown-id), **fuzz**
 partial-release handler), and a **reentrancy** test (a reentrant token cannot
 double-spend).
 
-## BrainAuditAnchor (135 LoC)
+## BrainAuditAnchor (201 source lines including comments)
 
 Append-only Merkle-root anchor for the audit log; `verifyInclusion` is the
 public verification primitive.
@@ -110,10 +110,19 @@ public verification primitive.
   `node = keccak256(0x01‖sort(l,r))`. A valid proof verifies; any single-byte
   mutation of root/leaf/proof fails.
 - No state mutation path for an already-anchored root.
+- `anchorBatch` is additive and UNAUDITED / Base Sepolia testnet-only. It must
+  preserve the same per-tenant root semantics as `anchor`, bound batch length by
+  `MAX_BATCH = 50`, skip already-published `(tenantId, root)` pairs without
+  reverting the entire batch, and revert on invalid periods, length mismatch,
+  over-cap batches, or non-publisher calls. It must not introduce root-of-roots
+  semantics or change existing storage layout.
 
 **Coverage:** unit (anchor records/emits, duplicate-root rejection, period
 validation, publisher rotation) + `verifyInclusion` single/pair/wrong-proof +
-the P1.3 fuzz invariant `testFuzz_verifyInclusion_tamperFails`.
+the P1.3 fuzz invariant `testFuzz_verifyInclusion_tamperFails`. Batch coverage:
+multi-tenant publish updates every latest entry, duplicate retry skips only the
+duplicate element, length mismatch reverts, only-publisher enforced, and
+over-`MAX_BATCH` reverts.
 
 ## BrainPolicyRegistry (255 LoC)
 

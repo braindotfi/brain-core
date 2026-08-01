@@ -70,6 +70,14 @@ instead of genesis and log a warning. Event scans are chunked by
 `InsufficientAnchorFundsError`, leave the anchor pending for retry, emit the
 critical wallet metric, and must never mark the row `reverted`.
 
+Audit anchor publishing uses `BrainAuditAnchor.anchorBatch` on Base Sepolia to
+collapse each bounded publisher cycle to a single transaction where possible.
+The contract cap and default scheduler cap are 50 rows per batch, chosen to keep
+gas headroom while draining tenant-scale backlogs. Mainnet anchoring remains
+fenced until the additive batch function is externally audited. The one-time
+backlog drain script defaults to dry-run and must stop before spending when the
+configured wallet floor or max-spend budget would be crossed.
+
 Every service-owned table with a `tenant_id` column must enable and force
 Postgres row-level security and define at least one tenant policy. The
 `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as one

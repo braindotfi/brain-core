@@ -23,7 +23,13 @@ vi.mock("./repository.js", () => ({
   setAnchorReverted: vi.fn(),
 }));
 
-import { publishAnchor, publishPendingAnchor, type BroadcastResult } from "./publisher.js";
+import {
+  publishAnchor,
+  publishPendingAnchor,
+  publishPendingAnchorBatch,
+  type BroadcastBatchResult,
+  type BroadcastResult,
+} from "./publisher.js";
 import * as repo from "./repository.js";
 
 const pool = {} as Pool;
@@ -53,6 +59,14 @@ const broadcastResult = (status: BroadcastResult["status"]): BroadcastResult => 
   txHash: Buffer.alloc(32, 0xab),
   blockNumber: 4242n,
   status,
+});
+
+const batchResult = (
+  input: BroadcastBatchResult["input"],
+  status: BroadcastResult["status"],
+): BroadcastBatchResult => ({
+  input,
+  result: broadcastResult(status),
 });
 
 describe("publishAnchor", () => {
@@ -184,5 +198,64 @@ describe("publishAnchor", () => {
 
     expect(repo.setAnchorTxHash).not.toHaveBeenCalled();
     expect(repo.setAnchorReverted).not.toHaveBeenCalled();
+  });
+
+  it("publishes several pending rows with one batch tx and finalizes every row", async () => {
+    const rows = [
+      anchorRow({ id: "anchor_1", tenant_id: "tnt_a", merkle_root: Buffer.alloc(32, 1) }),
+      anchorRow({ id: "anchor_2", tenant_id: "tnt_b", merkle_root: Buffer.alloc(32, 2) }),
+      anchorRow({ id: "anchor_3", tenant_id: "tnt_c", merkle_root: Buffer.alloc(32, 3) }),
+    ];
+    const broadcaster = vi.fn(async (inputs: BroadcastBatchResult["input"][]) =>
+      inputs.map((input) => batchResult(input, "confirmed")),
+    );
+
+    const summary = await publishPendingAnchorBatch(pool, broadcaster, rows);
+
+    expect(broadcaster).toHaveBeenCalledTimes(1);
+    expect(broadcaster).toHaveBeenCalledWith([
+      expect.objectContaining({ tenantId: "tnt_a", merkleRoot: rows[0]?.merkle_root }),
+      expect.objectContaining({ tenantId: "tnt_b", merkleRoot: rows[1]?.merkle_root }),
+      expect.objectContaining({ tenantId: "tnt_c", merkleRoot: rows[2]?.merkle_root }),
+    ]);
+    expect(repo.setAnchorTxHash).toHaveBeenCalledTimes(3);
+    expect(repo.setAnchorReverted).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      attempted: 3,
+      confirmed: 3,
+      alreadyAnchored: 0,
+      reverted: 0,
+      txCount: 1,
+    });
+  });
+
+  it("finalizes per-row batch outcomes without retrying terminal rows", async () => {
+    const rows = [
+      anchorRow({ id: "anchor_1", tenant_id: "tnt_a", merkle_root: Buffer.alloc(32, 1) }),
+      anchorRow({ id: "anchor_2", tenant_id: "tnt_b", merkle_root: Buffer.alloc(32, 2) }),
+      anchorRow({
+        id: "anchor_terminal",
+        tenant_id: "tnt_c",
+        onchain_status: "reverted",
+      }),
+    ];
+    const broadcaster = vi.fn(async (inputs: BroadcastBatchResult["input"][]) => [
+      batchResult(inputs[0]!, "already_anchored"),
+      batchResult(inputs[1]!, "reverted"),
+    ]);
+
+    const summary = await publishPendingAnchorBatch(pool, broadcaster, rows);
+
+    expect(broadcaster).toHaveBeenCalledTimes(1);
+    expect(repo.setAnchorTxHash).toHaveBeenCalledTimes(1);
+    expect(repo.setAnchorReverted).toHaveBeenCalledTimes(1);
+    expect(repo.setAnchorReverted).toHaveBeenCalledWith(expect.anything(), "anchor_2");
+    expect(summary).toMatchObject({
+      attempted: 2,
+      skippedTerminal: 1,
+      confirmed: 0,
+      alreadyAnchored: 1,
+      reverted: 1,
+    });
   });
 });
