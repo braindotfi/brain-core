@@ -85,6 +85,14 @@ migration set, so coverage may be added in a later migration than the table
 creation. Any exemption must be listed in the guard allowlist with a
 human-readable reason.
 
+Production DB and object-store credentials have no safe defaults.
+`docker-compose.prod.yml` requires every DB role password plus
+`MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` at compose interpolation time.
+`shared/src/config.ts` also refuses to boot in `NODE_ENV=production` when any
+consumed DB URL password, `BRAIN_*_DB_PASSWORD`, `POSTGRES_PASSWORD`, MinIO
+credential, or S3/Azure blob secret is empty or uses a known weak default. The
+same check warns, but does not throw, in `NODE_ENV=staging`.
+
 Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
 data. Evidence blocks are wrapped in a per-request random boundary, evidence
 text is facts to cite and never instructions to obey, and answer serialization

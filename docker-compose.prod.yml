@@ -20,11 +20,12 @@
 # (the DB/MinIO passwords woven into the connection URLs below) from the
 # --env-file / ./.env, NOT from a service's `env_file:` entry. Using one file
 # for both keeps the role passwords and the URLs that reference them in sync.
-# Every ${VAR:-default} has a testnet default, so the stack still boots with no
-# file — but override every password before exposing the host. A non-prod stack
-# (e.g. staging) sets BRAIN_ENV_FILE=<its env file> inside that same --env-file
-# file, so each service's env_file: resolves to the right file without a
-# .env.prod symlink.
+# Database role passwords and MinIO root credentials have no production
+# fallback. Compose interpolation uses ${VAR:?message} for those values so an
+# unset or empty secret fails before any service starts. A non-prod stack (e.g.
+# staging) sets BRAIN_ENV_FILE=<its env file> inside that same --env-file file,
+# so each service's env_file: resolves to the right file without a .env.prod
+# symlink.
 #
 # Boot order is enforced by depends_on conditions:
 #   postgres healthy → migrate (owner role, creates tables) completed
@@ -33,9 +34,8 @@
 #   all of the above + redis healthy → api
 #
 # Connection URLs are composed from passwords supplied via compose interpolation
-# (the top-level ./.env file or the shell), with testnet-friendly defaults so the
-# stack boots out-of-the-box on a fresh VM. Override every *_DB_PASSWORD and the
-# MinIO root credentials before exposing the host.
+# (the top-level ./.env file or the shell). Every *_DB_PASSWORD, the owner
+# POSTGRES_PASSWORD, and the MinIO root credentials are required in production.
 
 name: brain-prod
 
@@ -53,15 +53,15 @@ x-brain-common-env: &brain-common-env
   AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
   AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
   AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
-  DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:-brain_app}@postgres:5432/brain
+  DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}@postgres:5432/brain
   DATABASE_SSL: disable
   REDIS_URL: redis://redis:6379
   BLOB_BACKEND: s3
   BLOB_CONTAINER: brain-artifacts
   S3_ENDPOINT: http://minio:9000
   S3_REGION: ${S3_REGION:-us-east-1}
-  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-brainminio}
-  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-brainminio}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
   S3_FORCE_PATH_STYLE: "true"
 
 services:
@@ -73,7 +73,7 @@ services:
       # The bootstrap superuser/owner. migrate connects as this role; the app
       # connects as the lower-privilege roles created by the db-roles step.
       POSTGRES_USER: brain
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
       POSTGRES_DB: brain
     volumes:
       - pg-data:/var/lib/postgresql/data
@@ -125,8 +125,8 @@ services:
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-brainminio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-brainminio}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
     volumes:
       - minio-data:/data
 
@@ -141,8 +141,8 @@ services:
       minio:
         condition: service_started
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-brainminio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-brainminio}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
       BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
     entrypoint:
       - /bin/sh
@@ -167,7 +167,7 @@ services:
     container_name: brain-prod-migrate
     command: ["node", "tools/migrate/dist/cli.js", "up"]
     environment:
-      DATABASE_URL: postgres://brain:${POSTGRES_PASSWORD:-brain}@postgres:5432/brain
+      DATABASE_URL: postgres://brain:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}@postgres:5432/brain
       DATABASE_SSL: disable
     depends_on:
       postgres:
@@ -184,7 +184,7 @@ services:
     volumes:
       - ./infra/db-roles.sql:/db-roles.sql:ro
     environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-brain}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}
     # Role passwords are interpolated by compose at parse time (the ${..} form),
     # matching the URLs the api builds below so the credentials line up.
     entrypoint:
@@ -194,22 +194,22 @@ services:
         set -e
         psql -v ON_ERROR_STOP=1 \
           -h postgres -U brain -d brain \
-          -v brain_app_password="${BRAIN_APP_DB_PASSWORD:-brain_app}" \
-          -v brain_privileged_password="${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}" \
-          -v brain_wiki_reader_password="${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}" \
-          -v brain_mcp_reader_password="${BRAIN_MCP_READER_DB_PASSWORD:-brain_mcp_reader}" \
-          -v brain_raw_worker_password="${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}" \
-          -v brain_canonical_projector_password="${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}" \
-          -v brain_ledger_projector_password="${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:-brain_ledger_projector}" \
-          -v brain_execution_worker_password="${BRAIN_EXECUTION_WORKER_DB_PASSWORD:-brain_execution_worker}" \
-          -v brain_audit_verifier_password="${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}" \
-          -v brain_audit_publisher_password="${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:-brain_audit_publisher}" \
-          -v brain_resolver_password="${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}" \
-          -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}" \
-          -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}" \
-          -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}" \
-          -v brain_auth_password="${BRAIN_AUTH_DB_PASSWORD:-brain_auth}" \
-          -v brain_auth_audit_writer_password="${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}" \
+          -v brain_app_password="${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}" \
+          -v brain_privileged_password="${BRAIN_PRIVILEGED_DB_PASSWORD:?BRAIN_PRIVILEGED_DB_PASSWORD is required in production}" \
+          -v brain_wiki_reader_password="${BRAIN_WIKI_DB_PASSWORD:?BRAIN_WIKI_DB_PASSWORD is required in production}" \
+          -v brain_mcp_reader_password="${BRAIN_MCP_READER_DB_PASSWORD:?BRAIN_MCP_READER_DB_PASSWORD is required in production}" \
+          -v brain_raw_worker_password="${BRAIN_RAW_WORKER_DB_PASSWORD:?BRAIN_RAW_WORKER_DB_PASSWORD is required in production}" \
+          -v brain_canonical_projector_password="${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:?BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD is required in production}" \
+          -v brain_ledger_projector_password="${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:?BRAIN_LEDGER_PROJECTOR_DB_PASSWORD is required in production}" \
+          -v brain_execution_worker_password="${BRAIN_EXECUTION_WORKER_DB_PASSWORD:?BRAIN_EXECUTION_WORKER_DB_PASSWORD is required in production}" \
+          -v brain_audit_verifier_password="${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:?BRAIN_AUDIT_VERIFIER_DB_PASSWORD is required in production}" \
+          -v brain_audit_publisher_password="${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:?BRAIN_AUDIT_PUBLISHER_DB_PASSWORD is required in production}" \
+          -v brain_resolver_password="${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}" \
+          -v brain_tenant_deletion_password="${BRAIN_TENANT_DELETION_DB_PASSWORD:?BRAIN_TENANT_DELETION_DB_PASSWORD is required in production}" \
+          -v brain_surface_gateway_password="${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_DB_PASSWORD is required in production}" \
+          -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD is required in production}" \
+          -v brain_auth_password="${BRAIN_AUTH_DB_PASSWORD:?BRAIN_AUTH_DB_PASSWORD is required in production}" \
+          -v brain_auth_audit_writer_password="${BRAIN_AUTH_AUDIT_DB_PASSWORD:?BRAIN_AUTH_AUDIT_DB_PASSWORD is required in production}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -233,7 +233,7 @@ services:
         required: false
     environment:
       # brain_privileged (BYPASSRLS) so the seed can write across the tenant.
-      DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:-brain_privileged}@postgres:5432/brain
+      DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:?BRAIN_PRIVILEGED_DB_PASSWORD is required in production}@postgres:5432/brain
       DATABASE_SSL: disable
       BRAIN_TENANT_ID: ${BRAIN_SEED_TENANT_ID:-tnt_00000000010000000000000000}
       BRAIN_ACTOR: golden-path-seed
@@ -294,15 +294,15 @@ services:
       # container, per OAUTH-AS-PLAN.md section 2). This service deliberately
       # has no env_file, so no production secret beyond what is explicitly
       # listed here reaches what is a public browser-facing origin.
-      DATABASE_URL: postgres://unused:unused@localhost:5432/unused
+      DATABASE_URL: postgres://unused:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}@localhost:5432/unused
       REDIS_URL: redis://localhost:6379
       AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
       AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
       AUTH_SIGN_KEY: ${AUTH_SIGN_KEY}
       AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET}
-      BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:-brain_auth}@postgres:5432/brain
-      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
-      BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:-brain_auth_audit_writer}@postgres:5432/brain
+      BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:?BRAIN_AUTH_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:?BRAIN_AUTH_AUDIT_DB_PASSWORD is required in production}@postgres:5432/brain
       EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
       EMAIL_API_KEY: ${EMAIL_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
@@ -349,11 +349,11 @@ services:
       # pools its routes use are provided — never the worker-only DB credentials.
       BRAIN_HTTP_ENABLED: "true"
       BRAIN_WORKERS: none
-      BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:-brain_wiki_reader}@postgres:5432/brain
-      BRAIN_MCP_READER_DB_URL: postgres://brain_mcp_reader:${BRAIN_MCP_READER_DB_PASSWORD:-brain_mcp_reader}@postgres:5432/brain
-      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
-      BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
-      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
+      BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:?BRAIN_WIKI_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_MCP_READER_DB_URL: postgres://brain_mcp_reader:${BRAIN_MCP_READER_DB_PASSWORD:?BRAIN_MCP_READER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:?BRAIN_TENANT_DELETION_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:?BRAIN_AUDIT_VERIFIER_DB_PASSWORD is required in production}@postgres:5432/brain
     # No `auth: condition: service_healthy` here: both deploy workflows recreate
     # this service with --no-deps, so compose would ignore the condition anyway
     # (the ordering is enforced by the workflow steps instead, not by compose).
@@ -404,13 +404,13 @@ services:
       BRAIN_HTTP_ENABLED: "false"
       BRAIN_WORKERS: "all"
       # Worker-only role URLs (no resolver: that is request-path only).
-      BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:-brain_raw_worker}@postgres:5432/brain
-      BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:-brain_canonical_projector}@postgres:5432/brain
-      BRAIN_LEDGER_PROJECTOR_DB_URL: postgres://brain_ledger_projector:${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:-brain_ledger_projector}@postgres:5432/brain
-      BRAIN_EXECUTION_WORKER_DB_URL: postgres://brain_execution_worker:${BRAIN_EXECUTION_WORKER_DB_PASSWORD:-brain_execution_worker}@postgres:5432/brain
-      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:-brain_audit_verifier}@postgres:5432/brain
-      BRAIN_AUDIT_PUBLISHER_DB_URL: postgres://brain_audit_publisher:${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:-brain_audit_publisher}@postgres:5432/brain
-      BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:-brain_tenant_deletion}@postgres:5432/brain
+      BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:?BRAIN_RAW_WORKER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:?BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_LEDGER_PROJECTOR_DB_URL: postgres://brain_ledger_projector:${BRAIN_LEDGER_PROJECTOR_DB_PASSWORD:?BRAIN_LEDGER_PROJECTOR_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_EXECUTION_WORKER_DB_URL: postgres://brain_execution_worker:${BRAIN_EXECUTION_WORKER_DB_PASSWORD:?BRAIN_EXECUTION_WORKER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:?BRAIN_AUDIT_VERIFIER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_AUDIT_PUBLISHER_DB_URL: postgres://brain_audit_publisher:${BRAIN_AUDIT_PUBLISHER_DB_PASSWORD:?BRAIN_AUDIT_PUBLISHER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:?BRAIN_TENANT_DELETION_DB_PASSWORD is required in production}@postgres:5432/brain
     depends_on:
       postgres:
         condition: service_healthy
@@ -449,9 +449,9 @@ services:
     environment:
       <<: *brain-common-env
       SERVICE_NAME: brain-surface-gateway
-      BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain_surface_gateway:${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:-brain_surface_gateway}@postgres:5432/brain
-      BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: postgres://brain_surface_audit_writer:${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:-brain_surface_audit_writer}@postgres:5432/brain
-      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:-brain_resolver}@postgres:5432/brain
+      BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain_surface_gateway:${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: postgres://brain_surface_audit_writer:${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
       SLACK_ENABLED: ${SLACK_ENABLED:-false}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
