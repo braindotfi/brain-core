@@ -378,6 +378,15 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   `brain.audit.anchor.oldest_unanchored_age_seconds` makes the backlog
   observable. `brain_audit_publisher` holds SELECT on `audit_anchors` for the
   coverage join.
+- Anchor publisher event scans must use `AUDIT_ANCHOR_FROM_BLOCK` in staging
+  and production. If it is unset, the broadcaster and reconciler use a bounded
+  lookback window (`AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS`) and log a warning
+  rather than scanning from genesis. Event scans are chunked by
+  `AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS` to fit range-limited Base RPC providers.
+  The broadcaster checks wallet balance before `writeContract`; insufficient
+  funds throws `InsufficientAnchorFundsError`, leaves the anchor pending for
+  retry, emits `brain.audit.anchor.publisher_wallet_insufficient_funds.count`,
+  and never marks the row `reverted`.
 - Published anchors are re-proved, so tail truncation is detectable. The fork,
   gap, genesis and content-hash checks all pass if the newest events of a
   tenant's chain are deleted. `verifyAnchorRoots` recomputes each confirmed

@@ -171,4 +171,18 @@ describe("publishAnchor", () => {
       4242n,
     );
   });
+
+  it("leaves a pending row pending when the broadcaster throws a transient insufficient-funds error", async () => {
+    const pending = anchorRow();
+    const broadcaster = vi.fn(async () => {
+      throw new Error("InsufficientAnchorFundsError");
+    });
+
+    await expect(publishPendingAnchor(pool, broadcaster, pending)).rejects.toThrow(
+      "InsufficientAnchorFundsError",
+    );
+
+    expect(repo.setAnchorTxHash).not.toHaveBeenCalled();
+    expect(repo.setAnchorReverted).not.toHaveBeenCalled();
+  });
 });

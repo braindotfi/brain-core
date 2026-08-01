@@ -11,6 +11,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
+import type { MetricsEmitter } from "@brain/shared";
 
 /**
  * Base Sepolia's reported gas price can be sub-0.01 gwei, which viem turns into
@@ -46,6 +47,9 @@ interface BroadcastResult {
   status: BroadcastStatus;
 }
 type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
+interface AnchorLog {
+  warn(message: string): void;
+}
 
 const BRAIN_AUDIT_ANCHOR_ABI = [
   {
@@ -77,9 +81,36 @@ export interface ViemAnchorBroadcasterOptions {
   privateKey: `0x${string}`;
   contractAddress: `0x${string}`;
   rpcUrl: string;
-  /** Earliest block to scan when healing an already-anchored window. Default 0. */
-  fromBlock?: bigint;
+  /** Earliest block to scan when healing an already-anchored window. */
+  fromBlock?: bigint | undefined;
+  /** Maximum inclusive block span per AnchorPublished event query. */
+  maxEventScanBlockSpan?: number;
+  /** Fallback event-scan lookback when fromBlock is not configured. */
+  fromBlockLookbackBlocks?: bigint;
+  /** Safety multiplier applied to gas * maxFeePerGas before checking balance. */
+  gasSafetyFactor?: number;
+  /** Alert threshold for the publisher wallet balance. Defaults to 0. */
+  walletBalanceAlertWei?: bigint;
+  metrics?: MetricsEmitter;
+  log?: AnchorLog;
+  nodeEnv?: string;
 }
+
+export class InsufficientAnchorFundsError extends Error {
+  public override readonly name = "InsufficientAnchorFundsError";
+  public constructor(
+    public readonly balanceWei: bigint,
+    public readonly requiredWei: bigint,
+  ) {
+    super(
+      `audit anchor publisher wallet has ${balanceWei.toString()} wei, below guarded cost ${requiredWei.toString()} wei`,
+    );
+  }
+}
+
+const DEFAULT_EVENT_SCAN_MAX_BLOCKS = 2_000;
+const DEFAULT_FROM_BLOCK_LOOKBACK_BLOCKS = 100_000n;
+const DEFAULT_GAS_SAFETY_FACTOR = 2;
 
 /**
  * The Base-Sepolia-typed public client. Naming the factory gives both the
@@ -115,7 +146,12 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
 
   const publicClient = createAnchorPublicClient(transport);
 
-  const fromBlock = opts.fromBlock ?? 0n;
+  const maxEventScanBlockSpan = opts.maxEventScanBlockSpan ?? DEFAULT_EVENT_SCAN_MAX_BLOCKS;
+  const fromBlockLookbackBlocks =
+    opts.fromBlockLookbackBlocks ?? DEFAULT_FROM_BLOCK_LOOKBACK_BLOCKS;
+  const gasSafetyFactor = opts.gasSafetyFactor ?? DEFAULT_GAS_SAFETY_FACTOR;
+  const walletBalanceAlertWei = opts.walletBalanceAlertWei ?? 0n;
+  const nodeEnv = opts.nodeEnv ?? process.env.NODE_ENV ?? "development";
 
   // Resolve the already-anchored case: the root is published on-chain, so
   // broadcasting again would revert with RootAlreadyPublished (§5.3). Return the
@@ -131,7 +167,13 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       opts.contractAddress,
       tenantIdBytes,
       rootHexLower,
-      fromBlock,
+      {
+        configuredFromBlock: opts.fromBlock,
+        lookbackBlocks: fromBlockLookbackBlocks,
+        maxBlockSpan: maxEventScanBlockSpan,
+        nodeEnv,
+        log: opts.log ?? console,
+      },
     );
     if (match === null) {
       throw new Error(
@@ -177,19 +219,50 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       maxFeePerGas = maxPriorityFeePerGas;
     }
 
+    const anchorArgs = [
+      tenantIdBytes,
+      rootHex,
+      BigInt(input.eventCount),
+      BigInt(Math.floor(input.periodStart.getTime() / 1000)),
+      BigInt(Math.floor(input.periodEnd.getTime() / 1000)),
+    ] as const;
+    let gas: bigint;
+    try {
+      gas = await publicClient.estimateContractGas({
+        account,
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "anchor",
+        args: anchorArgs,
+      });
+    } catch (err) {
+      if (!isDeterministicRevert(err)) throw err;
+      const racedPublished = await publicClient.readContract({
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "isPublished",
+        args: [tenantIdBytes, rootHex],
+      });
+      if (racedPublished) return resolveAlreadyAnchored(tenantIdBytes, rootHexLower);
+      return { txHash: Buffer.alloc(0), blockNumber: 0n, status: "reverted" };
+    }
+    const balance = await publicClient.getBalance({ address: account.address });
+    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei);
+    const guardedCost = applySafetyFactor(gas * maxFeePerGas, gasSafetyFactor);
+    if (balance < guardedCost) {
+      opts.metrics?.increment("brain.audit.anchor.publisher_wallet_insufficient_funds.count", {
+        severity: "critical",
+      });
+      throw new InsufficientAnchorFundsError(balance, guardedCost);
+    }
+
     let txHash: `0x${string}`;
     try {
       txHash = await walletClient.writeContract({
         address: opts.contractAddress,
         abi: BRAIN_AUDIT_ANCHOR_ABI,
         functionName: "anchor",
-        args: [
-          tenantIdBytes,
-          rootHex,
-          BigInt(input.eventCount),
-          BigInt(Math.floor(input.periodStart.getTime() / 1000)),
-          BigInt(Math.floor(input.periodEnd.getTime() / 1000)),
-        ],
+        args: anchorArgs,
         maxFeePerGas,
         maxPriorityFeePerGas,
       });
@@ -235,6 +308,25 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
   };
 }
 
+function applySafetyFactor(costWei: bigint, safetyFactor: number): bigint {
+  const factor = Number.isFinite(safetyFactor) && safetyFactor > 0 ? safetyFactor : 1;
+  const basisPoints = BigInt(Math.ceil(factor * 10_000));
+  return (costWei * basisPoints + 9_999n) / 10_000n;
+}
+
+function emitWalletBalanceMetrics(
+  metrics: MetricsEmitter | undefined,
+  balanceWei: bigint,
+  alertThresholdWei: bigint,
+): void {
+  if (metrics === undefined) return;
+  metrics.gauge("brain.audit.anchor.publisher_wallet_balance_wei", Number(balanceWei));
+  metrics.gauge(
+    "brain.audit.anchor.publisher_wallet_balance_below_alert",
+    balanceWei < alertThresholdWei ? 1 : 0,
+  );
+}
+
 // --- Anchor event reader (read-only; backs the orphan-recovery reconciler) ---
 // Structurally matches @brain/audit's AnchorEventReader; inlined here for the
 // same project-reference reason as the broadcaster above.
@@ -268,33 +360,98 @@ async function findPublishedAnchorTx(
   contractAddress: `0x${string}`,
   tenantIdBytes: `0x${string}`,
   rootHexLower: string,
-  fromBlock: bigint,
+  opts: {
+    configuredFromBlock: bigint | undefined;
+    lookbackBlocks: bigint;
+    maxBlockSpan: number;
+    nodeEnv: string;
+    log: AnchorLog | undefined;
+  },
 ): Promise<{ txHash: Buffer; blockNumber: bigint } | null> {
-  const logs = await publicClient.getContractEvents({
-    address: contractAddress,
-    abi: BRAIN_AUDIT_ANCHOR_EVENTS_ABI,
-    eventName: "AnchorPublished",
-    args: { tenantId: tenantIdBytes },
-    fromBlock,
-    toBlock: "latest",
+  const latestBlock = await publicClient.getBlockNumber();
+  const fromBlock = resolveAnchorScanFromBlock({
+    configuredFromBlock: opts.configuredFromBlock,
+    latestBlock,
+    lookbackBlocks: opts.lookbackBlocks,
+    nodeEnv: opts.nodeEnv,
+    log: opts.log,
   });
-  for (const lg of logs) {
-    const root = (lg.args.root ?? "").toString().toLowerCase();
-    if (root === rootHexLower && lg.transactionHash !== null && lg.blockNumber !== null) {
-      return {
-        txHash: Buffer.from(lg.transactionHash.slice(2), "hex"),
-        blockNumber: lg.blockNumber,
-      };
+  if (fromBlock > latestBlock) return null;
+  const span = BigInt(Math.max(1, Math.floor(opts.maxBlockSpan)));
+  for (let start = fromBlock; start <= latestBlock; start += span) {
+    const end = start + span - 1n > latestBlock ? latestBlock : start + span - 1n;
+    const logs = await publicClient.getContractEvents({
+      address: contractAddress,
+      abi: BRAIN_AUDIT_ANCHOR_EVENTS_ABI,
+      eventName: "AnchorPublished",
+      args: { tenantId: tenantIdBytes },
+      fromBlock: start,
+      toBlock: end,
+    });
+    for (const lg of logs) {
+      const root = (lg.args.root ?? "").toString().toLowerCase();
+      if (root === rootHexLower && lg.transactionHash !== null && lg.blockNumber !== null) {
+        return {
+          txHash: Buffer.from(lg.transactionHash.slice(2), "hex"),
+          blockNumber: lg.blockNumber,
+        };
+      }
     }
   }
   return null;
 }
 
+export function resolveAnchorScanFromBlock(opts: {
+  configuredFromBlock?: bigint | undefined;
+  latestBlock: bigint;
+  lookbackBlocks: bigint;
+  nodeEnv: string;
+  log?: AnchorLog | undefined;
+}): bigint {
+  if (opts.configuredFromBlock !== undefined) return opts.configuredFromBlock;
+  opts.log?.warn(
+    "AUDIT_ANCHOR_FROM_BLOCK is not set; using a bounded lookback window for audit anchor event scans",
+  );
+  const windowed =
+    opts.latestBlock > opts.lookbackBlocks ? opts.latestBlock - opts.lookbackBlocks : 0n;
+  if (opts.nodeEnv === "production" && windowed === 0n && opts.latestBlock > 0n) return 1n;
+  return windowed;
+}
+
+export async function findPublishedAnchorTxForTests(input: {
+  publicClient: Pick<AnchorPublicClient, "getBlockNumber" | "getContractEvents">;
+  contractAddress: `0x${string}`;
+  tenantIdBytes: `0x${string}`;
+  rootHexLower: string;
+  fromBlock: bigint;
+  maxBlockSpan: number;
+}): Promise<{ txHash: Buffer; blockNumber: bigint } | null> {
+  return findPublishedAnchorTx(
+    input.publicClient as AnchorPublicClient,
+    input.contractAddress,
+    input.tenantIdBytes,
+    input.rootHexLower,
+    {
+      configuredFromBlock: input.fromBlock,
+      lookbackBlocks: DEFAULT_FROM_BLOCK_LOOKBACK_BLOCKS,
+      maxBlockSpan: input.maxBlockSpan,
+      nodeEnv: "test",
+      log: undefined,
+    },
+  );
+}
+
 export interface ViemAnchorEventReaderOptions {
   contractAddress: `0x${string}`;
   rpcUrl: string;
-  /** Earliest block to scan (the contract deploy block in prod). Default 0. */
-  fromBlock?: bigint;
+  /** Earliest block to scan (the contract deploy block in prod). */
+  fromBlock?: bigint | undefined;
+  /** Maximum inclusive block span per AnchorPublished event query. */
+  maxEventScanBlockSpan?: number;
+  /** Fallback event-scan lookback when fromBlock is not configured. */
+  fromBlockLookbackBlocks?: bigint;
+  log?: AnchorLog;
+  nodeEnv?: string;
 }
 
 export function createViemAnchorEventReader(opts: ViemAnchorEventReaderOptions): AnchorEventReader {
@@ -304,13 +461,13 @@ export function createViemAnchorEventReader(opts: ViemAnchorEventReaderOptions):
     async findAnchorTx({ tenantId, merkleRoot }) {
       const tenantIdBytes = keccak256(toBytes(tenantId)) as `0x${string}`;
       const rootHex = toHex(merkleRoot).toLowerCase();
-      return findPublishedAnchorTx(
-        publicClient,
-        opts.contractAddress,
-        tenantIdBytes,
-        rootHex,
-        opts.fromBlock ?? 0n,
-      );
+      return findPublishedAnchorTx(publicClient, opts.contractAddress, tenantIdBytes, rootHex, {
+        configuredFromBlock: opts.fromBlock,
+        lookbackBlocks: opts.fromBlockLookbackBlocks ?? DEFAULT_FROM_BLOCK_LOOKBACK_BLOCKS,
+        maxBlockSpan: opts.maxEventScanBlockSpan ?? DEFAULT_EVENT_SCAN_MAX_BLOCKS,
+        nodeEnv: opts.nodeEnv ?? process.env.NODE_ENV ?? "development",
+        log: opts.log ?? console,
+      });
     },
   };
 }
