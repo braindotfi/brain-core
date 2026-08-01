@@ -681,6 +681,26 @@ running compose with `--no-build`. Both host env files must carry
 `OPENAI_API_KEY`, `DOCUMENT_EXTRACT_AGENT_URL`, `BRAIN_AGENTS_INBOUND_SECRET`,
 and the ESP credentials required by outbound email onboarding.
 
+Production DB and object-store credentials fail closed in two places. First,
+`docker-compose.prod.yml` requires every database role password and MinIO root
+credential through `${VAR:?message}` interpolation. Second,
+`shared/src/config.ts` refuses to boot in `NODE_ENV=production` when any
+consumed database URL password, `BRAIN_*_DB_PASSWORD`, `POSTGRES_PASSWORD`,
+MinIO credential, or S3/Azure blob secret is empty or uses a known weak default
+such as the role name, `brain`, `postgres`, `changeme`, or `password`.
+`NODE_ENV=staging` logs the same findings at warn level instead of throwing so
+operators can rotate values without taking staging down. Required production
+variables are: `POSTGRES_PASSWORD`, `BRAIN_APP_DB_PASSWORD`,
+`BRAIN_PRIVILEGED_DB_PASSWORD`, `BRAIN_WIKI_DB_PASSWORD`,
+`BRAIN_MCP_READER_DB_PASSWORD`, `BRAIN_RAW_WORKER_DB_PASSWORD`,
+`BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD`, `BRAIN_LEDGER_PROJECTOR_DB_PASSWORD`,
+`BRAIN_EXECUTION_WORKER_DB_PASSWORD`, `BRAIN_AUDIT_VERIFIER_DB_PASSWORD`,
+`BRAIN_AUDIT_PUBLISHER_DB_PASSWORD`, `BRAIN_RESOLVER_DB_PASSWORD`,
+`BRAIN_TENANT_DELETION_DB_PASSWORD`, `BRAIN_SURFACE_GATEWAY_DB_PASSWORD`,
+`BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD`, `BRAIN_AUTH_DB_PASSWORD`,
+`BRAIN_AUTH_AUDIT_DB_PASSWORD`, `MINIO_ROOT_USER`, and
+`MINIO_ROOT_PASSWORD`.
+
 Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
 shipped by CI, but only to the **production** VM (`promote-prod.yml`), and
 that vendored `Caddyfile` was read directly off the prod box: it carries only

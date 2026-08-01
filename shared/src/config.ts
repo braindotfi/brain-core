@@ -39,6 +39,145 @@ function positiveBigIntDefault(value: bigint) {
   return z.coerce.bigint().positive().default(value);
 }
 
+const KNOWN_WEAK_INFRA_SECRET_VALUES = new Set([
+  "",
+  "brain",
+  "postgres",
+  "changeme",
+  "password",
+  "brain_app",
+  "brain_privileged",
+  "brain_wiki_reader",
+  "brain_mcp_reader",
+  "brain_raw_worker",
+  "brain_canonical_projector",
+  "brain_ledger_projector",
+  "brain_execution_worker",
+  "brain_audit_verifier",
+  "brain_audit_publisher",
+  "brain_resolver",
+  "brain_tenant_deletion",
+  "brain_surface_gateway",
+  "brain_surface_audit_writer",
+  "brain_auth",
+  "brain_auth_audit_writer",
+  "brainminio",
+  "minioadmin",
+]);
+
+const DB_URL_ENV_NAMES = [
+  "DATABASE_URL",
+  "BRAIN_WIKI_DB_URL",
+  "BRAIN_MCP_READER_DB_URL",
+  "BRAIN_RAW_WORKER_DB_URL",
+  "BRAIN_CANONICAL_PROJECTOR_DB_URL",
+  "BRAIN_LEDGER_PROJECTOR_DB_URL",
+  "BRAIN_EXECUTION_WORKER_DB_URL",
+  "BRAIN_AUDIT_VERIFIER_DB_URL",
+  "BRAIN_AUDIT_PUBLISHER_DB_URL",
+  "BRAIN_RESOLVER_DB_URL",
+  "BRAIN_TENANT_DELETION_DB_URL",
+  "BRAIN_SURFACE_GATEWAY_DB_URL",
+  "BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL",
+  "BRAIN_AUTH_DB_URL",
+  "BRAIN_AUTH_AUDIT_DB_URL",
+] as const;
+
+const INFRA_SECRET_ENV_NAMES = [
+  "POSTGRES_PASSWORD",
+  "MINIO_ROOT_USER",
+  "MINIO_ROOT_PASSWORD",
+  "S3_ACCESS_KEY_ID",
+  "S3_SECRET_ACCESS_KEY",
+  "AZURE_BLOB_ACCOUNT_KEY",
+] as const;
+
+interface WeakInfraSecretFinding {
+  readonly name: string;
+  readonly reason: "empty" | "known weak default";
+}
+
+export interface InfraSecretFenceOptions {
+  readonly warn?: (message: string) => void;
+}
+
+function weakSecretReason(value: string | undefined): WeakInfraSecretFinding["reason"] | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") return "empty";
+  return KNOWN_WEAK_INFRA_SECRET_VALUES.has(normalized) ? "known weak default" : undefined;
+}
+
+function addWeakFinding(
+  findings: WeakInfraSecretFinding[],
+  name: string,
+  value: string | undefined,
+): void {
+  const reason = weakSecretReason(value);
+  if (reason !== undefined) findings.push({ name, reason });
+}
+
+function passwordFromUrl(value: string): string | undefined {
+  try {
+    return decodeURIComponent(new URL(value).password);
+  } catch {
+    return undefined;
+  }
+}
+
+function findWeakInfraSecrets(env: Readonly<Record<string, string | undefined>>) {
+  const findings: WeakInfraSecretFinding[] = [];
+
+  for (const name of DB_URL_ENV_NAMES) {
+    const value = env[name];
+    if (value === undefined || value === "") continue;
+    addWeakFinding(findings, `${name} password`, passwordFromUrl(value));
+  }
+
+  for (const name of INFRA_SECRET_ENV_NAMES) {
+    if (Object.prototype.hasOwnProperty.call(env, name)) {
+      addWeakFinding(findings, name, env[name]);
+    }
+  }
+
+  for (const [name, value] of Object.entries(env)) {
+    if (/^BRAIN_[A-Z0-9_]*_DB_PASSWORD$/.test(name)) {
+      addWeakFinding(findings, name, value);
+    }
+  }
+
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = `${finding.name}:${finding.reason}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function assertProductionInfraSecretsSafe(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  options: InfraSecretFenceOptions = {},
+): void {
+  const nodeEnv = env.NODE_ENV ?? "development";
+  if (nodeEnv !== "production" && nodeEnv !== "staging") return;
+
+  const findings = findWeakInfraSecrets(env);
+  if (findings.length === 0) return;
+
+  const formatted = findings.map((finding) => `${finding.name} (${finding.reason})`).join(", ");
+  const message =
+    `NODE_ENV=${nodeEnv} found weak database or infrastructure secret values: ${formatted}. ` +
+    "Set unique high-entropy production values before boot.";
+
+  if (nodeEnv === "production") {
+    throw new Error(message);
+  }
+
+  const warn = options.warn ?? ((m: string) => console.warn(m));
+  warn(`[config] ${message} Production will refuse to boot with these values.`);
+}
+
 const envSchema = z.object({
   // ---- Identity and environment ----
   NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
@@ -748,12 +887,14 @@ export type BrainConfig = z.infer<typeof envSchema>;
  */
 export function parseConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  options: InfraSecretFenceOptions = {},
 ): BrainConfig {
   const result = envSchema.safeParse(env);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid Brain configuration:\n${issues}`);
   }
+  assertProductionInfraSecretsSafe(env, options);
   return result.data;
 }
 

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { _resetConfigForTests, loadConfig, parseConfig } from "./config.js";
+import {
+  _resetConfigForTests,
+  assertProductionInfraSecretsSafe,
+  loadConfig,
+  parseConfig,
+} from "./config.js";
 
 const MIN_ENV = {
   DATABASE_URL: "postgres://brain:brain@localhost:5432/brain",
@@ -103,5 +108,82 @@ describe("loadConfig", () => {
     const a = loadConfig();
     const b = loadConfig();
     expect(a).toBe(b); // cached
+  });
+});
+
+describe("assertProductionInfraSecretsSafe", () => {
+  const strongProductionEnv = {
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://brain_app:strong-app-pass@localhost:5432/brain",
+    BRAIN_RAW_WORKER_DB_URL: "postgres://brain_raw_worker:strong-raw-pass@localhost:5432/brain",
+    S3_ACCESS_KEY_ID: "brain-prod-minio",
+    S3_SECRET_ACCESS_KEY: "strong-minio-secret",
+  };
+
+  it("throws in production when a database URL password is empty", () => {
+    expect(() =>
+      assertProductionInfraSecretsSafe({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://brain_app:@localhost:5432/brain",
+      }),
+    ).toThrow(/DATABASE_URL/);
+  });
+
+  it("throws in production when a database URL password uses a role-name default", () => {
+    expect(() =>
+      assertProductionInfraSecretsSafe({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://brain_app:brain_app@localhost:5432/brain",
+      }),
+    ).toThrow(/DATABASE_URL/);
+  });
+
+  it("throws in production when a raw DB password env var uses a generic weak value", () => {
+    expect(() =>
+      assertProductionInfraSecretsSafe({
+        ...strongProductionEnv,
+        BRAIN_LEDGER_PROJECTOR_DB_PASSWORD: "password",
+      }),
+    ).toThrow(/BRAIN_LEDGER_PROJECTOR_DB_PASSWORD/);
+  });
+
+  it("passes in production with strong database and infra secrets", () => {
+    expect(() => assertProductionInfraSecretsSafe(strongProductionEnv)).not.toThrow();
+  });
+
+  it("warns but does not throw in staging and lists the offending vars", () => {
+    const warn = vi.fn();
+    expect(() =>
+      assertProductionInfraSecretsSafe(
+        {
+          NODE_ENV: "staging",
+          DATABASE_URL: "postgres://brain_app:brain_app@localhost:5432/brain",
+          MINIO_ROOT_PASSWORD: "brainminio",
+        },
+        { warn },
+      ),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("DATABASE_URL");
+    expect(warn.mock.calls[0]?.[0]).toContain("MINIO_ROOT_PASSWORD");
+  });
+
+  it("does not enforce weak production secrets outside staging or production", () => {
+    expect(() => assertProductionInfraSecretsSafe(MIN_ENV)).not.toThrow();
+    expect(() => assertProductionInfraSecretsSafe({ ...MIN_ENV, NODE_ENV: "test" })).not.toThrow();
+  });
+
+  it("is enforced by parseConfig during production boot", () => {
+    expect(() =>
+      parseConfig({ ...MIN_ENV, NODE_ENV: "production", DATABASE_URL: MIN_ENV.DATABASE_URL }),
+    ).toThrow(/DATABASE_URL password/);
+
+    const warn = vi.fn();
+    const cfg = parseConfig(
+      { ...MIN_ENV, NODE_ENV: "staging", DATABASE_URL: MIN_ENV.DATABASE_URL },
+      { warn },
+    );
+    expect(cfg.NODE_ENV).toBe("staging");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("DATABASE_URL password"));
   });
 });
