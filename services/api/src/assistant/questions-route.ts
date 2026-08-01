@@ -1,6 +1,12 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
-import { brainError, requireScope, withTenantScope, type Scope } from "@brain/shared";
+import {
+  brainError,
+  guardGroundedAnswer,
+  requireScope,
+  withTenantScope,
+  type Scope,
+} from "@brain/shared";
 
 const READ_SCOPE: Scope = "wiki:read";
 
@@ -85,10 +91,11 @@ function parseLimit(value: string | undefined): number {
 }
 
 function serializeQuestion(row: AssistantQuestionRow) {
+  const guardedAnswer = row.answer === null ? null : guardGroundedAnswer(row.answer).answer;
   return {
     id: row.id,
     question: row.question,
-    answer: row.answer,
+    answer: guardedAnswer,
     status: row.status,
     source: row.source,
     evidence_ids: row.evidence_ids ?? [],

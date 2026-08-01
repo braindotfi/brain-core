@@ -149,6 +149,7 @@ export {
 
 // LLM + embeddings (§2 stack: Claude + OpenAI)
 export * from "./llm/types.js";
+export * from "./llm/answer-guard.js";
 export { AnthropicAdapter, type AnthropicAdapterOptions } from "./llm/anthropic.js";
 export {
   OpenAICompletionAdapter,
