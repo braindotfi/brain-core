@@ -63,6 +63,13 @@ closed as `self_approval_blocked` with `payee_unresolved=true`. Vendor payees
 with unresolved email still pass in v1 as an accepted residual gap until
 canonical vendor identity links are first-class in Ledger.
 
+Audit anchor event scans must use `AUDIT_ANCHOR_FROM_BLOCK` in staging and
+production. If unset, the broadcaster and reconciler use bounded lookback
+instead of genesis and log a warning. Event scans are chunked by
+`AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS`. Insufficient publisher wallet funds throw
+`InsufficientAnchorFundsError`, leave the anchor pending for retry, emit the
+critical wallet metric, and must never mark the row `reverted`.
+
 Fiat rails have a default-on human approval floor. `wire` always requires a
 recorded human approval when policy allows. ACH and card can execute
 autonomously only when the matched signed policy rule carries a covering

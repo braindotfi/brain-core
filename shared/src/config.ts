@@ -28,6 +28,17 @@ function optionalNonEmptyString() {
   );
 }
 
+function optionalNonnegativeBigInt() {
+  return z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z.coerce.bigint().nonnegative().optional(),
+  );
+}
+
+function positiveBigIntDefault(value: bigint) {
+  return z.coerce.bigint().positive().default(value);
+}
+
 const envSchema = z.object({
   // ---- Identity and environment ----
   NODE_ENV: z.enum(["development", "test", "staging", "production"]).default("development"),
@@ -438,6 +449,16 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(60 * 60 * 1000),
+  /**
+   * Contract deploy block floor for AnchorPublished scans. When unset, the
+   * reader uses a bounded lookback window and logs a warning instead of
+   * scanning from genesis.
+   */
+  AUDIT_ANCHOR_FROM_BLOCK: optionalNonnegativeBigInt(),
+  AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS: positiveBigIntDefault(100_000n),
+  AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS: z.coerce.number().int().positive().default(2_000),
+  AUDIT_ANCHOR_GAS_SAFETY_FACTOR: z.coerce.number().positive().default(2),
+  AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI: z.coerce.bigint().nonnegative().default(0n),
 
   // ---- Collections overdue scanner ----
   BRAIN_COLLECTIONS_SCAN_INTERVAL_MS: z.coerce

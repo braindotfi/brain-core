@@ -1271,6 +1271,14 @@ async function main(): Promise<void> {
           privateKey: cfg.AUDIT_PUBLISHER_KEY as `0x${string}`,
           contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          fromBlock: cfg.AUDIT_ANCHOR_FROM_BLOCK,
+          fromBlockLookbackBlocks: cfg.AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS,
+          maxEventScanBlockSpan: cfg.AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS,
+          gasSafetyFactor: cfg.AUDIT_ANCHOR_GAS_SAFETY_FACTOR,
+          walletBalanceAlertWei: cfg.AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI,
+          metrics,
+          log,
+          nodeEnv: cfg.NODE_ENV,
         })
       : undefined;
 
@@ -1298,6 +1306,11 @@ async function main(): Promise<void> {
           reader: createViemAnchorEventReader({
             contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
             rpcUrl: anchorRpcUrl,
+            fromBlock: cfg.AUDIT_ANCHOR_FROM_BLOCK,
+            fromBlockLookbackBlocks: cfg.AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS,
+            maxEventScanBlockSpan: cfg.AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS,
+            log,
+            nodeEnv: cfg.NODE_ENV,
           }),
         })
       : undefined;
