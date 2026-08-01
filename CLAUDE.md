@@ -163,6 +163,12 @@ Done
   `flagged` is reserved for risk events that require attention. `wiki.question`
   emits `assistant_activity` with severity `info` and includes the original
   question text at `inputs.question`.
+- Wiki and Assistant question answers treat retrieved evidence as untrusted
+  tenant data. Evidence blocks are wrapped in a per-request random boundary,
+  evidence text is facts to cite and never instructions to obey, and answer
+  serialization fails closed to the grounded-answer fallback when the parsed or
+  stored answer contains raw internal JSON, boundary tokens, or prompt fragments.
+  Evidence ids remain subset-filtered against the retrieved tenant-scoped rows.
 - Proposal read contracts are documented in
   `docs/contracts/proposals-read-model.md`. `/v1/proposals` and
   `/v1/proposals/{id}` keep their compact fields and also expose

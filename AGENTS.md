@@ -70,6 +70,13 @@ instead of genesis and log a warning. Event scans are chunked by
 `InsufficientAnchorFundsError`, leave the anchor pending for retry, emit the
 critical wallet metric, and must never mark the row `reverted`.
 
+Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
+data. Evidence blocks are wrapped in a per-request random boundary, evidence
+text is facts to cite and never instructions to obey, and answer serialization
+fails closed to the grounded-answer fallback when the parsed or stored answer
+contains raw internal JSON, boundary tokens, or prompt fragments. Evidence ids
+remain subset-filtered against the retrieved tenant-scoped rows.
+
 Fiat rails have a default-on human approval floor. `wire` always requires a
 recorded human approval when policy allows. ACH and card can execute
 autonomously only when the matched signed policy rule carries a covering

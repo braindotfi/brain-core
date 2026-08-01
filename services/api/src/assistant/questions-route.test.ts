@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import {
   errorHandlerPlugin,
+  GROUNDED_ANSWER_FALLBACK,
   newTenantId,
   newUserId,
   type Principal,
@@ -60,7 +61,7 @@ async function buildApp(pool: Pool, warn: ReturnType<typeof vi.fn>, scopes?: Sco
 
 describe("GET /assistant/questions", () => {
   it("returns tenant-scoped assistant questions", async () => {
-    const { pool, warn } = fakePool([
+    const { pool, queries, warn } = fakePool([
       {
         id: "asq_1",
         question: "What changed in cash?",
@@ -93,6 +94,31 @@ describe("GET /assistant/questions", () => {
         },
       ],
     });
+    expect(queries.some((q) => q.includes("tenant_id = current_setting"))).toBe(true);
+    await app.close();
+  });
+
+  it("guards stored answers before returning them", async () => {
+    const { pool, warn } = fakePool([
+      {
+        id: "asq_raw",
+        question: "What's my total AR?",
+        answer: `{"answer":"$133,438","evidence_ids":["obl_1"],"tenant_id":"tnt_other"}`,
+        status: "answered",
+        source: "wiki",
+        evidence_ids: ["obl_1"],
+        metadata: {},
+        created_at: new Date("2026-07-01T00:00:00Z"),
+        updated_at: "2026-07-01T00:01:00.000Z",
+      },
+    ]);
+    const app = await buildApp(pool, warn);
+
+    const res = await app.inject({ method: "GET", url: "/assistant/questions?limit=5" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().questions[0].answer).toBe(GROUNDED_ANSWER_FALLBACK);
+    expect(res.json().questions[0].evidence_ids).toEqual(["obl_1"]);
     await app.close();
   });
 
