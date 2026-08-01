@@ -169,6 +169,12 @@ Done
   serialization fails closed to the grounded-answer fallback when the parsed or
   stored answer contains raw internal JSON, boundary tokens, or prompt fragments.
   Evidence ids remain subset-filtered against the retrieved tenant-scoped rows.
+- Every service-owned table with a `tenant_id` column must enable and force
+  Postgres row-level security and define at least one tenant policy. The
+  `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as
+  one migration set, so coverage may be added in a later migration than the
+  table creation. Any exemption must be listed in the guard allowlist with a
+  human-readable reason.
 - Proposal read contracts are documented in
   `docs/contracts/proposals-read-model.md`. `/v1/proposals` and
   `/v1/proposals/{id}` keep their compact fields and also expose

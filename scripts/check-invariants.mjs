@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -560,6 +561,25 @@ check(
     !executionAgentHoldSource.includes("releaseAgentQuarantine"),
   "the contribution intake hold route and repository helpers must not use the old contribution quarantine naming",
 );
+
+try {
+  execFileSync("node", [resolve(root, "scripts/check-rls-coverage.mjs")], {
+    cwd: root,
+    stdio: "pipe",
+    encoding: "utf8",
+  });
+  check(
+    "tenant-scoped tables have RLS coverage",
+    true,
+    "check-rls-coverage must pass for every service-owned tenant table",
+  );
+} catch (err) {
+  check(
+    "tenant-scoped tables have RLS coverage",
+    false,
+    err.stderr?.toString() || err.stdout?.toString() || "check-rls-coverage failed",
+  );
+}
 
 const bad = checks.filter((c) => !c.ok);
 if (bad.length > 0) {

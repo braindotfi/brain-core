@@ -70,6 +70,13 @@ instead of genesis and log a warning. Event scans are chunked by
 `InsufficientAnchorFundsError`, leave the anchor pending for retry, emit the
 critical wallet metric, and must never mark the row `reverted`.
 
+Every service-owned table with a `tenant_id` column must enable and force
+Postgres row-level security and define at least one tenant policy. The
+`check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as one
+migration set, so coverage may be added in a later migration than the table
+creation. Any exemption must be listed in the guard allowlist with a
+human-readable reason.
+
 Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
 data. Evidence blocks are wrapped in a per-request random boundary, evidence
 text is facts to cite and never instructions to obey, and answer serialization
