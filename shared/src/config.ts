@@ -459,6 +459,7 @@ const envSchema = z.object({
   AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS: z.coerce.number().int().positive().default(2_000),
   AUDIT_ANCHOR_GAS_SAFETY_FACTOR: z.coerce.number().positive().default(2),
   AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI: z.coerce.bigint().nonnegative().default(0n),
+  AUDIT_ANCHOR_BATCH_SIZE: z.coerce.number().int().positive().max(50).default(50),
 
   // ---- Collections overdue scanner ----
   BRAIN_COLLECTIONS_SCAN_INTERVAL_MS: z.coerce

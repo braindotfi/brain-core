@@ -70,6 +70,120 @@ contract BrainAuditAnchorTest is Test {
         anchor.anchor(TENANT_A, keccak256("r"), 1, 200, 100);
     }
 
+    function test_anchorBatch_recordsAndEmitsEachTenant() public {
+        bytes32[] memory tenants = new bytes32[](3);
+        tenants[0] = TENANT_A;
+        tenants[1] = TENANT_B;
+        tenants[2] = keccak256("tnt_C");
+        bytes32[] memory roots = new bytes32[](3);
+        roots[0] = keccak256("root-a");
+        roots[1] = keccak256("root-b");
+        roots[2] = keccak256("root-c");
+        uint256[] memory counts = new uint256[](3);
+        counts[0] = 2;
+        counts[1] = 3;
+        counts[2] = 4;
+        uint256[] memory starts = new uint256[](3);
+        starts[0] = 100;
+        starts[1] = 110;
+        starts[2] = 120;
+        uint256[] memory ends = new uint256[](3);
+        ends[0] = 101;
+        ends[1] = 111;
+        ends[2] = 121;
+
+        vm.expectEmit(true, false, false, true, address(anchor));
+        emit BrainAuditAnchor.AnchorPublished(tenants[0], roots[0], counts[0], starts[0], ends[0]);
+        vm.expectEmit(true, false, false, true, address(anchor));
+        emit BrainAuditAnchor.AnchorPublished(tenants[1], roots[1], counts[1], starts[1], ends[1]);
+        vm.expectEmit(true, false, false, true, address(anchor));
+        emit BrainAuditAnchor.AnchorPublished(tenants[2], roots[2], counts[2], starts[2], ends[2]);
+
+        vm.prank(publisher);
+        anchor.anchorBatch(tenants, roots, counts, starts, ends);
+
+        for (uint256 i = 0; i < tenants.length; ++i) {
+            assertTrue(anchor.isPublished(tenants[i], roots[i]));
+            (bytes32 latestRoot, uint256 blk, uint256 eventCount, uint256 periodEnd) =
+                anchor.latestAnchorFull(tenants[i]);
+            assertEq(latestRoot, roots[i]);
+            assertEq(blk, block.number);
+            assertEq(eventCount, counts[i]);
+            assertEq(periodEnd, ends[i]);
+        }
+    }
+
+    function test_anchorBatch_skipsAlreadyPublishedAndPublishesRest() public {
+        bytes32 rootA = keccak256("root-a");
+        bytes32 rootB = keccak256("root-b");
+        vm.prank(publisher);
+        anchor.anchor(TENANT_A, rootA, 1, 0, 1);
+
+        bytes32[] memory tenants = new bytes32[](2);
+        tenants[0] = TENANT_A;
+        tenants[1] = TENANT_B;
+        bytes32[] memory roots = new bytes32[](2);
+        roots[0] = rootA;
+        roots[1] = rootB;
+        uint256[] memory counts = new uint256[](2);
+        counts[0] = 9;
+        counts[1] = 7;
+        uint256[] memory starts = new uint256[](2);
+        starts[0] = 10;
+        starts[1] = 20;
+        uint256[] memory ends = new uint256[](2);
+        ends[0] = 11;
+        ends[1] = 21;
+
+        vm.expectEmit(true, false, false, true, address(anchor));
+        emit BrainAuditAnchor.AnchorPublished(TENANT_B, rootB, 7, 20, 21);
+        vm.prank(publisher);
+        anchor.anchorBatch(tenants, roots, counts, starts, ends);
+
+        (bytes32 latestA,, uint256 countA, uint256 endA) = anchor.latestAnchorFull(TENANT_A);
+        assertEq(latestA, rootA);
+        assertEq(countA, 1);
+        assertEq(endA, 1);
+        assertTrue(anchor.isPublished(TENANT_B, rootB));
+    }
+
+    function test_anchorBatch_rejectsLengthMismatch() public {
+        bytes32[] memory tenants = new bytes32[](1);
+        bytes32[] memory roots = new bytes32[](0);
+        uint256[] memory counts = new uint256[](1);
+        uint256[] memory starts = new uint256[](1);
+        uint256[] memory ends = new uint256[](1);
+        vm.prank(publisher);
+        vm.expectRevert(BrainAuditAnchor.BatchLengthMismatch.selector);
+        anchor.anchorBatch(tenants, roots, counts, starts, ends);
+    }
+
+    function test_anchorBatch_onlyPublisher() public {
+        bytes32[] memory tenants = new bytes32[](1);
+        tenants[0] = TENANT_A;
+        bytes32[] memory roots = new bytes32[](1);
+        roots[0] = keccak256("root");
+        uint256[] memory counts = new uint256[](1);
+        uint256[] memory starts = new uint256[](1);
+        uint256[] memory ends = new uint256[](1);
+        ends[0] = 1;
+        vm.prank(nonPublisher);
+        vm.expectRevert(BrainAuditAnchor.NotPublisher.selector);
+        anchor.anchorBatch(tenants, roots, counts, starts, ends);
+    }
+
+    function test_anchorBatch_rejectsOverMaxBatch() public {
+        uint256 len = anchor.MAX_BATCH() + 1;
+        bytes32[] memory tenants = new bytes32[](len);
+        bytes32[] memory roots = new bytes32[](len);
+        uint256[] memory counts = new uint256[](len);
+        uint256[] memory starts = new uint256[](len);
+        uint256[] memory ends = new uint256[](len);
+        vm.prank(publisher);
+        vm.expectRevert(abi.encodeWithSelector(BrainAuditAnchor.BatchTooLarge.selector, len));
+        anchor.anchorBatch(tenants, roots, counts, starts, ends);
+    }
+
     function test_setPublisher_isTwoStep() public {
         address next = address(0xCAFE);
         vm.prank(publisher);

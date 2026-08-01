@@ -64,6 +64,25 @@ export interface BroadcastResult {
 }
 
 export type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
+export interface BroadcastBatchResult {
+  input: BroadcastInput;
+  result: BroadcastResult;
+}
+export type AnchorBatchBroadcaster = (inputs: BroadcastInput[]) => Promise<BroadcastBatchResult[]>;
+
+export interface AnchorPublisherMetrics {
+  gauge(name: string, value: number, tags?: Record<string, string>): void;
+  increment(name: string, tags?: Record<string, string>): void;
+}
+
+export interface PublishPendingAnchorBatchSummary {
+  attempted: number;
+  skippedTerminal: number;
+  confirmed: number;
+  alreadyAnchored: number;
+  reverted: number;
+  txCount: number;
+}
 
 export interface PublishOptions {
   tenantId: string;
@@ -76,7 +95,17 @@ export async function publishAnchor(
   broadcaster: AnchorBroadcaster,
   opts: PublishOptions,
 ): Promise<AuditAnchorRow | null> {
-  const result = await withTenantScope(pool, opts.tenantId, async (c) => {
+  const result = await createPendingAnchor(pool, opts);
+
+  if (result === null) return null;
+  return publishPendingAnchor(pool, broadcaster, result);
+}
+
+export async function createPendingAnchor(
+  pool: Pool,
+  opts: PublishOptions,
+): Promise<AuditAnchorRow | null> {
+  return withTenantScope(pool, opts.tenantId, async (c) => {
     const events = await listEventsForAnchor(c, opts.periodStart, opts.periodEnd);
     if (events.length === 0) return null;
 
@@ -100,9 +129,6 @@ export async function publishAnchor(
     });
     return inserted;
   });
-
-  if (result === null) return null;
-  return publishPendingAnchor(pool, broadcaster, result);
 }
 
 export async function publishPendingAnchor(
@@ -135,6 +161,71 @@ export async function publishPendingAnchor(
     return findAnchorByRootLocal(c, row.merkle_root);
   });
   return finalized;
+}
+
+export async function publishPendingAnchorBatch(
+  pool: Pool,
+  broadcaster: AnchorBatchBroadcaster,
+  rows: AuditAnchorRow[],
+  metrics?: AnchorPublisherMetrics,
+): Promise<PublishPendingAnchorBatchSummary> {
+  const pending = rows.filter(
+    (row) => row.onchain_tx_hash === null && row.onchain_status !== "reverted",
+  );
+  const summary: PublishPendingAnchorBatchSummary = {
+    attempted: pending.length,
+    skippedTerminal: rows.length - pending.length,
+    confirmed: 0,
+    alreadyAnchored: 0,
+    reverted: 0,
+    txCount: 0,
+  };
+  metrics?.gauge("brain.audit.anchor.batch_size", pending.length);
+  if (pending.length === 0) return summary;
+
+  const broadcasts = await broadcaster(
+    pending.map((row) => ({
+      tenantId: row.tenant_id,
+      merkleRoot: row.merkle_root,
+      eventCount: row.event_count,
+      periodStart: row.period_start,
+      periodEnd: row.period_end,
+    })),
+  );
+  if (broadcasts.length !== pending.length) {
+    throw new Error(
+      `anchor batch broadcaster returned ${broadcasts.length} result(s) for ${pending.length} input(s)`,
+    );
+  }
+
+  const txHashes = new Set<string>();
+  for (let i = 0; i < broadcasts.length; ++i) {
+    const row = pending[i];
+    const broadcast = broadcasts[i]?.result;
+    if (broadcast === undefined || row === undefined) {
+      throw new Error("anchor batch broadcaster returned an incomplete result set");
+    }
+    if (broadcast.status === "reverted") {
+      summary.reverted += 1;
+      await withTenantScope(pool, row.tenant_id, async (c) => {
+        await setAnchorReverted(c, row.id);
+      });
+      continue;
+    }
+
+    if (broadcast.status === "already_anchored") {
+      summary.alreadyAnchored += 1;
+    } else {
+      summary.confirmed += 1;
+    }
+    if (broadcast.txHash.length > 0) txHashes.add(broadcast.txHash.toString("hex"));
+    await withTenantScope(pool, row.tenant_id, async (c) => {
+      await setAnchorTxHash(c, row.id, broadcast.txHash, broadcast.blockNumber);
+    });
+  }
+  summary.txCount = txHashes.size;
+  metrics?.gauge("brain.audit.anchor.batch_tx.count", summary.txCount);
+  return summary;
 }
 
 async function findAnchorByRootLocal(

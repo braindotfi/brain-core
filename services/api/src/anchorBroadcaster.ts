@@ -3,6 +3,7 @@ import {
   ContractFunctionRevertedError,
   createPublicClient,
   createWalletClient,
+  decodeEventLog,
   http,
   keccak256,
   parseGwei,
@@ -47,9 +48,19 @@ interface BroadcastResult {
   status: BroadcastStatus;
 }
 type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
+type AnchorBatchBroadcaster = (inputs: BroadcastInput[]) => Promise<BroadcastBatchResult[]>;
+interface BroadcastBatchResult {
+  input: BroadcastInput;
+  result: BroadcastResult;
+}
+type ViemAnchorBroadcaster = AnchorBroadcaster & {
+  broadcastAnchorBatch: AnchorBatchBroadcaster;
+};
 interface AnchorLog {
   warn(message: string): void;
 }
+
+export const MAX_ANCHOR_BATCH_SIZE = 50;
 
 const BRAIN_AUDIT_ANCHOR_ABI = [
   {
@@ -62,6 +73,19 @@ const BRAIN_AUDIT_ANCHOR_ABI = [
       { name: "eventCount", type: "uint256" },
       { name: "periodStart", type: "uint256" },
       { name: "periodEnd", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "anchorBatch",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tenantIds", type: "bytes32[]" },
+      { name: "roots", type: "bytes32[]" },
+      { name: "eventCounts", type: "uint256[]" },
+      { name: "periodStarts", type: "uint256[]" },
+      { name: "periodEnds", type: "uint256[]" },
     ],
     outputs: [],
   },
@@ -91,6 +115,8 @@ export interface ViemAnchorBroadcasterOptions {
   gasSafetyFactor?: number;
   /** Alert threshold for the publisher wallet balance. Defaults to 0. */
   walletBalanceAlertWei?: bigint;
+  /** Hard upper bound for one anchorBatch call. Must not exceed the contract MAX_BATCH. */
+  maxBatchSize?: number;
   metrics?: MetricsEmitter;
   log?: AnchorLog;
   nodeEnv?: string;
@@ -134,7 +160,9 @@ function isDeterministicRevert(err: unknown): boolean {
   return /execution reverted|reverted/i.test(err.shortMessage || err.message);
 }
 
-export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions): AnchorBroadcaster {
+export function createViemAnchorBroadcaster(
+  opts: ViemAnchorBroadcasterOptions,
+): ViemAnchorBroadcaster {
   const account = privateKeyToAccount(opts.privateKey);
   const transport = http(opts.rpcUrl);
 
@@ -152,6 +180,10 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
   const gasSafetyFactor = opts.gasSafetyFactor ?? DEFAULT_GAS_SAFETY_FACTOR;
   const walletBalanceAlertWei = opts.walletBalanceAlertWei ?? 0n;
   const nodeEnv = opts.nodeEnv ?? process.env.NODE_ENV ?? "development";
+  const maxBatchSize = Math.min(
+    MAX_ANCHOR_BATCH_SIZE,
+    Math.max(1, Math.floor(opts.maxBatchSize ?? MAX_ANCHOR_BATCH_SIZE)),
+  );
 
   // Resolve the already-anchored case: the root is published on-chain, so
   // broadcasting again would revert with RootAlreadyPublished (§5.3). Return the
@@ -183,23 +215,10 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
     return { txHash: match.txHash, blockNumber: match.blockNumber, status: "already_anchored" };
   }
 
-  return async function broadcastAnchor(input: BroadcastInput): Promise<BroadcastResult> {
-    const tenantIdBytes = keccak256(toBytes(input.tenantId)) as `0x${string}`;
-    const rootHex = toHex(input.merkleRoot) as `0x${string}`;
-    const rootHexLower = rootHex.toLowerCase();
-
-    // (a) Skip already-anchored windows. A published root cannot be re-published
-    // (the contract reverts), so check the chain before spending a nonce.
-    const alreadyPublished = await publicClient.readContract({
-      address: opts.contractAddress,
-      abi: BRAIN_AUDIT_ANCHOR_ABI,
-      functionName: "isPublished",
-      args: [tenantIdBytes, rootHex],
-    });
-    if (alreadyPublished) {
-      return resolveAlreadyAnchored(tenantIdBytes, rootHexLower);
-    }
-
+  async function resolveFees(): Promise<{
+    maxFeePerGas: bigint;
+    maxPriorityFeePerGas: bigint;
+  }> {
     const minPriority = gweiFloor("BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI", "1.5");
     const minMaxFee = gweiFloor("BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI", "3");
     let maxPriorityFeePerGas = minPriority;
@@ -218,6 +237,70 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
     if (maxFeePerGas < maxPriorityFeePerGas) {
       maxFeePerGas = maxPriorityFeePerGas;
     }
+    return { maxFeePerGas, maxPriorityFeePerGas };
+  }
+
+  async function waitForReceipt(txHash: `0x${string}`): Promise<{
+    blockNumber: bigint;
+    status: "confirmed" | "reverted";
+    logs: ReadonlyArray<{
+      address: `0x${string}`;
+      topics: readonly `0x${string}`[];
+      data: `0x${string}`;
+    }>;
+  }> {
+    const RECEIPT_TIMEOUT_MS = 5 * 60 * 1000;
+    const receipt = await Promise.race([
+      publicClient.waitForTransactionReceipt({ hash: txHash }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(`waitForTransactionReceipt timed out after ${RECEIPT_TIMEOUT_MS / 1000}s`),
+            ),
+          RECEIPT_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+    return {
+      blockNumber: receipt.blockNumber,
+      status: receipt.status === "success" ? "confirmed" : "reverted",
+      logs: receipt.logs ?? [],
+    };
+  }
+
+  async function assertAffordable(gas: bigint, maxFeePerGas: bigint): Promise<void> {
+    const balance = await publicClient.getBalance({ address: account.address });
+    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei);
+    const guardedCost = applySafetyFactor(gas * maxFeePerGas, gasSafetyFactor);
+    if (balance < guardedCost) {
+      opts.metrics?.increment("brain.audit.anchor.publisher_wallet_insufficient_funds.count", {
+        severity: "critical",
+      });
+      throw new InsufficientAnchorFundsError(balance, guardedCost);
+    }
+  }
+
+  const broadcastAnchor: AnchorBroadcaster = async function broadcastAnchor(
+    input: BroadcastInput,
+  ): Promise<BroadcastResult> {
+    const tenantIdBytes = keccak256(toBytes(input.tenantId)) as `0x${string}`;
+    const rootHex = toHex(input.merkleRoot) as `0x${string}`;
+    const rootHexLower = rootHex.toLowerCase();
+
+    // (a) Skip already-anchored windows. A published root cannot be re-published
+    // (the contract reverts), so check the chain before spending a nonce.
+    const alreadyPublished = await publicClient.readContract({
+      address: opts.contractAddress,
+      abi: BRAIN_AUDIT_ANCHOR_ABI,
+      functionName: "isPublished",
+      args: [tenantIdBytes, rootHex],
+    });
+    if (alreadyPublished) {
+      return resolveAlreadyAnchored(tenantIdBytes, rootHexLower);
+    }
+
+    const { maxFeePerGas, maxPriorityFeePerGas } = await resolveFees();
 
     const anchorArgs = [
       tenantIdBytes,
@@ -246,15 +329,7 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       if (racedPublished) return resolveAlreadyAnchored(tenantIdBytes, rootHexLower);
       return { txHash: Buffer.alloc(0), blockNumber: 0n, status: "reverted" };
     }
-    const balance = await publicClient.getBalance({ address: account.address });
-    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei);
-    const guardedCost = applySafetyFactor(gas * maxFeePerGas, gasSafetyFactor);
-    if (balance < guardedCost) {
-      opts.metrics?.increment("brain.audit.anchor.publisher_wallet_insufficient_funds.count", {
-        severity: "critical",
-      });
-      throw new InsufficientAnchorFundsError(balance, guardedCost);
-    }
+    await assertAffordable(gas, maxFeePerGas);
 
     let txHash: `0x${string}`;
     try {
@@ -283,19 +358,7 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
       return { txHash: Buffer.alloc(0), blockNumber: 0n, status: "reverted" };
     }
 
-    const RECEIPT_TIMEOUT_MS = 5 * 60 * 1000;
-    const receipt = await Promise.race([
-      publicClient.waitForTransactionReceipt({ hash: txHash }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(`waitForTransactionReceipt timed out after ${RECEIPT_TIMEOUT_MS / 1000}s`),
-            ),
-          RECEIPT_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+    const receipt = await waitForReceipt(txHash);
     // (b) Persist the real on-chain outcome. A mined-but-reverted tx (status 0)
     // emits no AnchorPublished and is NOT a valid anchor — surface it as
     // `reverted` so the caller records a terminal failure instead of a phantom
@@ -303,9 +366,177 @@ export function createViemAnchorBroadcaster(opts: ViemAnchorBroadcasterOptions):
     return {
       txHash: Buffer.from(txHash.slice(2), "hex"),
       blockNumber: receipt.blockNumber,
-      status: receipt.status === "success" ? "confirmed" : "reverted",
+      status: receipt.status,
     };
   };
+
+  const broadcastAnchorBatch: AnchorBatchBroadcaster = async function broadcastAnchorBatch(
+    inputs: BroadcastInput[],
+  ): Promise<BroadcastBatchResult[]> {
+    if (inputs.length === 0) return [];
+    if (inputs.length > maxBatchSize) {
+      throw new Error(
+        `anchor batch size ${inputs.length} exceeds configured maximum ${maxBatchSize}`,
+      );
+    }
+
+    const results = new Array<BroadcastBatchResult | undefined>(inputs.length);
+    const unpublished: Array<{
+      index: number;
+      input: BroadcastInput;
+      tenantIdBytes: `0x${string}`;
+      rootHex: `0x${string}`;
+      rootHexLower: string;
+    }> = [];
+
+    for (let index = 0; index < inputs.length; ++index) {
+      const input = inputs[index];
+      if (input === undefined) throw new Error("anchor batch input disappeared during iteration");
+      const tenantIdBytes = keccak256(toBytes(input.tenantId)) as `0x${string}`;
+      const rootHex = toHex(input.merkleRoot) as `0x${string}`;
+      const rootHexLower = rootHex.toLowerCase();
+      const alreadyPublished = await publicClient.readContract({
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "isPublished",
+        args: [tenantIdBytes, rootHex],
+      });
+      if (alreadyPublished) {
+        results[index] = {
+          input,
+          result: await resolveAlreadyAnchored(tenantIdBytes, rootHexLower),
+        };
+      } else {
+        unpublished.push({ index, input, tenantIdBytes, rootHex, rootHexLower });
+      }
+    }
+
+    if (unpublished.length === 0) return results as BroadcastBatchResult[];
+
+    const { maxFeePerGas, maxPriorityFeePerGas } = await resolveFees();
+    const batchArgs = [
+      unpublished.map((entry) => entry.tenantIdBytes),
+      unpublished.map((entry) => entry.rootHex),
+      unpublished.map((entry) => BigInt(entry.input.eventCount)),
+      unpublished.map((entry) => BigInt(Math.floor(entry.input.periodStart.getTime() / 1000))),
+      unpublished.map((entry) => BigInt(Math.floor(entry.input.periodEnd.getTime() / 1000))),
+    ] as const;
+
+    let gas: bigint;
+    try {
+      gas = await publicClient.estimateContractGas({
+        account,
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "anchorBatch",
+        args: batchArgs,
+      });
+    } catch (err) {
+      if (!isDeterministicRevert(err)) throw err;
+      await markBatchRevertOrRace(unpublished, results);
+      return results as BroadcastBatchResult[];
+    }
+    await assertAffordable(gas, maxFeePerGas);
+
+    let txHash: `0x${string}`;
+    try {
+      txHash = await walletClient.writeContract({
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "anchorBatch",
+        args: batchArgs,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+    } catch (err) {
+      if (!isDeterministicRevert(err)) throw err;
+      await markBatchRevertOrRace(unpublished, results);
+      return results as BroadcastBatchResult[];
+    }
+
+    const receipt = await waitForReceipt(txHash);
+    const batchTx = Buffer.from(txHash.slice(2), "hex");
+    const emitted = anchorPairsEmittedByReceiptLogs(receipt.logs, opts.contractAddress);
+    for (const entry of unpublished) {
+      const emittedInBatch = emitted.has(anchorPairKey(entry.tenantIdBytes, entry.rootHex));
+      results[entry.index] = {
+        input: entry.input,
+        result:
+          receipt.status === "reverted"
+            ? { txHash: Buffer.alloc(0), blockNumber: receipt.blockNumber, status: "reverted" }
+            : emittedInBatch
+              ? { txHash: batchTx, blockNumber: receipt.blockNumber, status: "confirmed" }
+              : await resolveAlreadyAnchored(entry.tenantIdBytes, entry.rootHexLower),
+      };
+    }
+    return results as BroadcastBatchResult[];
+  };
+
+  async function markBatchRevertOrRace(
+    unpublished: Array<{
+      index: number;
+      input: BroadcastInput;
+      tenantIdBytes: `0x${string}`;
+      rootHex: `0x${string}`;
+      rootHexLower: string;
+    }>,
+    results: Array<BroadcastBatchResult | undefined>,
+  ): Promise<void> {
+    for (const entry of unpublished) {
+      const racedPublished = await publicClient.readContract({
+        address: opts.contractAddress,
+        abi: BRAIN_AUDIT_ANCHOR_ABI,
+        functionName: "isPublished",
+        args: [entry.tenantIdBytes, entry.rootHex],
+      });
+      results[entry.index] = {
+        input: entry.input,
+        result: racedPublished
+          ? await resolveAlreadyAnchored(entry.tenantIdBytes, entry.rootHexLower)
+          : { txHash: Buffer.alloc(0), blockNumber: 0n, status: "reverted" },
+      };
+    }
+  }
+
+  return Object.assign(broadcastAnchor, { broadcastAnchorBatch });
+}
+
+function anchorPairKey(tenantIdBytes: `0x${string}`, rootHex: `0x${string}`): string {
+  return `${tenantIdBytes.toLowerCase()}:${rootHex.toLowerCase()}`;
+}
+
+function anchorPairsEmittedByReceiptLogs(
+  logs: ReadonlyArray<{
+    address: `0x${string}`;
+    topics: readonly `0x${string}`[];
+    data: `0x${string}`;
+  }>,
+  contractAddress: `0x${string}`,
+): Set<string> {
+  const out = new Set<string>();
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== contractAddress.toLowerCase()) continue;
+    try {
+      const signature = log.topics[0];
+      if (signature === undefined) continue;
+      const topics: [signature: `0x${string}`, ...args: `0x${string}`[]] = [
+        signature,
+        ...log.topics.slice(1),
+      ];
+      const decoded = decodeEventLog({
+        abi: BRAIN_AUDIT_ANCHOR_EVENTS_ABI,
+        data: log.data,
+        topics,
+      });
+      if (decoded.eventName !== "AnchorPublished") continue;
+      const tenantId = decoded.args.tenantId;
+      const root = decoded.args.root;
+      if (tenantId !== undefined && root !== undefined) out.add(anchorPairKey(tenantId, root));
+    } catch {
+      // Ignore unrelated logs from the same transaction.
+    }
+  }
+  return out;
 }
 
 function applySafetyFactor(costWei: bigint, safetyFactor: number): bigint {

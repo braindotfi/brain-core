@@ -10,11 +10,7 @@ pragma solidity 0.8.24;
 contract BrainAuditAnchor {
     /// @notice Emitted once per tenant per anchor publication.
     event AnchorPublished(
-        bytes32 indexed tenantId,
-        bytes32 root,
-        uint256 eventCount,
-        uint256 periodStart,
-        uint256 periodEnd
+        bytes32 indexed tenantId, bytes32 root, uint256 eventCount, uint256 periodStart, uint256 periodEnd
     );
 
     /// @notice Emitted when the publisher is rotated (multi-sig change).
@@ -45,11 +41,18 @@ contract BrainAuditAnchor {
     ///      root for the same tenant reverts.
     mapping(bytes32 => mapping(bytes32 => bool)) private _published;
 
+    /// @notice Hard cap for anchorBatch. Keeps worst-case gas bounded under the
+    ///         Base Sepolia block gas limit while letting the publisher collapse
+    ///         the normal hourly cycle to one transaction.
+    uint256 public constant MAX_BATCH = 50;
+
     error NotPublisher();
     error NotPendingPublisher();
     error RootAlreadyPublished(bytes32 tenantId, bytes32 root);
     error ZeroAddress();
     error InvalidPeriod();
+    error BatchLengthMismatch();
+    error BatchTooLarge(uint256 length);
 
     modifier onlyPublisher() {
         if (msg.sender != publisher) revert NotPublisher();
@@ -69,25 +72,50 @@ contract BrainAuditAnchor {
     /// @param eventCount  Number of leaves in the tree (sanity bound).
     /// @param periodStart Window start (unix seconds).
     /// @param periodEnd   Window end (unix seconds, inclusive of last event).
-    function anchor(
-        bytes32 tenantId,
-        bytes32 root,
-        uint256 eventCount,
-        uint256 periodStart,
-        uint256 periodEnd
-    ) external onlyPublisher {
+    function anchor(bytes32 tenantId, bytes32 root, uint256 eventCount, uint256 periodStart, uint256 periodEnd)
+        external
+        onlyPublisher
+    {
         if (periodEnd < periodStart) revert InvalidPeriod();
         if (_published[tenantId][root]) revert RootAlreadyPublished(tenantId, root);
 
         _published[tenantId][root] = true;
-        _latestByTenant[tenantId] = Latest({
-            root: root,
-            blockNumber: block.number,
-            eventCount: eventCount,
-            periodEnd: periodEnd
-        });
+        _latestByTenant[tenantId] =
+            Latest({root: root, blockNumber: block.number, eventCount: eventCount, periodEnd: periodEnd});
 
         emit AnchorPublished(tenantId, root, eventCount, periodStart, periodEnd);
+    }
+
+    /// @notice Publish multiple tenant Merkle roots in one transaction.
+    /// @dev    Same semantics as `anchor` for every element except duplicate
+    ///         (tenantId, root) pairs are skipped, making batch retries safe
+    ///         after a partial prior success.
+    function anchorBatch(
+        bytes32[] calldata tenantIds,
+        bytes32[] calldata roots,
+        uint256[] calldata eventCounts,
+        uint256[] calldata periodStarts,
+        uint256[] calldata periodEnds
+    ) external onlyPublisher {
+        uint256 len = tenantIds.length;
+        if (roots.length != len || eventCounts.length != len || periodStarts.length != len || periodEnds.length != len)
+        {
+            revert BatchLengthMismatch();
+        }
+        if (len > MAX_BATCH) revert BatchTooLarge(len);
+
+        for (uint256 i = 0; i < len; ++i) {
+            if (periodEnds[i] < periodStarts[i]) revert InvalidPeriod();
+            bytes32 tenantId = tenantIds[i];
+            bytes32 root = roots[i];
+            if (_published[tenantId][root]) continue;
+
+            _published[tenantId][root] = true;
+            _latestByTenant[tenantId] =
+                Latest({root: root, blockNumber: block.number, eventCount: eventCounts[i], periodEnd: periodEnds[i]});
+
+            emit AnchorPublished(tenantId, root, eventCounts[i], periodStarts[i], periodEnds[i]);
+        }
     }
 
     /// @notice Begin a two-step publisher rotation (multi-sig membership change).
