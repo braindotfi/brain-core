@@ -25,12 +25,13 @@ test("main workflow runs Python agents checks before VM image build", () => {
   assert.match(workflow, /uv run pytest/);
   assert.match(
     buildImageJob,
-    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents\]/,
+    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac\]/,
   );
 });
 
 test("main workflow builds app and agents images before deployment", () => {
   const buildImageJob = workflowJob("build_image");
+  const containerScanJob = workflowJob("container_scan");
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote", promoteWorkflow);
 
@@ -50,7 +51,18 @@ test("main workflow builds app and agents images before deployment", () => {
     buildImageJob,
     /docker push ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
   );
-  assert.match(deployStagingJob, /needs: build_image/);
+  assert.match(containerScanJob, /needs: build_image/);
+  assert.match(deployStagingJob, /needs: container_scan/);
+  assert.match(
+    containerScanJob,
+    /image-ref: ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(
+    containerScanJob,
+    /image-ref: ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\}/,
+  );
+  assert.match(containerScanJob, /severity: HIGH,CRITICAL/);
+  assert.match(containerScanJob, /exit-code: "1"/);
   assert.match(deployStagingJob, /VM_HOST: \$\{\{ secrets\.VM_HOST_STAGING \}\}/);
   assert.match(deployStagingJob, /VM_ENV_FILE: \.env\.staging/);
   assert.match(promoteWorkflow, /workflow_dispatch:/);

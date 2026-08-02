@@ -62,6 +62,15 @@ resource "azurerm_key_vault" "main" {
   enable_rbac_authorization  = true
   purge_protection_enabled   = local.is_prod
   soft_delete_retention_days = 90
+
+  # RBAC determines which managed identities can read secrets. The network
+  # boundary denies all other traffic while preserving Azure control-plane and
+  # managed-service access required by the deployed services.
+  network_acls {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+
   tags                       = local.tags
 }
 

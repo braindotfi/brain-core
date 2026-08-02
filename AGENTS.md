@@ -114,6 +114,15 @@ checks enabled conditional boot fences without printing values. This catches
 missing `AUTH_COOKIE_SECRET` and `BRAIN_MCP_READER_DB_PASSWORD` before a deploy
 can change runtime state.
 
+Supply-chain CI runs on every pull request and main push: `pnpm audit` and
+tfsec fail on high or critical findings, CodeQL uses security-extended queries
+for JavaScript, TypeScript, and Python, and Trivy scans both production images.
+PR scans use images built once in the scanning job; main scans the exact GHCR
+images before staging deploy. Dependabot updates npm and GitHub Actions weekly.
+Any scanner ignore requires a documented reason and expiry date. The current
+`.trivyignore` entries are Debian 12 advisories with no vendor fix at the time
+of scanning and expire on 2026-09-02; reassess them when refreshing base images.
+
 Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
 data. Evidence blocks are wrapped in a per-request random boundary, evidence
 text is facts to cite and never instructions to obey, and answer serialization

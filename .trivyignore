@@ -1,0 +1,39 @@
+# Debian 12 has no vendor fix for this util-linux issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-53615
+# Debian 12 marks this gzip issue fix_deferred as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-41992
+# Debian 12 has no vendor fix for this libacl issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-54369
+# Debian 12 has no vendor fix for this ncurses issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2025-69720
+# Debian 12 has no vendor fix for this Perl issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-13221
+# Debian 12 marks this Perl archive issue fix_deferred as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-42496
+# Debian 12 has no vendor fix for this Perl Storable issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-57433
+# Debian 12 has no vendor fix for this Perl compiler issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-8376
+# Debian 12 marks this Perl archive issue fix_deferred as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-42497
+# Debian 12 has no vendor fix for this Perl IO issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-48962
+# Debian 12 has no vendor fix for this Perl integer-overflow issue as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-57432
+# Debian 12 marks this Perl archive issue fix_deferred as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2026-9538
+# Debian marks this zlib issue will_not_fix for bookworm as of 2026-08-02. Reassess by 2026-09-02.
+# exp:2026-09-02
+CVE-2023-45853
