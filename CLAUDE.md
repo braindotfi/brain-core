@@ -713,6 +713,15 @@ that file already being present on the box from manual setup, never on CI
 having shipped it. Do not add Caddyfile/docker-compose.caddy.yml sync or a
 Caddy reload step to `main.yml`.
 
+Production Caddy is composed into the same Docker project as `api`, `auth`, and
+`surface-gateway`. The repo-tracked `Caddyfile` reaches `api:3000` and
+`auth:3000` through Docker DNS on the internal compose network, while same-host
+operator and health probes can still use the host loopback binds. Do not publish
+app services on all host interfaces in production. Keep app-service host ports
+loopback-only, e.g. `127.0.0.1:3000:3000`, `127.0.0.1:3002:3000`, and
+`127.0.0.1:3003:3000`. Caddy's `80:80` and `443:443` are the public entry
+points.
+
 `infra/main.tf` still contains Container Apps wiring from the earlier deploy
 model. That wiring is legacy and is not the production source of truth while
 the GitHub workflow deploys to Docker VMs.
