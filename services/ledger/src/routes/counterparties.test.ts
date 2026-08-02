@@ -70,6 +70,8 @@ describe("counterparty routes", () => {
       type: "vendor",
       risk_level: null,
       verified_status: "unverified",
+      trust_status: "unreviewed",
+      trust_reviewed_at: null,
       aliases: [],
       linked_accounts: [],
       agent_id: null,
@@ -136,7 +138,7 @@ describe("counterparty routes", () => {
     }
   });
 
-  it("passes verified_status through list filters and rejects invalid values", async () => {
+  it("passes verified_status and trust_status through list filters and rejects invalid values", async () => {
     const listCounterparties = vi.fn(async () => ({ items: [], next_cursor: null }));
     const app = await buildApp({ listCounterparties });
     try {
@@ -150,12 +152,29 @@ describe("counterparty routes", () => {
         expect.objectContaining({ verified_status: "unverified" }),
       );
 
+      const trust = await app.inject({
+        method: "GET",
+        url: "/ledger/counterparties?trust_status=paused",
+      });
+      expect(trust.statusCode).toBe(200);
+      expect(listCounterparties).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ trust_status: "paused" }),
+      );
+
       const bad = await app.inject({
         method: "GET",
         url: "/ledger/counterparties?verified_status=trusted",
       });
       expect(bad.statusCode).toBe(400);
       expect(bad.json().error.details.reason).toBe("invalid_verified_status");
+
+      const badTrust = await app.inject({
+        method: "GET",
+        url: "/ledger/counterparties?trust_status=document_verified",
+      });
+      expect(badTrust.statusCode).toBe(400);
+      expect(badTrust.json().error.details.reason).toBe("invalid_trust_status");
     } finally {
       await app.close();
     }
@@ -284,6 +303,14 @@ describe("counterparty routes", () => {
       expect(trust.statusCode).toBe(400);
       expect(trust.json().error.details.reason).toBe("field_not_editable");
 
+      const trustState = await app.inject({
+        method: "PATCH",
+        url: `/ledger/counterparties/${counterpartyId}`,
+        payload: { trust_status: "trusted" },
+      });
+      expect(trustState.statusCode).toBe(400);
+      expect(trustState.json().error.details.reason).toBe("field_not_editable");
+
       const payment = await app.inject({
         method: "PATCH",
         url: `/ledger/counterparties/${counterpartyId}`,
@@ -291,6 +318,79 @@ describe("counterparty routes", () => {
       });
       expect(payment.statusCode).toBe(400);
       expect(payment.json().error.details.reason).toBe("payment_fields_not_allowed");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("routes customer trust transitions through ledger:write user principals", async () => {
+    const counterparty: Counterparty = {
+      id: counterpartyId,
+      owner_id: tenantId,
+      name: "BigCo",
+      display_name: "BigCo",
+      normalized_name: "bigco",
+      type: "customer",
+      risk_level: null,
+      verified_status: "unverified",
+      trust_status: "trusted",
+      trust_reviewed_at: "2026-07-05T00:00:00.000Z",
+      aliases: [],
+      linked_accounts: [],
+      agent_id: null,
+      onchain_address: null,
+      metadata: {},
+      source_ids: [],
+      evidence_ids: [],
+      provenance: "human_confirmed",
+      confidence: 0.95,
+      created_at: "2026-07-05T00:00:00.000Z",
+      updated_at: "2026-07-05T00:00:00.000Z",
+    };
+    const transitionCounterpartyTrust = vi.fn(async () => ({
+      counterparty,
+      previous_trust_status: "unreviewed" as const,
+    }));
+    const app = await buildApp({ transitionCounterpartyTrust });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: `/ledger/counterparties/${counterpartyId}/trust/grant`,
+        payload: { reason: "Reviewed AR evidence" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(transitionCounterpartyTrust).toHaveBeenCalledWith(
+        expect.objectContaining({ principalType: "user" }),
+        counterpartyId,
+        "grant",
+        { reason: "Reviewed AR evidence" },
+      );
+      expect(res.json().counterparty).toMatchObject({
+        type: "customer",
+        trust_status: "trusted",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects agent principals on trust transitions before service mutation", async () => {
+    const transitionCounterpartyTrust = vi.fn();
+    const app = await buildApp(
+      { transitionCounterpartyTrust },
+      principal({ id: "agent_01ARZ3NDEKTSV4RRFFQ69G5FAV", type: "agent" }),
+    );
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: `/ledger/counterparties/${counterpartyId}/trust/pause`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.details).toMatchObject({
+        reason: "actor_unresolved",
+        principal_type: "agent",
+      });
+      expect(transitionCounterpartyTrust).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

@@ -18,6 +18,9 @@ Query parameters:
 - `verified_status`: optional verification status. Allowed values are
   `unverified`, `self_attested`, `document_verified`, and
   `sanctions_cleared`.
+- `trust_status`: optional user-reviewed trust workflow status. Allowed values
+  are `unreviewed`, `trusted`, `paused`, and `acknowledged`. This is separate
+  from `verified_status`.
 - `limit`: optional integer. Defaults to 50 and is capped by Ledger service
   limits.
 
@@ -32,7 +35,9 @@ Response:
       "display_name": "Globex Corp",
       "type": "vendor",
       "payment_count": 2,
-      "payment_total": "1234.56"
+      "payment_total": "1234.56",
+      "trust_status": "unreviewed",
+      "trust_reviewed_at": null
     }
   ]
 }
@@ -133,6 +138,70 @@ Response:
 }
 ```
 
+### `POST /ledger/counterparties/:counterparty_id/trust/grant`
+
+Scope: `ledger:write`.
+
+Requires a user principal. Marks the counterparty `trusted`.
+
+Allowed prior states:
+
+- `unreviewed`
+- `acknowledged`
+
+### `POST /ledger/counterparties/:counterparty_id/trust/pause`
+
+Scope: `ledger:write`.
+
+Requires a user principal. Marks the counterparty `paused`.
+
+Allowed prior states:
+
+- `unreviewed`
+- `trusted`
+- `acknowledged`
+
+### `POST /ledger/counterparties/:counterparty_id/trust/restore`
+
+Scope: `ledger:write`.
+
+Requires a user principal. Restores a `paused` counterparty to `trusted`.
+
+Allowed prior state:
+
+- `paused`
+
+### `POST /ledger/counterparties/:counterparty_id/trust/acknowledge`
+
+Scope: `ledger:write`.
+
+Requires a user principal. Marks the counterparty `acknowledged`.
+
+Allowed prior states:
+
+- `unreviewed`
+- `paused`
+
+All trust transition routes accept an optional body:
+
+```json
+{
+  "reason": "Reviewed supporting documents"
+}
+```
+
+The reason is stored on the audit event only. Invalid transitions fail closed
+with `ledger_status_invalid` and HTTP 409. These transitions apply uniformly to
+all counterparty types, including `vendor` and `customer`.
+
+Trust transitions emit `counterparty.trust.granted`,
+`counterparty.trust.paused`, `counterparty.trust.restored`, or
+`counterparty.trust.acknowledged` audit events with the counterparty id, acting
+user, prior state, new state, and optional reason.
+
+`trust_status` is not read by the policy VM, §6 gate, or payment path in this
+contract version.
+
 ## Rejected Fields
 
 The manual create and edit endpoints reject payment instruction fields with
@@ -141,7 +210,8 @@ IBAN, account number, routing number, SWIFT, BIC, wallet, or bank details.
 
 The manual create and edit endpoints reject trust state fields with reason
 `field_not_editable`. Rejected fields include `provenance`, `confidence`,
-`verified_status`, and `risk_level`.
+`verified_status`, `risk_level`, `trust_status`, `trust_reviewed_at`, and
+`trust_reviewed_by`.
 
 Unknown body fields are rejected with reason `unknown_field`. This is distinct
 from `field_not_editable`, which is reserved for trust state fields that exist

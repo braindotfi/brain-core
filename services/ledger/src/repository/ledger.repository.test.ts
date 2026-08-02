@@ -197,6 +197,13 @@ describe("listCounterparties", () => {
     expect(_log[0]!.values).toEqual(["unverified", 20]);
   });
 
+  it("adds trust_status filter", async () => {
+    const { _log, ...client } = fakeClient();
+    await listCounterparties(client, { trust_status: "paused", limit: 20 });
+    expect(_log[0]!.sql).toContain("cp.trust_status = $1");
+    expect(_log[0]!.values).toEqual(["paused", 20]);
+  });
+
   it("searches normalized names and aliases", async () => {
     const { _log, ...client } = fakeClient();
     await listCounterparties(client, { q: "Acme Trading", limit: 20 });

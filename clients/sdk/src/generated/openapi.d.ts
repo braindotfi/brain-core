@@ -871,6 +871,102 @@ export interface paths {
         patch: operations["updateCounterpartyIdentity"];
         trace?: never;
     };
+    "/ledger/counterparties/{counterparty_id}/trust/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a counterparty trusted
+         * @description Requires `ledger:write` and a user principal. Applies uniformly to all
+         *     counterparty types. Allowed from `unreviewed` or `acknowledged`; invalid
+         *     transitions return `ledger_status_invalid` with HTTP 409. This changes
+         *     `trust_status` only and does not alter `verified_status` or payment gate
+         *     behavior.
+         */
+        post: operations["grantCounterpartyTrust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/counterparties/{counterparty_id}/trust/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause counterparty trust
+         * @description Requires `ledger:write` and a user principal. Applies uniformly to all
+         *     counterparty types. Allowed from `unreviewed`, `trusted`, or
+         *     `acknowledged`; invalid transitions return `ledger_status_invalid` with
+         *     HTTP 409. This changes `trust_status` only and does not alter
+         *     `verified_status` or payment gate behavior.
+         */
+        post: operations["pauseCounterpartyTrust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/counterparties/{counterparty_id}/trust/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a paused counterparty to trusted
+         * @description Requires `ledger:write` and a user principal. Applies uniformly to all
+         *     counterparty types. Allowed only from `paused`; invalid transitions
+         *     return `ledger_status_invalid` with HTTP 409. This changes
+         *     `trust_status` only and does not alter `verified_status` or payment
+         *     gate behavior.
+         */
+        post: operations["restoreCounterpartyTrust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/counterparties/{counterparty_id}/trust/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge a counterparty review item
+         * @description Requires `ledger:write` and a user principal. Applies uniformly to all
+         *     counterparty types. Allowed from `unreviewed` or `paused`; invalid
+         *     transitions return `ledger_status_invalid` with HTTP 409. This changes
+         *     `trust_status` only and does not alter `verified_status` or payment gate
+         *     behavior.
+         */
+        post: operations["acknowledgeCounterpartyTrust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/obligations": {
         parameters: {
             query?: never;
@@ -4365,12 +4461,28 @@ export interface components {
             risk_level?: "low" | "medium" | "high" | "sanctioned" | null;
             /** @enum {string|null} */
             verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared" | null;
+            /**
+             * @description User-reviewed counterparty trust workflow state. Separate from verified_status.
+             * @enum {string}
+             */
+            trust_status?: "unreviewed" | "trusted" | "paused" | "acknowledged";
+            /** Format: date-time */
+            trust_reviewed_at?: string | null;
             aliases?: string[];
             linked_accounts?: string[];
             /** @description Count of posted or cleared outflow transactions linked to this counterparty. */
             payment_count?: number;
             /** @description Sum of posted or cleared outflow transaction amounts linked to this counterparty. */
             payment_total?: string;
+        };
+        CounterpartyTrustTransitionRequest: {
+            /** @description Optional human review reason. Stored on the audit event only. */
+            reason?: string;
+        };
+        CounterpartyTrustTransitionResponse: {
+            counterparty: components["schemas"]["Counterparty"];
+            /** @enum {string} */
+            previous_trust_status: "unreviewed" | "trusted" | "paused" | "acknowledged";
         };
         Obligation: components["schemas"]["LedgerCommonFields"] & {
             /** @enum {string} */
@@ -6733,6 +6845,8 @@ export interface operations {
                 q?: string;
                 type?: "merchant" | "vendor" | "customer" | "employer" | "employee" | "bank" | "wallet" | "exchange" | "tax_authority" | "agent" | "other";
                 verified_status?: "unverified" | "self_attested" | "document_verified" | "sanctions_cleared";
+                /** @description User-reviewed counterparty trust workflow state. Separate from verified_status. */
+                trust_status?: "unreviewed" | "trusted" | "paused" | "acknowledged";
                 limit?: number;
                 cursor?: string;
             };
@@ -6913,6 +7027,122 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    grantCounterpartyTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyTrustTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Trust state changed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterpartyTrustTransitionResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    pauseCounterpartyTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyTrustTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Trust state changed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterpartyTrustTransitionResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    restoreCounterpartyTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyTrustTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Trust state changed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterpartyTrustTransitionResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    acknowledgeCounterpartyTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                counterparty_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CounterpartyTrustTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Trust state changed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterpartyTrustTransitionResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listObligations: {

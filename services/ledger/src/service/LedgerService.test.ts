@@ -186,6 +186,9 @@ function rowCommon() {
     evidence_ids: ["prs_def"],
     provenance: "extracted",
     confidence: 0.9,
+    trust_status: "unreviewed",
+    trust_reviewed_at: null,
+    trust_reviewed_by: null,
     created_at: NOW,
     updated_at: NOW,
   };
@@ -598,6 +601,166 @@ describe("LedgerService manual counterparty endpoints", () => {
         err.details?.["reason"] === "name_conflict",
     );
     expect(calls.some((c) => c.text.includes("UPDATE ledger_counterparties"))).toBe(false);
+  });
+});
+
+describe("LedgerService.transitionCounterpartyTrust", () => {
+  const matrix: Array<[string, string, string]> = [
+    ["unreviewed", "grant", "trusted"],
+    ["unreviewed", "pause", "paused"],
+    ["unreviewed", "acknowledge", "acknowledged"],
+    ["trusted", "pause", "paused"],
+    ["paused", "restore", "trusted"],
+    ["paused", "acknowledge", "acknowledged"],
+    ["acknowledged", "grant", "trusted"],
+    ["acknowledged", "pause", "paused"],
+  ];
+
+  it.each(matrix)("applies allowed %s -> %s transitions", async (prior, transition, target) => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "FOR UPDATE": [
+        {
+          ...rowCommon(),
+          id: "cp_review",
+          name: "Review Target",
+          normalized_name: "review_target",
+          type: prior === "acknowledged" ? "customer" : "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          trust_status: prior,
+          trust_reviewed_at: null,
+          trust_reviewed_by: null,
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+      "UPDATE ledger_counterparties": [
+        {
+          ...rowCommon(),
+          id: "cp_review",
+          name: "Review Target",
+          normalized_name: "review_target",
+          type: prior === "acknowledged" ? "customer" : "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          trust_status: target,
+          trust_reviewed_at: new Date("2026-07-05T00:00:00.000Z"),
+          trust_reviewed_by: ctx.actor,
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    const result = await service.transitionCounterpartyTrust(
+      { ...ctx, principalType: "user" },
+      "cp_review",
+      transition as never,
+      { reason: "Reviewed by ops" },
+    );
+
+    expect(result.previous_trust_status).toBe(prior);
+    expect(result.counterparty.trust_status).toBe(target);
+    expect(result.counterparty.trust_reviewed_at).toBe("2026-07-05T00:00:00.000Z");
+    const select = calls.find((c) => c.text.includes("FOR UPDATE"))!;
+    expect(select.text).toContain("owner_id = current_setting('app.tenant_id', true)");
+    const update = calls.find((c) => c.text.includes("UPDATE ledger_counterparties"))!;
+    expect(update.text).toContain("owner_id = current_setting('app.tenant_id', true)");
+    expect(update.values).toEqual([target, ctx.actor, "cp_review"]);
+    expect(audit.events[0]!.action).toMatch(/^counterparty\.trust\./);
+    expect(audit.events[0]!.inputs).toMatchObject({
+      counterparty_id: "cp_review",
+      transition,
+      prior_state: prior,
+      reason: "Reviewed by ops",
+    });
+    expect(audit.events[0]!.outputs).toMatchObject({
+      counterparty_id: "cp_review",
+      trust_status: target,
+    });
+  });
+
+  it("rejects disallowed transitions without mutating or auditing", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "FOR UPDATE": [
+        {
+          ...rowCommon(),
+          id: "cp_review",
+          name: "Review Target",
+          normalized_name: "review_target",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          trust_status: "trusted",
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    await expect(
+      service.transitionCounterpartyTrust({ ...ctx, principalType: "user" }, "cp_review", "grant"),
+    ).rejects.toSatisfy(
+      (err) =>
+        isBrainError(err) &&
+        err.code === "ledger_status_invalid" &&
+        err.details?.["reason"] === "invalid_trust_transition",
+    );
+    expect(calls.some((c) => c.text.includes("UPDATE ledger_counterparties"))).toBe(false);
+    expect(audit.events).toEqual([]);
+  });
+
+  it("rejects non-user principals before loading the row", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit });
+    await expect(
+      service.transitionCounterpartyTrust({ ...ctx, principalType: "agent" }, "cp_review", "pause"),
+    ).rejects.toSatisfy(
+      (err) =>
+        isBrainError(err) &&
+        err.code === "payment_intent_approval_invalid" &&
+        err.details?.["principal_type"] === "agent",
+    );
+    expect(calls).toEqual([]);
+    expect(audit.events).toEqual([]);
+  });
+
+  it("fails closed on an unknown persisted trust state", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = fakePool({
+      "FOR UPDATE": [
+        {
+          ...rowCommon(),
+          id: "cp_review",
+          name: "Review Target",
+          normalized_name: "review_target",
+          type: "vendor",
+          risk_level: null,
+          verified_status: "unverified",
+          trust_status: "legacy_unknown",
+          aliases: [],
+          linked_accounts: [],
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit });
+    await expect(
+      service.transitionCounterpartyTrust({ ...ctx, principalType: "user" }, "cp_review", "pause"),
+    ).rejects.toSatisfy(
+      (err) =>
+        isBrainError(err) &&
+        err.code === "ledger_status_invalid" &&
+        err.details?.["reason"] === "unknown_trust_state",
+    );
+    expect(calls.some((c) => c.text.includes("UPDATE ledger_counterparties"))).toBe(false);
+    expect(audit.events).toEqual([]);
   });
 });
 

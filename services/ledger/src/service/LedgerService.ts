@@ -185,6 +185,7 @@ export class LedgerService implements ILedgerService {
       q?: string;
       type?: Counterparty["type"];
       verified_status?: Counterparty["verified_status"];
+      trust_status?: Counterparty["trust_status"];
       limit?: number;
       cursor?: string;
     },
@@ -198,6 +199,7 @@ export class LedgerService implements ILedgerService {
         ...(f.verified_status !== undefined && f.verified_status !== null
           ? { verified_status: f.verified_status }
           : {}),
+        ...(f.trust_status !== undefined ? { trust_status: f.trust_status } : {}),
         limit: limit + 1,
         ...(cursor !== undefined ? { cursor } : {}),
       }),
@@ -397,6 +399,93 @@ export class LedgerService implements ILedgerService {
     };
   }
 
+  public async transitionCounterpartyTrust(
+    ctx: ServiceCallContext,
+    id: string,
+    transition: CounterpartyTrustTransition,
+    input: CounterpartyTrustTransitionInput = {},
+  ): Promise<{ counterparty: Counterparty; previous_trust_status: CounterpartyTrustStatus }> {
+    if (ctx.principalType !== "user") {
+      throw brainError("payment_intent_approval_invalid", "actor_unresolved", {
+        statusOverride: 403,
+        details: {
+          reason: "actor_unresolved",
+          source: "session",
+          principal_type: ctx.principalType ?? "unknown",
+        },
+      });
+    }
+
+    const target = trustTargetForTransition(transition);
+    const result = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const { rows: beforeRows } = await c.query<CounterpartyRow>(
+        `SELECT *
+           FROM ledger_counterparties
+          WHERE id = $1
+            AND owner_id = current_setting('app.tenant_id', true)
+          FOR UPDATE`,
+        [id],
+      );
+      const before = beforeRows[0] ?? null;
+      if (before === null) return null;
+
+      const previous = parseCounterpartyTrustStatus(before.trust_status);
+      if (!canApplyTrustTransition(previous, transition)) {
+        throw brainError("ledger_status_invalid", "invalid counterparty trust transition", {
+          details: {
+            reason: "invalid_trust_transition",
+            counterparty_id: id,
+            transition,
+            prior_state: previous,
+            target_state: target,
+          },
+        });
+      }
+
+      const { rows } = await c.query<CounterpartyRow>(
+        `UPDATE ledger_counterparties
+            SET trust_status = $1,
+                trust_reviewed_at = now(),
+                trust_reviewed_by = $2,
+                updated_at = now()
+          WHERE id = $3
+            AND owner_id = current_setting('app.tenant_id', true)
+          RETURNING *`,
+        [target, ctx.actor, id],
+      );
+      const after = rows[0];
+      if (after === undefined) return null;
+      return { before, after, previous };
+    });
+
+    if (result === null) {
+      throw brainError("ledger_row_not_found", "no such counterparty");
+    }
+
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "ledger",
+      eventType: "system_activity",
+      severity: "info",
+      actor: ctx.actor,
+      action: trustAuditAction(transition),
+      inputs: {
+        counterparty_id: id,
+        transition,
+        prior_state: result.previous,
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
+      },
+      outputs: { counterparty_id: result.after.id, trust_status: result.after.trust_status },
+      beforeState: { trust_status: result.previous },
+      afterState: { trust_status: result.after.trust_status },
+    });
+
+    return {
+      counterparty: serializeCounterparty(result.after),
+      previous_trust_status: result.previous,
+    };
+  }
+
   /**
    * Idempotent re-normalization. Reads the raw_parsed row, dispatches by
    * parser id to a registered extractor, and returns the Ledger rows
@@ -562,6 +651,10 @@ function serializeTransaction(row: TransactionRow): Transaction {
 }
 
 function serializeCounterparty(row: CounterpartyRow): Counterparty {
+  const reviewedAt =
+    row.trust_reviewed_at instanceof Date
+      ? row.trust_reviewed_at.toISOString()
+      : row.trust_reviewed_at;
   return {
     ...commonFields(row),
     name: row.name,
@@ -570,6 +663,8 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     type: row.type as Counterparty["type"],
     risk_level: row.risk_level as Counterparty["risk_level"],
     verified_status: row.verified_status as Counterparty["verified_status"],
+    trust_status: parseCounterpartyTrustStatus(row.trust_status ?? "unreviewed"),
+    trust_reviewed_at: reviewedAt ?? null,
     aliases: row.aliases,
     linked_accounts: row.linked_accounts,
     agent_id: row.agent_id,
@@ -578,6 +673,58 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     payment_count: Number(row.payment_count ?? 0),
     payment_total: row.payment_total ?? "0",
   };
+}
+
+export type CounterpartyTrustStatus = Counterparty["trust_status"];
+export type CounterpartyTrustTransition = "grant" | "pause" | "restore" | "acknowledge";
+
+export interface CounterpartyTrustTransitionInput {
+  reason?: string;
+}
+
+const COUNTERPARTY_TRUST_STATUSES = new Set<CounterpartyTrustStatus>([
+  "unreviewed",
+  "trusted",
+  "paused",
+  "acknowledged",
+]);
+
+const TRUST_TRANSITIONS: Record<CounterpartyTrustStatus, readonly CounterpartyTrustTransition[]> = {
+  unreviewed: ["grant", "pause", "acknowledge"],
+  trusted: ["pause"],
+  paused: ["restore", "acknowledge"],
+  acknowledged: ["grant", "pause"],
+};
+
+function parseCounterpartyTrustStatus(value: string): CounterpartyTrustStatus {
+  if (!COUNTERPARTY_TRUST_STATUSES.has(value as CounterpartyTrustStatus)) {
+    throw brainError("ledger_status_invalid", "unknown counterparty trust state", {
+      details: { reason: "unknown_trust_state", trust_status: value },
+    });
+  }
+  return value as CounterpartyTrustStatus;
+}
+
+function canApplyTrustTransition(
+  current: CounterpartyTrustStatus,
+  transition: CounterpartyTrustTransition,
+): boolean {
+  return (TRUST_TRANSITIONS[current] ?? []).includes(transition);
+}
+
+function trustTargetForTransition(
+  transition: CounterpartyTrustTransition,
+): CounterpartyTrustStatus {
+  if (transition === "grant" || transition === "restore") return "trusted";
+  if (transition === "pause") return "paused";
+  return "acknowledged";
+}
+
+function trustAuditAction(transition: CounterpartyTrustTransition): string {
+  if (transition === "grant") return "counterparty.trust.granted";
+  if (transition === "pause") return "counterparty.trust.paused";
+  if (transition === "restore") return "counterparty.trust.restored";
+  return "counterparty.trust.acknowledged";
 }
 
 function serializeObligation(row: ObligationRow): Obligation {

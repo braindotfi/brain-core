@@ -24,6 +24,8 @@ export interface CounterpartyObservationView {
   type: string;
   provenance: string;
   confidence: number;
+  trust_status: string;
+  trust_reviewed_at: string | null;
   source_ids: string[];
   metadata: Record<string, unknown>;
 }
@@ -106,6 +108,8 @@ export async function resolveCounterpartyView(
     // 2 — load every member observation verbatim.
     const { rows: observations } = await c.query<CounterpartyObservationView>(
       `SELECT id AS counterparty_id, name, type, provenance, confidence,
+              trust_status,
+              CASE WHEN trust_reviewed_at IS NULL THEN NULL ELSE trust_reviewed_at::text END AS trust_reviewed_at,
               source_ids, COALESCE(metadata, '{}'::jsonb) AS metadata
          FROM ledger_counterparties
         WHERE id = ANY($1::text[])`,
