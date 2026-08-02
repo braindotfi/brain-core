@@ -332,7 +332,7 @@ services:
     container_name: brain-prod-api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     # Operator-supplied secrets (C-series): AUTH_SIGN_KEY,
     # BRAIN_SESSION_KEY, BASE_RPC_URL, BRAIN_ONCHAIN_SMART_ACCOUNT,
     # AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS, contract addresses,
@@ -442,7 +442,7 @@ services:
     restart: unless-stopped
     command: ["node", "services/surface-gateway/dist/main.js"]
     ports:
-      - "3002:3000"
+      - "127.0.0.1:3002:3000"
     env_file:
       - path: ${BRAIN_ENV_FILE:-.env.prod}
         required: false
