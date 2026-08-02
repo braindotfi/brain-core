@@ -90,8 +90,8 @@ jobs:
           )"
           invoice_row="$(
             docker exec -i brain-prod-postgres psql -U brain -d brain -At -F $'\t' \
-              -v ON_ERROR_STOP=1 -v tenant_id="$smoke_tenant_id" \
-              -c "SELECT i.id, i.counterparty_id, i.amount_due, i.currency, i.due_date::date, cp.name, i.invoice_number FROM ledger_invoices i JOIN ledger_counterparties cp ON cp.owner_id = i.owner_id AND cp.id = i.counterparty_id WHERE i.owner_id = :'tenant_id' AND i.status = 'overdue' ORDER BY i.due_date ASC, i.id ASC LIMIT 1;"
+              -v ON_ERROR_STOP=1 \
+              -c "SELECT i.id, i.counterparty_id, i.amount_due, i.currency, i.due_date::date, cp.name, i.invoice_number FROM ledger_invoices i JOIN ledger_counterparties cp ON cp.owner_id = i.owner_id AND cp.id = i.counterparty_id WHERE i.owner_id = '${smoke_tenant_id}' AND i.status = 'overdue' ORDER BY i.due_date ASC, i.id ASC LIMIT 1;"
           )"
           if [[ -z "$invoice_row" ]]; then
             echo "No overdue invoice found on isolated smoke tenant $smoke_tenant_id"
