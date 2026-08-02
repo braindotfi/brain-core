@@ -33,7 +33,7 @@
     "pg": "^8.13.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "@anthropic-ai/sdk": "^0.30.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "openai": "^4.68.0"
   }
 }
