@@ -1,0 +1,293 @@
+name: ops-counterparty-trust-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment to exercise through the public API."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+          - both
+        default: both
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    name: staging counterparty trust transition smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: inputs.target == 'staging' || inputs.target == 'both'
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      API_BASE: https://staging-api.brain.fi
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Exercise all counterparty trust transitions
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          set -a
+          # The platform credential and user session remain on the VM. This smoke
+          # emits only isolated resource identifiers and transition outcomes.
+          . "./$VM_ENV_FILE"
+          set +a
+          if [[ -z "${BRAIN_PLATFORM_SERVICE_SECRET:-}" ]]; then
+            echo "BRAIN_PLATFORM_SERVICE_SECRET is not configured on the VM"
+            exit 1
+          fi
+
+          create_payload="$(
+            docker exec brain-prod-api node -e '
+              const { randomUUID } = require("node:crypto");
+              const suffix = randomUUID().replace(/-/g, "");
+              process.stdout.write(JSON.stringify({
+                company_name: "Counterparty trust smoke",
+                founder: {
+                  email: `counterparty-trust-smoke+${suffix}@brain.invalid`,
+                  display_name: "Counterparty Trust Smoke",
+                },
+                founder_external_ref: `counterparty-trust-smoke:${suffix}`,
+                demo_seed: true,
+              }));
+            '
+          )"
+          create_response="$(
+            printf '%s' "$create_payload" | curl -fsS --retry 2 --connect-timeout 10 --max-time 90 \
+              -X POST "$API_BASE/v1/tenants" \
+              -H "Content-Type: application/json" \
+              -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+              --data-binary @-
+          )"
+          smoke_tenant_id="$(
+            printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const parsed = JSON.parse(body);
+                if (typeof parsed.tenant_id !== "string" || !/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/.test(parsed.tenant_id)) process.exit(1);
+                process.stdout.write(parsed.tenant_id);
+              });
+            '
+          )"
+          smoke_user_token="$(
+            printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const parsed = JSON.parse(body);
+                if (typeof parsed.session?.token !== "string" || parsed.session.token.length === 0) process.exit(1);
+                process.stdout.write(parsed.session.token);
+              });
+            '
+          )"
+          counterparty_id="$(
+            docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+              -v ON_ERROR_STOP=1 \
+              -c "SELECT id FROM ledger_counterparties WHERE owner_id = '${smoke_tenant_id}' AND trust_status = 'unreviewed' ORDER BY id LIMIT 1;"
+          )"
+          if [[ ! "$counterparty_id" =~ ^cp_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "No unreviewed counterparty found on isolated smoke tenant $smoke_tenant_id"
+            exit 1
+          fi
+
+          transition() {
+            local name="$1"
+            local expected_previous="$2"
+            local expected_target="$3"
+            local response
+            response="$(
+              curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+                -X POST "$API_BASE/v1/ledger/counterparties/$counterparty_id/trust/$name" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${smoke_user_token}" \
+                --data '{"reason":"controlled trust-state smoke"}'
+            )"
+            printf '%s' "$response" | EXPECTED_PREVIOUS="$expected_previous" EXPECTED_TARGET="$expected_target" \
+              docker exec -i \
+                -e EXPECTED_PREVIOUS -e EXPECTED_TARGET brain-prod-api node -e '
+                  let body = "";
+                  process.stdin.on("data", (chunk) => { body += chunk; });
+                  process.stdin.on("end", () => {
+                    const parsed = JSON.parse(body);
+                    if (parsed.previous_trust_status !== process.env.EXPECTED_PREVIOUS) process.exit(1);
+                    if (parsed.counterparty?.trust_status !== process.env.EXPECTED_TARGET) process.exit(1);
+                  });
+                '
+            printf 'transition=%s previous=%s target=%s\n' "$name" "$expected_previous" "$expected_target"
+          }
+
+          transition grant unreviewed trusted
+          transition pause trusted paused
+          transition restore paused trusted
+          transition pause trusted paused
+          transition acknowledge paused acknowledged
+
+          audit_complete="$(
+            docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+              -v ON_ERROR_STOP=1 \
+              -c "SELECT COUNT(*) = 5 FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action IN ('counterparty.trust.granted', 'counterparty.trust.paused', 'counterparty.trust.restored', 'counterparty.trust.acknowledged');"
+          )"
+          if [[ "$audit_complete" != "t" ]]; then
+            echo "Expected five trust audit events for smoke tenant $smoke_tenant_id"
+            exit 1
+          fi
+          printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id"
+          printf 'counterparty_id=%s\n' "$counterparty_id"
+          printf 'trust_audit_events=5\n'
+          REMOTE
+
+  production:
+    name: production counterparty trust transition smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: inputs.target == 'production' || inputs.target == 'both'
+    environment: production
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Exercise all counterparty trust transitions
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          set -a
+          # The platform credential and user session remain on the VM. This smoke
+          # emits only isolated resource identifiers and transition outcomes.
+          . "./$VM_ENV_FILE"
+          set +a
+          if [[ -z "${BRAIN_PLATFORM_SERVICE_SECRET:-}" ]]; then
+            echo "BRAIN_PLATFORM_SERVICE_SECRET is not configured on the VM"
+            exit 1
+          fi
+
+          create_payload="$(
+            docker exec brain-prod-api node -e '
+              const { randomUUID } = require("node:crypto");
+              const suffix = randomUUID().replace(/-/g, "");
+              process.stdout.write(JSON.stringify({
+                company_name: "Counterparty trust smoke",
+                founder: {
+                  email: `counterparty-trust-smoke+${suffix}@brain.invalid`,
+                  display_name: "Counterparty Trust Smoke",
+                },
+                founder_external_ref: `counterparty-trust-smoke:${suffix}`,
+                demo_seed: true,
+              }));
+            '
+          )"
+          create_response="$(
+            printf '%s' "$create_payload" | curl -fsS --retry 2 --connect-timeout 10 --max-time 90 \
+              -X POST "$API_BASE/v1/tenants" \
+              -H "Content-Type: application/json" \
+              -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+              --data-binary @-
+          )"
+          smoke_tenant_id="$(
+            printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const parsed = JSON.parse(body);
+                if (typeof parsed.tenant_id !== "string" || !/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/.test(parsed.tenant_id)) process.exit(1);
+                process.stdout.write(parsed.tenant_id);
+              });
+            '
+          )"
+          smoke_user_token="$(
+            printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const parsed = JSON.parse(body);
+                if (typeof parsed.session?.token !== "string" || parsed.session.token.length === 0) process.exit(1);
+                process.stdout.write(parsed.session.token);
+              });
+            '
+          )"
+          counterparty_id="$(
+            docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+              -v ON_ERROR_STOP=1 \
+              -c "SELECT id FROM ledger_counterparties WHERE owner_id = '${smoke_tenant_id}' AND trust_status = 'unreviewed' ORDER BY id LIMIT 1;"
+          )"
+          if [[ ! "$counterparty_id" =~ ^cp_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "No unreviewed counterparty found on isolated smoke tenant $smoke_tenant_id"
+            exit 1
+          fi
+
+          transition() {
+            local name="$1"
+            local expected_previous="$2"
+            local expected_target="$3"
+            local response
+            response="$(
+              curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
+                -X POST "$API_BASE/v1/ledger/counterparties/$counterparty_id/trust/$name" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${smoke_user_token}" \
+                --data '{"reason":"controlled trust-state smoke"}'
+            )"
+            printf '%s' "$response" | EXPECTED_PREVIOUS="$expected_previous" EXPECTED_TARGET="$expected_target" \
+              docker exec -i \
+                -e EXPECTED_PREVIOUS -e EXPECTED_TARGET brain-prod-api node -e '
+                  let body = "";
+                  process.stdin.on("data", (chunk) => { body += chunk; });
+                  process.stdin.on("end", () => {
+                    const parsed = JSON.parse(body);
+                    if (parsed.previous_trust_status !== process.env.EXPECTED_PREVIOUS) process.exit(1);
+                    if (parsed.counterparty?.trust_status !== process.env.EXPECTED_TARGET) process.exit(1);
+                  });
+                '
+            printf 'transition=%s previous=%s target=%s\n' "$name" "$expected_previous" "$expected_target"
+          }
+
+          transition grant unreviewed trusted
+          transition pause trusted paused
+          transition restore paused trusted
+          transition pause trusted paused
+          transition acknowledge paused acknowledged
+
+          audit_complete="$(
+            docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+              -v ON_ERROR_STOP=1 \
+              -c "SELECT COUNT(*) = 5 FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action IN ('counterparty.trust.granted', 'counterparty.trust.paused', 'counterparty.trust.restored', 'counterparty.trust.acknowledged');"
+          )"
+          if [[ "$audit_complete" != "t" ]]; then
+            echo "Expected five trust audit events for smoke tenant $smoke_tenant_id"
+            exit 1
+          fi
+          printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id"
+          printf 'counterparty_id=%s\n' "$counterparty_id"
+          printf 'trust_audit_events=5\n'
+          REMOTE
