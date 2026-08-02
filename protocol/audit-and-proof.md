@@ -43,13 +43,13 @@ Tamper with `event_002` and `B` changes. `event_003` still references the old `B
 Events are batched into a per-tenant Merkle tree. Roots are anchored to Base
 Sepolia through `BrainAuditAnchor`.
 
-| Property                | Value                                                                                                                   |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Property                | Value                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Publisher cycle**     | Configured bounded cycles. The default interval is one hour, but anchor status is the source of truth for each record. |
 | **Immediate anchoring** | No severity-accelerated path exists.                                                                                   |
 | **Anchor target**       | `BrainAuditAnchor` on Base Sepolia.                                                                                    |
-| **Anchor authority**    | The contract's `onlyPublisher` address. The current Base Sepolia publisher is a single EOA with two-step rotation.    |
-| **Replay guard**        | A tenant-root pair is published once. `anchorBatch` skips already-published pairs so batch retries are safe.          |
+| **Anchor authority**    | The contract's `onlyPublisher` address. The current Base Sepolia publisher is a single EOA with two-step rotation.     |
+| **Replay guard**        | A tenant-root pair is published once. `anchorBatch` skips already-published pairs so batch retries are safe.           |
 
 [**→ BrainAuditAnchor smart contract**](../smart-contracts/brainauditanchor.md)
 
@@ -83,12 +83,12 @@ publisher.**
 
 On-chain anchors must not leak tenant data.
 
-| What's On-Chain    | What's Off-Chain                   |
-| ------------------ | ---------------------------------- |
-| Merkle roots       | Event payloads (encrypted at rest) |
-| Hashed `tenantId`  | Raw artifacts                      |
-| Anchor transaction and block | Ledger records, Wiki entities |
-| Publisher address  | Policy text and compiled rules     |
+| What's On-Chain              | What's Off-Chain                   |
+| ---------------------------- | ---------------------------------- |
+| Merkle roots                 | Event payloads (encrypted at rest) |
+| Hashed `tenantId`            | Raw artifacts                      |
+| Anchor transaction and block | Ledger records, Wiki entities      |
+| Publisher address            | Policy text and compiled rules     |
 
 Counterparties verifying a proof receive only the specific event(s) the tenant chooses to share, plus the Merkle path. Everything else stays private.
 

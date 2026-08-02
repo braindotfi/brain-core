@@ -65,11 +65,11 @@ Authorization: Bearer <token>
 
 Three independent paths to the same conclusion:
 
-| Method                       | Description                                                                                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------- |
-| **SDK helper**               | `verifyMerkleProof(...)` from `@brainfinance/sdk`. No Brain account required                  |
+| Method                       | Description                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **SDK helper**               | `verifyMerkleProof(...)` from `@brainfinance/sdk`. No Brain account required                                              |
 | **On-chain call**            | `BrainAuditAnchor.isPublished(tenantId, root)` plus `verifyInclusion(root, leaf, merkleProof)` from any Solidity contract |
-| **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                    |
+| **Public verifier endpoint** | `POST /v1/audit/verify`. Supply event hash, Merkle proof, and claimed root                                                |
 
 ### Human-Readable View
 

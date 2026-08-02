@@ -2,13 +2,13 @@
 
 `BrainAuditAnchor` stores Merkle roots of per-tenant audit batches. Anchors are immutable after submission.
 
-| Property          | Value                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------- |
-| **Network**       | Base Sepolia only                                                                            |
-| **Solidity**      | 0.8.x                                                                                         |
-| **Pattern**       | Immutable. No upgrade path in MVP; changes require a redeploy.                               |
-| **Audit status**  | Unaudited. Base mainnet is fenced pending an external smart-contract audit.                  |
-| **Publisher**     | Single EOA at `0x41d4ce9d9fe968ca1230bdc296b28fdc9aa6ff6e`, verified on Base Sepolia.         |
+| Property         | Value                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| **Network**      | Base Sepolia only                                                                     |
+| **Solidity**     | 0.8.x                                                                                 |
+| **Pattern**      | Immutable. No upgrade path in MVP; changes require a redeploy.                        |
+| **Audit status** | Unaudited. Base mainnet is fenced pending an external smart-contract audit.           |
+| **Publisher**    | Single EOA at `0x41d4ce9d9fe968ca1230bdc296b28fdc9aa6ff6e`, verified on Base Sepolia. |
 
 ### Interface
 
@@ -77,12 +77,12 @@ Off-chain audit log
    └─ publisher calls anchor() or anchorBatch() on Base Sepolia
 ```
 
-| Step | Detail                                                                            |
-| ---- | --------------------------------------------------------------------------------- |
-| 1    | Audit events batch into a Merkle tree per tenant over a period window             |
-| 2    | The publisher submits root, event count, and period bounds                         |
+| Step | Detail                                                                              |
+| ---- | ----------------------------------------------------------------------------------- |
+| 1    | Audit events batch into a Merkle tree per tenant over a period window               |
+| 2    | The publisher submits root, event count, and period bounds                          |
 | 3    | `anchor()` publishes one root, or `anchorBatch()` publishes up to `MAX_BATCH` roots |
-| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable          |
+| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable            |
 
 ### Replay Protection
 
@@ -125,11 +125,11 @@ The verifier does not need to trust Brain. They only need to call a public view 
 
 Base L2 has fast finality, but small reorgs are possible.
 
-| Mitigation                                 | Detail                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------------------- |
-| **Confirmation depth**                     | Reads wait for a configurable depth before treating an anchor as final     |
+| Mitigation                                 | Detail                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| **Confirmation depth**                     | Reads wait for a configurable depth before treating an anchor as final          |
 | **Retryable publication**                  | The publisher retains pending anchors and retries them after transient failures |
-| **Off-chain log canonical until anchored** | A record remains pending until its on-chain transaction is confirmed       |
+| **Off-chain log canonical until anchored** | A record remains pending until its on-chain transaction is confirmed            |
 
 ### Publisher Rotation
 

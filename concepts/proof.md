@@ -71,10 +71,10 @@ account, an API key, or access to the underlying data.
 
 ### What's on-Chain vs Off-Chain
 
-| On-chain                     | Off-chain                           |
-| ---------------------------- | ----------------------------------- |
-| Hashed `tenant_id`           | Tenant's actual id                  |
-| Merkle roots                 | Individual events                   |
+| On-chain                       | Off-chain                           |
+| ------------------------------ | ----------------------------------- |
+| Hashed `tenant_id`             | Tenant's actual id                  |
+| Merkle roots                   | Individual events                   |
 | Published roots and block data | Event content, citations, decisions |
 | Publisher transaction address  | Audit event signatures              |
 
@@ -82,11 +82,11 @@ The on-chain footprint is intentionally minimal. The hash commits to history wit
 
 ### Privacy Properties
 
-| Concern                             | How Brain handles                                                     |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| Counterparty learns tenant identity | Tenant ID is hashed before storage                                    |
-| Counterparty learns event content   | Events are off-chain; only hashes anchor                              |
-| Anchor publisher compromise         | Only the configured publisher can write; root uniqueness prevents replay |
+| Concern                             | How Brain handles                                                          |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| Counterparty learns tenant identity | Tenant ID is hashed before storage                                         |
+| Counterparty learns event content   | Events are off-chain; only hashes anchor                                   |
+| Anchor publisher compromise         | Only the configured publisher can write; root uniqueness prevents replay   |
 | Reorg drops an anchor               | Pending anchors are retried; off-chain status is canonical until confirmed |
 
 ### Why "Anchored on-Chain" Matters
