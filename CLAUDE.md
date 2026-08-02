@@ -713,8 +713,19 @@ the `brain_mcp_reader` role through `db-roles`. The credential hardening that
 made this value mandatory exposed a legacy provisioning omission: the reader
 role already existed, but the historical VM env files had never received its
 password. Before a promote that adds a compose-required secret, run a
-pre-promote required-secret presence check for both environments. Generalizing
-that check in the promote workflow remains an operational follow-up.
+pre-promote required-secret presence check for both environments.
+
+Every staging deploy and production promote runs
+`scripts/check-required-compose-secrets.sh` on the VM after syncing compose
+files but before rollback tagging, image pull, migrations, or compose recreate.
+It derives unconditional requirements from `${VAR:?message}` interpolation in
+`docker-compose.prod.yml`, reports only missing variable names, and also checks
+the enabled conditional boot fences for API keys, service tokens, demo
+provisioning, external agents, and surface integrations. Auth's
+`AUTH_SIGN_KEY`, `AUTH_COOKIE_SECRET`, `EMAIL_ENDPOINT`, and `EMAIL_API_KEY`
+are compose-required as well as boot-fenced. This would have stopped both the
+missing `AUTH_COOKIE_SECRET` and missing `BRAIN_MCP_READER_DB_PASSWORD`
+incidents before any image pull.
 
 `ops-counterparty-trust-smoke.yml` is a production-gated mutable smoke for the
 counterparty trust-state API. It creates an isolated seeded tenant, calls all

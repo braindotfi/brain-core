@@ -105,8 +105,14 @@ Legacy VM `.env.staging` and `.env.prod` files missed
 `BRAIN_MCP_READER_DB_PASSWORD` when credential hardening made it mandatory.
 Use the production-gated `ops-mcp-reader-db-password.yml` workflow to inspect
 or repair that one credential without logging it, then apply `db-roles` to
-align the existing reader role. A generalized pre-promote required-secret
-presence check remains an operational follow-up.
+align the existing reader role.
+
+Before any image pull or compose recreate, staging and production deploy
+workflows run `scripts/check-required-compose-secrets.sh` on the target VM.
+It derives `${VAR:?message}` requirements from `docker-compose.prod.yml` and
+checks enabled conditional boot fences without printing values. This catches
+missing `AUTH_COOKIE_SECRET` and `BRAIN_MCP_READER_DB_PASSWORD` before a deploy
+can change runtime state.
 
 Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
 data. Evidence blocks are wrapped in a per-request random boundary, evidence

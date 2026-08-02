@@ -264,6 +264,7 @@ jobs:
             'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       - name: Enable staging API key auth
@@ -319,6 +320,14 @@ jobs:
           rm -f "$tmp" "$script_tmp"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE' '$remote_tmp'; rc=\$?; rm -f '$remote_script' '$remote_tmp'; exit \$rc"
+
+      - name: Pre-promote required-secret presence check
+        # Run after the staging API-key setup above because it may add the
+        # conditionally-required BRAIN_API_KEY_PEPPER, but before image pull,
+        # migrations, or any compose recreate can mutate the target.
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.

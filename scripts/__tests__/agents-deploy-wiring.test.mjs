@@ -119,6 +119,28 @@ test("staging deploy starts infra without pulling service dependencies", () => {
   assert.match(deployStagingJob, /scripts\/ops\/staging_api_key_acceptance\.py/);
 });
 
+test("staging and production validate required secrets before image pull", () => {
+  const deployStagingJob = workflowJob("deploy_staging");
+  const promoteProductionJob = workflowJob("promote", promoteWorkflow);
+
+  for (const [name, job] of [
+    ["deploy_staging", deployStagingJob],
+    ["promote_production", promoteProductionJob],
+  ]) {
+    const sync = job.indexOf("scripts/check-required-compose-secrets.sh");
+    const guard = job.indexOf("Pre-promote required-secret presence check");
+    const pull = job.indexOf("Pull images from GHCR");
+    assert.ok(sync >= 0, `${name} must ship the required-secret guard to the VM`);
+    assert.ok(guard > sync, `${name} must run the required-secret guard after syncing it`);
+    assert.ok(pull > guard, `${name} must run the required-secret guard before image pull`);
+    assert.match(
+      job,
+      /bash scripts\/check-required-compose-secrets\.sh --compose docker-compose\.prod\.yml --env \$VM_ENV_FILE/,
+      `${name} must validate its target env file`,
+    );
+  }
+});
+
 test("staging and production deploy rerun db role grants after migrations", () => {
   const deployStagingJob = workflowJob("deploy_staging");
   const promoteProductionJob = workflowJob("promote", promoteWorkflow);

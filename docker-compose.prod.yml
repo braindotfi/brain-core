@@ -298,13 +298,16 @@ services:
       REDIS_URL: redis://localhost:6379
       AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
       AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
-      AUTH_SIGN_KEY: ${AUTH_SIGN_KEY}
-      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET}
+      # These have matching process boot fences in services/auth. Keep them as
+      # compose-required interpolation too, so deploy preflight fails before
+      # pulling an image or recreating a container.
+      AUTH_SIGN_KEY: ${AUTH_SIGN_KEY:?AUTH_SIGN_KEY is required in production}
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:?AUTH_COOKIE_SECRET is required in production}
       BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:?BRAIN_AUTH_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:?BRAIN_AUTH_AUDIT_DB_PASSWORD is required in production}@postgres:5432/brain
-      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
-      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:?EMAIL_ENDPOINT is required in production}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:?EMAIL_API_KEY is required in production}
       EMAIL_FROM: ${EMAIL_FROM:-}
     depends_on:
       postgres:
