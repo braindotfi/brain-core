@@ -140,6 +140,15 @@ jobs:
           \pset null '(null)'
           BEGIN TRANSACTION READ ONLY;
 
+          \echo 'counterparty trust schema'
+          SELECT EXISTS (
+                   SELECT 1
+                     FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'ledger_counterparties'
+                      AND column_name = 'trust_status'
+                 ) AS ledger_counterparties_trust_status_present;
+
           \echo 'tenant'
           SELECT id, kind, sandbox, created_via, created_at
             FROM tenants
