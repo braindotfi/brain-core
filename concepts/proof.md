@@ -4,7 +4,12 @@ description: Why every claim Brain makes is verifiable.
 
 # Proof
 
-Every meaningful event Brain records is hashed, chained, and periodically anchored on Base L2. A counterparty, auditor, or end user can verify that a specific event happened, at a specific time, with a specific decision, **without trusting Brain**.
+Every meaningful event Brain records is hashed, chained, and periodically
+anchored on Base Sepolia. Brain's API and off-chain services are production
+available. The on-chain contract is unaudited, Base Sepolia only, and not
+deployed on Base mainnet. A counterparty, auditor, or end user can verify that
+a specific event happened, at a specific time, with a specific decision,
+**without trusting Brain**.
 
 ### Two Layers of Proof
 
@@ -44,7 +49,11 @@ To rewrite history, you'd have to regenerate every subsequent hash. And you'd st
 
 ### On-Chain Anchors
 
-Brain batches audit events into a Merkle tree per tenant and anchors the root on Base hourly. There is no severity-accelerated anchoring path today. Once anchored, the root is immutable.
+Brain batches audit events into a Merkle tree per tenant and submits roots on
+the configured publisher cycle. The default interval is one hour, but an event
+is anchored only when its audit status records a confirmed on-chain
+transaction. There is no severity-accelerated anchoring path. Once published,
+a tenant-root pair cannot be published again.
 
 ```typescript
 const proof = await brain.proof(actionId);
@@ -54,7 +63,11 @@ proof.anchorRoot; // the Merkle root anchored on Base
 proof.anchorTx; // the transaction that anchored it
 ```
 
-A counterparty verifies on-chain by calling `BrainAuditAnchor.verify()` with the proof. They don't need a Brain account, an API key, or any access to the underlying data.
+A counterparty verifies on-chain by checking
+`BrainAuditAnchor.isPublished(tenantId, root)` and calling
+`BrainAuditAnchor.verifyInclusion(root, leaf, proof)`. `latestAnchor(tenantId)`
+returns the most recently published root for a tenant. They do not need a Brain
+account, an API key, or access to the underlying data.
 
 ### What's on-Chain vs Off-Chain
 
@@ -62,8 +75,8 @@ A counterparty verifies on-chain by calling `BrainAuditAnchor.verify()` with the
 | ---------------------------- | ----------------------------------- |
 | Hashed `tenant_id`           | Tenant's actual id                  |
 | Merkle roots                 | Individual events                   |
-| Batch indexes and timestamps | Event content, citations, decisions |
-| Anchor publisher signatures  | Audit event signatures              |
+| Published roots and block data | Event content, citations, decisions |
+| Publisher transaction address  | Audit event signatures              |
 
 The on-chain footprint is intentionally minimal. The hash commits to history without revealing anything.
 
@@ -73,8 +86,8 @@ The on-chain footprint is intentionally minimal. The hash commits to history wit
 | ----------------------------------- | --------------------------------------------------------------------- |
 | Counterparty learns tenant identity | Tenant ID is hashed before storage                                    |
 | Counterparty learns event content   | Events are off-chain; only hashes anchor                              |
-| Anchor publisher compromise         | `batchIndex` is strictly monotonic; out-of-order submissions revert   |
-| Reorg drops an anchor               | Reads wait for finality; cross-batch references catch dropped anchors |
+| Anchor publisher compromise         | Only the configured publisher can write; root uniqueness prevents replay |
+| Reorg drops an anchor               | Pending anchors are retried; off-chain status is canonical until confirmed |
 
 ### Why "Anchored on-Chain" Matters
 

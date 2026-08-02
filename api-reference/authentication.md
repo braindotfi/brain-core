@@ -6,10 +6,21 @@ Brain authenticates three caller types: humans, internal agents, and external ag
 | ------------------ | --------------------------------------------------- | ------------------------------------- |
 | **Human**          | Self-serve email + password, **or** a linked wallet | Bearer owner JWT                      |
 | **Internal agent** | Brain-issued service token (your own backend)       | Bearer service token                  |
-| **API partner**    | Tenant API key                                      | Bearer `brain_sk_…` key               |
+| **API partner**    | Tenant API key in the sandbox integration environment | Bearer `brain_sk_…` key             |
 | **External agent** | SIWX (EIP-4361 over Base) + on-chain scope          | `access_token` from the SIWX exchange |
 
-Every credential is presented the same way: `Authorization: Bearer <token>`. There is one bearer mechanism, not several. The `brain_sk_test_…` / `brain_sk_live_…` value you copy from the Console is a tenant API key. The SDK takes it as `new Brain({ apiKey })`. See [Server API key](#server-api-key-brain_sk_) below.
+Every credential is presented the same way: `Authorization: Bearer <token>`.
+There is one bearer mechanism, not several. The `brain_sk_test_…` /
+`brain_sk_live_…` value is a tenant API key when API-key authentication is
+enabled for that environment. See [Server API key](#server-api-key-brain_sk_)
+below.
+
+{% hint style="warning" %}
+At launch, first-class API-key authentication is enabled in the sandbox
+integration environment. It is not enabled on the production API, where
+`brain_sk_` bearers fail closed as invalid keys. Production access continues to
+use the supported human, service, and agent credentials described on this page.
+{% endhint %}
 
 {% hint style="info" %}
 Self-serve signup is gated by the `BRAIN_SELF_SERVE_SIGNUP` flag and is **sandbox-only** (RFC 0002): a new tenant can read and _propose_, but moves no money until the existing promotion + external-audit gates clear. Hosted SSO (Auth0/SAML) is **planned (roadmap)**, not in the MVP.
@@ -26,13 +37,16 @@ The credential a server-side integration uses is a Brain-issued tenant API key w
 | Property            | Value                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------- |
 | **Format**          | `brain_sk_test_…` (sandbox) / `brain_sk_live_…` (live)                                  |
-| **Issued by**       | The Console, per tenant                                                                 |
+| **Availability**    | Sandbox integration environment at launch; production API-key auth is disabled         |
+| **Issued by**       | Tenant-admin key routes when API-key auth is enabled for the environment                |
 | **Presented as**    | `Authorization: Bearer brain_sk_…`, or `new Brain({ apiKey: "brain_sk_…" })` in the SDK |
-| **Scopes**          | `ledger:read`, `audit:read`                                                             |
-| **Sandbox vs live** | Distinct keys per environment                                                           |
-| **Lifetime**        | Until revoked or rotated by a tenant admin                                              |
+| **Scopes**          | `ledger:read`, `audit:read`, `governance:read` only                                     |
+| **Sandbox vs live** | Distinct `brain_sk_test_…` and `brain_sk_live_…` key formats                            |
+| **Lifetime**        | No automatic TTL at issuance. Revocation and rotation are supported; an optional `expires_at` is enforced when populated. |
 
-Rate limits, idempotency, and audit attribution are all keyed off this token.
+The plaintext secret is returned only when a key is issued or rotated. The
+database retains only a server-peppered SHA-256 digest. Rate limits, idempotency,
+last-used tracking, and audit attribution are keyed off the authenticated key.
 
 ### Human Authentication (self-serve email + password)
 
@@ -160,7 +174,7 @@ ScopeAttestation(
 | ------------------------------------------------- | ----------- | ------------------------------------- |
 | **Owner JWT** (email/wallet)                      | 15 minutes  | Yes. Log in / re-sign again           |
 | **Agent token (SIWX)**                            | 1 hour      | Yes, by re-signing SIWX               |
-| **Server API key** (`brain_sk_`, Console)         | 90 days     | Rotated by tenant admin               |
+| **Server API key** (`brain_sk_`, sandbox only at launch) | No automatic TTL | Rotated or revoked by tenant admin |
 | **Service-token mint** (`/v1/auth/service-token`) | 1 hour      | Re-mint (break-glass sandbox/testnet) |
 | **Email-verification token**                      | 24 hours    | No, single-use                        |
 | **Policy verdict**                                | 60 seconds  | No, single-use                        |

@@ -115,8 +115,9 @@ Content-Type: application/json
 ```
 
 Brain also publishes a `verifyMerkleProof(...)` helper in `@brainfinance/sdk`
-and an on-chain `BrainAuditAnchor.verify(...)` view function. Three independent
-paths to the same conclusion.
+and the on-chain `BrainAuditAnchor.verifyInclusion(root, leaf, proof)` view
+function. Check `isPublished(tenantId, root)` to verify the root belongs to the
+tenant. Three independent paths reach the same conclusion.
 
 ### Export
 
