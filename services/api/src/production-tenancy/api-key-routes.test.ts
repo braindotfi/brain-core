@@ -10,6 +10,7 @@ import {
   JwtVerifier,
   newTenantId,
   newUserId,
+  requireScope,
   type AuditEmitter,
   type AuditEvent,
   type AuditEventInput,
@@ -44,6 +45,7 @@ interface FakeApiKeyRow {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  expires_at: string | null;
   rotated_from_id: string | null;
 }
 
@@ -105,6 +107,7 @@ function makeAppPool(store: FakeStore) {
           created_at: now,
           last_used_at: null,
           revoked_at: null,
+          expires_at: null,
           rotated_from_id: rotatedFromId,
         };
         store.apiKeys.set(id, row);
@@ -170,10 +173,12 @@ function makeAppPool(store: FakeStore) {
 function makeResolverPool(store: FakeStore) {
   return {
     query: async (sql: string, values: unknown[] = []) => {
-      if (sql.includes("WHERE hashed_secret = $1")) {
-        const [hashedSecret] = values as [string];
-        const row = [...store.apiKeys.values()].find((r) => r.hashed_secret === hashedSecret);
-        return row !== undefined ? { rows: [row], rowCount: 1 } : { rows: [], rowCount: 0 };
+      if (sql.includes("WHERE key_prefix = $1 AND key_last4 = $2")) {
+        const [keyPrefix, keyLast4] = values as [string, string];
+        const rows = [...store.apiKeys.values()].filter(
+          (row) => row.key_prefix === keyPrefix && row.key_last4 === keyLast4,
+        );
+        return { rows, rowCount: rows.length };
       }
       if (sql.includes("SELECT tenant_id FROM api_keys WHERE id = $1")) {
         const [id] = values as [string];
@@ -243,6 +248,14 @@ async function buildApp(
   });
   await registerApiKeyRoutes(app, { pool, resolverPool, audit, pepper: PEPPER });
   app.get("/read-only", async (request) => {
+    return { ok: true, key_id: request.apiKeyId ?? null };
+  });
+  app.get("/ledger-scope", async (request) => {
+    requireScope(request.principal!.scopes, "ledger:read");
+    return { ok: true, key_id: request.apiKeyId ?? null };
+  });
+  app.get("/audit-scope", async (request) => {
+    requireScope(request.principal!.scopes, "audit:read");
     return { ok: true, key_id: request.apiKeyId ?? null };
   });
   app.get("/audited", async (request) => {
@@ -442,6 +455,90 @@ describe("per-customer API keys", () => {
     }
   });
 
+  it("enforces route scopes carried by the key principal", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: "Ledger only", environment: "sandbox", scopes: ["ledger:read"] },
+      });
+      expect(issue.statusCode).toBe(201);
+      const issued = issue.json();
+
+      const ledger = await app.inject({
+        method: "GET",
+        url: "/ledger-scope",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(ledger.statusCode).toBe(200);
+
+      const audit = await app.inject({
+        method: "GET",
+        url: "/audit-scope",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(audit.statusCode).toBe(403);
+      expect(audit.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects cross-tenant reads with a valid API key", async () => {
+    const tenantId = newTenantId();
+    const otherTenantId = newTenantId();
+    const store = makeStore(tenantId);
+    store.tenants.add(otherTenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: "Audit key", environment: "sandbox", scopes: ["audit:read"] },
+      });
+      expect(issue.statusCode).toBe(201);
+      const issued = issue.json();
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/tenants/${otherTenantId}/usage`,
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("auth_tenant_mismatch");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps brain_sk_ fail-closed when the authenticator is disabled", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(errorHandlerPlugin);
+    await app.register(authPlugin, {
+      verifier: {} as unknown as JwtVerifier,
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_disabled" },
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json().error.code).toBe("auth_invalid_key");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("hashes with the server-side pepper", () => {
     const secret = "brain_sk_test_example";
     expect(hashApiKeySecret(secret, "pepper-a")).not.toBe(hashApiKeySecret(secret, "pepper-b"));
@@ -487,7 +584,12 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
     return { pool: { connect: async () => client }, writeCount: () => writes };
   }
 
-  function seedKey(store: FakeStore, tenantId: string, secret: string): string {
+  function seedKey(
+    store: FakeStore,
+    tenantId: string,
+    secret: string,
+    overrides: Partial<Pick<FakeApiKeyRow, "expires_at" | "revoked_at">> = {},
+  ): string {
     const id = `akey_${store.apiKeys.size + 1}`;
     store.apiKeys.set(id, {
       id,
@@ -500,7 +602,8 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       hashed_secret: hashApiKeySecret(secret, PEPPER),
       created_at: new Date().toISOString(),
       last_used_at: null,
-      revoked_at: null,
+      revoked_at: overrides.revoked_at ?? null,
+      expires_at: overrides.expires_at ?? null,
       rotated_from_id: null,
     });
     return id;
@@ -618,5 +721,47 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
     await authenticate(secret);
     await flush();
     expect(writeCount()).toBe(2);
+  });
+
+  it("rejects expired and wrong secrets while accepting a valid key", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const validSecret = "brain_sk_test_valid_expiry";
+    const expiredSecret = "brain_sk_test_expired";
+    seedKey(store, tenantId, validSecret);
+    seedKey(store, tenantId, expiredSecret, {
+      expires_at: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const { pool } = countingPool(store);
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+    });
+
+    await expect(authenticate(validSecret)).resolves.toMatchObject({
+      principal: { tenantId, scopes: ["ledger:read"] },
+    });
+    await expect(authenticate(expiredSecret)).resolves.toBeNull();
+    await expect(authenticate("brain_sk_test_wrong")).resolves.toBeNull();
+  });
+
+  it("rate-limits by API key id", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_rate_limited";
+    seedKey(store, tenantId, secret);
+    const { pool } = countingPool(store);
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 1 }),
+    });
+
+    await expect(authenticate(secret)).resolves.toBeTruthy();
+    await expect(authenticate(secret)).rejects.toMatchObject({
+      code: "rate_limited",
+    });
   });
 });

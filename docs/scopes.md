@@ -43,12 +43,11 @@ Each non-human credential class has its own scope allowlist, both defined in
 - **MCP agents** registered in `BrainMCPAgentRegistry` hold
   `AGENT_PERMITTED_SCOPES` (5 scopes): `ledger:read`, `wiki:read`, `raw:write`,
   `payment_intent:propose`, `execution:propose`.
-- **Per-customer API keys** hold `API_KEY_PERMITTED_SCOPES` (9 scopes): the
-  agent set plus the read verbs `raw:read`, `policy:read`, `execution:read`, and
-  `audit:read`. API keys may read their own tenant's audit trail, which the
-  MCP-agent set withholds. Neither set includes any
-  `approve`/`execute`/`admin`/`sign`/`policy:write` scope, so neither class can
-  move money or administer anything.
+- **Per-customer API keys** hold `API_KEY_PERMITTED_SCOPES` (3 scopes):
+  `ledger:read`, `audit:read`, and `governance:read`. API keys may read their
+  own tenant's commercial API surfaces for ledger, audit, and governance data.
+  They cannot ingest raw data, propose actions, approve, execute, sign policy, or
+  administer the tenant.
 
 These caps are enforced **at issuance, not at verify time**:
 

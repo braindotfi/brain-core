@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   API_KEY_PERMITTED_SCOPES,
@@ -64,6 +64,7 @@ interface ApiKeyRow {
   created_at: Date | string;
   last_used_at: Date | string | null;
   revoked_at: Date | string | null;
+  expires_at: Date | string | null;
   rotated_from_id: string | null;
 }
 
@@ -254,17 +255,26 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
   const lastWrittenAt = new Map<string, number>();
 
   return async (secret: string): Promise<{ principal: Principal; keyId: string } | null> => {
+    const lookup = parseApiKeyLookup(secret);
+    if (lookup === null) {
+      return null;
+    }
     const hashedSecret = hashApiKeySecret(secret, deps.pepper);
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
       `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
-              hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id
+              hashed_secret, created_at, last_used_at, revoked_at, expires_at, rotated_from_id
          FROM api_keys
-        WHERE hashed_secret = $1
-        LIMIT 1`,
-      [hashedSecret],
+        WHERE key_prefix = $1 AND key_last4 = $2
+        ORDER BY created_at DESC, id DESC`,
+      [lookup.keyPrefix, lookup.keyLast4],
     );
-    const row = rows[0];
-    if (row === undefined || row.revoked_at !== null) {
+    const row = rows.find((candidate) => hashesEqual(candidate.hashed_secret, hashedSecret));
+    const nowMs = now();
+    if (
+      row === undefined ||
+      row.revoked_at !== null ||
+      (row.expires_at !== null && Date.parse(String(row.expires_at)) <= nowMs)
+    ) {
       return null;
     }
 
@@ -283,7 +293,6 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     if (lastWrittenAt.size > 50_000) {
       lastWrittenAt.clear();
     }
-    const nowMs = now();
     const lastWrite = lastWrittenAt.get(row.id);
     if (lastWrite === undefined || nowMs - lastWrite >= cooldownMs) {
       // Set before firing the write (not after it resolves) so a burst of
@@ -311,6 +320,25 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
 
 export function hashApiKeySecret(secret: string, pepper: string): string {
   return createHash("sha256").update(`${pepper}.${secret}`, "utf8").digest("hex");
+}
+
+function parseApiKeyLookup(
+  secret: string,
+): { keyPrefix: (typeof ENV_PREFIX)[ApiKeyEnvironment]; keyLast4: string } | null {
+  const keyPrefix = Object.values(ENV_PREFIX).find((prefix) => secret.startsWith(prefix));
+  if (keyPrefix === undefined || secret.length <= keyPrefix.length) {
+    return null;
+  }
+  return { keyPrefix, keyLast4: secret.slice(-4) };
+}
+
+function hashesEqual(storedHex: string, computedHex: string): boolean {
+  const stored = Buffer.from(storedHex, "hex");
+  const computed = Buffer.from(computedHex, "hex");
+  if (stored.length !== computed.length || stored.length === 0) {
+    return false;
+  }
+  return timingSafeEqual(stored, computed);
 }
 
 function requireTenantAdmin(request: FastifyRequest, tenantId: string): Principal {
@@ -430,7 +458,7 @@ async function insertGeneratedKey(
          )
          VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
          RETURNING id, tenant_id, name, environment, scopes, key_prefix, key_last4,
-                   hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id`,
+                   hashed_secret, created_at, last_used_at, revoked_at, expires_at, rotated_from_id`,
         [
           row.id,
           row.tenantId,
@@ -464,7 +492,7 @@ async function insertGeneratedKey(
 async function lockActiveKey(client: TenantScopedClient, id: string): Promise<ApiKeyRow | null> {
   const { rows } = await client.query<ApiKeyRow>(
     `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
-            hashed_secret, created_at, last_used_at, revoked_at, rotated_from_id
+            hashed_secret, created_at, last_used_at, revoked_at, expires_at, rotated_from_id
        FROM api_keys
       WHERE id = $1 AND revoked_at IS NULL
       FOR UPDATE`,
@@ -546,6 +574,7 @@ function serializeKey(row: ApiKeyRow, secret?: string) {
     created_at: toIso(row.created_at),
     last_used_at: toIso(row.last_used_at),
     revoked_at: toIso(row.revoked_at),
+    expires_at: toIso(row.expires_at),
     rotated_from_id: row.rotated_from_id,
     ...(secret !== undefined ? { secret } : {}),
   };

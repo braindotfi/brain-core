@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   InMemoryAuditEmitter,
   InMemoryIdempotencyStore,
+  authPlugin,
   errorHandlerPlugin,
+  type JwtVerifier,
+  type Principal,
   newTenantId,
 } from "@brain/shared";
 import { registerGovernanceRoutes } from "./routes.js";
@@ -138,6 +141,60 @@ describe("governance routes", () => {
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe("auth_token_invalid");
     await app.close();
+  });
+
+  it("allows governance read routes with a Brain API key carrying governance:read", async () => {
+    const tenantId = newTenantId();
+    const app = Fastify();
+    await app.register(errorHandlerPlugin);
+    const principal = (scopes: Principal["scopes"]): Principal => ({
+      id: "akey_governance",
+      type: "api_partner",
+      tenantId,
+      scopes,
+      tokenId: "akey_governance",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    });
+    await app.register(authPlugin, {
+      verifier: {} as unknown as JwtVerifier,
+      apiKeyAuthenticator: async (secret: string) => {
+        if (secret === "brain_sk_test_governance") {
+          return { principal: principal(["governance:read"]), keyId: "akey_governance" };
+        }
+        if (secret === "brain_sk_test_ledger") {
+          return { principal: principal(["ledger:read"]), keyId: "akey_ledger" };
+        }
+        return null;
+      },
+    });
+    const db = buildPool();
+    await registerGovernanceRoutes(app, {
+      pool: db.pool,
+      audit: new InMemoryAuditEmitter(),
+      platformSecret,
+      idempotencyStore: new InMemoryIdempotencyStore(),
+      idempotencyTtlSeconds: 86_400,
+    });
+    await app.ready();
+    try {
+      const allowed = await app.inject({
+        method: "GET",
+        url: `/governance/agents?tenant_id=${tenantId}`,
+        headers: { authorization: "Bearer brain_sk_test_governance" },
+      });
+      expect(allowed.statusCode).toBe(200);
+      expect(allowed.json().agents).toHaveLength(1);
+
+      const rejected = await app.inject({
+        method: "GET",
+        url: `/governance/agents?tenant_id=${tenantId}`,
+        headers: { authorization: "Bearer brain_sk_test_ledger" },
+      });
+      expect(rejected.statusCode).toBe(403);
+      expect(rejected.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
   });
 
   it("lists tenant-scoped agents with cursor pagination", async () => {

@@ -390,7 +390,7 @@ export interface paths {
          *     `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
          *     SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
          *     plaintext secret exactly once. Current API-key scopes are
-         *     `ledger:read` and `audit:read`.
+         *     `ledger:read`, `audit:read`, and `governance:read`.
          */
         post: operations["issueApiKey"];
         delete?: never;
@@ -2988,9 +2988,11 @@ export interface paths {
         };
         /**
          * List registered agents for governance review
-         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-         *     with `governance:read`. Tenant is supplied as `tenant_id` because
-         *     the platform credential is not a tenant bearer principal.
+         * @description Read route. Accepts either a bearer principal, including a Brain API key,
+         *     with `governance:read`, or `X-Platform-Service-Auth` with
+         *     `governance:read`. Tenant is supplied as `tenant_id` for platform
+         *     callers because the platform credential is not a tenant bearer
+         *     principal.
          */
         get: operations["listGovernanceAgents"];
         put?: never;
@@ -3010,8 +3012,9 @@ export interface paths {
         };
         /**
          * Get one registered agent with lifecycle timeline
-         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-         *     with `governance:read`.
+         * @description Read route. Accepts either a bearer principal, including a Brain API key,
+         *     with `governance:read`, or `X-Platform-Service-Auth` with
+         *     `governance:read`.
          */
         get: operations["getGovernanceAgent"];
         put?: never;
@@ -3038,9 +3041,10 @@ export interface paths {
         };
         /**
          * Build an audit-derived governance report
-         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-         *     with `governance:read`. Reports include policy-relevant audit events
-         *     in the requested period. Historical rows are joined to
+         * @description Read route. Accepts either a bearer principal, including a Brain API key,
+         *     with `governance:read`, or `X-Platform-Service-Auth` with
+         *     `governance:read`. Reports include policy-relevant audit events in the
+         *     requested period. Historical rows are joined to
          *     `policy_decisions` when `policy_decision_id` is present. Rows without
          *     a native outcome or resolvable policy decision are returned with
          *     `decision_data_status=unavailable` rather than omitted.
@@ -3089,8 +3093,9 @@ export interface paths {
         };
         /**
          * Get an immutable governance report snapshot
-         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-         *     with `governance:read`. Returns the frozen snapshot payload stored at
+         * @description Read route. Accepts either a bearer principal, including a Brain API key,
+         *     with `governance:read`, or `X-Platform-Service-Auth` with
+         *     `governance:read`. Returns the frozen snapshot payload stored at
          *     creation time and never re-queries the live audit store.
          */
         get: operations["getGovernanceReportSnapshot"];
@@ -5746,6 +5751,8 @@ export interface operations {
                             last_used_at?: string | null;
                             /** Format: date-time */
                             revoked_at?: string | null;
+                            /** Format: date-time */
+                            expires_at?: string | null;
                             rotated_from_id?: string | null;
                         }[];
                     };
@@ -5778,7 +5785,7 @@ export interface operations {
                     name: string;
                     /** @enum {string} */
                     environment: "sandbox" | "live";
-                    scopes: ("ledger:read" | "audit:read")[];
+                    scopes: ("ledger:read" | "audit:read" | "governance:read")[];
                 };
             };
         };
@@ -5805,6 +5812,8 @@ export interface operations {
                         last_used_at?: string | null;
                         /** Format: date-time */
                         revoked_at?: string | null;
+                        /** Format: date-time */
+                        expires_at?: string | null;
                         rotated_from_id?: string | null;
                         /** @description Plaintext key. Shown only in this response. */
                         secret?: string;

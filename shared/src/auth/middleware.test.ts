@@ -187,3 +187,48 @@ describe("onResponse api key usage attribution (via CorrelatingAuditEmitter)", (
     }
   });
 });
+
+describe("optional auth on skipAuth routes", () => {
+  const fakePrincipal: Principal = {
+    id: "akey_optional",
+    type: "api_partner",
+    tenantId: "tnt_optional",
+    scopes: ["governance:read"],
+    tokenId: "akey_optional",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  };
+
+  it("allows no bearer but authenticates a bearer when one is present", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as unknown as JwtVerifier,
+      apiKeyAuthenticator: async (secret: string) =>
+        secret === "brain_sk_test_optional"
+          ? { principal: fakePrincipal, keyId: "akey_optional" }
+          : null,
+    });
+    app.get("/optional", { config: { skipAuth: true, optionalAuth: true } }, async (request) => ({
+      principal_id: request.principal?.id ?? null,
+      key_id: request.apiKeyId ?? null,
+    }));
+    await app.ready();
+    try {
+      const anonymous = await app.inject({ method: "GET", url: "/optional" });
+      expect(anonymous.statusCode).toBe(200);
+      expect(anonymous.json()).toEqual({ principal_id: null, key_id: null });
+
+      const authenticated = await app.inject({
+        method: "GET",
+        url: "/optional",
+        headers: { authorization: "Bearer brain_sk_test_optional" },
+      });
+      expect(authenticated.statusCode).toBe(200);
+      expect(authenticated.json()).toEqual({
+        principal_id: "akey_optional",
+        key_id: "akey_optional",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+});

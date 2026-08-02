@@ -9,6 +9,7 @@ import {
   newTenantId,
   newTokenId,
   newUserId,
+  requireScope,
   withTenantScope,
   type AuditEmitter,
   type JwtSigner,
@@ -605,6 +606,10 @@ export function assertPlatformCredential(
   secret: string | undefined,
   scope: Scope,
 ): void {
+  if (request.principal !== undefined) {
+    requireScope(request.principal.scopes, scope);
+    return;
+  }
   if (secret === undefined || secret.length === 0) {
     throw brainError("dependency_unavailable", "BRAIN_PLATFORM_SERVICE_SECRET is not configured", {
       details: { required_scope: scope },

@@ -36,6 +36,14 @@ and production agent tokens, but receive the Brightline demo ledger, policy,
 agent, pending Needs Review proposals, and fake-connected source rows before the
 create response returns.
 
+Tenant API keys are first-class bearer credentials for the commercial read API.
+Only `ledger:read`, `audit:read`, and `governance:read` are issuable today.
+Plaintext `brain_sk_test_` and `brain_sk_live_` secrets are returned once, while
+`api_keys` stores only the server-peppered SHA-256 digest. Gateway auth compares
+digests in constant time, rejects revoked or expired keys, applies per-key rate
+limits, updates `last_used_at`, and attributes request audit events with
+`key_id`.
+
 Agent principals are propose-only at the identity layer. They must never resolve
 as members, receive member claims, or carry approval/member admin scopes.
 
