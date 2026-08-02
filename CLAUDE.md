@@ -765,6 +765,14 @@ loopback-only, e.g. `127.0.0.1:3000:3000`, `127.0.0.1:3002:3000`, and
 `127.0.0.1:3003:3000`. Caddy's `80:80` and `443:443` are the public entry
 points.
 
+Caddy applies HSTS (`max-age=31536000; includeSubDomains`), `nosniff`, deny
+framing, strict-origin referrer policy, and removes the `Server` header for
+`api.brain.fi`, `mcp.brain.fi`, and `auth.brain.fi`. HSTS is safe because Caddy
+is the HTTPS edge for these sites. Do not add `preload` unless the domains are
+intentionally submitted to the browser preload list. `/v1/docs*` also receives
+the Scalar-compatible CSP already used by the API docs route; keep it aligned
+with `services/api/src/docs/routes.ts`.
+
 `infra/main.tf` still contains Container Apps wiring from the earlier deploy
 model. That wiring is legacy and is not the production source of truth while
 the GitHub workflow deploys to Docker VMs.
