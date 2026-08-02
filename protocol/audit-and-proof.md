@@ -2,6 +2,10 @@
 
 Every event in Brain (ingestion, extraction, query, proposal, policy decision, approval, execution, settlement) emits an audit record into an append-only log. Records form a per-tenant **Merkle tree**. Tree roots are batched and anchored on-chain through `BrainAuditAnchor`.
 
+Brain core and its HTTP APIs are available in production. The on-chain proof
+deployment is on Base Sepolia. It is unaudited and there is no Base mainnet
+deployment. A separate sandbox environment is available for integration work.
+
 ### Three Properties This Gives You
 
 <table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>📜 Tenant-verifiable History</strong></td><td>A tenant can prove a specific decision occurred at a specific time, based on specific evidence, under a specific policy version.</td></tr><tr><td><strong>🤝 Counterparty-verifiable Proofs</strong></td><td>A counterparty can verify a payment was authorized without seeing the underlying data, by checking a Merkle proof against an anchored root.</td></tr><tr><td><strong>🔒 No Silent Rewrites</strong></td><td>Brain itself cannot silently rewrite history. Anchors commit the past state to a public chain.</td></tr></tbody></table>
@@ -36,15 +40,16 @@ Tamper with `event_002` and `B` changes. `event_003` still references the old `B
 
 ### Merkle Batching and on-Chain Anchoring
 
-Events are batched into a per-tenant Merkle tree. Roots are anchored to Base L2 through `BrainAuditAnchor`.
+Events are batched into a per-tenant Merkle tree. Roots are anchored to Base
+Sepolia through `BrainAuditAnchor`.
 
-| Property                | Value                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Anchor cadence**      | Hourly (default)                                                                                           |
-| **Immediate anchoring** | On high-severity events (large transfers, new counterparties, policy changes)                              |
-| **Anchor target**       | `BrainAuditAnchor` on Base L2                                                                              |
-| **Anchor authority**    | Brain anchorer key, EIP-712 signed                                                                         |
-| **Reorg tolerance**     | Anchors reference previous batch; small reorg windows tolerated; off-chain log is canonical until anchored |
+| Property                | Value                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Publisher cycle**     | Configured bounded cycles. The default interval is one hour, but anchor status is the source of truth for each record. |
+| **Immediate anchoring** | No severity-accelerated path exists.                                                                                   |
+| **Anchor target**       | `BrainAuditAnchor` on Base Sepolia.                                                                                    |
+| **Anchor authority**    | The contract's `onlyPublisher` address. The current Base Sepolia publisher is a single EOA with two-step rotation.     |
+| **Replay guard**        | A tenant-root pair is published once. `anchorBatch` skips already-published pairs so batch retries are safe.           |
 
 [**→ BrainAuditAnchor smart contract**](../smart-contracts/brainauditanchor.md)
 
@@ -66,23 +71,24 @@ GET /v1/audit/{event_id}/proof
 
 To verify, the counterparty:
 
-1. Reads `anchored_root` from `BrainAuditAnchor.rootAt(tenantId, batchIndex)` on Base
-2. Reconstructs the leaf hash from the `event` data
-3. Walks `merkle_path` to compute the candidate root
-4. Compares against `anchored_root`
+1. Checks that the proof root is published for the tenant with `isPublished(tenantId, root)`. `latestAnchor(tenantId)` is useful when the proof is for that tenant's most recent root.
+2. Reconstructs the leaf hash from the `event` data.
+3. Calls `verifyInclusion(root, leaf, merklePath)`.
 
-If they match, the event is provably part of the anchored history. **Brain is not a trusted intermediary in this verification. It is just a publisher.**
+If both checks succeed, the event is provably part of the anchored history.
+**Brain is not a trusted intermediary in this verification. It is just a
+publisher.**
 
 ### Privacy
 
 On-chain anchors must not leak tenant data.
 
-| What's On-Chain    | What's Off-Chain                   |
-| ------------------ | ---------------------------------- |
-| Merkle roots       | Event payloads (encrypted at rest) |
-| Hashed `tenantId`  | Raw artifacts                      |
-| Anchor timestamp   | Ledger records, Wiki entities      |
-| Anchorer signature | Policy text and compiled rules     |
+| What's On-Chain              | What's Off-Chain                   |
+| ---------------------------- | ---------------------------------- |
+| Merkle roots                 | Event payloads (encrypted at rest) |
+| Hashed `tenantId`            | Raw artifacts                      |
+| Anchor transaction and block | Ledger records, Wiki entities      |
+| Publisher address            | Policy text and compiled rules     |
 
 Counterparties verifying a proof receive only the specific event(s) the tenant chooses to share, plus the Merkle path. Everything else stays private.
 

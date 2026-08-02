@@ -2,12 +2,13 @@
 
 `BrainAuditAnchor` stores Merkle roots of per-tenant audit batches. Anchors are immutable after submission.
 
-| Property          | Value                                                                |
-| ----------------- | -------------------------------------------------------------------- |
-| **Network**       | Base Sepolia today                                                   |
-| **Solidity**      | 0.8.x                                                                |
-| **Pattern**       | Immutable. No upgrade path in MVP; changes ship as audited redeploys |
-| **Anchorer keys** | Current testnet publisher is a single EOA; HSM is pre-mainnet TODO   |
+| Property         | Value                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| **Network**      | Base Sepolia only                                                                     |
+| **Solidity**     | 0.8.x                                                                                 |
+| **Pattern**      | Immutable. No upgrade path in MVP; changes require a redeploy.                        |
+| **Audit status** | Unaudited. Base mainnet is fenced pending an external smart-contract audit.           |
+| **Publisher**    | Single EOA at `0x41d4ce9d9fe968ca1230bdc296b28fdc9aa6ff6e`, verified on Base Sepolia. |
 
 ### Interface
 
@@ -29,6 +30,18 @@ interface IBrainAuditAnchor {
         uint256 periodEnd
     ) external;  // onlyPublisher
 
+    function anchorBatch(
+        bytes32[] calldata tenantIds,
+        bytes32[] calldata roots,
+        uint256[] calldata eventCounts,
+        uint256[] calldata periodStarts,
+        uint256[] calldata periodEnds
+    ) external;  // onlyPublisher, maximum 50 entries
+
+    function publisher() external view returns (address);
+
+    function MAX_BATCH() external view returns (uint256);
+
     function latestAnchor(bytes32 tenantId)
         external view returns (bytes32 root, uint256 blockNumber);
 
@@ -47,7 +60,10 @@ interface IBrainAuditAnchor {
 }
 ```
 
-Publication is authorized by the caller, not by a per-call signature. The `anchor` function is `onlyPublisher`; in production the publisher is a Safe multi-sig (2-of-3), so a single-key compromise cannot publish.
+Publication is authorized by the caller, not by a per-call signature. `anchor`
+and `anchorBatch` are `onlyPublisher`. The current Base Sepolia publisher is a
+single EOA, not a Safe multisig. `setPublisher` and `acceptPublisher` provide a
+two-step rotation path.
 
 ### How Anchoring Works
 
@@ -58,15 +74,15 @@ Off-chain audit log
    │
    ├─ Merkle tree built per batch
    │
-   └─ publisher (multi-sig) calls anchor() on Base L2
+   └─ publisher calls anchor() or anchorBatch() on Base Sepolia
 ```
 
-| Step | Detail                                                                   |
-| ---- | ------------------------------------------------------------------------ |
-| 1    | Audit events batch into a Merkle tree per tenant over a period window    |
-| 2    | The publisher multi-sig submits the root, event count, and period bounds |
-| 3    | The root is published via `anchor()`                                     |
-| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable |
+| Step | Detail                                                                              |
+| ---- | ----------------------------------------------------------------------------------- |
+| 1    | Audit events batch into a Merkle tree per tenant over a period window               |
+| 2    | The publisher submits root, event count, and period bounds                          |
+| 3    | `anchor()` publishes one root, or `anchorBatch()` publishes up to `MAX_BATCH` roots |
+| 4    | Contract emits `AnchorPublished`; the root becomes immutably retrievable            |
 
 ### Replay Protection
 
@@ -79,6 +95,11 @@ The contract records every published `(tenantId, root)` pair and rejects a repea
 | **Period bounds**                  | `periodEnd` before `periodStart` reverts |
 
 Root-uniqueness per tenant is the replay guard: a published root cannot be re-anchored for the same tenant. There is no batch-index sequence to maintain, so anchoring never depends on submission order.
+
+`anchorBatch()` has the same period validation as `anchor()` and a hard
+`MAX_BATCH` cap of 50. Unlike single-root `anchor()`, it skips an already
+published `(tenantId, root)` pair. This makes a batch retry safe after a prior
+partial success.
 
 ### Verification by Counterparties
 
@@ -104,11 +125,11 @@ The verifier does not need to trust Brain. They only need to call a public view 
 
 Base L2 has fast finality, but small reorgs are possible.
 
-| Mitigation                                 | Detail                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------------------- |
-| **Confirmation depth**                     | Reads wait for a configurable depth before treating an anchor as final     |
-| **Cross-batch references**                 | Each new batch's auxiliary metadata references the previous batch hash     |
-| **Off-chain log canonical until anchored** | If a reorg drops an anchor, the off-chain log replays it in the next batch |
+| Mitigation                                 | Detail                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| **Confirmation depth**                     | Reads wait for a configurable depth before treating an anchor as final          |
+| **Retryable publication**                  | The publisher retains pending anchors and retries them after transient failures |
+| **Off-chain log canonical until anchored** | A record remains pending until its on-chain transaction is confirmed            |
 
 ### Publisher Rotation
 

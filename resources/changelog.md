@@ -6,6 +6,26 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.11 (production launch documentation reconciliation)
+
+Documentation-only correction. No API or contract behavior changed.
+
+- **Audit proof documentation now matches `BrainAuditAnchor`.** Verification uses
+  `isPublished(tenantId, root)` and `verifyInclusion(root, leaf, proof)`.
+  `latestAnchor` returns the current tenant root. The contract has no batch
+  index or `rootAt` method.
+- **Batch publication is documented.** `anchorBatch` publishes up to 50 tenant
+  roots in one Base Sepolia transaction and skips already-published pairs on a
+  retry. Single-root `anchor` still rejects a duplicate pair.
+- **Launch network and publisher statements are corrected.** Brain's APIs are
+  production available. The anchor contract is unaudited, runs on Base Sepolia,
+  has no Base mainnet deployment, and currently uses a single EOA publisher with
+  two-step rotation.
+- **API-key availability is stated per environment.** At launch, first-class
+  `brain_sk_` authentication is enabled for sandbox integration and disabled on
+  the production API. The only issuable scopes are `ledger:read`, `audit:read`,
+  and `governance:read`.
+
 ### v0.5.10 (proposal read model expansion)
 
 Backward-compatible API read-model expansion. No new route or API version was

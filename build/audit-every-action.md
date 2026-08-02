@@ -6,6 +6,10 @@ description: Pull a verifiable trail of what your agent (or user) did.
 
 Goal: pull a complete, tamper-evident record of every meaningful event for a tenant. Useful for compliance review, customer disputes, internal reporting, and proving to auditors that the right thing happened.
 
+Brain's API and off-chain audit service are production available. The public
+anchor contract is deployed on Base Sepolia only, is unaudited, and is not a
+Base mainnet deployment.
+
 ### Reading the Trail
 
 ```typescript
@@ -48,10 +52,10 @@ proof.anchorBlock;  // the Base block number
 You can hand this to a counterparty or auditor. They can verify it without trusting Brain.
 
 ```solidity
-// Public verifier on Base
-bool valid = brainAuditAnchor.verify(
-  tenantIdHash,
-  batchIndex,
+// Public verifier on Base Sepolia
+bool published = brainAuditAnchor.isPublished(tenantIdHash, proof.anchorRoot);
+bool included = brainAuditAnchor.verifyInclusion(
+  proof.anchorRoot,
   eventLeaf,
   merklePath
 );
@@ -71,7 +75,7 @@ console.log(trace.events);
 //   { type: "action.approved",    actor: "user_cfo" },
 //   { type: "action.executed",    rail: "ach", txHash: null },
 //   { type: "action.settled",     receipt: "..." },
-//   { type: "audit.anchored",     batchIndex: 4127 }
+//   { type: "audit.anchored",     merkleRoot: "0x...", txHash: "0x..." }
 // ]
 ```
 
@@ -121,9 +125,9 @@ const trail = await brain.audit.list("acme", {
 
 | Concern               | Why Brain handles it                                                            |
 | --------------------- | ------------------------------------------------------------------------------- |
-| **Tamper resistance** | Every event is hashed and chained; Merkle roots anchor on Base hourly |
-| **Per-event signing** | Anchorer keys live in HSMs; rotation is governed                                |
-| **Reorg safety**      | Reads wait for finality; cross-batch references catch dropped anchors           |
+| **Tamper resistance** | Every event is hashed and chained; each tenant-root pair is published once      |
+| **Publisher control** | The current Base Sepolia publisher is one EOA; rotation is a two-step handoff   |
+| **Reorg safety**      | Pending anchors are retried; off-chain status remains authoritative until confirmed |
 | **Privacy**           | Only Merkle roots and hashed tenant IDs are on-chain; no payload data leaks     |
 
 ### What's Next
