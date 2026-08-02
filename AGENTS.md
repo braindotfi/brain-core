@@ -101,6 +101,13 @@ consumed DB URL password, `BRAIN_*_DB_PASSWORD`, `POSTGRES_PASSWORD`, MinIO
 credential, or S3/Azure blob secret is empty or uses a known weak default. The
 same check warns, but does not throw, in `NODE_ENV=staging`.
 
+Legacy VM `.env.staging` and `.env.prod` files missed
+`BRAIN_MCP_READER_DB_PASSWORD` when credential hardening made it mandatory.
+Use the production-gated `ops-mcp-reader-db-password.yml` workflow to inspect
+or repair that one credential without logging it, then apply `db-roles` to
+align the existing reader role. A generalized pre-promote required-secret
+presence check remains an operational follow-up.
+
 Wiki and Assistant question answers treat retrieved evidence as untrusted tenant
 data. Evidence blocks are wrapped in a per-request random boundary, evidence
 text is facts to cite and never instructions to obey, and answer serialization

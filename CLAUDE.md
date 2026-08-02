@@ -705,6 +705,23 @@ variables are: `POSTGRES_PASSWORD`, `BRAIN_APP_DB_PASSWORD`,
 `BRAIN_AUTH_AUDIT_DB_PASSWORD`, `MINIO_ROOT_USER`, and
 `MINIO_ROOT_PASSWORD`.
 
+Existing VM environments store those deployment credentials in `.env.staging`
+and `.env.prod`, rather than in repository secrets. The production-gated
+`ops-mcp-reader-db-password.yml` workflow inspects or safely repairs the
+`BRAIN_MCP_READER_DB_PASSWORD` entry without logging its value, then reapplies
+the `brain_mcp_reader` role through `db-roles`. The credential hardening that
+made this value mandatory exposed a legacy provisioning omission: the reader
+role already existed, but the historical VM env files had never received its
+password. Before a promote that adds a compose-required secret, run a
+pre-promote required-secret presence check for both environments. Generalizing
+that check in the promote workflow remains an operational follow-up.
+
+`ops-counterparty-trust-smoke.yml` is a production-gated mutable smoke for the
+counterparty trust-state API. It creates an isolated seeded tenant, calls all
+four user-authenticated transitions through the public API, and verifies both
+the returned state and five audit events. Keep `prod-tenant-diagnostics.yml`
+read-only; do not add mutable checks to that workflow.
+
 Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
 shipped by CI, but only to the **production** VM (`promote-prod.yml`), and
 that vendored `Caddyfile` was read directly off the prod box: it carries only
