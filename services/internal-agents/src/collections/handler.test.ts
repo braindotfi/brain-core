@@ -96,6 +96,11 @@ describe("collectionsHandler", () => {
           "propose_payment_plan",
         ],
       });
+      expect(proposed.action.narrative).toBe(
+        "Acme has 1200.50 USD outstanding on invoice INV-2, 10 days overdue. " +
+          "Recommend escalation with urgent tone at the escalation tier.",
+      );
+      expect(proposed.action.narrative).not.toContain("escalation escalation");
     }
   });
 
