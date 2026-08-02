@@ -18,6 +18,68 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # --------- Supply-chain scanning ---------
+  dependency_audit:
+    name: dependency audit (high + critical)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+      - name: Install lockfile dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Fail on high or critical dependency advisories
+        run: pnpm audit --audit-level=high
+
+  iac:
+    name: IaC scan (tfsec high + critical)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - name: Scan Terraform
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+        with:
+          working_directory: infra
+          version: v1.28.11
+          additional_args: --minimum-severity HIGH
+
+  container_scan:
+    name: container scan (high + critical)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - name: Build production images once for scanning
+        run: |
+          docker build --build-arg GIT_SHA=${{ github.sha }} --build-arg SERVICE_VERSION=${{ github.sha }} -t brain-core:ci -f Dockerfile .
+          docker build -t brain-agents:ci -f services/agents/Dockerfile services/agents
+      - name: Scan core image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: brain-core:ci
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: "false"
+          trivyignores: .trivyignore
+      - name: Scan agents image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: brain-agents:ci
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: "false"
+          trivyignores: .trivyignore
+
   # --------- TypeScript services ---------
   typescript:
     name: typescript (lint + unit)

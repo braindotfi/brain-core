@@ -16,6 +16,38 @@ permissions:
   contents: read
 
 jobs:
+  # Supply-chain gates start alongside unit/integration. build_image waits for
+  # these two gates, while CodeQL runs independently in codeql.yml on every
+  # push and pull request.
+  dependency_audit:
+    name: dependency audit (high + critical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install lockfile dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Fail on high or critical dependency advisories
+        run: pnpm audit --audit-level=high
+
+  iac:
+    name: IaC scan (tfsec high + critical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - name: Scan Terraform
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+        with:
+          working_directory: infra
+          version: v1.28.11
+          additional_args: --minimum-severity HIGH
+
   # Secret scan on every push to main. PR coverage runs in pr.yml; this is the
   # belt to that suspender for direct pushes (merge commits, hotfix pushes)
   # that never went through a PR. Pre-commit hooks are bypassable with
@@ -191,7 +223,7 @@ jobs:
   build_image:
     name: build production image
     runs-on: ubuntu-latest
-    needs: [unit_and_integration, golden_path_smoke, python_agents]
+    needs: [unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -216,10 +248,42 @@ jobs:
           docker build -t ghcr.io/braindotfi/brain-agents:${{ github.sha }} -f services/agents/Dockerfile services/agents
           docker push ghcr.io/braindotfi/brain-agents:${{ github.sha }}
 
+  container_scan:
+    name: container scan (high + critical)
+    runs-on: ubuntu-latest
+    needs: build_image
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/braindotfi/brain-core:${{ github.sha }}
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: "false"
+          trivyignores: .trivyignore
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/braindotfi/brain-agents:${{ github.sha }}
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: "false"
+          trivyignores: .trivyignore
+
   deploy_staging:
     name: deploy staging VM
     runs-on: ubuntu-latest
-    needs: build_image
+    needs: container_scan
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     # Scoped to this job (not the whole workflow) so a staging deploy is not
     # blocked by an older run parked at promote_production's approval gate.

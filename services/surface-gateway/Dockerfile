@@ -3,7 +3,7 @@
 # Build: `docker build -f services/surface-gateway/Dockerfile .`
 
 FROM node:22-slim AS builder
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile && pnpm --filter @brain/surface-gateway... run build

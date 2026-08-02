@@ -7,7 +7,7 @@ FROM node:22-slim AS dev
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 WORKDIR /app
 # Overridden per-service by docker-compose.dev.yml; sane default = run the API in watch mode.
 CMD ["pnpm", "-C", "services/api", "run", "dev"]
@@ -15,7 +15,7 @@ CMD ["pnpm", "-C", "services/api", "run", "dev"]
 # ---- build stage ----
 FROM node:22-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
 WORKDIR /app
 
@@ -80,7 +80,7 @@ ENV GIT_SHA=$GIT_SHA
 ARG SERVICE_VERSION=0.0.0-dev
 ENV SERVICE_VERSION=$SERVICE_VERSION
 
-RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
 WORKDIR /app
 
@@ -117,7 +117,12 @@ COPY tests/e2e/package.json tests/e2e/
 COPY tests/invariants/package.json tests/invariants/
 COPY tests/adversarial/package.json tests/adversarial/
 
-RUN pnpm install --frozen-lockfile --prod
+# Runtime entry points invoke Node directly. Remove build-only package managers
+# after the production install so their transitive tooling is not shipped.
+RUN pnpm install --frozen-lockfile --prod \
+  && rm -rf /usr/local/lib/node_modules/corepack /usr/local/lib/node_modules/npm \
+  && rm -rf /root/.cache/node/corepack \
+  && rm -f /usr/local/bin/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # Built artifacts from builder
 COPY --from=builder /app/schemas/dist schemas/dist

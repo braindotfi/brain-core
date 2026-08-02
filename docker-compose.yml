@@ -74,7 +74,13 @@ services:
       BRAIN_API_BASE_URL: ${BRAIN_API_BASE_URL:-http://host.docker.internal:3001}
       BRAIN_API_TOKEN: ${BRAIN_API_TOKEN}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
