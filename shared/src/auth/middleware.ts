@@ -11,8 +11,9 @@
  *   - GET  /health                   (root health check)
  *
  * Exemptions are registered by adding `skipAuth: true` to the route config.
- * The plugin trusts that flag rather than maintaining a URL allowlist —
- * route ownership stays with the route author.
+ * The plugin trusts that flag rather than maintaining a URL allowlist, so
+ * route ownership stays with the route author. Routes that need platform-header
+ * access and optional bearer principals may also set `optionalAuth: true`.
  */
 
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
@@ -33,6 +34,8 @@ declare module "fastify" {
   interface FastifyContextConfig {
     /** Set `skipAuth: true` on a route config to bypass JWT verification. */
     skipAuth?: boolean;
+    /** With skipAuth, authenticate a bearer if present but allow none. */
+    optionalAuth?: boolean;
   }
 }
 
@@ -54,10 +57,12 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
   const { verifier, apiKeyAuthenticator, apiKeyUsageAudit } = opts;
 
   fastify.addHook("onRequest", async (request: FastifyRequest) => {
-    if (request.routeOptions.config?.skipAuth === true) {
+    const skipAuth = request.routeOptions.config?.skipAuth === true;
+    const optionalAuth = request.routeOptions.config?.optionalAuth === true;
+    const token = extractBearer(request.headers.authorization);
+    if (skipAuth && (!optionalAuth || token === null)) {
       return;
     }
-    const token = extractBearer(request.headers.authorization);
     if (token === null) {
       throw brainError("auth_token_missing", "missing bearer token");
     }

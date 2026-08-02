@@ -89,7 +89,7 @@ export async function registerGovernanceRoutes(
 ): Promise<void> {
   app.get(
     "/governance/agents",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, optionalAuth: true } },
     async (
       request: FastifyRequest<{
         Querystring: {
@@ -133,7 +133,7 @@ export async function registerGovernanceRoutes(
 
   app.get(
     "/governance/agents/:agent_id",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, optionalAuth: true } },
     async (
       request: FastifyRequest<{
         Params: { agent_id: string };
@@ -212,7 +212,7 @@ export async function registerGovernanceRoutes(
 
   app.get(
     "/governance/reports",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, optionalAuth: true } },
     async (
       request: FastifyRequest<{
         Querystring: {
@@ -317,7 +317,7 @@ export async function registerGovernanceRoutes(
 
   app.get(
     "/governance/reports/:report_id",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, optionalAuth: true } },
     async (
       request: FastifyRequest<{
         Params: { report_id: string };

@@ -1446,7 +1446,7 @@ paths:
         `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
         SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
         plaintext secret exactly once. Current API-key scopes are
-        `ledger:read` and `audit:read`.
+        `ledger:read`, `audit:read`, and `governance:read`.
       operationId: issueApiKey
       parameters:
         - name: tenantId
@@ -1465,7 +1465,8 @@ paths:
                 environment: { type: string, enum: [sandbox, live] }
                 scopes:
                   type: array
-                  items: { type: string, enum: ['ledger:read', 'audit:read'] }
+                  items:
+                    { type: string, enum: ['ledger:read', 'audit:read', 'governance:read'] }
       responses:
         '201':
           description: API key issued; plaintext key returned exactly once
@@ -1485,6 +1486,7 @@ paths:
                   created_at: { type: string, format: date-time }
                   last_used_at: { type: [string, "null"], format: date-time }
                   revoked_at: { type: [string, "null"], format: date-time }
+                  expires_at: { type: [string, "null"], format: date-time }
                   rotated_from_id: { type: [string, "null"] }
                   secret: { type: string, description: 'Plaintext key. Shown only in this response.' }
         '400':
@@ -1540,6 +1542,7 @@ paths:
                         created_at: { type: string, format: date-time }
                         last_used_at: { type: [string, "null"], format: date-time }
                         revoked_at: { type: [string, "null"], format: date-time }
+                        expires_at: { type: [string, "null"], format: date-time }
                         rotated_from_id: { type: [string, "null"] }
         '403':
           description: Principal is not a same-tenant admin.
@@ -6023,9 +6026,11 @@ paths:
       tags: [Governance]
       summary: List registered agents for governance review
       description: |
-        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-        with `governance:read`. Tenant is supplied as `tenant_id` because
-        the platform credential is not a tenant bearer principal.
+        Read route. Accepts either a bearer principal, including a Brain API key,
+        with `governance:read`, or `X-Platform-Service-Auth` with
+        `governance:read`. Tenant is supplied as `tenant_id` for platform
+        callers because the platform credential is not a tenant bearer
+        principal.
       operationId: listGovernanceAgents
       security: []
       parameters:
@@ -6070,8 +6075,9 @@ paths:
       tags: [Governance]
       summary: Get one registered agent with lifecycle timeline
       description: |
-        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-        with `governance:read`.
+        Read route. Accepts either a bearer principal, including a Brain API key,
+        with `governance:read`, or `X-Platform-Service-Auth` with
+        `governance:read`.
       operationId: getGovernanceAgent
       security: []
       parameters:
@@ -6146,9 +6152,10 @@ paths:
       tags: [Governance]
       summary: Build an audit-derived governance report
       description: |
-        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-        with `governance:read`. Reports include policy-relevant audit events
-        in the requested period. Historical rows are joined to
+        Read route. Accepts either a bearer principal, including a Brain API key,
+        with `governance:read`, or `X-Platform-Service-Auth` with
+        `governance:read`. Reports include policy-relevant audit events in the
+        requested period. Historical rows are joined to
         `policy_decisions` when `policy_decision_id` is present. Rows without
         a native outcome or resolvable policy decision are returned with
         `decision_data_status=unavailable` rather than omitted.
@@ -6262,8 +6269,9 @@ paths:
       tags: [Governance]
       summary: Get an immutable governance report snapshot
       description: |
-        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`
-        with `governance:read`. Returns the frozen snapshot payload stored at
+        Read route. Accepts either a bearer principal, including a Brain API key,
+        with `governance:read`, or `X-Platform-Service-Auth` with
+        `governance:read`. Returns the frozen snapshot payload stored at
         creation time and never re-queries the live audit store.
       operationId: getGovernanceReportSnapshot
       security: []
@@ -6752,9 +6760,13 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: JWT or brain_sk_
       description: |
-        JWT bearer token. Contains tenant_id and scopes. For agent
+        JWT bearer token or first-class Brain API key. JWTs contain tenant_id
+        and scopes. API keys use the `brain_sk_test_...` or `brain_sk_live_...`
+        prefixes and are accepted only when `BRAIN_API_KEY_AUTH_ENABLED=true`.
+        API keys can hold `ledger:read`, `audit:read`, and `governance:read`
+        today. For agent
         principals, tokens are issued either by the sandbox/testnet-only
         `POST /auth/service-token` (this API), the production tenancy paths
         (`POST /tenants`, `POST /tenants/{tenant_id}/agent-token`), or the

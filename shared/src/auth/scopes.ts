@@ -113,7 +113,7 @@ export const AGENT_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 
 /**
  * The set of scopes a per-customer API key may hold. Current shipped values are
- * limited to read-only ledger and audit access.
+ * limited to read-only ledger, audit, and governance access.
  */
 export const API_KEY_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   "ledger:read",

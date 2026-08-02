@@ -325,9 +325,13 @@ Done
   issue and rotate responses. Tenant admins manage them through
   `POST /v1/tenants/{id}/keys`, `GET /v1/tenants/{id}/keys`,
   `POST /v1/keys/{id}/rotate`, and `DELETE /v1/keys/{id}`. Current scopes are
-  `ledger:read` and `audit:read`. Request-path audit events include nullable
-  `key_id`; session-authenticated and pre-enforcement events keep `key_id`
-  null. Per-key usage is exposed through
+  `ledger:read`, `audit:read`, and `governance:read`. Authentication looks up
+  key candidates by display prefix and last four characters, then compares the
+  peppered SHA-256 digest with a constant-time comparison. Revoked keys and keys
+  with past `expires_at` are rejected. Per-key rate limiting and
+  `last_used_at` tracking are applied at the gateway. Request-path audit events
+  include nullable `key_id`; session-authenticated and pre-enforcement events
+  keep `key_id` null. Per-key usage is exposed through
   `GET /v1/tenants/{id}/usage?window=30d&environment=sandbox&key_id=...`.
 - Production tenant creation is also available at
   `POST /v1/orgs/{orgId}/tenants`, using the same persistent production tenant
