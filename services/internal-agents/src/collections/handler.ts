@@ -72,8 +72,8 @@ function buildCollectionsProposal(input: HandlerInput): ProposedAction {
       next_escalation_date: nextEscalationDate,
       narrative:
         `${counterpartyName} has ${amount} ${currency} outstanding on invoice ${invoiceNumber}, ` +
-        `${daysOverdue} days overdue. Recommend ${recommendation.recommendedAction} with ` +
-        `${recommendation.tone} tone and ${recommendation.escalationTier} escalation.`,
+        `${daysOverdue} days overdue. Recommend ${recommendationNarrativeAction(recommendation.recommendedAction)} ` +
+        `with ${recommendation.tone} tone at the ${escalationTierLabel(recommendation.escalationTier)}.`,
       summary: `${amount} ${currency} receivable is ${daysOverdue} days overdue for ${counterpartyName}.`,
       risk_band: recommendation.riskBand,
       confidence,
@@ -154,6 +154,23 @@ function agingTierFor(daysOverdue: number): string {
   if (daysOverdue >= 30) return "30_59";
   if (daysOverdue >= 15) return "15_29";
   return "1_14";
+}
+
+function recommendationNarrativeAction(action: Recommendation["recommendedAction"]): string {
+  switch (action) {
+    case "draft_followup":
+      return "a follow-up draft";
+    case "create_task":
+      return "a collection task";
+    case "escalate":
+      return "escalation";
+    case "propose_payment_plan":
+      return "a payment plan";
+  }
+}
+
+function escalationTierLabel(tier: Recommendation["escalationTier"]): string {
+  return tier === "payment_plan" ? "payment-plan tier" : `${tier} tier`;
 }
 
 function displayInvoiceId(invoiceId: string): string {
