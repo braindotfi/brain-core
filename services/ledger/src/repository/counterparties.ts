@@ -8,6 +8,9 @@ export interface CounterpartyRow extends LedgerRowCommon {
   type: string;
   risk_level: string | null;
   verified_status: string | null;
+  trust_status: string;
+  trust_reviewed_at: Date | string | null;
+  trust_reviewed_by: string | null;
   aliases: string[];
   linked_accounts: string[];
   /** For type="agent": the execution-layer agent id (RFC 0001); null otherwise. */
@@ -25,6 +28,7 @@ export interface CounterpartyListFilters {
   q?: string;
   type?: string;
   verified_status?: string;
+  trust_status?: string;
   limit: number;
   cursor?: KeysetCursor;
 }
@@ -76,6 +80,10 @@ export async function listCounterparties(
   if (filters.verified_status !== undefined) {
     values.push(filters.verified_status);
     where.push(`cp.verified_status = $${values.length}`);
+  }
+  if (filters.trust_status !== undefined) {
+    values.push(filters.trust_status);
+    where.push(`cp.trust_status = $${values.length}`);
   }
   if (filters.q !== undefined && filters.q !== "") {
     const normalized = normalizeName(filters.q);

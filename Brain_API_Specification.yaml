@@ -2413,6 +2413,12 @@ paths:
           schema:
             type: string
             enum: [unverified, self_attested, document_verified, sanctions_cleared]
+        - name: trust_status
+          in: query
+          description: User-reviewed counterparty trust workflow state. Separate from verified_status.
+          schema:
+            type: string
+            enum: [unreviewed, trusted, paused, acknowledged]
         - name: limit
           in: query
           schema: { type: integer, default: 50, maximum: 500 }
@@ -2578,6 +2584,126 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /ledger/counterparties/{counterparty_id}/trust/grant:
+    post:
+      tags: [Ledger]
+      summary: Mark a counterparty trusted
+      description: |
+        Requires `ledger:write` and a user principal. Applies uniformly to all
+        counterparty types. Allowed from `unreviewed` or `acknowledged`; invalid
+        transitions return `ledger_status_invalid` with HTTP 409. This changes
+        `trust_status` only and does not alter `verified_status` or payment gate
+        behavior.
+      operationId: grantCounterpartyTrust
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionRequest' }
+      responses:
+        '200':
+          description: Trust state changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /ledger/counterparties/{counterparty_id}/trust/pause:
+    post:
+      tags: [Ledger]
+      summary: Pause counterparty trust
+      description: |
+        Requires `ledger:write` and a user principal. Applies uniformly to all
+        counterparty types. Allowed from `unreviewed`, `trusted`, or
+        `acknowledged`; invalid transitions return `ledger_status_invalid` with
+        HTTP 409. This changes `trust_status` only and does not alter
+        `verified_status` or payment gate behavior.
+      operationId: pauseCounterpartyTrust
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionRequest' }
+      responses:
+        '200':
+          description: Trust state changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /ledger/counterparties/{counterparty_id}/trust/restore:
+    post:
+      tags: [Ledger]
+      summary: Restore a paused counterparty to trusted
+      description: |
+        Requires `ledger:write` and a user principal. Applies uniformly to all
+        counterparty types. Allowed only from `paused`; invalid transitions
+        return `ledger_status_invalid` with HTTP 409. This changes
+        `trust_status` only and does not alter `verified_status` or payment
+        gate behavior.
+      operationId: restoreCounterpartyTrust
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionRequest' }
+      responses:
+        '200':
+          description: Trust state changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /ledger/counterparties/{counterparty_id}/trust/acknowledge:
+    post:
+      tags: [Ledger]
+      summary: Acknowledge a counterparty review item
+      description: |
+        Requires `ledger:write` and a user principal. Applies uniformly to all
+        counterparty types. Allowed from `unreviewed` or `paused`; invalid
+        transitions return `ledger_status_invalid` with HTTP 409. This changes
+        `trust_status` only and does not alter `verified_status` or payment gate
+        behavior.
+      operationId: acknowledgeCounterpartyTrust
+      parameters:
+        - name: counterparty_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionRequest' }
+      responses:
+        '200':
+          description: Trust state changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyTrustTransitionResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /ledger/obligations:
     get:
       tags: [Ledger]
@@ -8211,6 +8337,13 @@ components:
             verified_status:
               type: [string, "null"]
               enum: [unverified, self_attested, document_verified, sanctions_cleared]
+            trust_status:
+              type: string
+              enum: [unreviewed, trusted, paused, acknowledged]
+              description: User-reviewed counterparty trust workflow state. Separate from verified_status.
+            trust_reviewed_at:
+              type: [string, "null"]
+              format: date-time
             aliases:
               type: array
               items: { type: string }
@@ -8224,6 +8357,23 @@ components:
             payment_total:
               type: string
               description: Sum of posted or cleared outflow transaction amounts linked to this counterparty.
+
+    CounterpartyTrustTransitionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          description: Optional human review reason. Stored on the audit event only.
+
+    CounterpartyTrustTransitionResponse:
+      type: object
+      required: [counterparty, previous_trust_status]
+      properties:
+        counterparty: { $ref: '#/components/schemas/Counterparty' }
+        previous_trust_status:
+          type: string
+          enum: [unreviewed, trusted, paused, acknowledged]
 
     Obligation:
       allOf:

@@ -167,6 +167,7 @@ export async function registerLedgerRoutes(
           q?: string;
           type?: string;
           verified_status?: string;
+          trust_status?: string;
           limit?: string;
           cursor?: string;
         };
@@ -181,6 +182,9 @@ export async function registerLedgerRoutes(
         ...(request.query.type !== undefined ? { type: request.query.type as never } : {}),
         ...(request.query.verified_status !== undefined
           ? { verified_status: parseVerifiedStatus(request.query.verified_status) }
+          : {}),
+        ...(request.query.trust_status !== undefined
+          ? { trust_status: parseTrustStatus(request.query.trust_status) }
           : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(request.query.cursor !== undefined ? { cursor: request.query.cursor } : {}),
@@ -242,6 +246,35 @@ export async function registerLedgerRoutes(
       return { counterparty: result.counterparty };
     },
   );
+
+  for (const transition of ["grant", "pause", "restore", "acknowledge"] as const) {
+    app.post(
+      `/ledger/counterparties/:counterparty_id/trust/${transition}`,
+      async (
+        request: FastifyRequest<{
+          Params: { counterparty_id: string };
+          Body?: Record<string, unknown>;
+        }>,
+        reply,
+      ) => {
+        const ctx = principalCtx(request);
+        requireScope(request.principal!.scopes, WRITE);
+        requireUserPrincipal(ctx);
+        if (!isBrainId(request.params.counterparty_id, "cp")) {
+          throw brainError("request_params_invalid", "malformed counterparty_id");
+        }
+        const body = parseTrustTransitionBody(request.body);
+        const result = await service.transitionCounterpartyTrust(
+          ctx,
+          request.params.counterparty_id,
+          transition,
+          body,
+        );
+        reply.status(200);
+        return result;
+      },
+    );
+  }
 
   // Phase 6 governed read: the reconciled cross-source view (every observation
   // retained, field-level authority, conflicts listed, candidates pending
@@ -485,7 +518,15 @@ const PATCH_FIELDS = new Set([
   "tax_id",
   "aliases",
 ]);
-const TRUST_FIELDS = new Set(["provenance", "confidence", "verified_status", "risk_level"]);
+const TRUST_FIELDS = new Set([
+  "provenance",
+  "confidence",
+  "verified_status",
+  "risk_level",
+  "trust_status",
+  "trust_reviewed_at",
+  "trust_reviewed_by",
+]);
 const PAYMENT_FIELD_RE = /(iban|account_number|routing|swift|bic|wallet|bank)/i;
 const VERIFIED_STATUSES = new Set([
   "unverified",
@@ -493,6 +534,7 @@ const VERIFIED_STATUSES = new Set([
   "document_verified",
   "sanctions_cleared",
 ]);
+const TRUST_STATUSES = new Set(["unreviewed", "trusted", "paused", "acknowledged"]);
 
 function parseCounterpartyCreateBody(body: Record<string, unknown>): ManualCounterpartyCreateInput {
   assertPlainBody(body);
@@ -566,6 +608,26 @@ function parseVerifiedStatus(value: string): NonNullable<Counterparty["verified_
     });
   }
   return value as NonNullable<Counterparty["verified_status"]>;
+}
+
+function parseTrustStatus(value: string): Counterparty["trust_status"] {
+  if (!TRUST_STATUSES.has(value)) {
+    throw brainError("request_params_invalid", "invalid_trust_status", {
+      details: { reason: "invalid_trust_status" },
+    });
+  }
+  return value as Counterparty["trust_status"];
+}
+
+function parseTrustTransitionBody(body: unknown): { reason?: string } {
+  if (body === undefined || body === null) return {};
+  assertPlainBody(body);
+  rejectUnknownFields(body, new Set(["reason"]));
+  if (body["reason"] === undefined) return {};
+  if (typeof body["reason"] !== "string" || body["reason"].trim() === "") {
+    throw brainError("request_body_invalid", "reason must be a non-empty string");
+  }
+  return { reason: body["reason"].trim() };
 }
 
 function rejectPaymentFields(body: Record<string, unknown>): void {
