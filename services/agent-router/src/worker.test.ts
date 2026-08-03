@@ -67,6 +67,23 @@ const COMPLETE_RECONCILIATION_HANDLER: InternalAgentHandler = {
   }),
 };
 
+const INFORMATIONAL_RECONCILIATION_HANDLER: InternalAgentHandler = {
+  ...COMPLETE_RECONCILIATION_HANDLER,
+  build: (input) => ({
+    channel: "agent",
+    informational: true,
+    action: {
+      type: input.action,
+      match_type: "no_match",
+      left_entity_id: "tx_1",
+      right_entity_id: null,
+      confidence_score: 0.15,
+      explanation: "No credible reconciliation match was found.",
+      evidence_refs: input.evidence.items.map((i) => i.ref),
+    },
+  }),
+};
+
 let proposeCalls = 0;
 let createPICalls = 0;
 function makeDeps(
@@ -179,6 +196,23 @@ describe("routeAndPropose", () => {
     expect(result.proposed?.id).toBe("prop_recon");
     expect(delegated).toBe(1);
     // The default agents.propose must NOT have been used for reconciliation.
+    expect(proposeCalls).toBe(0);
+  });
+
+  it("keeps a low-confidence reconciliation result informational", async () => {
+    const deps = makeDeps({
+      handlers: { ...internalAgentHandlers, reconciliation: INFORMATIONAL_RECONCILIATION_HANDLER },
+    });
+    const result = await routeAndPropose(
+      CTX,
+      { tenant_id: "tnt_acme", event: "transaction.unreconciled" },
+      deps,
+    );
+
+    expect(result.selected_agent_id).toBe("reconciliation");
+    expect(result.status).toBe("notify_only");
+    expect(result.proposed).toBeUndefined();
+    expect(result.reason).toBe("informational_low_confidence_reconciliation");
     expect(proposeCalls).toBe(0);
   });
 
