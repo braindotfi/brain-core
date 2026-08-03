@@ -27,7 +27,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "botbuilder": "^4.23.3",
     "fastify": "^5.0.0",
-    "pg": "^8.13.0"
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

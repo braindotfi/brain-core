@@ -30,7 +30,7 @@
     "@brain/shared": "workspace:*",
     "@brain/schemas": "workspace:*",
     "fastify": "^5.0.0",
-    "pg": "^8.13.0",
+    "pg": "^8.22.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "@anthropic-ai/sdk": "^0.30.0",
