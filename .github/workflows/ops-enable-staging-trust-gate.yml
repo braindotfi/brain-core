@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "cd ~/brain-core && BRAIN_ENV_FILE='$VM_ENV_FILE' docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents surface-gateway"
+            "cd ~/brain-core && BRAIN_ENV_FILE='$VM_ENV_FILE' docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --force-recreate --no-deps --no-build api worker agents surface-gateway"
 
       - name: Verify staging health and flag
         shell: bash
