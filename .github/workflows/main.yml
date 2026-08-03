@@ -325,10 +325,11 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       - name: Enable staging API key auth
@@ -392,6 +393,57 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
+
+      # scripts/ops/repair-policy-content-hash.mjs (dry run, no --apply) fails
+      # closed when any `policies` row still carries the pre-6b544ed
+      # insertion-order content_hash (services/api/src/demo/brainsaas-seed.ts
+      # and tools/seed-golden-path/src/cli.ts both used to write it).
+      # getActive (services/policy/src/repository.ts) recomputes the canonical
+      # hash on every read and throws policy_not_active on drift, so an
+      # unrepaired row is a hard outage for that tenant's whole money path the
+      # moment this deploy ships, not a warning.
+      #
+      # Runs via the `migrate` service, NOT `api`: `policies` is under FORCE
+      # RLS and `api`'s DATABASE_URL is `brain_app`, a NOBYPASSRLS role, so an
+      # unscoped SELECT through `api` silently returns zero rows and the gate
+      # would pass even when repair is needed (infra/db-roles.sql). `migrate`
+      # already carries `DATABASE_URL: postgres://brain:...`, the Postgres
+      # bootstrap superuser (docker-compose.prod.yml's postgres service
+      # comment: "migrate connects as this role"), which bypasses RLS
+      # unconditionally regardless of FORCE ROW LEVEL SECURITY -- exactly the
+      # owner/migration role the script's own header requires, and it is
+      # already present in `migrate`'s environment from compose, so no
+      # secret is ever passed on a command line. `migrate` is a one-shot
+      # service (`restart: "no"`), so this uses `docker compose run --rm`,
+      # the same pattern the later "Migrate + recreate auth on VM" step
+      # already uses against the same fixed container_name sequentially, and
+      # bind-mounts the script rather than `docker cp`, since there is no
+      # long-lived container to copy into. The mount target lives under
+      # `services/api/` because that is where Node resolution was verified:
+      # `services/api/package.json` declares `@brain/policy` and `pg` as real
+      # dependencies, and since every service in this compose file shares the
+      # one `brain-core` image, that filesystem path resolves the same way no
+      # matter which service's `docker compose run`/`exec` executes it.
+      #
+      # Skips (does not fail) only when `postgres` itself is not running:
+      # that is what genuine cold start looks like (no volume, no
+      # `policies` table, nothing to repair). A crash-looping or stopped
+      # `api`/`migrate` does not skip the gate, since neither is the signal
+      # checked.
+      #
+      # Never passes --apply here: an automatic silent re-stamp during a
+      # deploy is exactly the "manual DB surgery as a fix" this repo
+      # forbids; repair is a deliberate operator action, run ahead of time.
+      - name: Policy content-hash repair gate
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             pg_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q postgres); \
+             if [ -z \"\$pg_id\" ]; then echo 'postgres not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml run --rm --no-deps \
+               -v ~/brain-core/scripts/ops/repair-policy-content-hash.mjs:/app/services/api/ops-repair-policy-content-hash.mjs:ro \
+               migrate node services/api/ops-repair-policy-content-hash.mjs" \
+          || { echo "policy content_hash repair required before deploy -- run: DATABASE_URL=<staging owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply (see docs/r03-staging-deploy-runbook.md)"; exit 1; }
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.

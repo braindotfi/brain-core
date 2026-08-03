@@ -44,12 +44,23 @@ jobs:
         id: resolve
         run: |
           sha="${{ inputs.sha }}"
+          if [ -n "$sha" ] && ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "inputs.sha must be a 40-character lowercase hex commit SHA, got: $sha"
+            exit 1
+          fi
           if [ -z "$sha" ]; then
             body=$(curl -s https://staging-api.brain.fi/health || true)
             sha=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
           fi
           if [ -z "$sha" ]; then
             echo "Could not resolve a SHA to promote (no input given and staging-api.brain.fi/health returned no commit)."
+            exit 1
+          fi
+          # staging-api.brain.fi/health's body is remote-controlled text on the
+          # same path as inputs.sha below (docker pull, ssh, actions/checkout
+          # ref) -- validate it exactly the same way regardless of source.
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Resolved SHA is not a 40-character lowercase hex commit SHA, refusing to use it: $sha"
             exit 1
           fi
           echo "Promoting commit: $sha"
@@ -82,7 +93,7 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           if [ -f docker-compose.caddy.yml ]; then
             scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
@@ -92,6 +103,7 @@ jobs:
           fi
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       - name: Pre-promote required-secret presence check
@@ -101,6 +113,26 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
+
+      # See main.yml's matching "Policy content-hash repair gate" step for the
+      # full rationale. Same mechanics against the production VM: runs via
+      # the `migrate` service (DATABASE_URL is the Postgres bootstrap
+      # superuser `brain`, which bypasses the RLS that would otherwise
+      # zero-row this query through `api`'s NOBYPASSRLS `brain_app` role),
+      # dry run only, `docker compose run --rm` since `migrate` is a one-shot
+      # service, skip only when `postgres` itself is not running (genuine
+      # cold start). Runs before rollback tagging, image pull, migrations, or
+      # compose recreate.
+      - name: Policy content-hash repair gate
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             pg_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q postgres); \
+             if [ -z \"\$pg_id\" ]; then echo 'postgres not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml run --rm --no-deps \
+               -v ~/brain-core/scripts/ops/repair-policy-content-hash.mjs:/app/services/api/ops-repair-policy-content-hash.mjs:ro \
+               migrate node services/api/ops-repair-policy-content-hash.mjs" \
+          || { echo "policy content_hash repair required before promote -- run: DATABASE_URL=<prod owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply (see docs/r03-staging-deploy-runbook.md)"; exit 1; }
 
       # Prune images untouched for 24h+ so the rollback tags minted
       # above don't accumulate forever and fill the disk. `docker image
