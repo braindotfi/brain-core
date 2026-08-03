@@ -6,6 +6,16 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.15 (tenant-aware Wiki question suggestions)
+
+- **`GET /v1/wiki/suggested-questions` returns eligible deterministic
+  questions for the calling tenant.** Suggestions derive from the same intent
+  registry as deterministic Wiki question execution, so unavailable or
+  generative-only questions are never suggested.
+- **Suggestions are ranked by tenant-local deterministic question use.** The
+  `usage_rank_score` is an all-time invocation count scoped by tenant and is
+  never shared across tenants.
+
 ### v0.5.14 (grounded Wiki listing answers)
 
 - **Bounded transaction, cash-flow, and invoice listings use deterministic

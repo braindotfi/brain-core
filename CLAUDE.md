@@ -172,6 +172,9 @@ Done
   `/v1/wiki/question` returns `answered` separately from prose. Deterministic
   transaction count, total, average, and bounded transaction, cash-flow, or
   invoice listing questions return exact Ledger results with cited records.
+  `GET /v1/wiki/suggested-questions` derives tenant-aware suggestions only from
+  that deterministic registry. Each registered intent supplies its eligibility
+  query, and eligible intents are ranked by tenant-local invocation count.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as

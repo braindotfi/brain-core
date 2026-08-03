@@ -1404,6 +1404,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/wiki/suggested-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tenant-aware deterministic question suggestions
+         * @description Requires `wiki:read`. Returns only currently eligible questions backed
+         *     by the deterministic Wiki-question registry. `usage_rank_score` is the
+         *     tenant's all-time invocation count for that intent and is used to rank
+         *     otherwise eligible suggestions.
+         */
+        get: operations["listSuggestedWikiQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/wiki/annotate": {
         parameters: {
             query?: never;
@@ -3957,6 +3980,13 @@ export interface components {
                 inputTokens: number;
                 outputTokens: number;
             };
+        };
+        WikiSuggestedQuestion: {
+            /** @enum {string} */
+            intent_id: "transaction_count" | "transaction_sum" | "transaction_average" | "transaction_listing" | "cash_flow_listing" | "invoice_listing";
+            display_text: string;
+            /** @description All-time invocation count for this deterministic intent in the calling tenant. */
+            usage_rank_score: number;
         };
         /**
          * @description Phase 3 only accepts `kind` in `policy`/`agent` (WIKI_KINDS).
@@ -7750,6 +7780,30 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listSuggestedWikiQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eligible deterministic question suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        suggestions: components["schemas"]["WikiSuggestedQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     annotateWiki: {

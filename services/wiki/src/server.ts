@@ -10,6 +10,7 @@ import {
 import { registerEntity } from "./routes/entity.js";
 import { registerSearch } from "./routes/search.js";
 import { registerQuestion } from "./routes/question.js";
+import { registerSuggestedQuestions } from "./routes/suggested-questions.js";
 import { registerAnnotate } from "./routes/annotate.js";
 import { registerSchema } from "./routes/schema.js";
 import { registerMemoryRoutes } from "./routes/memory.js";
@@ -43,6 +44,7 @@ export async function buildWikiApp(opts: BuildWikiAppOptions): Promise<FastifyIn
   await registerEntity(app, opts.deps);
   await registerSearch(app, opts.deps);
   await registerQuestion(app, opts.deps);
+  await registerSuggestedQuestions(app, opts.deps);
   await registerAnnotate(app, opts.deps);
   await registerSchema(app, opts.deps);
 
@@ -69,6 +71,7 @@ export async function registerWikiPlugin(app: FastifyInstance, deps: WikiDeps): 
   await registerEntity(app, deps);
   await registerSearch(app, deps);
   await registerQuestion(app, deps);
+  await registerSuggestedQuestions(app, deps);
   await registerAnnotate(app, deps);
   await registerSchema(app, deps);
   const pageService = new WikiPageService({

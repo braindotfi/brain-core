@@ -59,7 +59,16 @@ export interface AskResult {
   evidence: AskEvidenceItem[];
   model: string;
   usage: { inputTokens: number; outputTokens: number };
+  /** Internal routing metadata used to record tenant-specific intent usage. */
+  deterministicIntentId?: DeterministicIntentId;
   cachedAt?: string;
+}
+
+export interface SuggestedQuestion {
+  intentId: DeterministicIntentId;
+  displayText: string;
+  /** Invocation count for this intent in the current tenant. */
+  usageRankScore: number;
 }
 
 export interface AskDeps {
@@ -93,6 +102,14 @@ interface LedgerCandidate {
 type QuestionIntent = "accounts_receivable" | "reconciliation" | "generic";
 
 type AggregateOperation = "count" | "sum" | "average";
+
+export type DeterministicIntentId =
+  | "transaction_count"
+  | "transaction_sum"
+  | "transaction_average"
+  | "transaction_listing"
+  | "cash_flow_listing"
+  | "invoice_listing";
 
 interface TransactionAggregateIntent {
   operation: AggregateOperation;
@@ -154,6 +171,14 @@ interface InvoiceListingRow {
   counterparty_id: string;
 }
 
+interface DeterministicIntentDefinition {
+  id: DeterministicIntentId;
+  displayText: string;
+  parse: (question: string, asOf: Date | null) => unknown | null;
+  answer: (client: TenantScopedClient, intent: unknown) => Promise<AskResult>;
+  isEligible: (client: TenantScopedClient, asOf: Date) => Promise<boolean>;
+}
+
 export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResult> {
   const key = dedupKey(opts);
   const cached = await deps.redis.get(cacheKey(key));
@@ -171,17 +196,13 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 
   const started = Date.now();
 
-  const aggregateIntent = parseTransactionAggregateIntent(opts.question, opts.asOf);
-  if (aggregateIntent !== null) {
-    const result = await answerTransactionAggregate(deps.client, aggregateIntent);
-    await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
-    recordQuestionMetrics(deps.metrics, opts, started, result.usage);
-    return result;
-  }
-
-  const listingIntent = parseStructuredListingIntent(opts.question, opts.asOf);
-  if (listingIntent !== null) {
-    const result = await answerStructuredListing(deps.client, listingIntent);
+  const deterministicIntent = resolveDeterministicIntent(opts.question, opts.asOf);
+  if (deterministicIntent !== null) {
+    const result = await deterministicIntent.definition.answer(
+      deps.client,
+      deterministicIntent.intent,
+    );
+    result.deterministicIntentId = deterministicIntent.definition.id;
     await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
     recordQuestionMetrics(deps.metrics, opts, started, result.usage);
     return result;
@@ -233,6 +254,66 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   recordQuestionMetrics(deps.metrics, opts, started, completion.usage);
 
   return result;
+}
+
+/**
+ * Records use of an executed deterministic intent. This runs in the same
+ * tenant-scoped request transaction as the question, so RLS prevents a usage
+ * count from being attributed to another tenant.
+ */
+export async function recordDeterministicIntentUsage(
+  client: TenantScopedClient,
+  intentId: DeterministicIntentId,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO wiki_question_intent_usage (
+       tenant_id, intent_id, invocation_count, first_invoked_at, last_invoked_at
+     )
+     VALUES (current_setting('app.tenant_id', true), $1, 1, now(), now())
+     ON CONFLICT (tenant_id, intent_id)
+     DO UPDATE SET
+       invocation_count = wiki_question_intent_usage.invocation_count + 1,
+       last_invoked_at = now()`,
+    [intentId],
+  );
+}
+
+/**
+ * Returns only questions backed by registered deterministic handlers. Adding a
+ * handler to DETERMINISTIC_INTENT_REGISTRY automatically opts it into this
+ * surface, subject to its own tenant-scoped eligibility query.
+ */
+export async function listSuggestedQuestions(
+  client: TenantScopedClient,
+  asOf: Date = new Date(),
+): Promise<SuggestedQuestion[]> {
+  const usage = await client.query<{ intent_id: string; invocation_count: string }>(
+    `SELECT intent_id, invocation_count::text AS invocation_count
+       FROM wiki_question_intent_usage
+      WHERE tenant_id = current_setting('app.tenant_id', true)`,
+  );
+  const usageByIntent = new Map(
+    usage.rows.map((row) => [row.intent_id, Number(row.invocation_count)]),
+  );
+  const eligibility = await Promise.all(
+    DETERMINISTIC_INTENT_REGISTRY.map(async (definition) => ({
+      definition,
+      eligible: await definition.isEligible(client, asOf),
+    })),
+  );
+
+  return eligibility
+    .filter((entry) => entry.eligible)
+    .map(({ definition }) => ({
+      intentId: definition.id,
+      displayText: definition.displayText,
+      usageRankScore: usageByIntent.get(definition.id) ?? 0,
+    }))
+    .sort(
+      (left, right) =>
+        right.usageRankScore - left.usageRankScore ||
+        left.displayText.localeCompare(right.displayText),
+    );
 }
 
 function recordQuestionMetrics(
@@ -910,6 +991,133 @@ function parseStructuredListingIntent(
     range,
     asOf,
   };
+}
+
+function parseAggregateOperationIntent(
+  operation: AggregateOperation,
+): (question: string, asOf: Date | null) => TransactionAggregateIntent | null {
+  return (question, asOf) => {
+    const intent = parseTransactionAggregateIntent(question, asOf);
+    return intent?.operation === operation ? intent : null;
+  };
+}
+
+function parseListingEntityIntent(
+  entity: ListingEntity,
+): (question: string, asOf: Date | null) => StructuredListingIntent | null {
+  return (question, asOf) => {
+    const intent = parseStructuredListingIntent(question, asOf);
+    return intent?.entity === entity ? intent : null;
+  };
+}
+
+async function hasEligibleTransactions(
+  client: TenantScopedClient,
+  asOf: Date,
+  range: DateRange | null,
+): Promise<boolean> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (range !== null) {
+    values.push(range.start, range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  values.push(asOf);
+  clauses.push(`transaction_date <= $${values.length}`);
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_transactions
+        WHERE ${clauses.join(" AND ")}
+     ) AS eligible`,
+    values,
+  );
+  return rows[0]?.eligible === true;
+}
+
+async function hasEligibleInvoices(
+  client: TenantScopedClient,
+  asOf: Date,
+  range: DateRange,
+): Promise<boolean> {
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_invoices
+        WHERE issue_date >= $1
+          AND issue_date < $2
+          AND issue_date <= $3
+     ) AS eligible`,
+    [range.start, range.end, asOf],
+  );
+  return rows[0]?.eligible === true;
+}
+
+function currentMonthRange(asOf: Date): DateRange {
+  const start = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() + 1, 1));
+  const monthName = start.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  return { start, end, label: `in ${monthName} ${start.getUTCFullYear()}` };
+}
+
+export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefinition[] = [
+  {
+    id: "transaction_count",
+    displayText: "How many transactions do I have this month?",
+    parse: parseAggregateOperationIntent("count"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_sum",
+    displayText: "What is my total transaction volume this month?",
+    parse: parseAggregateOperationIntent("sum"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_average",
+    displayText: "What is my average transaction amount this month?",
+    parse: parseAggregateOperationIntent("average"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_listing",
+    displayText: "Show my last 10 transactions",
+    parse: parseListingEntityIntent("transaction"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, null),
+  },
+  {
+    id: "cash_flow_listing",
+    displayText: "Show recent cash flow",
+    parse: parseListingEntityIntent("cash_flow"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, null),
+  },
+  {
+    id: "invoice_listing",
+    displayText: "List this month's invoices",
+    parse: parseListingEntityIntent("invoice"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleInvoices(client, asOf, currentMonthRange(asOf)),
+  },
+];
+
+function resolveDeterministicIntent(
+  question: string,
+  asOf: Date | null,
+): { definition: DeterministicIntentDefinition; intent: unknown } | null {
+  for (const definition of DETERMINISTIC_INTENT_REGISTRY) {
+    const intent = definition.parse(question, asOf);
+    if (intent !== null) return { definition, intent };
+  }
+  return null;
 }
 
 function parseListingLimit(question: string): number | null {

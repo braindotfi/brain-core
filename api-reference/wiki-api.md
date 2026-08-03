@@ -5,6 +5,7 @@ Natural-language and structured access to the tenant's memory graph. The Wiki is
 | Operation                        | Endpoint                                    |
 | -------------------------------- | ------------------------------------------- |
 | Ask a natural-language question  | `POST /v1/wiki/question`                    |
+| Get suggested questions          | `GET  /v1/wiki/suggested-questions`         |
 | Search entities                  | `GET  /v1/wiki/search`                      |
 | Get an entity                    | `GET  /v1/wiki/entity/{entity_id}`          |
 | Evidence chain for an entity     | `GET  /v1/wiki/entity/{entity_id}/evidence` |
@@ -48,6 +49,34 @@ Content-Type: application/json
 ```
 
 `question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). Transaction count, sum, and average questions with an unambiguous transaction scope run as deterministic Ledger queries. Listing questions with an explicit `show`, `list`, or `display` intent plus a recency, count, or date bound also route deterministically: transactions and cash flow return transaction rows, while invoice listings return invoice rows. Other questions use the LLM path and may incur per-call costs. `answered` is the machine-readable result status: `true` means the response is grounded or deterministic; `false` means `answer` is a refusal rather than an answer. Every response carries cited Ledger evidence.
+
+### Suggested Questions
+
+```http
+GET /v1/wiki/suggested-questions
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "suggestions": [
+    {
+      "intent_id": "transaction_listing",
+      "display_text": "Show my last 10 transactions",
+      "usage_rank_score": 4
+    }
+  ]
+}
+```
+
+This endpoint requires `wiki:read`. It returns only deterministic questions
+that are eligible against the calling tenant's current Ledger data. An intent
+with no matching rows is omitted. `usage_rank_score` is the calling tenant's
+all-time invocation count for that intent, so clients can rank suggestions
+without sharing usage data between tenants. The deterministic intent registry
+is the single source for both question execution and this endpoint, so a
+suggestion cannot advertise a question that the grounded Q&A layer cannot
+answer.
 
 ### Search Entities
 

@@ -131,7 +131,10 @@ contains raw internal JSON, boundary tokens, or prompt fragments. Evidence ids
 remain subset-filtered against the retrieved tenant-scoped rows. `/v1/wiki/question`
 returns `answered` separately from prose. Deterministic transaction count, total,
 average, and bounded transaction, cash-flow, or invoice listing questions return
-exact Ledger results with cited records.
+exact Ledger results with cited records. `GET /v1/wiki/suggested-questions`
+derives tenant-aware suggestions only from that deterministic registry. Each
+registered intent supplies its eligibility query, and eligible intents are
+ranked by tenant-local invocation count.
 
 Fiat rails have a default-on human approval floor. `wire` always requires a
 recorded human approval when policy allows. ACH and card can execute

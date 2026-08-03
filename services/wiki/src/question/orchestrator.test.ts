@@ -1,5 +1,5 @@
 import type { Redis } from "ioredis";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DeterministicEmbeddingAdapter,
   GROUNDED_ANSWER_FALLBACK,
@@ -11,7 +11,12 @@ import {
   llmKey,
   type TenantScopedClient,
 } from "@brain/shared";
-import { WIKI_ANSWER_SYSTEM_PROMPT, askWiki } from "./orchestrator.js";
+import {
+  WIKI_ANSWER_SYSTEM_PROMPT,
+  askWiki,
+  listSuggestedQuestions,
+  recordDeterministicIntentUsage,
+} from "./orchestrator.js";
 
 /**
  * v0.3 — orchestrator grounds in Ledger rows. The fake client returns
@@ -80,6 +85,7 @@ interface FakeRows {
     status: string;
     counterparty_id: string;
   }>;
+  intentUsage?: Array<{ intent_id: string; invocation_count: string }>;
 }
 
 function fakeRedis(): {
@@ -102,6 +108,15 @@ function fakeRedis(): {
 function fakeClient(rows: FakeRows): TenantScopedClient {
   return {
     query: async (text: string, values?: unknown[]) => {
+      if (text.includes("FROM wiki_question_intent_usage")) {
+        return {
+          rows: (rows.intentUsage ?? []) as never[],
+          rowCount: rows.intentUsage?.length ?? 0,
+        };
+      }
+      if (text.includes("INSERT INTO wiki_question_intent_usage")) {
+        return { rows: [], rowCount: 1 };
+      }
       if (text.includes("FROM ledger_reconciliation_matches")) {
         return {
           rows: (rows.reconciliationMatches ?? []) as never[],
@@ -109,6 +124,26 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         };
       }
       if (text.includes("FROM ledger_transactions")) {
+        if (text.includes("SELECT EXISTS")) {
+          const parameters = values ?? [];
+          let parameterIndex = 0;
+          let transactions = rows.transactions;
+          if (text.includes("transaction_date >= $")) {
+            const start = parameters[parameterIndex++] as Date;
+            const end = parameters[parameterIndex++] as Date;
+            transactions = transactions.filter(
+              (transaction) =>
+                transaction.transaction_date >= start && transaction.transaction_date < end,
+            );
+          }
+          if (text.includes("transaction_date <= $")) {
+            const asOf = parameters[parameterIndex++] as Date;
+            transactions = transactions.filter(
+              (transaction) => transaction.transaction_date <= asOf,
+            );
+          }
+          return { rows: [{ eligible: transactions.length > 0 }] as never[], rowCount: 1 };
+        }
         if (text.includes("COUNT(*) OVER ()")) {
           const parameters = values ?? [];
           let parameterIndex = 0;
@@ -189,6 +224,9 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         if (text.includes("issue_date <= $")) {
           const asOf = parameters[parameterIndex++] as Date;
           invoices = invoices.filter((invoice) => invoice.issue_date <= asOf);
+        }
+        if (text.includes("SELECT EXISTS")) {
+          return { rows: [{ eligible: invoices.length > 0 }] as never[], rowCount: 1 };
         }
         const limit = parameters.at(-1);
         if (typeof limit === "number") invoices = invoices.slice(0, limit);
@@ -698,6 +736,127 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.evidence).toEqual([
       expect.objectContaining({ entityType: "invoice", entityId: "inv_JULY" }),
     ]);
+  });
+
+  it("derives eligible suggested questions only from registered deterministic intents", async () => {
+    const suggestions = await listSuggestedQuestions(
+      fakeClient({
+        transactions: [
+          {
+            id: "tx_JULY",
+            amount: "125.00",
+            currency: "USD",
+            direction: "outflow",
+            transaction_date: new Date("2026-07-12T00:00:00Z"),
+            description_normalized: "Supplier payment",
+            description_raw: null,
+            counterparty_id: null,
+          },
+        ],
+        obligations: [],
+        counterparties: [],
+        invoices: [
+          {
+            id: "inv_JULY",
+            invoice_number: "INV-2040",
+            amount_due: "400.00",
+            amount_paid: "0.00",
+            currency: "USD",
+            issue_date: new Date("2026-07-10T00:00:00Z"),
+            due_date: new Date("2026-07-31T00:00:00Z"),
+            status: "sent",
+            counterparty_id: "cp_CUSTOMER",
+          },
+        ],
+        intentUsage: [
+          { intent_id: "cash_flow_listing", invocation_count: "5" },
+          { intent_id: "transaction_listing", invocation_count: "2" },
+          { intent_id: "unknown_future_intent", invocation_count: "99" },
+        ],
+      }),
+      new Date("2026-07-31T23:59:59Z"),
+    );
+
+    expect(suggestions).toEqual([
+      {
+        intentId: "cash_flow_listing",
+        displayText: "Show recent cash flow",
+        usageRankScore: 5,
+      },
+      {
+        intentId: "transaction_listing",
+        displayText: "Show my last 10 transactions",
+        usageRankScore: 2,
+      },
+      {
+        intentId: "transaction_count",
+        displayText: "How many transactions do I have this month?",
+        usageRankScore: 0,
+      },
+      {
+        intentId: "invoice_listing",
+        displayText: "List this month's invoices",
+        usageRankScore: 0,
+      },
+      {
+        intentId: "transaction_average",
+        displayText: "What is my average transaction amount this month?",
+        usageRankScore: 0,
+      },
+      {
+        intentId: "transaction_sum",
+        displayText: "What is my total transaction volume this month?",
+        usageRankScore: 0,
+      },
+    ]);
+  });
+
+  it("marks each deterministic result with its registry intent id", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [
+            {
+              id: "tx_JULY",
+              amount: "125.00",
+              currency: "USD",
+              direction: "outflow",
+              transaction_date: new Date("2026-07-12T00:00:00Z"),
+              description_normalized: "Supplier payment",
+              description_raw: null,
+              counterparty_id: null,
+            },
+          ],
+          obligations: [],
+          counterparties: [],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("deterministic questions must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Show last 10 transactions",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-list",
+      },
+    );
+
+    expect(result.deterministicIntentId).toBe("transaction_listing");
+  });
+
+  it("writes deterministic usage through the tenant-scoped usage table", async () => {
+    const query = vi.fn(async () => ({ rows: [], rowCount: 1 }));
+    const client = { query } as unknown as TenantScopedClient;
+    await recordDeterministicIntentUsage(client, "transaction_count");
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO wiki_question_intent_usage"),
+      ["transaction_count"],
+    );
   });
 
   it("exposes no evidence when the generic path retrieves rows but the LLM cites none", async () => {

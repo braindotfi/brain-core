@@ -1151,6 +1151,26 @@
           "openapi": "documented:/wiki/question"
         },
         {
+          "method": "GET",
+          "path": "/v1/wiki/suggested-questions",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "none",
+          "response_shape": "200 { suggestions: [{ intent_id, display_text, usage_rank_score }] }; only eligible deterministic Wiki-question intents are returned, ranked by tenant-local invocation count",
+          "example_request": "GET /v1/wiki/suggested-questions",
+          "example_response": {
+            "suggestions": [
+              {
+                "intent_id": "transaction_listing",
+                "display_text": "Show my last 10 transactions",
+                "usage_rank_score": 4
+              }
+            ]
+          },
+          "openapi": "documented:/wiki/suggested-questions"
+        },
+        {
           "method": "POST",
           "path": "/v1/wiki/annotate",
           "auth": "bearer",
