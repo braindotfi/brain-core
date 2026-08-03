@@ -32,7 +32,7 @@
     "@brain/schemas": "workspace:*",
     "@brain/policy": "workspace:*",
     "@brain/ledger": "workspace:*",
-    "fastify": "^5.0.0",
+    "fastify": "^5.11.0",
     "pg": "^8.22.0"
   }
 }
