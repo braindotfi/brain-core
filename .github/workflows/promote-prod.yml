@@ -215,9 +215,13 @@ jobs:
       # Pre-flight gate, not the post-recreate smoke below (that one stays
       # where it is). auth opens three Postgres pools before it starts
       # listening, so give it a bounded wait rather than a single curl.
-      # auth.brain.fi DNS does not resolve yet, so this SSHes into the VM and
-      # curls the container's 127.0.0.1-bound port directly instead of going
-      # over Caddy/DNS, same as the post-recreate auth smoke test below.
+      # Deliberately probes the container's 127.0.0.1-bound port over SSH
+      # rather than https://auth.brain.fi/healthz. This gate answers one
+      # question only, "is the auth container up on the new image", and it has
+      # to answer it before the verifiers are recreated. Going over Caddy/DNS
+      # would fold edge health into that answer and fail the promote for a
+      # reason that has nothing to do with auth. Same for the post-recreate
+      # smoke below.
       - name: Wait for auth healthy on VM before recreating verifiers
         run: |
           expected="${{ steps.resolve.outputs.sha }}"
@@ -320,9 +324,10 @@ jobs:
       # node process that exits(1) moments later (e.g. missing/malformed
       # AUTH_SIGN_KEY, see services/auth/src/main.ts) is invisible to that
       # exit code and would otherwise ship a green promote with a dead
-      # authorization server. auth.brain.fi DNS does not resolve yet
-      # (OAUTH-AS-PLAN.md), so this SSHes into the VM and curls the container's
-      # 127.0.0.1-bound port directly instead of going over Caddy/DNS.
+      # authorization server. Probes the container's 127.0.0.1-bound port over
+      # SSH rather than https://auth.brain.fi/healthz, for the same reason as
+      # the pre-flight gate above: this asserts the container is serving the
+      # expected commit, not that the edge in front of it is healthy.
       - name: Smoke test auth /healthz
         run: |
           expected="${{ steps.resolve.outputs.sha }}"
