@@ -290,7 +290,14 @@ describe("publishAnchor", () => {
   });
 
   it("logs loudly (through the structured logger, not console) instead of silently recycling a terminally reverted row for the same recomputed window", async () => {
-    const revertedRow = anchorRow({ id: "anchor_reverted", onchain_status: "reverted" });
+    // period_start/period_end differ from opts so the assertion below proves
+    // the log reads the stored row, not the (tainted) request-scoped opts.
+    const revertedRow = anchorRow({
+      id: "anchor_reverted",
+      onchain_status: "reverted",
+      period_start: new Date("2020-01-01T00:00:00Z"),
+      period_end: new Date("2020-01-02T00:00:00Z"),
+    });
     vi.mocked(repo.findAnchorByRoot).mockResolvedValueOnce(revertedRow);
     const logger = { error: vi.fn() } as unknown as Logger;
 
@@ -298,8 +305,16 @@ describe("publishAnchor", () => {
 
     expect(result).toBe(revertedRow);
     expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ anchorId: "anchor_reverted" }),
+      {
+        anchorId: "anchor_reverted",
+        periodStart: revertedRow.period_start,
+        periodEnd: revertedRow.period_end,
+      },
       expect.stringContaining("terminally reverted anchor"),
     );
+    // tenantId is CodeQL-tainted from the authenticated request path on the
+    // manual publish endpoint; it must never appear in this log line.
+    const loggedFields = vi.mocked(logger.error).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(loggedFields).not.toHaveProperty("tenantId");
   });
 });

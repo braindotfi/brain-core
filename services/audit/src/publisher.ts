@@ -150,12 +150,21 @@ export async function createPendingAnchor(
         // rejected these exact events for a reason), not something to
         // auto-retry. Routed through the structured logger (not console),
         // matching how services/api/main.ts logs this same shape.
+        //
+        // tenantId is deliberately omitted: on the POST /audit/anchor/publish
+        // path opts.tenantId traces back to the authenticated principal, and
+        // CodeQL's js/clear-text-logging taints it end to end regardless of
+        // sink. anchorId already uniquely identifies the row, and its tenant
+        // is one `SELECT tenant_id FROM audit_anchors WHERE id = ...` away --
+        // do not add tenantId back here. periodStart/periodEnd are read off
+        // `existing` (the stored row) rather than `opts` for the same taint
+        // reason, and it is more correct anyway: it reports what is actually
+        // persisted, not the recomputed window that produced the same root.
         (opts.logger ?? defaultLogger).error(
           {
-            tenantId: opts.tenantId,
             anchorId: existing.id,
-            periodStart: opts.periodStart,
-            periodEnd: opts.periodEnd,
+            periodStart: existing.period_start,
+            periodEnd: existing.period_end,
           },
           "recomputed anchor window matches a terminally reverted anchor; it will never advance covered_to without operator intervention",
         );
