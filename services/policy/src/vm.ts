@@ -29,6 +29,8 @@ export interface Action {
   confidence?: number | null;
   evidence_score?: number | null;
   risk_level?: "low" | "medium" | "high" | "critical" | null;
+  /** Gate-time counterparty trust state. No rule primitive consumes it yet. */
+  counterparty_trust_status?: "unreviewed" | "trusted" | "paused" | "acknowledged" | null;
 }
 
 /** Total order over risk levels for the agent.risk_level.lte primitive. */

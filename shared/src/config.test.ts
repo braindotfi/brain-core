@@ -28,6 +28,7 @@ describe("parseConfig", () => {
     expect(cfg.REQUEST_BODY_LIMIT_BYTES).toBe(52_428_800);
     expect(cfg.AUTH_ISSUER).toBe("https://auth.brain.fi");
     expect(cfg.AUTH_CLOCK_TOLERANCE_SECONDS).toBe(5);
+    expect(cfg.BRAIN_TRUST_GATE_ENABLED).toBe(false);
   });
 
   it("rejects missing DATABASE_URL with a helpful message", () => {

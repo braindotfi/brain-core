@@ -145,6 +145,7 @@ export interface BuildPaymentIntentServiceDeps {
     input: { tenantId: string; agentId: string; amount: string; currency: string },
   ) => Promise<void>;
   fiatHumanApprovalFloorEnabled?: boolean;
+  trustGateEnabled?: boolean;
 }
 
 export function buildPaymentIntentService(
@@ -186,5 +187,6 @@ export function buildPaymentIntentService(
     ...(deps.enqueue !== undefined ? { enqueue: deps.enqueue } : {}),
     ...(deps.recordAgentSpend !== undefined ? { recordAgentSpend: deps.recordAgentSpend } : {}),
     fiatHumanApprovalFloorEnabled: deps.fiatHumanApprovalFloorEnabled ?? true,
+    trustGateEnabled: deps.trustGateEnabled ?? false,
   });
 }

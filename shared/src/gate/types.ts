@@ -25,6 +25,8 @@ export type GateCheckName =
   | "onchain_settlement_permitted"
   | "source_account_allowed"
   | "counterparty_allowed"
+  // 5.25 - counterparty trust state, gated by BRAIN_TRUST_GATE_ENABLED.
+  | "counterparty_trust_allowed"
   // 5.5 — agent payee registered + attested in BrainMCPAgentRegistry, not paused (RFC 0001 §6.3).
   | "agent_counterparty_attested"
   | "counterparty_verified"

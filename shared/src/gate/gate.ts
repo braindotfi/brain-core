@@ -65,6 +65,11 @@ export interface GatePaymentIntent {
   evidence_score?: number | null;
   /** Agent-output risk passed into policy as `agent.risk_level.lte`. */
   risk_level?: "low" | "medium" | "high" | "critical" | null;
+  /**
+   * Counterparty trust state resolved at gate time when the trust gate is
+   * enabled. This is policy input only. Existing policies do not reference it.
+   */
+  counterparty_trust_status?: CounterpartyTrustStatus | null;
   /** Optional linkage used by evidence semantic validation (H-21, check 9.5). */
   invoice_id?: string | null;
   obligation_id?: string | null;
@@ -179,6 +184,12 @@ export interface GateCounterparty {
   risk_level: string | null;
   verified_status: string | null;
   /**
+   * Ledger-owned counterparty trust state. Optional for backward-compatible
+   * loaders; the enabled trust gate treats a missing or invalid value as
+   * unknown and denies before execution.
+   */
+  trust_status?: CounterpartyTrustStatus | string | null;
+  /**
    * The counterparty's `agent_id` when `type === "agent"` (Phase 1B). Threaded to
    * the attestation read (check 5.5). Absent/null for non-agent counterparties.
    */
@@ -191,6 +202,8 @@ export interface GateCounterparty {
    */
   onchain_address?: string | null;
 }
+
+export type CounterpartyTrustStatus = "unreviewed" | "trusted" | "paused" | "acknowledged";
 
 export interface GateApprovalState {
   signedRoles: string[];
@@ -340,6 +353,11 @@ export interface GateDependencies {
    */
   fiatHumanApprovalFloorEnabled?: boolean | undefined;
   /**
+   * Feature-gated check 5.25. Defaults off so the existing section 6 trace and
+   * outcomes remain unchanged until a deliberate environment enablement.
+   */
+  trustGateEnabled?: boolean | undefined;
+  /**
    * Optional metrics sink (item 11). When wired, the gate emits at termination:
    *   - brain.gate.check.count   {check, outcome ∈ pass|fail|not_applicable, dry_run}
    *   - brain.gate.outcome.count {outcome ∈ ok|fail, dry_run}
@@ -479,6 +497,14 @@ export async function runPreExecutionGate(
           outcome: checkOutcome,
           dry_run: dryRun,
         });
+        if (!c.passed && c.name === "counterparty_trust_allowed") {
+          deps.metrics.increment("brain.gate.counterparty_trust_denial.count", {
+            tenant_id: input.ctx.tenantId,
+            reason: String(c.detail?.reason ?? "counterparty_trust_unknown"),
+            trust_status: String(c.detail?.trust_status ?? "unknown"),
+            dry_run: dryRun,
+          });
+        }
       }
     } catch {
       // Metrics are observability only; a telemetry sink must never decide
@@ -581,7 +607,33 @@ export async function runPreExecutionGate(
   // intent may already carry one from creation, but Phase-4 re-evaluates
   // every time execute is called so the snapshot is fresh against the
   // current Ledger state.)
-  const decision = await deps.evaluatePolicy(input.intent, { dryRun });
+  // When enabled, load once before policy evaluation so the policy VM receives
+  // the gate-time trust state. The same loaded row is reused by checks 5-6; no
+  // second counterparty query is introduced. Loader errors are retained as an
+  // unknown trust state and fail closed at check 5.25.
+  const trustGateEnabled = deps.trustGateEnabled === true;
+  let preloadedCounterparty: GateCounterparty | null | undefined;
+  let counterpartyLoadFailed = false;
+  if (trustGateEnabled) {
+    try {
+      preloadedCounterparty = await deps.resolveCounterparty(input.intent.destination_counterparty_id);
+    } catch {
+      preloadedCounterparty = null;
+      counterpartyLoadFailed = true;
+    }
+  }
+  const policyIntent: GatePaymentIntent = trustGateEnabled
+    ? {
+        ...input.intent,
+        counterparty_trust_status:
+          preloadedCounterparty !== null &&
+          preloadedCounterparty !== undefined &&
+          isCounterpartyTrustStatus(preloadedCounterparty.trust_status)
+            ? preloadedCounterparty.trust_status
+            : null,
+      }
+    : input.intent;
+  const decision = await deps.evaluatePolicy(policyIntent, { dryRun });
   outcome = decision.outcome;
   requiredApprovers = decision.required_approvers;
   trace = decision.trace;
@@ -638,14 +690,45 @@ export async function runPreExecutionGate(
   pass(checks, 4, "source_account_allowed");
 
   // 5 — counterparty allowed (exists, not sanctioned).
-  const counterparty = await deps.resolveCounterparty(input.intent.destination_counterparty_id);
+  const counterparty = trustGateEnabled
+    ? preloadedCounterparty ?? null
+    : await deps.resolveCounterparty(input.intent.destination_counterparty_id);
   if (counterparty === null) {
+    if (trustGateEnabled) {
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_unknown",
+        trust_status: "unknown",
+        ...(counterpartyLoadFailed ? { loader_failure: true } : {}),
+      });
+    }
     return failGate(5, "counterparty_allowed", { reason: "counterparty not found" });
   }
   if (counterparty.risk_level === "sanctioned") {
     return failGate(5, "counterparty_allowed", { reason: "counterparty sanctioned" });
   }
   pass(checks, 5, "counterparty_allowed");
+
+  // 5.25 - counterparty trust. This is a deterministic, non-policy-overridable
+  // deny: a paused trust state blocks execution, and a missing or malformed
+  // state fails closed. Trusted, unreviewed, and acknowledged counterparties
+  // preserve the existing path. The feature flag keeps this check absent until
+  // a deliberate staging-first enablement.
+  if (trustGateEnabled) {
+    const trustStatus = counterparty.trust_status;
+    if (!isCounterpartyTrustStatus(trustStatus)) {
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_unknown",
+        trust_status: trustStatus ?? "unknown",
+      });
+    }
+    if (trustStatus === "paused") {
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_paused",
+        trust_status: trustStatus,
+      });
+    }
+    pass(checks, 5.25, "counterparty_trust_allowed", { trust_status: trustStatus });
+  }
 
   // 5.5 — agent-counterparty attestation (RFC 0001 §6.3). When the attestation
   // reader is wired AND the payee is an agent counterparty (Phase 1B), it must be
@@ -1086,6 +1169,15 @@ function pass(
   detail?: Record<string, unknown>,
 ): void {
   checks.push({ index, name, passed: true, ...(detail !== undefined ? { detail } : {}) });
+}
+
+function isCounterpartyTrustStatus(value: unknown): value is CounterpartyTrustStatus {
+  return (
+    value === "unreviewed" ||
+    value === "trusted" ||
+    value === "paused" ||
+    value === "acknowledged"
+  );
 }
 
 /**

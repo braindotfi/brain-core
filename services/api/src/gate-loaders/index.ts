@@ -102,6 +102,7 @@ export function makeResolveCounterparty(
       type: cp.type,
       risk_level: cp.risk_level ?? null,
       verified_status: cp.verified_status ?? null,
+      trust_status: cp.trust_status,
       // RFC 0001 §6.3 / §6.1 — agent attestation (check 5.5) + x402 recipient
       // match (check 6.5). Null for non-agent / off-chain counterparties.
       agent_id: cp.agent_id ?? null,

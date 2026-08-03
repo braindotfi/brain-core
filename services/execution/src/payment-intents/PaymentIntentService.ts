@@ -293,6 +293,8 @@ export interface PaymentIntentServiceDeps {
   ) => Promise<void>;
   /** Operational kill-switch for the fiat human approval floor. Defaults on. */
   fiatHumanApprovalFloorEnabled?: boolean;
+  /** Feature gate for section 6 counterparty trust enforcement. Defaults off. */
+  trustGateEnabled?: boolean;
 }
 
 /** On-chain dispatch params merged into the outbox payload by PaymentIntentService.execute. */
@@ -758,6 +760,7 @@ export class PaymentIntentService implements IPaymentIntentService {
       resolveCounterparty: (cpId) => this.deps.resolveCounterparty(ctx, cpId),
       evaluatePolicy: (i) => this.deps.evaluatePolicy(ctx, i),
       fiatHumanApprovalFloorEnabled: this.deps.fiatHumanApprovalFloorEnabled,
+      trustGateEnabled: this.deps.trustGateEnabled,
       resolveApprovals: async (intentId, activePolicyVersion) => ({
         // P0.4: count only currently-valid signatures; stale (superseded policy
         // version) and revoked signatures are excluded from quorum.

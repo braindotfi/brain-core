@@ -189,6 +189,9 @@ export class PolicyService {
       confidence: intent.confidence ?? null,
       evidence_score: intent.evidence_score ?? null,
       risk_level: isRiskLevel(intent.risk_level) ? intent.risk_level : null,
+      counterparty_trust_status: isCounterpartyTrustStatus(intent.counterparty_trust_status)
+        ? intent.counterparty_trust_status
+        : null,
       ...(spendInWindow !== undefined ? { spend_in_window: spendInWindow } : {}),
       ...(txCountInWindow !== undefined ? { tx_count_in_window: txCountInWindow } : {}),
     };
@@ -351,6 +354,17 @@ function isRiskLevel(v: unknown): v is NonNullable<Action["risk_level"]> {
   return v === "low" || v === "medium" || v === "high" || v === "critical";
 }
 
+function isCounterpartyTrustStatus(
+  value: unknown,
+): value is NonNullable<Action["counterparty_trust_status"]> {
+  return (
+    value === "unreviewed" ||
+    value === "trusted" ||
+    value === "paused" ||
+    value === "acknowledged"
+  );
+}
+
 function rawString(raw: Record<string, unknown>, key: string): string | null {
   const value = raw[key];
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -433,6 +447,9 @@ function sha256Intent(intent: GatePaymentIntent): string {
     confidence: intent.confidence ?? null,
     evidence_score: intent.evidence_score ?? null,
     risk_level: intent.risk_level ?? null,
+    ...(intent.counterparty_trust_status !== undefined
+      ? { counterparty_trust_status: intent.counterparty_trust_status }
+      : {}),
   });
   return createHash("sha256").update(payload).digest("hex");
 }
