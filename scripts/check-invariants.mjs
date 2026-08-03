@@ -32,18 +32,22 @@ check(
 );
 
 const trustCheckStart = trustGateSource.indexOf("// 5.25 - counterparty trust.");
-const trustCheckEnd = trustGateSource.indexOf("// 5.5", trustCheckStart);
+const policyEvaluationIndex = trustGateSource.indexOf(
+  "const decision = await deps.evaluatePolicy(policyIntent, { dryRun });",
+);
+const trustCheckEnd = policyEvaluationIndex;
 const trustCheckBlock = trustGateSource.slice(trustCheckStart, trustCheckEnd);
 check(
-  "enabled counterparty trust gate fails closed for paused and unknown state",
+  "enabled counterparty trust gate precedes policy and fails closed",
   trustCheckStart >= 0 &&
+    policyEvaluationIndex > trustCheckStart &&
     trustCheckEnd > trustCheckStart &&
     trustGateSource.includes("const trustGateEnabled = deps.trustGateEnabled === true") &&
     trustCheckBlock.includes('return failGate(5.25, "counterparty_trust_allowed"') &&
     trustCheckBlock.includes('reason: "counterparty_trust_paused"') &&
     trustCheckBlock.includes('reason: "counterparty_trust_unknown"') &&
-    trustCheckBlock.includes("if (!isCounterpartyTrustStatus(trustStatus))"),
-  "when BRAIN_TRUST_GATE_ENABLED is wired, paused, missing, and malformed counterparty trust state must deny before execution",
+    trustCheckBlock.includes("if (!isCounterpartyTrustStatus(preloadedCounterparty.trust_status))"),
+  "when BRAIN_TRUST_GATE_ENABLED is wired, trust denials must precede policy evaluation and fail closed",
 );
 
 const authorizationGate = read("services/execution/src/members/authorizeApproval.ts");

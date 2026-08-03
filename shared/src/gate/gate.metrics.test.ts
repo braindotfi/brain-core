@@ -8,7 +8,7 @@
  * refactor cannot quietly drop the signal.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockMetrics } from "../metrics.js";
 import { InMemoryAuditEmitter } from "../audit/emitter.js";
 import { runPreExecutionGate } from "./gate.js";
@@ -182,11 +182,17 @@ describe("§6 gate — metrics emission (item 11)", () => {
 
   it("emits a tenant-scoped trust-denial metric with the observed state", async () => {
     const metrics = new MockMetrics();
+    const evaluatePolicy = vi.fn(async () => ({
+      ...makeDecision(),
+      outcome: "reject" as const,
+      matched_rule_id: "block-all",
+    }));
     const result = await runPreExecutionGate(
       makeDeps({
         metrics,
         trustGateEnabled: true,
         resolveCounterparty: async () => ({ ...TRUSTED_CP, trust_status: "paused" }),
+        evaluatePolicy,
       }),
       { ctx, principal: defaultPrincipal(), intent: defaultIntent() },
     );
@@ -200,5 +206,6 @@ describe("§6 gate — metrics emission (item 11)", () => {
       trust_status: "paused",
       dry_run: false,
     });
+    expect(evaluatePolicy).not.toHaveBeenCalled();
   });
 });

@@ -112,26 +112,34 @@ describe("section 6 gate counterparty trust", () => {
     },
   );
 
-  it("denies paused counterparties without allowing policy to override the state", async () => {
-    const result = await run({
-      trustGateEnabled: true,
-      resolveCounterparty: async () => counterparty("paused"),
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      failedCheck: {
-        index: 5.25,
-        name: "counterparty_trust_allowed",
-        detail: {
-          reason: "counterparty_trust_paused",
-          trust_status: "paused",
+  it.each([
+    ["allowing", decision],
+    ["rejecting", { ...decision, outcome: "reject" as const, matched_rule_id: "block-all" }],
+  ])(
+    "denies paused counterparties before an %s policy can mask the trust reason",
+    async (_label, policy) => {
+      const evaluatePolicy = vi.fn(async () => policy);
+      const result = await run({
+        trustGateEnabled: true,
+        resolveCounterparty: async () => counterparty("paused"),
+        evaluatePolicy,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        failedCheck: {
+          index: 5.25,
+          name: "counterparty_trust_allowed",
+          detail: {
+            reason: "counterparty_trust_paused",
+            trust_status: "paused",
+          },
         },
-      },
-    });
-  });
+      });
+      expect(evaluatePolicy).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
-    ["missing counterparty", async () => null],
     ["missing trust status", async () => counterparty(null)],
     ["unknown trust status", async () => counterparty("legacy" as string)],
   ])("fails closed for %s", async (_label, resolveCounterparty) => {
@@ -144,6 +152,46 @@ describe("section 6 gate counterparty trust", () => {
         detail: { reason: "counterparty_trust_unknown" },
       },
     });
+  });
+
+  it("denies an unknown trust status before a rejecting policy can mask the trust reason", async () => {
+    const evaluatePolicy = vi.fn(async () => ({
+      ...decision,
+      outcome: "reject" as const,
+      matched_rule_id: "block-all",
+    }));
+    const result = await run({
+      trustGateEnabled: true,
+      resolveCounterparty: async () => counterparty("legacy" as string),
+      evaluatePolicy,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failedCheck: {
+        index: 5.25,
+        name: "counterparty_trust_allowed",
+        detail: { reason: "counterparty_trust_unknown", trust_status: "legacy" },
+      },
+    });
+    expect(evaluatePolicy).not.toHaveBeenCalled();
+  });
+
+  it("preserves the legacy Check 5 missing-counterparty failure while enabled", async () => {
+    const missing = async () => null;
+    const flagOff = await run({ resolveCounterparty: missing });
+    const flagOn = await run({ trustGateEnabled: true, resolveCounterparty: missing });
+    expect(flagOn).toMatchObject({
+      ok: false,
+      failedCheck: {
+        index: 5,
+        name: "counterparty_allowed",
+        detail: { reason: "counterparty not found" },
+      },
+    });
+    expect(flagOn.ok).toBe(false);
+    expect(flagOff.ok).toBe(false);
+    if (flagOn.ok || flagOff.ok) throw new Error("missing counterparty unexpectedly passed");
+    expect(flagOn.failedCheck).toEqual(flagOff.failedCheck);
   });
 
   it("fails closed when the shared counterparty loader throws", async () => {

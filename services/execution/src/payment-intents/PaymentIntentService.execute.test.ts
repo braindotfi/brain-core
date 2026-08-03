@@ -206,7 +206,11 @@ function makeService(
     client: TenantScopedClient,
     input: { tenantId: string; agentId: string; amount: string; currency: string },
   ) => Promise<void>,
-  options: { trustGateEnabled?: boolean; counterparty?: GateCounterparty } = {},
+  options: {
+    trustGateEnabled?: boolean;
+    counterparty?: GateCounterparty;
+    evaluatePolicy?: () => Promise<GatePolicyDecision>;
+  } = {},
 ): PaymentIntentService {
   const approvals = new ApprovalService({
     pool,
@@ -222,7 +226,8 @@ function makeService(
     resolveAgent: async (_ctx, _id) => GATE_AGENT,
     resolveAccount: async (_ctx, _id) => GATE_ACCOUNT,
     resolveCounterparty: async (_ctx, _id) => options.counterparty ?? GATE_CP,
-    evaluatePolicy: async (_ctx, _intent) => POLICY_DECISION,
+    evaluatePolicy: async (_ctx, _intent) =>
+      options.evaluatePolicy === undefined ? POLICY_DECISION : options.evaluatePolicy(),
     resolvePrincipal: async (_ctx) => GATE_PRINCIPAL,
     ...(recordAgentSpend !== undefined ? { recordAgentSpend } : {}),
     ...(options.trustGateEnabled === true ? { trustGateEnabled: true } : {}),
@@ -681,9 +686,15 @@ describe("PaymentIntentService.execute — gate failure path", () => {
       }
       return { rows: [], rowCount: 0 };
     });
+    const evaluatePolicy = vi.fn(async () => ({
+      ...POLICY_DECISION,
+      outcome: "reject" as const,
+      matched_rule_id: "block-all",
+    }));
     const service = makeService(pool, audit, undefined, {
       trustGateEnabled: true,
       counterparty: { ...GATE_CP, trust_status: "paused" },
+      evaluatePolicy,
     });
 
     await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
@@ -706,6 +717,7 @@ describe("PaymentIntentService.execute — gate failure path", () => {
         trust_status: "paused",
       },
     });
+    expect(evaluatePolicy).not.toHaveBeenCalled();
   });
 
   it("throws payment_intent_invalid_state when intent is not approved", async () => {
