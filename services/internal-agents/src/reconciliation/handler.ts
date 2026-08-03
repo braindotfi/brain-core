@@ -40,6 +40,8 @@ interface RankedCandidate extends ReconciliationCandidate {
 }
 
 const CONFIDENCE_FLOOR = 0.7;
+// Below this score, the candidate has no amount or counterparty signal, only weak date proximity.
+const INFORMATIONAL_CONFIDENCE_THRESHOLD = 0.3;
 
 function buildReconciliationProposal(input: HandlerInput): ProposedAction {
   const transactionId = requireStringField(input.context, "transaction_id");
@@ -74,6 +76,7 @@ function buildReconciliationProposal(input: HandlerInput): ProposedAction {
 
   return {
     channel: "agent",
+    informational: !matched && confidenceScore < INFORMATIONAL_CONFIDENCE_THRESHOLD,
     action: {
       type: "reconciliation",
       kind: "agent_action",

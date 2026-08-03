@@ -54,6 +54,24 @@ const COMPLETE_COLLECTIONS_HANDLER: InternalAgentHandler = {
   }),
 };
 
+const INFORMATIONAL_RECONCILIATION_HANDLER: InternalAgentHandler = {
+  agent_key: "reconciliation",
+  actions: ["propose_match"],
+  build: (input) => ({
+    channel: "agent",
+    informational: true,
+    action: {
+      type: "reconciliation",
+      match_type: "no_match",
+      left_entity_id: "tx_meridian",
+      right_entity_id: null,
+      confidence_score: 0.15,
+      explanation: "No credible reconciliation match was found.",
+      evidence_refs: input.evidence.items.map((item) => item.ref),
+    },
+  }),
+};
+
 function makeStore(): {
   store: AgentRunStore;
   runs: RecordRunInput[];
@@ -174,6 +192,48 @@ describe("AgentRunService (shadow mode)", () => {
     expect(result.status).toBe("proposal_created");
     expect(proposed).toBe(1);
     expect(runs.at(-1)?.proposalId).toBe("prop_1");
+  });
+
+  it("records a low-confidence reconciliation result as notify_only without a proposal", async () => {
+    const { store, runs } = makeStore();
+    let proposed = 0;
+    const reconciliationEvidence: Evidence[] = [{ kind: "transaction", ref: "tx_meridian" }];
+    const svc = makeService(
+      store,
+      ["reconciliation_review"],
+      () => (proposed += 1),
+      () => {},
+      {
+        isShadowed: () => false,
+        evidence: reconciliationEvidence,
+        routerEvidence: reconciliationEvidence,
+        handlers: {
+          ...internalAgentHandlers,
+          reconciliation: INFORMATIONAL_RECONCILIATION_HANDLER,
+        },
+      },
+    );
+
+    const result = await svc.run(CTX, {
+      tenant_id: "tnt_acme",
+      event: "transaction.unreconciled",
+    });
+
+    expect(result.selected_agent_id).toBe("reconciliation");
+    expect(result.status).toBe("notify_only");
+    expect(result.proposed).toBeUndefined();
+    expect(proposed).toBe(0);
+    expect(runs.at(-1)).toMatchObject({
+      executionMode: "notify_only",
+      status: "notify_only",
+      failureReason: "informational_low_confidence_reconciliation",
+      reason: {
+        informational: {
+          reason: "low_confidence_reconciliation",
+          confidence_score: 0.15,
+        },
+      },
+    });
   });
 
   it("records a no_match routing decision and no run", async () => {

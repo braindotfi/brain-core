@@ -21,7 +21,12 @@ import type { InternalAgentDefinition } from "@brain/schemas";
 import type { EvidenceBundle, EvidenceRef } from "./evidence.js";
 
 export type ProposedAction =
-  | { readonly channel: "agent"; readonly action: Record<string, unknown> }
+  | {
+      readonly channel: "agent";
+      readonly action: Record<string, unknown>;
+      /** Internal handler signal: record an existing notify-only run, not a proposal. */
+      readonly informational?: boolean;
+    }
   | { readonly channel: "payment_intent"; readonly intent: CreatePaymentIntentInput };
 
 export interface HandlerInput {

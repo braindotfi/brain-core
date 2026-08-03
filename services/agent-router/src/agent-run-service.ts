@@ -431,6 +431,30 @@ export class AgentRunService {
       }
     }
 
+    if (agentId === "reconciliation" && proposed.channel === "agent" && proposed.informational) {
+      return this.terminalRun(ctx, {
+        agentId,
+        category,
+        executionMode: "notify_only",
+        status: "notify_only",
+        reason: {
+          ...reasonWithAction,
+          informational: {
+            reason: "low_confidence_reconciliation",
+            confidence_score: proposed.action["confidence_score"] ?? null,
+          },
+        },
+        routingDecisionId: routing.id,
+        input,
+        confidence: decision.confidence,
+        evidenceScore: bundle.evidence_score,
+        action: resolution.action,
+        failureReason: "informational_low_confidence_reconciliation",
+        shadowMode: false,
+        ...runIdentity,
+      });
+    }
+
     // SHADOW MODE: a financial proposal moves no money when the agent is
     // shadowed, OR (graduated rollout, 1b) when it's live but the action's rail
     // is not on the agent's allowlist.
