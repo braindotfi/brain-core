@@ -604,36 +604,61 @@ export async function runPreExecutionGate(
   }
   pass(checks, 2, "agent_authorized");
 
-  // (We need a PolicyDecision before we can run the remaining checks. The
-  // intent may already carry one from creation, but Phase-4 re-evaluates
-  // every time execute is called so the snapshot is fresh against the
-  // current Ledger state.)
-  // When enabled, load once before policy evaluation so the policy VM receives
-  // the gate-time trust state. The same loaded row is reused by checks 5-6; no
-  // second counterparty query is introduced. Loader errors are retained as an
-  // unknown trust state and fail closed at check 5.25.
+  // When enabled, load once before policy evaluation so Check 5.25 has
+  // precedence over policy and the policy VM receives the gate-time trust
+  // state. The same loaded row is reused by checks 5-6; no second counterparty
+  // query is introduced. Flag-off retains the legacy ordering below.
   const trustGateEnabled = deps.trustGateEnabled === true;
   let preloadedCounterparty: GateCounterparty | null | undefined;
-  let counterpartyLoadFailed = false;
+  let trustStatus: CounterpartyTrustStatus | null = null;
   if (trustGateEnabled) {
     try {
       preloadedCounterparty = await deps.resolveCounterparty(
         input.intent.destination_counterparty_id,
       );
     } catch {
-      preloadedCounterparty = null;
-      counterpartyLoadFailed = true;
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_unknown",
+        trust_status: "unknown",
+        loader_failure: true,
+      });
     }
+    if (preloadedCounterparty === null) {
+      return failGate(5, "counterparty_allowed", { reason: "counterparty not found" });
+    }
+    if (preloadedCounterparty.risk_level === "sanctioned") {
+      return failGate(5, "counterparty_allowed", { reason: "counterparty sanctioned" });
+    }
+    pass(checks, 5, "counterparty_allowed");
+
+    // 5.25 - counterparty trust. This is a deterministic, non-policy-overridable
+    // deny: a paused trust state blocks execution, and a missing or malformed
+    // state fails closed. Trusted, unreviewed, and acknowledged counterparties
+    // preserve the existing path. The feature flag keeps this check absent until
+    // a deliberate staging-first enablement.
+    if (!isCounterpartyTrustStatus(preloadedCounterparty.trust_status)) {
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_unknown",
+        trust_status: preloadedCounterparty.trust_status ?? "unknown",
+      });
+    }
+    trustStatus = preloadedCounterparty.trust_status;
+    if (trustStatus === "paused") {
+      return failGate(5.25, "counterparty_trust_allowed", {
+        reason: "counterparty_trust_paused",
+        trust_status: trustStatus,
+      });
+    }
+    pass(checks, 5.25, "counterparty_trust_allowed", { trust_status: trustStatus });
   }
+
+  // We need a PolicyDecision before the policy-dependent checks. The intent may
+  // already carry one from creation, but Phase-4 re-evaluates every time execute
+  // is called so the snapshot is fresh against current Ledger state.
   const policyIntent: GatePaymentIntent = trustGateEnabled
     ? {
         ...input.intent,
-        counterparty_trust_status:
-          preloadedCounterparty !== null &&
-          preloadedCounterparty !== undefined &&
-          isCounterpartyTrustStatus(preloadedCounterparty.trust_status)
-            ? preloadedCounterparty.trust_status
-            : null,
+        counterparty_trust_status: trustStatus,
       }
     : input.intent;
   const decision = await deps.evaluatePolicy(policyIntent, { dryRun });
@@ -692,45 +717,19 @@ export async function runPreExecutionGate(
   }
   pass(checks, 4, "source_account_allowed");
 
-  // 5 — counterparty allowed (exists, not sanctioned).
+  // Flag-on ran checks 5 and 5.25 before policy so trust denials cannot be
+  // masked. Flag-off preserves the legacy Check 5 position and behavior.
   const counterparty = trustGateEnabled
-    ? (preloadedCounterparty ?? null)
+    ? preloadedCounterparty
     : await deps.resolveCounterparty(input.intent.destination_counterparty_id);
-  if (counterparty === null) {
-    if (trustGateEnabled) {
-      return failGate(5.25, "counterparty_trust_allowed", {
-        reason: "counterparty_trust_unknown",
-        trust_status: "unknown",
-        ...(counterpartyLoadFailed ? { loader_failure: true } : {}),
-      });
-    }
+  if (counterparty === null || counterparty === undefined) {
     return failGate(5, "counterparty_allowed", { reason: "counterparty not found" });
   }
-  if (counterparty.risk_level === "sanctioned") {
-    return failGate(5, "counterparty_allowed", { reason: "counterparty sanctioned" });
-  }
-  pass(checks, 5, "counterparty_allowed");
-
-  // 5.25 - counterparty trust. This is a deterministic, non-policy-overridable
-  // deny: a paused trust state blocks execution, and a missing or malformed
-  // state fails closed. Trusted, unreviewed, and acknowledged counterparties
-  // preserve the existing path. The feature flag keeps this check absent until
-  // a deliberate staging-first enablement.
-  if (trustGateEnabled) {
-    const trustStatus = counterparty.trust_status;
-    if (!isCounterpartyTrustStatus(trustStatus)) {
-      return failGate(5.25, "counterparty_trust_allowed", {
-        reason: "counterparty_trust_unknown",
-        trust_status: trustStatus ?? "unknown",
-      });
+  if (!trustGateEnabled) {
+    if (counterparty.risk_level === "sanctioned") {
+      return failGate(5, "counterparty_allowed", { reason: "counterparty sanctioned" });
     }
-    if (trustStatus === "paused") {
-      return failGate(5.25, "counterparty_trust_allowed", {
-        reason: "counterparty_trust_paused",
-        trust_status: trustStatus,
-      });
-    }
-    pass(checks, 5.25, "counterparty_trust_allowed", { trust_status: trustStatus });
+    pass(checks, 5, "counterparty_allowed");
   }
 
   // 5.5 — agent-counterparty attestation (RFC 0001 §6.3). When the attestation
