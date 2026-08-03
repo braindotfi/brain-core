@@ -108,7 +108,7 @@ jobs:
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -171,7 +171,7 @@ jobs:
       BRAIN_BASE_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -605,7 +605,7 @@ jobs:
       BRAIN_TEST_VENDOR_ID: ${{ vars.E2E_EXTERNAL_AGENT_VENDOR_ID }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -643,7 +643,7 @@ jobs:
       BRAIN_TESTNET_SUCCESS_VALUE: ${{ vars.BRAIN_TESTNET_SUCCESS_VALUE }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
