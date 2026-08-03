@@ -386,11 +386,16 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   refuses to re-stamp a row with signatures, since those were collected over the
   stored digest. **This is CI-enforced, not operator-trusted**: both
   `deploy_staging` (`main.yml`) and `promote-prod.yml` run a "Policy
-  content-hash repair gate" step (dry run, `docker exec` into the already-running
-  `api` container) right after the required-secret presence check and before
-  rollback tagging, image pull, migrations, or any compose recreate, and fail
-  the workflow closed if any row is still outstanding. See
-  `docs/r03-staging-deploy-runbook.md`.
+  content-hash repair gate" step (dry run, `docker compose run --rm` through
+  the `migrate` service) right after the required-secret presence check and
+  before rollback tagging, image pull, migrations, or any compose recreate,
+  and fail the workflow closed if any row is still outstanding. It runs
+  through `migrate`, not `api`: `policies` is under FORCE RLS and `api`
+  connects as the NOBYPASSRLS `brain_app` role, so a check run through `api`
+  would silently see zero rows and always pass. `migrate` already carries
+  `DATABASE_URL` for the Postgres bootstrap superuser (`brain`), which
+  bypasses RLS unconditionally, matching the script's own requirement for the
+  owner/migration role. See `docs/r03-staging-deploy-runbook.md`.
 - Audit anchor coverage is derived per tenant from `MAX(period_end)` over its
   non-reverted anchors, not from a fixed `now - AUDIT_ANCHOR_INTERVAL_MS`
   window. The fixed window left every event emitted while the process was down
@@ -734,15 +739,25 @@ incidents before any image pull.
 
 Immediately after that secret check, both workflows also run a "Policy
 content-hash repair gate": `scripts/ops/repair-policy-content-hash.mjs`
-(dry run, no `--apply`) via `docker exec` into the already-running `api`
-container, still before rollback tagging, image pull, migrations, or compose
-recreate. It fails the workflow closed if any `policies` row still carries a
-pre-6b544ed non-canonical `content_hash` (see the policy-layer section
-above), and skips with a message rather than failing on a genuine cold-start
-VM where `api` has never been created (nothing to repair against an empty
-table). Repair is a deliberate operator action (`--apply`, run ahead of the
-deploy) -- the gate never mutates data itself, matching the no-manual-DB-surgery
-default of failing rather than silently re-stamping in CI.
+(dry run, no `--apply`) via `docker compose run --rm --no-deps` through the
+`migrate` service, still before rollback tagging, image pull, migrations, or
+compose recreate. It runs through `migrate`, never `api`: `api`'s
+`DATABASE_URL` is the NOBYPASSRLS `brain_app` role and `policies` is under
+FORCE RLS, so a check that ran through `api` would issue an unscoped SELECT
+that silently returns zero rows and pass even when repair is needed.
+`migrate` already carries `DATABASE_URL` for `brain`, the Postgres bootstrap
+superuser (`docker-compose.prod.yml`'s `postgres` service: "migrate connects
+as this role"), which bypasses RLS unconditionally -- the owner/migration
+role the script's own header requires -- and that credential is already in
+`migrate`'s environment from compose, so nothing is passed on a command
+line. The gate fails the workflow closed if any `policies` row still carries
+a pre-6b544ed non-canonical `content_hash` (see the policy-layer section
+above), and skips with a message rather than failing only when `postgres`
+itself is not running (genuine cold start, nothing to repair against a
+nonexistent table). Repair is a deliberate operator action (`--apply`, run
+ahead of the deploy) -- the gate never mutates data itself, matching the
+no-manual-DB-surgery default of failing rather than silently re-stamping in
+CI.
 
 Supply-chain controls run on every pull request and main push. `pnpm audit`
 fails on high and critical dependency advisories, tfsec scans `infra/` at the

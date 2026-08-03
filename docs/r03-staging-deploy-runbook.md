@@ -74,13 +74,24 @@ moment a deploy ships.
 required-secret presence check and before rollback tagging, image pull,
 migrations, or any compose recreate. It ships
 `scripts/ops/repair-policy-content-hash.mjs` to the target VM and runs it
-(dry run, no `--apply`) with `docker exec` against the already-running `api`
-container, so it needs no `pnpm build` step of its own -- the container's
-image already has `@brain/policy` and `pg` resolvable, the same context
-`getActive` itself runs in. The gate fails the workflow before anything
-destructive happens if any row is still outstanding, or exits 0 with a skip
-message on a genuine cold-start VM where `api` has never been created
-(nothing to repair against an empty `policies` table).
+(dry run, no `--apply`) with `docker compose run --rm --no-deps` through the
+`migrate` service -- not `api`. `policies` is under FORCE RLS and `api`
+connects as the NOBYPASSRLS `brain_app` role, so a check run through `api`
+would issue an unscoped SELECT that silently returns zero rows and pass
+even when repair is genuinely needed. `migrate` already carries
+`DATABASE_URL` for `brain`, the Postgres bootstrap superuser, which bypasses
+RLS unconditionally -- the owner/migration role the script's own header
+requires -- and that credential is already present in `migrate`'s
+environment from compose, so nothing is ever passed on a command line. The
+script is bind-mounted into the same image every service shares (so it
+needs no `pnpm build` step of its own -- `@brain/policy` and `pg` are
+already resolvable there, the same context `getActive` itself runs in). The
+gate fails the workflow before anything destructive happens if any row is
+still outstanding, or exits 0 with a skip message only when `postgres`
+itself is not running yet, which is what a genuine cold-start VM looks like
+(nothing to repair against a database that does not exist yet). A
+crash-looping or stopped `api`/`migrate` on an otherwise-live box does not
+trip this skip, since `postgres` is the only signal it checks.
 
 If the gate fails, repair manually, in order. Ordering matters: pre-deploy
 `getActive` does not verify content_hash, so there is no window where a

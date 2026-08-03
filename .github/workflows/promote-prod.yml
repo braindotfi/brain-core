@@ -115,22 +115,23 @@ jobs:
             "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
 
       # See main.yml's matching "Policy content-hash repair gate" step for the
-      # full rationale. Same mechanics against the production VM: `docker
-      # exec` into the already-running `api` container (module resolution for
-      # `@brain/policy` and `pg` already works there), dry run only, skip on a
-      # genuine cold-start box with no `api` container yet. Runs before
-      # rollback tagging, image pull, migrations, or compose recreate.
+      # full rationale. Same mechanics against the production VM: runs via
+      # the `migrate` service (DATABASE_URL is the Postgres bootstrap
+      # superuser `brain`, which bypasses the RLS that would otherwise
+      # zero-row this query through `api`'s NOBYPASSRLS `brain_app` role),
+      # dry run only, `docker compose run --rm` since `migrate` is a one-shot
+      # service, skip only when `postgres` itself is not running (genuine
+      # cold start). Runs before rollback tagging, image pull, migrations, or
+      # compose recreate.
       - name: Policy content-hash repair gate
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
-             api_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q api); \
-             if [ -z \"\$api_id\" ]; then echo 'api container not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
-             docker cp scripts/ops/repair-policy-content-hash.mjs brain-prod-api:/app/services/api/ops-repair-policy-content-hash.mjs && \
-             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml exec -T api node services/api/ops-repair-policy-content-hash.mjs; \
-             rc=\$?; \
-             docker exec brain-prod-api rm -f /app/services/api/ops-repair-policy-content-hash.mjs; \
-             exit \$rc" \
+             pg_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q postgres); \
+             if [ -z \"\$pg_id\" ]; then echo 'postgres not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml run --rm --no-deps \
+               -v ~/brain-core/scripts/ops/repair-policy-content-hash.mjs:/app/services/api/ops-repair-policy-content-hash.mjs:ro \
+               migrate node services/api/ops-repair-policy-content-hash.mjs" \
           || { echo "policy content_hash repair required before promote -- run: DATABASE_URL=<prod owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply (see docs/r03-staging-deploy-runbook.md)"; exit 1; }
 
       # Prune images untouched for 24h+ so the rollback tags minted
