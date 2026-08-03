@@ -45,17 +45,24 @@ export interface BroadcastInput {
 
 /**
  * Outcome of a broadcast attempt. The broadcaster resolves (never throws) for
- * the three deterministic on-chain outcomes and throws only on transient errors
+ * these deterministic on-chain outcomes and throws only on transient errors
  * (RPC/network), which the caller is free to retry on the next cycle:
  *   confirmed        — tx mined status=1; AnchorPublished emitted.
  *   already_anchored — the root was already published on-chain (skip the
  *                      redundant broadcast); txHash/blockNumber identify the
  *                      original winning tx so the DB row can be healed.
- *   reverted         — tx mined status=0 (deterministic revert). Terminal — the
- *                      caller must NOT retry. txHash is the reverted tx (kept
- *                      for forensics; not persisted as a valid anchor).
+ *   reverted         — a SINGLE-anchor tx mined status=0 (deterministic
+ *                      revert), where one row is one transaction so the
+ *                      revert genuinely is that row's. Terminal — the caller
+ *                      must NOT retry. txHash is the reverted tx (kept for
+ *                      forensics; not persisted as a valid anchor).
+ *   unresolved       — a batch anchorBatch() call failed at the transaction
+ *                      level (shared by every row in the batch, so it is not
+ *                      any one row's fault), or a row's already-anchored
+ *                      status could not be confirmed this cycle. NOT
+ *                      terminal — leave the row pending for a later cycle.
  */
-export type BroadcastStatus = "confirmed" | "already_anchored" | "reverted";
+export type BroadcastStatus = "confirmed" | "already_anchored" | "reverted" | "unresolved";
 
 export interface BroadcastResult {
   txHash: Buffer;
@@ -81,6 +88,9 @@ export interface PublishPendingAnchorBatchSummary {
   confirmed: number;
   alreadyAnchored: number;
   reverted: number;
+  // Transaction-level failures (or an unresolved already-anchored lookup),
+  // left pending for the next cycle rather than marked terminally reverted.
+  unresolved: number;
   txCount: number;
 }
 
@@ -115,6 +125,27 @@ export async function createPendingAnchor(
 
     const existing = await findAnchorByRoot(c, root);
     if (existing !== null) {
+      if (existing.onchain_status === "reverted") {
+        // findAnchorByRoot has no status filter, so a genuinely reverted
+        // window is found here too. Its period_end never advances
+        // covered_to (the coverage query excludes reverted anchors), so the
+        // SAME window recomputes to the SAME root every cycle and lands
+        // here again -- returning it silently as a §5.3 no-op would make
+        // that permanent with nothing in the logs to show it. Log loudly
+        // instead of building a retry framework: recovering a genuinely
+        // reverted window is a deliberate operator decision (the contract
+        // rejected these exact events for a reason), not something to
+        // auto-retry.
+        console.error(
+          "[audit-publisher] recomputed anchor window matches a terminally reverted anchor; it will never advance covered_to without operator intervention",
+          {
+            tenantId: opts.tenantId,
+            anchorId: existing.id,
+            periodStart: opts.periodStart,
+            periodEnd: opts.periodEnd,
+          },
+        );
+      }
       // §5.3 no-op.
       return existing;
     }
@@ -154,10 +185,12 @@ export async function publishPendingAnchor(
     if (broadcast.status === "reverted") {
       // Deterministic on-chain revert. Record it and stop retrying.
       await setAnchorReverted(c, row.id);
-    } else {
+    } else if (broadcast.status !== "unresolved") {
       // confirmed | already_anchored both carry a valid on-chain anchor tx.
       await setAnchorTxHash(c, row.id, broadcast.txHash, broadcast.blockNumber);
     }
+    // "unresolved" is a batch-only outcome in practice (the single-row
+    // broadcaster never returns it); leave the row untouched either way.
     return findAnchorByRootLocal(c, row.merkle_root);
   });
   return finalized;
@@ -178,6 +211,7 @@ export async function publishPendingAnchorBatch(
     confirmed: 0,
     alreadyAnchored: 0,
     reverted: 0,
+    unresolved: 0,
     txCount: 0,
   };
   metrics?.gauge("brain.audit.anchor.batch_size", pending.length);
@@ -205,6 +239,15 @@ export async function publishPendingAnchorBatch(
     if (broadcast === undefined || row === undefined) {
       throw new Error("anchor batch broadcaster returned an incomplete result set");
     }
+    if (broadcast.status === "unresolved") {
+      // A transaction-level batch failure or an unresolved already-anchored
+      // lookup -- not this row's fault. Leave it pending; the next cycle
+      // retries it (same posture as InsufficientAnchorFundsError).
+      summary.unresolved += 1;
+      metrics?.increment("brain.audit.anchor.batch_unresolved.count");
+      continue;
+    }
+
     if (broadcast.status === "reverted") {
       summary.reverted += 1;
       await withTenantScope(pool, row.tenant_id, async (c) => {

@@ -24,6 +24,7 @@ vi.mock("./repository.js", () => ({
 }));
 
 import {
+  createPendingAnchor,
   publishAnchor,
   publishPendingAnchor,
   publishPendingAnchorBatch,
@@ -257,5 +258,48 @@ describe("publishAnchor", () => {
       alreadyAnchored: 1,
       reverted: 1,
     });
+  });
+
+  it("leaves an unresolved batch row pending -- no DB write, no terminal reverted -- and counts it separately", async () => {
+    const rows = [
+      anchorRow({ id: "anchor_1", tenant_id: "tnt_a", merkle_root: Buffer.alloc(32, 1) }),
+      anchorRow({ id: "anchor_2", tenant_id: "tnt_b", merkle_root: Buffer.alloc(32, 2) }),
+    ];
+    const broadcaster = vi.fn(async (inputs: BroadcastBatchResult["input"][]) => [
+      batchResult(inputs[0]!, "unresolved"),
+      batchResult(inputs[1]!, "confirmed"),
+    ]);
+
+    const summary = await publishPendingAnchorBatch(pool, broadcaster, rows);
+
+    expect(repo.setAnchorTxHash).toHaveBeenCalledTimes(1);
+    expect(repo.setAnchorTxHash).toHaveBeenCalledWith(
+      expect.anything(),
+      "anchor_2",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(repo.setAnchorReverted).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      attempted: 2,
+      confirmed: 1,
+      reverted: 0,
+      unresolved: 1,
+    });
+  });
+
+  it("logs loudly instead of silently recycling a terminally reverted row for the same recomputed window", async () => {
+    const revertedRow = anchorRow({ id: "anchor_reverted", onchain_status: "reverted" });
+    vi.mocked(repo.findAnchorByRoot).mockResolvedValueOnce(revertedRow);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await createPendingAnchor(pool, opts);
+
+    expect(result).toBe(revertedRow);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("terminally reverted anchor"),
+      expect.objectContaining({ anchorId: "anchor_reverted" }),
+    );
+    consoleError.mockRestore();
   });
 });

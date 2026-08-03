@@ -39,9 +39,19 @@ interface BroadcastInput {
 // confirmed        — tx mined status=1; AnchorPublished emitted.
 // already_anchored — the root was already published on-chain; skip the redundant
 //                    broadcast and return the original winning tx.
-// reverted         — tx mined status=0, OR the call deterministically reverts at
-//                    estimate time. Terminal: the caller must NOT retry.
-type BroadcastStatus = "confirmed" | "already_anchored" | "reverted";
+// reverted         — a SINGLE-anchor call's tx mined status=0, OR that call
+//                    deterministically reverts at estimate time. One row is one
+//                    transaction here, so the revert genuinely belongs to that
+//                    row. Terminal: the caller must NOT retry.
+// unresolved       — a batch anchorBatch() call failed at the TRANSACTION level
+//                    (NotPublisher, BatchTooLarge, BatchLengthMismatch, a failed
+//                    gas estimate, or a mined revert of the whole batch tx), or a
+//                    row's already-anchored status could not be confirmed this
+//                    cycle (its AnchorPublished event wasn't found in the scan
+//                    window). Neither is a property of any one row, so it is
+//                    NOT terminal -- the row is left pending for a later cycle,
+//                    same posture as InsufficientAnchorFundsError.
+type BroadcastStatus = "confirmed" | "already_anchored" | "reverted" | "unresolved";
 interface BroadcastResult {
   txHash: Buffer;
   blockNumber: bigint;
@@ -213,6 +223,30 @@ export function createViemAnchorBroadcaster(
       );
     }
     return { txHash: match.txHash, blockNumber: match.blockNumber, status: "already_anchored" };
+  }
+
+  // Batch-only wrapper around resolveAlreadyAnchored. The retry query is
+  // ORDER BY created_at ASC LIMIT N, so a row whose AnchorPublished event
+  // can't be located (a poison row) is always the oldest and therefore
+  // always back in the next batch -- if resolving it throws out of a loop
+  // over many rows, that one row aborts every other row in the batch, every
+  // cycle, forever. Catch it here and leave just that row unresolved
+  // (pending retry) instead of failing the whole batch.
+  async function resolveAlreadyAnchoredOrPending(
+    tenantIdBytes: `0x${string}`,
+    rootHexLower: string,
+  ): Promise<BroadcastResult> {
+    try {
+      return await resolveAlreadyAnchored(tenantIdBytes, rootHexLower);
+    } catch (err) {
+      const log = opts.log ?? console;
+      log.warn(
+        `anchor batch row ${rootHexLower} could not resolve already-anchored status, leaving pending: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { txHash: Buffer.alloc(0), blockNumber: 0n, status: "unresolved" };
+    }
   }
 
   async function resolveFees(): Promise<{
@@ -404,7 +438,7 @@ export function createViemAnchorBroadcaster(
       if (alreadyPublished) {
         results[index] = {
           input,
-          result: await resolveAlreadyAnchored(tenantIdBytes, rootHexLower),
+          result: await resolveAlreadyAnchoredOrPending(tenantIdBytes, rootHexLower),
         };
       } else {
         unpublished.push({ index, input, tenantIdBytes, rootHex, rootHexLower });
@@ -462,16 +496,31 @@ export function createViemAnchorBroadcaster(
       results[entry.index] = {
         input: entry.input,
         result:
+          // A mined revert of the batch tx is a TRANSACTION-level failure
+          // (NotPublisher, BatchTooLarge, BatchLengthMismatch, ...), not a
+          // property of any one row -- every row in the batch shares the same
+          // tx and the same outcome, so none of them is individually
+          // "reverted". Leave every row unresolved (pending retry) instead of
+          // marking 50 rows terminally reverted for one bad tx.
           receipt.status === "reverted"
-            ? { txHash: Buffer.alloc(0), blockNumber: receipt.blockNumber, status: "reverted" }
+            ? { txHash: Buffer.alloc(0), blockNumber: receipt.blockNumber, status: "unresolved" }
             : emittedInBatch
               ? { txHash: batchTx, blockNumber: receipt.blockNumber, status: "confirmed" }
-              : await resolveAlreadyAnchored(entry.tenantIdBytes, entry.rootHexLower),
+              : await resolveAlreadyAnchoredOrPending(entry.tenantIdBytes, entry.rootHexLower),
       };
     }
     return results as BroadcastBatchResult[];
   };
 
+  // Called when the batch anchorBatch() call deterministically reverts before
+  // mining (a failed gas estimate, or a send-time revert): a transaction-level
+  // failure (NotPublisher, BatchTooLarge, BatchLengthMismatch, ...), not a
+  // per-row one, since InvalidPeriod is the only reachable per-row revert
+  // reason and createPendingAnchor never builds an empty-window anchor that
+  // could trigger it. Per row this only re-checks for the genuine race where
+  // another process published the same root in between; anything that isn't
+  // that race is left unresolved (pending retry) rather than terminally
+  // reverted.
   async function markBatchRevertOrRace(
     unpublished: Array<{
       index: number;
@@ -492,8 +541,8 @@ export function createViemAnchorBroadcaster(
       results[entry.index] = {
         input: entry.input,
         result: racedPublished
-          ? await resolveAlreadyAnchored(entry.tenantIdBytes, entry.rootHexLower)
-          : { txHash: Buffer.alloc(0), blockNumber: 0n, status: "reverted" },
+          ? await resolveAlreadyAnchoredOrPending(entry.tenantIdBytes, entry.rootHexLower)
+          : { txHash: Buffer.alloc(0), blockNumber: 0n, status: "unresolved" },
       };
     }
   }
