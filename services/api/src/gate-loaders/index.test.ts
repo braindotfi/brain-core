@@ -183,6 +183,7 @@ describe("makeResolveCounterparty", () => {
       type: "vendor",
       risk_level: null,
       verified_status: null,
+      trust_status: undefined,
       agent_id: null,
       onchain_address: null,
     });
@@ -195,12 +196,14 @@ describe("makeResolveCounterparty", () => {
         type: "agent",
         risk_level: "low",
         verified_status: "document_verified",
+        trust_status: "trusted",
         agent_id: "agent_z",
         onchain_address: "0xabc",
       }),
     )(ctx(), "cp_x");
     expect(out?.agent_id).toBe("agent_z");
     expect(out?.onchain_address).toBe("0xabc");
+    expect(out?.trust_status).toBe("trusted");
   });
 });
 

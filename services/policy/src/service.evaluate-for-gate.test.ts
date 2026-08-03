@@ -150,6 +150,27 @@ describe("PolicyService.evaluateForGate — confidence gating (RFC 0004 §5.2)",
     expect(decision.outcome).toBe("reject");
   });
 
+  it("preserves decisions for policies that do not reference counterparty trust", async () => {
+    const policy: PolicyDocument = {
+      version: 1,
+      rules: [{ id: "existing-rule", applies_to: ["any"], when: {}, execute: "confirm" }],
+    };
+    const svc = new PolicyService({
+      pool: poolWithActivePolicy(policy),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const withoutTrust = await svc.evaluateForGate(ctx, intent(0.9));
+    const withTrust = await svc.evaluateForGate(ctx, {
+      ...intent(0.9),
+      counterparty_trust_status: "acknowledged",
+    });
+
+    expect(withTrust.outcome).toBe(withoutTrust.outcome);
+    expect(withTrust.matched_rule_id).toBe(withoutTrust.matched_rule_id);
+    expect(withTrust.required_approvers).toEqual(withoutTrust.required_approvers);
+  });
+
   it("threads signed on-chain x402 autonomy fields into the gate decision", async () => {
     const policy: PolicyDocument = {
       version: 1,

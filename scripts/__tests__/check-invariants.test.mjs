@@ -19,6 +19,7 @@ test("check-invariants fails when self-approval moves after second approval", ()
   try {
     for (const file of [
       "services/execution/src/payment-intents/PaymentIntentService.ts",
+      "shared/src/gate/gate.ts",
       "services/execution/src/members/ActorResolver.ts",
       "services/execution/src/members/authorizeApproval.ts",
       "services/execution/src/members/authorizeApproval.test.ts",
@@ -63,6 +64,7 @@ test("check-invariants fails when provisioning stops creating bootstrap member",
   try {
     for (const file of [
       "services/execution/src/payment-intents/PaymentIntentService.ts",
+      "shared/src/gate/gate.ts",
       "services/execution/src/members/ActorResolver.ts",
       "services/execution/src/members/authorizeApproval.ts",
       "services/execution/src/members/authorizeApproval.test.ts",
@@ -85,6 +87,48 @@ test("check-invariants fails when provisioning stops creating bootstrap member",
       "",
     );
     writeFileSync(provisionPath, withoutBootstrap);
+
+    assert.throws(
+      () =>
+        execFileSync(process.execPath, ["scripts/check-invariants.mjs"], {
+          cwd: repoRoot,
+          env: { ...process.env, BRAIN_INVARIANT_ROOT: root },
+          stdio: "pipe",
+        }),
+      /Command failed/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("check-invariants fails when trust-state deny reasons are removed", () => {
+  const root = mkdtempSync(join(tmpdir(), "brain-invariants-"));
+  try {
+    for (const file of [
+      "services/execution/src/payment-intents/PaymentIntentService.ts",
+      "shared/src/gate/gate.ts",
+      "services/execution/src/members/ActorResolver.ts",
+      "services/execution/src/members/authorizeApproval.ts",
+      "services/execution/src/members/authorizeApproval.test.ts",
+      "services/api/src/onboarding/provision.ts",
+      "services/api/src/main.ts",
+      "services/api/src/demo/brainsaas-seed.ts",
+      "services/execution/migrations/0024_bootstrap_missing_members.sql",
+      "services/ledger/src/routes/index.ts",
+      "services/ledger/src/service/LedgerService.ts",
+      "shared/src/webhooks/outbound.ts",
+    ]) {
+      const target = join(root, file);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(new URL(file, repoRoot), target);
+    }
+
+    const gatePath = join(root, "shared/src/gate/gate.ts");
+    writeFileSync(
+      gatePath,
+      readFileSync(gatePath, "utf8").replace('reason: "counterparty_trust_paused"', 'reason: "removed"'),
+    );
 
     assert.throws(
       () =>

@@ -64,6 +64,7 @@ const TRUSTED_CP: GateCounterparty = {
   type: "vendor",
   risk_level: "low",
   verified_status: "document_verified",
+  trust_status: "trusted",
 };
 
 function makeDecision(): GatePolicyDecision {
@@ -177,5 +178,27 @@ describe("§6 gate — metrics emission (item 11)", () => {
     });
     const outcome = metrics.calls.find((c) => c.name === "brain.gate.outcome.count");
     expect(outcome?.tags).toMatchObject({ outcome: "ok", dry_run: true });
+  });
+
+  it("emits a tenant-scoped trust-denial metric with the observed state", async () => {
+    const metrics = new MockMetrics();
+    const result = await runPreExecutionGate(
+      makeDeps({
+        metrics,
+        trustGateEnabled: true,
+        resolveCounterparty: async () => ({ ...TRUSTED_CP, trust_status: "paused" }),
+      }),
+      { ctx, principal: defaultPrincipal(), intent: defaultIntent() },
+    );
+    expect(result.ok).toBe(false);
+    const denial = metrics.calls.find(
+      (call) => call.name === "brain.gate.counterparty_trust_denial.count",
+    );
+    expect(denial?.tags).toMatchObject({
+      tenant_id: TENANT,
+      reason: "counterparty_trust_paused",
+      trust_status: "paused",
+      dry_run: false,
+    });
   });
 });

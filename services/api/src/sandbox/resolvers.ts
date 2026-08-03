@@ -124,11 +124,12 @@ export function makeSandboxResolveCounterparty(
         type: string;
         risk_level: string | null;
         verified_status: string | null;
+        trust_status: string | null;
         agent_id: string | null;
         onchain_address: string | null;
       }>(
         // RFC 0001 §6.3/§6.1 — agent_id (attestation) + onchain_address (x402 recipient).
-        `SELECT id, type, risk_level, verified_status, agent_id, onchain_address
+        `SELECT id, type, risk_level, verified_status, trust_status, agent_id, onchain_address
            FROM ledger_counterparties
           WHERE id = $1`,
         [counterpartyId],

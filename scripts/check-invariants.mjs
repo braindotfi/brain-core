@@ -16,6 +16,7 @@ function check(name, ok, detail) {
 }
 
 const paymentIntentService = read("services/execution/src/payment-intents/PaymentIntentService.ts");
+const trustGateSource = read("shared/src/gate/gate.ts");
 const approveStart = paymentIntentService.indexOf("public async approve(");
 const approveEnd = paymentIntentService.indexOf("public async reject(", approveStart);
 const approveBody = paymentIntentService.slice(approveStart, approveEnd);
@@ -28,6 +29,21 @@ check(
     authorizeIndex >= 0 &&
     signIndex > authorizeIndex,
   "approve must authorize member authority before writing an approval signature",
+);
+
+const trustCheckStart = trustGateSource.indexOf("// 5.25 - counterparty trust.");
+const trustCheckEnd = trustGateSource.indexOf("// 5.5", trustCheckStart);
+const trustCheckBlock = trustGateSource.slice(trustCheckStart, trustCheckEnd);
+check(
+  "enabled counterparty trust gate fails closed for paused and unknown state",
+  trustCheckStart >= 0 &&
+    trustCheckEnd > trustCheckStart &&
+    trustGateSource.includes("const trustGateEnabled = deps.trustGateEnabled === true") &&
+    trustCheckBlock.includes('return failGate(5.25, "counterparty_trust_allowed"') &&
+    trustCheckBlock.includes('reason: "counterparty_trust_paused"') &&
+    trustCheckBlock.includes('reason: "counterparty_trust_unknown"') &&
+    trustCheckBlock.includes("if (!isCounterpartyTrustStatus(trustStatus))"),
+  "when BRAIN_TRUST_GATE_ENABLED is wired, paused, missing, and malformed counterparty trust state must deny before execution",
 );
 
 const authorizationGate = read("services/execution/src/members/authorizeApproval.ts");

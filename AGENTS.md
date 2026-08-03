@@ -135,6 +135,13 @@ recorded human approval when policy allows. ACH and card can execute
 autonomously only when the matched signed policy rule carries a covering
 `ach_autonomous_max_amount` or `card_autonomous_max_amount`.
 
+Counterparty trust enforcement at section 6 check 5.25 is gated by
+`BRAIN_TRUST_GATE_ENABLED` and defaults off. When enabled, `paused` denies with
+`counterparty_trust_paused`; missing, malformed, or unloadable trust state
+denies with `counterparty_trust_unknown`. Before any environment enablement,
+run `scripts/ops/report-counterparty-trust-gate-impact.ts` in read-only mode
+and complete a focused section 6 re-audit.
+
 Policy activation lints for `agent.confidence.gte > 0.5`. The default is a
 structured warning; `BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT=true` makes it a hard
 activation reject.

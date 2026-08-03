@@ -206,6 +206,7 @@ function makeService(
     client: TenantScopedClient,
     input: { tenantId: string; agentId: string; amount: string; currency: string },
   ) => Promise<void>,
+  options: { trustGateEnabled?: boolean; counterparty?: GateCounterparty } = {},
 ): PaymentIntentService {
   const approvals = new ApprovalService({
     pool,
@@ -220,10 +221,11 @@ function makeService(
     approvals,
     resolveAgent: async (_ctx, _id) => GATE_AGENT,
     resolveAccount: async (_ctx, _id) => GATE_ACCOUNT,
-    resolveCounterparty: async (_ctx, _id) => GATE_CP,
+    resolveCounterparty: async (_ctx, _id) => options.counterparty ?? GATE_CP,
     evaluatePolicy: async (_ctx, _intent) => POLICY_DECISION,
     resolvePrincipal: async (_ctx) => GATE_PRINCIPAL,
     ...(recordAgentSpend !== undefined ? { recordAgentSpend } : {}),
+    ...(options.trustGateEnabled === true ? { trustGateEnabled: true } : {}),
   });
 }
 
@@ -669,6 +671,41 @@ describe("PaymentIntentService.execute — gate failure path", () => {
     const afterEvent = audit.events.find((e) => e.action === "payment_intent.execute.after");
     expect(afterEvent?.outputs.ok).toBe(false);
     expect(afterEvent?.outputs.gate_failed).toBe(true);
+  });
+
+  it("records the trust-denial reason and observed state in the failure audit event", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const pool = makeFakePool((sql) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [APPROVED_INTENT_ROW], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const service = makeService(pool, audit, undefined, {
+      trustGateEnabled: true,
+      counterparty: { ...GATE_CP, trust_status: "paused" },
+    });
+
+    await expect(service.execute(ctx, PI_ID)).rejects.toMatchObject({
+      code: "payment_intent_gate_failed",
+      details: {
+        check_index: 5.25,
+        reason: "counterparty_trust_paused",
+        trust_status: "paused",
+      },
+    });
+
+    const afterEvent = audit.events.find(
+      (event) => event.action === "payment_intent.execute.after",
+    );
+    expect(afterEvent?.outputs.failed_check).toMatchObject({
+      index: 5.25,
+      name: "counterparty_trust_allowed",
+      detail: {
+        reason: "counterparty_trust_paused",
+        trust_status: "paused",
+      },
+    });
   });
 
   it("throws payment_intent_invalid_state when intent is not approved", async () => {

@@ -70,6 +70,9 @@ export interface ExecutionDeps {
     counterpartyId: string,
   ) => Promise<GateCounterparty | null>;
 
+  /** Feature gate for section 6 counterparty trust enforcement. Defaults off. */
+  trustGateEnabled?: boolean;
+
   /** Map ServiceCallContext to a GatePrincipal (pulls from JWT). */
   resolvePrincipal: (ctx: ServiceCallContext) => Promise<GatePrincipal>;
 

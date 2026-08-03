@@ -445,6 +445,14 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default("true"),
+  /**
+   * Feature gate for section 6 counterparty trust enforcement. Default off until the
+   * staged impact report and focused gate re-audit complete.
+   */
+  BRAIN_TRUST_GATE_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
   BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT: z
     .enum(["true", "false"])
     .transform((v) => v === "true")

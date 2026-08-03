@@ -698,6 +698,12 @@ Pending Dmitriy sign-off
   are rejected. Gate metric sinks are observability only; telemetry failures
   cannot change the deterministic gate decision. Production boot fails if
   behavior-hash flag loading or escrow state loading is missing for live rails.
+- Section 6 check 5.25 counterparty trust enforcement is feature-gated by
+  `BRAIN_TRUST_GATE_ENABLED`, which defaults false. When enabled, `paused`
+  denies with `counterparty_trust_paused`; missing, malformed, or unloadable
+  trust state denies with `counterparty_trust_unknown`. Run
+  `scripts/ops/report-counterparty-trust-gate-impact.ts` in read-only mode and
+  complete a focused section 6 re-audit before enabling any environment.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.

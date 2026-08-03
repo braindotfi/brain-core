@@ -107,6 +107,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
     resolveAgent: opts.deps.resolveAgent,
     resolveAccount: opts.deps.resolveAccount,
     resolveCounterparty: opts.deps.resolveCounterparty,
+    trustGateEnabled: opts.deps.trustGateEnabled ?? false,
     evaluatePolicy: opts.deps.evaluatePaymentIntent,
     resolvePrincipal: opts.deps.resolvePrincipal,
     ...(opts.deps.resolveTenantFlags !== undefined
