@@ -263,8 +263,9 @@ describe("§6 — check 11.5: duplicate-payment guard (H-22)", () => {
   it("HARD-rejects at 11.5 on a collision even when approval is present", async () => {
     const { deps } = makeDeps({
       // Require + grant approval, so the reject is purely the duplicate guard.
-      evaluatePolicy: async () => makeDecision({ outcome: "confirm", required_approvers: ["cfo"] }),
-      resolveApprovals: async () => ({ signedRoles: ["cfo"] }),
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["admin"] }),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
       detectDuplicates: async () => ({
         passed: false,
         collisions: [
@@ -564,8 +565,8 @@ describe("§6 — check 11: approval granted when required", () => {
   it("fails when outcome=confirm but quorum not signed", async () => {
     const { deps } = makeDeps({
       evaluatePolicy: async () =>
-        makeDecision({ outcome: "confirm", required_approvers: ["cfo", "ceo"] }),
-      resolveApprovals: async () => ({ signedRoles: ["cfo"] }),
+        makeDecision({ outcome: "confirm", required_approvers: ["admin", "approver"] }),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,
@@ -575,14 +576,14 @@ describe("§6 — check 11: approval granted when required", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.failedCheck.index).toBe(11);
-      expect(result.failedCheck.detail!.missing).toEqual(["ceo"]);
+      expect(result.failedCheck.detail!.missing).toEqual(["approver"]);
     }
   });
   it("passes when outcome=confirm and full quorum signed", async () => {
     const { deps } = makeDeps({
       evaluatePolicy: async () =>
-        makeDecision({ outcome: "confirm", required_approvers: ["cfo", "ceo"] }),
-      resolveApprovals: async () => ({ signedRoles: ["cfo", "ceo"] }),
+        makeDecision({ outcome: "confirm", required_approvers: ["admin", "approver"] }),
+      resolveApprovals: async () => ({ signedRoles: ["admin", "approver"] }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,
@@ -593,15 +594,106 @@ describe("§6 — check 11: approval granted when required", () => {
   });
 });
 
+// These pin the §6 gate's check 11 to the SAME generic-slot quorum semantics
+// as ApprovalService.hasRequiredRoleQuorum (both now call the one shared
+// implementation in @brain/shared's gate/approverRoles.ts). Before this fix,
+// check 11 did a naive literal match on the string "signer", which could
+// never be satisfied by a real recorded approver_role ("admin" | "approver"),
+// so every "single_signer" / vm.ts-defaulted policy could never clear the
+// gate no matter who approved.
+describe("§6 - check 11: generic signer-slot quorum matches ApprovalService", () => {
+  it('["signer"] is satisfied by a single admin signature', async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["signer"] }),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('["signer","signer"] is NOT satisfied by one signature', async () => {
+    const { deps } = makeDeps({
+      evaluatePolicy: async () =>
+        makeDecision({ outcome: "confirm", required_approvers: ["signer", "signer"] }),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failedCheck.index).toBe(11);
+  });
+
+  it('["admin"] is satisfied by an admin signature and not by an approver signature', async () => {
+    const decision = () => makeDecision({ outcome: "confirm", required_approvers: ["admin"] });
+    const admin = makeDeps({
+      evaluatePolicy: async () => decision(),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
+    });
+    const approver = makeDeps({
+      evaluatePolicy: async () => decision(),
+      resolveApprovals: async () => ({ signedRoles: ["approver"] }),
+    });
+    const adminResult = await runPreExecutionGate(admin.deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    const approverResult = await runPreExecutionGate(approver.deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    expect(adminResult.ok).toBe(true);
+    expect(approverResult.ok).toBe(false);
+  });
+
+  it('["admin","signer"] needs the named admin role PLUS one more signed role', async () => {
+    const decision = () =>
+      makeDecision({ outcome: "confirm", required_approvers: ["admin", "signer"] });
+    const adminOnly = makeDeps({
+      evaluatePolicy: async () => decision(),
+      resolveApprovals: async () => ({ signedRoles: ["admin"] }),
+    });
+    const adminPlusApprover = makeDeps({
+      evaluatePolicy: async () => decision(),
+      resolveApprovals: async () => ({ signedRoles: ["admin", "approver"] }),
+    });
+    const adminOnlyResult = await runPreExecutionGate(adminOnly.deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    const adminPlusApproverResult = await runPreExecutionGate(adminPlusApprover.deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent(),
+    });
+    // Admin alone fills the named "admin" slot but leaves no spare role for
+    // the generic "signer" slot.
+    expect(adminOnlyResult.ok).toBe(false);
+    // The extra "approver" signature fills the generic slot once "admin" is
+    // consumed by the named requirement.
+    expect(adminPlusApproverResult.ok).toBe(true);
+  });
+});
+
 describe("§6 — check 11: policy-version-aware approvals (P0.4)", () => {
   it("threads the decision's policy_version into resolveApprovals", async () => {
     let seenVersion: number | undefined;
     const { deps } = makeDeps({
       evaluatePolicy: async () =>
-        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 7 }),
+        makeDecision({ outcome: "confirm", required_approvers: ["admin"], policy_version: 7 }),
       resolveApprovals: async (_id, v) => {
         seenVersion = v;
-        return { signedRoles: ["cfo"] };
+        return { signedRoles: ["admin"] };
       },
     });
     const result = await runPreExecutionGate(deps, {
@@ -616,9 +708,9 @@ describe("§6 — check 11: policy-version-aware approvals (P0.4)", () => {
   it("fails check 11 when stale signatures are excluded by version", async () => {
     const { deps } = makeDeps({
       evaluatePolicy: async () =>
-        makeDecision({ outcome: "confirm", required_approvers: ["cfo"], policy_version: 8 }),
+        makeDecision({ outcome: "confirm", required_approvers: ["admin"], policy_version: 8 }),
       // Resolver excludes the (stale) signature when asked for the active version.
-      resolveApprovals: async (_id, v) => ({ signedRoles: v === 8 ? [] : ["cfo"] }),
+      resolveApprovals: async (_id, v) => ({ signedRoles: v === 8 ? [] : ["admin"] }),
     });
     const result = await runPreExecutionGate(deps, {
       ctx,

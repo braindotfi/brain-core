@@ -412,11 +412,40 @@ Done
   golden-path.sh just never exercised a confirm outcome before), not
   introduced by moving the payment rule to `confirm`; the demo policies here
   were changed to `require: "admin_approval"` to match a role a seeded member
-  can actually hold. The same defect likely still affects
-  `onboarding/provision.ts`'s `buildDefaultPolicyDocument`
-  (`require: "single_signer"`) and `brainsaas-seed.ts`'s
-  `require: "owner_and_cfo"`; neither is fixed here, both are out of scope for
-  this change and worth a dedicated look.
+  can actually hold. The same defect also affected `onboarding/provision.ts`'s
+  `buildDefaultPolicyDocument` (`require: "single_signer"`) and
+  `brainsaas-seed.ts`'s `require: "owner_and_cfo"` / `"owner_approval"`; see
+  the next bullet for the durable fix, landed separately from this one.
+- Three independently-defined approver-role vocabularies used to disagree:
+  `MemberRole` (`services/execution/src/members/types.ts`, `admin | approver
+| viewer`), what `authorizeApproval` ever persists as `approvals.approver_role`
+  (`admin | approver`, never `viewer`), and the policy linter's own
+  `DEFAULT_ROLES` (`services/policy/src/linter.ts`), which used to invent
+  `owner`, `finance`, and `controller` on top of the real set. That let the
+  linter's `invalid_approval_role` check bless a `require` clause (e.g.
+  `owner_approval`, `owner_and_cfo`) the gate could never satisfy. Worse, for
+  the `signer` generic-slot token both `single_signer` and the policy VM's own
+  confirm-tier default use, the section 6 gate's check 11 did a naive literal
+  match against `decision.required_approvers` while
+  `ApprovalService.hasRequiredRoleQuorum` had the real generic-slot semantics,
+  so `require: "single_signer"` (the default policy for every self-serve
+  production tenant, via `onboarding/provision.ts`) could never clear the gate
+  no matter who approved. Fixed by one canonical vocabulary,
+  `APPROVER_ROLE_TOKENS` (`admin | approver | signer`, `shared/src/gate/approverRoles.ts`),
+  that the linter's `DEFAULT_ROLES` is now pinned to, and one shared
+  `hasRequiredRoleQuorum` (same file) that both the gate's check 11 and
+  `ApprovalService` call, so they cannot drift apart again. Seeded policies
+  using the unsatisfiable roles were moved to the canonical set:
+  `brainsaas-seed.ts`'s `owner_approval` rules became `admin_approval`, and
+  its `owner_and_cfo` dual-control rule became `admin_and_approver` to
+  preserve the two-distinct-roles intent. `single_signer` / `["signer"]`
+  policies (`provision.ts`, the VM's confirm-tier default, and the
+  high-risk fallback in `services/policy/src/service.ts`) needed no content
+  change; they were already correct and are now actually satisfiable.
+  `scripts/check-invariants.mjs` pins both the linter's vocabulary and the
+  one-quorum-implementation property. Note: this does not retroactively fix
+  already-active `owner_approval` policy rows in a live database; the linter
+  only blocks re-activation, it does not migrate stored rows.
 - Submitted policy documents are structurally validated by
   `validatePolicyDocument` (`services/policy/src/validate.ts`) at compose, lint,
   simulate-historical, and again at activation against the stored row. It

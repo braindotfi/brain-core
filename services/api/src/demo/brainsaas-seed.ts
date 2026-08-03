@@ -821,8 +821,11 @@ async function seedPolicy(
           "amount.gt": { currency: "USD", value: "50000.00" },
         },
         // Dual-key above $50k (≈ the old dual_key_above_50k): two distinct
-        // approver roles must sign, not one.
-        require: "owner_and_cfo",
+        // approver roles must sign, not one. "owner_and_cfo" was unsatisfiable
+        // (neither is a real MemberRole); admin_and_approver preserves the
+        // two-distinct-roles intent against the roles a member can actually
+        // hold.
+        require: "admin_and_approver",
         execute: "confirm",
       },
       {
@@ -839,14 +842,17 @@ async function seedPolicy(
         id: "treasury-confirm-large-deploy",
         applies_to: ["onchain_tx"],
         when: { "amount.gt": { currency: "USD", value: "250000.00" } },
-        require: "owner_approval",
+        // "owner_approval" was unsatisfiable ("owner" is not a real
+        // MemberRole); admin_approval matches a role a seeded member can
+        // actually hold.
+        require: "admin_approval",
         execute: "confirm",
       },
       {
         id: "treasury-confirm-onchain",
         applies_to: ["onchain_tx"],
         when: {},
-        require: "owner_approval",
+        require: "admin_approval",
         execute: "confirm",
       },
       // AR — chasing an account with very large outstanding requires approval
@@ -855,7 +861,7 @@ async function seedPolicy(
         id: "ar-confirm-above-500k",
         applies_to: ["agent_action"],
         when: { "amount.gt": { currency: "USD", value: "500000.00" } },
-        require: "owner_approval",
+        require: "admin_approval",
         execute: "confirm",
       },
       {

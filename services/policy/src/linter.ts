@@ -12,6 +12,7 @@
  * evaluated when the route supplies `recentMatchCounts` (from a DB count).
  */
 
+import { APPROVER_ROLE_TOKENS } from "@brain/shared";
 import { compareDecimal } from "./vm.js";
 import type { AmountLiteral, ApplyTo, PolicyDocument, PolicyRule } from "./dsl.js";
 
@@ -38,7 +39,11 @@ export interface LintOptions {
 }
 
 const DEFAULT_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "ETH", "USDC", "USDT"];
-const DEFAULT_ROLES = ["owner", "admin", "approver", "signer", "finance", "controller"];
+// Pinned to the canonical vocabulary (@brain/shared) so this linter cannot
+// bless a `require` role the §6 gate can never satisfy: "admin"/"approver"
+// are the only roles `authorizeApproval` ever persists as `approver_role`,
+// and "signer" is the documented generic-slot token. See approverRoles.ts.
+const DEFAULT_ROLES: ReadonlyArray<string> = APPROVER_ROLE_TOKENS;
 const MONEY_MOVEMENT: ReadonlyArray<ApplyTo> = ["outbound_payment", "onchain_tx", "any"];
 
 function isMoneyMover(rule: PolicyRule): boolean {

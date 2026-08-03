@@ -29,6 +29,7 @@ import type { DuplicateCheckInput, DuplicateCheckResult } from "./duplicate.js";
 import type { AgentAttestationInput, AgentAttestationResult } from "./agent-attestation.js";
 import type { EscrowStateInput, ResolvedEscrowState } from "./escrow-binding.js";
 import type { GateCheck, GateOutcome, GateResult } from "./types.js";
+import { hasRequiredRoleQuorum } from "./approverRoles.js";
 
 // x402 settlement invariants (RFC 0001 §6.1 / D-4): USDC on Base only. Defined
 // locally because the gate lives in `shared` and must not import a service (the
@@ -971,8 +972,15 @@ export async function runPreExecutionGate(
     const approvals = await deps.resolveApprovals(input.intent.id, decision.policy_version);
     const signedSet = new Set(approvals.signedRoles);
     if (decision.outcome === "confirm") {
-      const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
-      if (missing.length > 0) {
+      // Same quorum semantics ApprovalService uses to decide quorumMet: a
+      // "signer" required-role entry is a generic slot any remaining signed
+      // role can fill, not a literal role name (see hasRequiredRoleQuorum).
+      if (!hasRequiredRoleQuorum(decision.required_approvers, signedSet)) {
+        // Diagnostic only: a literal name-match miss. When the shortfall is
+        // purely a "signer" slot with no spare signed role, this list can be
+        // empty even though quorum failed; `required`/`signed` are the source
+        // of truth for why.
+        const missing = decision.required_approvers.filter((r) => !signedSet.has(r));
         return failGate(11, "approval_granted_when_required", {
           required: decision.required_approvers,
           signed: approvals.signedRoles,

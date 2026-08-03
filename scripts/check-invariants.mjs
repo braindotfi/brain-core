@@ -487,6 +487,26 @@ check(
   "wire must require human approval by default, while ACH and card autonomy must require signed cap fields",
 );
 
+const approverRolesSource = read("shared/src/gate/approverRoles.ts");
+const approvalServiceSource = read("services/execution/src/approvals/ApprovalService.ts");
+check(
+  "gate check 11 and ApprovalService share one role-quorum implementation",
+  // The property: exactly one hasRequiredRoleQuorum implementation, in
+  // @brain/shared, and both the §6 gate (check 11) and ApprovalService call
+  // it rather than each keeping their own copy. Before this, gate.ts did a
+  // naive literal-string match on required_approvers while ApprovalService
+  // had the real generic-"signer"-slot quorum logic, so a policy requiring
+  // "signer" (single_signer, or the VM's own confirm-tier default) could
+  // never pass check 11 no matter who signed.
+  approverRolesSource.includes("export function hasRequiredRoleQuorum") &&
+    gateSource.includes('import { hasRequiredRoleQuorum } from "./approverRoles.js"') &&
+    gateSource.includes("hasRequiredRoleQuorum(decision.required_approvers, signedSet)") &&
+    approvalServiceSource.includes("hasRequiredRoleQuorum") &&
+    approvalServiceSource.includes('} from "@brain/shared";') &&
+    !approvalServiceSource.includes("function hasRequiredRoleQuorum("),
+  "shared/src/gate/approverRoles.ts must define hasRequiredRoleQuorum once, imported by both gate.ts check 11 and ApprovalService, with no second copy in ApprovalService.ts",
+);
+
 const policyServiceSource = read("services/policy/src/service.ts");
 check(
   "policy service exposes fiat autonomy caps only from the matched rule",
@@ -501,6 +521,22 @@ check(
 
 const policyRoutesSource = read("services/policy/src/routes.ts");
 const policyLinterSource = read("services/policy/src/linter.ts");
+check(
+  "policy linter's approver-role vocabulary is pinned to the canonical set",
+  // The property: the linter's invalid_approval_role check must validate
+  // against @brain/shared's APPROVER_ROLE_TOKENS (admin/approver/signer --
+  // the only roles authorizeApproval can ever persist as approver_role, plus
+  // the signer generic slot), not a locally-invented list. Before this,
+  // DEFAULT_ROLES also contained "owner", "finance", and "controller", none
+  // of which is a real MemberRole, so the linter blessed require clauses
+  // (owner_approval, owner_and_cfo) the §6 gate could never satisfy.
+  policyLinterSource.includes('import { APPROVER_ROLE_TOKENS } from "@brain/shared";') &&
+    policyLinterSource.includes("DEFAULT_ROLES: ReadonlyArray<string> = APPROVER_ROLE_TOKENS") &&
+    !policyLinterSource.includes('"owner"') &&
+    !policyLinterSource.includes('"finance"') &&
+    !policyLinterSource.includes('"controller"'),
+  "services/policy/src/linter.ts's DEFAULT_ROLES must be APPROVER_ROLE_TOKENS from @brain/shared, not a separate fictional role list",
+);
 check(
   "policy activation lints the production confidence floor",
   policyLinterSource.includes("confidence_floor_missing") &&
