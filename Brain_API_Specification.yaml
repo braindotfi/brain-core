@@ -3291,7 +3291,9 @@ paths:
         Requires `wiki:read`. Grounds questions in tenant Ledger rows and
         returns an answer with cited evidence. Transaction count, total, and
         average questions use a deterministic Ledger query when the intent is
-        unambiguous; other questions use the grounded LLM path. `answered`
+        unambiguous. Explicit transaction, cash-flow, and invoice listing
+        questions with a recency, count, or date bound also use a deterministic
+        Ledger query. Other questions use the grounded LLM path. `answered`
         distinguishes a grounded or deterministic answer from a refusal.
         Costs apply only when the LLM path runs; see pricing documentation.
       operationId: askWiki
@@ -7574,12 +7576,12 @@ components:
             type: object
             required: [entityType, entityId, excerpt]
             properties:
-              entityType: { type: string, enum: [transaction, obligation, counterparty] }
+              entityType: { type: string, enum: [transaction, obligation, counterparty, invoice] }
               entityId: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
               excerpt: { type: string }
         model:
           type: string
-          description: The configured LLM model, or `structured-ledger-query` for deterministic aggregates.
+          description: The configured LLM model, or `structured-ledger-query` for deterministic aggregates and listings.
         usage:
           type: object
           required: [inputTokens, outputTokens]
