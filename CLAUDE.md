@@ -409,7 +409,14 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   catch-up clamp bounds one cycle's tree, and
   `brain.audit.anchor.oldest_unanchored_age_seconds` makes the backlog
   observable. `brain_audit_publisher` holds SELECT on `audit_anchors` for the
-  coverage join.
+  coverage join. The window itself is computed by the pure `nextAnchorWindow`
+  helper (`services/audit/src/anchorWindow.ts`, re-exported from `@brain/audit`)
+  so the scheduler (`services/api/src/main.ts`) and the on-demand
+  `POST /audit/anchor/publish` route derive it identically: `periodStart` is
+  `max(coveredTo + 1ms, oldestUnanchored)`, not `coveredTo + 1ms` alone -- a
+  tenant whose next unanchored event is more than 7 days past `coveredTo`
+  (a long quiet period) would otherwise clamp to an always-empty window and
+  never advance `covered_to` again.
 - Anchor publisher event scans must use `AUDIT_ANCHOR_FROM_BLOCK` in staging
   and production. If it is unset, the broadcaster and reconciler use a bounded
   lookback window (`AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS`) and log a warning
@@ -427,6 +434,27 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   `brain.audit.anchor.pending_backlog_depth`, `brain.audit.anchor.batch_size`,
   and `brain.audit.anchor.batch_tx.count`. Mainnet anchoring remains fenced
   until the additive batch function completes external audit.
+- `reverted` is a per-ROW terminal status and only genuinely applies to the
+  single-anchor path (`publishPendingAnchor`), where one row is one
+  transaction. Every reachable `anchorBatch` revert reason (`NotPublisher`,
+  `BatchTooLarge`, `BatchLengthMismatch`, a failed gas estimate, or a mined
+  revert of the batch tx) is a property of the transaction, not of any one
+  row, so `publishPendingAnchorBatch` and the batch broadcaster
+  (`services/api/src/anchorBroadcaster.ts`) surface those as `unresolved`
+  instead: the row is left `pending` for a later cycle (same posture
+  `InsufficientAnchorFundsError` already takes), counted separately in the
+  summary, and emits `brain.audit.anchor.batch_unresolved.count`. The same
+  status covers a row whose already-anchored on-chain status could not be
+  confirmed this cycle (its `AnchorPublished` event wasn't found in the scan
+  window) -- that failure is isolated per row so one poison row cannot abort
+  the rest of the batch (the retry query is `ORDER BY created_at ASC`, so a
+  stuck poison row would otherwise always be back at the front of every
+  cycle). `createPendingAnchor` logs loudly (`console.error`, not silent) if
+  a recomputed window ever matches an existing terminally-reverted anchor
+  row, since that row's `period_end` never advances `covered_to` and would
+  otherwise recur every cycle with nothing in the logs to show it; the
+  operator's recovery is a deliberate manual decision, not an automatic
+  retry.
 - Published anchors are re-proved, so tail truncation is detectable. The fork,
   gap, genesis and content-hash checks all pass if the newest events of a
   tenant's chain are deleted. `verifyAnchorRoots` recomputes each confirmed

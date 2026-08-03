@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Pool } from "pg";
 import type * as BrainShared from "@brain/shared";
+import type { Logger } from "@brain/shared";
 import type { AuditAnchorRow } from "./repository.js";
 
 // withTenantScope just runs the callback with a throwaway client here — the
@@ -24,6 +25,7 @@ vi.mock("./repository.js", () => ({
 }));
 
 import {
+  createPendingAnchor,
   publishAnchor,
   publishPendingAnchor,
   publishPendingAnchorBatch,
@@ -257,5 +259,62 @@ describe("publishAnchor", () => {
       alreadyAnchored: 1,
       reverted: 1,
     });
+  });
+
+  it("leaves an unresolved batch row pending -- no DB write, no terminal reverted -- and counts it separately", async () => {
+    const rows = [
+      anchorRow({ id: "anchor_1", tenant_id: "tnt_a", merkle_root: Buffer.alloc(32, 1) }),
+      anchorRow({ id: "anchor_2", tenant_id: "tnt_b", merkle_root: Buffer.alloc(32, 2) }),
+    ];
+    const broadcaster = vi.fn(async (inputs: BroadcastBatchResult["input"][]) => [
+      batchResult(inputs[0]!, "unresolved"),
+      batchResult(inputs[1]!, "confirmed"),
+    ]);
+
+    const summary = await publishPendingAnchorBatch(pool, broadcaster, rows);
+
+    expect(repo.setAnchorTxHash).toHaveBeenCalledTimes(1);
+    expect(repo.setAnchorTxHash).toHaveBeenCalledWith(
+      expect.anything(),
+      "anchor_2",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(repo.setAnchorReverted).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      attempted: 2,
+      confirmed: 1,
+      reverted: 0,
+      unresolved: 1,
+    });
+  });
+
+  it("logs loudly (through the structured logger, not console) instead of silently recycling a terminally reverted row for the same recomputed window", async () => {
+    // period_start/period_end differ from opts so the assertion below proves
+    // the log reads the stored row, not the (tainted) request-scoped opts.
+    const revertedRow = anchorRow({
+      id: "anchor_reverted",
+      onchain_status: "reverted",
+      period_start: new Date("2020-01-01T00:00:00Z"),
+      period_end: new Date("2020-01-02T00:00:00Z"),
+    });
+    vi.mocked(repo.findAnchorByRoot).mockResolvedValueOnce(revertedRow);
+    const logger = { error: vi.fn() } as unknown as Logger;
+
+    const result = await createPendingAnchor(pool, { ...opts, logger });
+
+    expect(result).toBe(revertedRow);
+    expect(logger.error).toHaveBeenCalledWith(
+      {
+        anchorId: "anchor_reverted",
+        periodStart: revertedRow.period_start,
+        periodEnd: revertedRow.period_end,
+      },
+      expect.stringContaining("terminally reverted anchor"),
+    );
+    // tenantId is CodeQL-tainted from the authenticated request path on the
+    // manual publish endpoint; it must never appear in this log line.
+    const loggedFields = vi.mocked(logger.error).mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(loggedFields).not.toHaveProperty("tenantId");
   });
 });

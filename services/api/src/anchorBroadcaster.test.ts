@@ -314,7 +314,10 @@ describe("createViemAnchorBroadcaster", () => {
     expect(writeContract).not.toHaveBeenCalled();
   });
 
-  it("batch returns reverted per row for a mined reverted batch tx", async () => {
+  it("batch leaves every row unresolved (pending retry) for a mined reverted batch tx, not terminally reverted", async () => {
+    // A mined revert of the batch tx is a transaction-level failure -- it is
+    // not any one row's fault, so it must not be recorded as 50 permanent
+    // per-row rejections.
     readContract.mockResolvedValue(false);
     writeContract.mockResolvedValue(TX);
     waitForTransactionReceipt.mockResolvedValue({ status: "reverted", blockNumber: 123n });
@@ -322,8 +325,39 @@ describe("createViemAnchorBroadcaster", () => {
     const res = await makeBroadcaster().broadcastAnchorBatch([input, inputB]);
 
     expect(res).toHaveLength(2);
-    expect(res.every((row) => row.result.status === "reverted")).toBe(true);
+    expect(res.every((row) => row.result.status === "unresolved")).toBe(true);
     expect(res.every((row) => row.result.txHash.length === 0)).toBe(true);
+  });
+
+  it("batch leaves rows unresolved (not reverted) when the batch call reverts at gas-estimate time and the race check finds it still unpublished", async () => {
+    readContract.mockResolvedValue(false); // pre-flight + race re-check: never published
+    estimateContractGas.mockRejectedValue(new BaseError("execution reverted"));
+
+    const res = await makeBroadcaster().broadcastAnchorBatch([input, inputB]);
+
+    expect(res.every((row) => row.result.status === "unresolved")).toBe(true);
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("batch isolates a poison row's unresolved already-anchored lookup instead of aborting the rest of the batch", async () => {
+    // input A is reported published on-chain, but its AnchorPublished event
+    // can't be located in the scan window (a poison row). It must not abort
+    // input B, which still needs a normal anchorBatch broadcast.
+    readContract
+      .mockResolvedValueOnce(true) // input A already published
+      .mockResolvedValueOnce(false); // input B needs anchorBatch
+    getContractEvents.mockResolvedValue([]); // A's AnchorPublished event not found
+    writeContract.mockResolvedValue(TX);
+    waitForTransactionReceipt.mockResolvedValue({
+      status: "success",
+      blockNumber: 123n,
+      logs: [anchorPublishedLog(inputB)],
+    });
+
+    const res = await makeBroadcaster().broadcastAnchorBatch([input, inputB]);
+
+    expect(res.map((row) => row.result.status)).toEqual(["unresolved", "confirmed"]);
+    expect(writeContract).toHaveBeenCalledTimes(1);
   });
 
   it("batch treats success without a matching AnchorPublished event as already anchored", async () => {

@@ -211,6 +211,7 @@ import {
   registerAuditRoutes,
   registerWebhookRoutes,
   createPendingAnchor,
+  nextAnchorWindow,
   publishAnchor,
   publishPendingAnchorBatch,
   publishPendingAnchor,
@@ -3265,10 +3266,6 @@ async function main(): Promise<void> {
   if (composition.workers.has("audit") && anchorBroadcaster !== undefined) {
     const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
     let anchorRunning = false;
-    // Caps a single catch-up window (a long-dormant or newly-backfilled
-    // tenant) so one cycle never builds one enormous Merkle tree; it closes
-    // the backlog over successive cycles instead.
-    const MAX_ANCHOR_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
     const runAnchor = async (): Promise<void> => {
       if (anchorRunning) return;
@@ -3366,21 +3363,16 @@ async function main(): Promise<void> {
         const newAnchorRows: AuditAnchorRow[] = [];
         for (const row of res.rows) {
           try {
-            const periodStart =
-              row.covered_to === null
-                ? row.oldest_unanchored
-                : // +1ms is deliberate: listEventsForAnchor uses an inclusive
-                  // created_at >= start AND created_at <= end, and emitter
-                  // timestamps are millisecond-precision JS ISO strings, so +1ms
-                  // starts the next window strictly after the previous window's
-                  // end without re-anchoring the boundary event.
-                  new Date(row.covered_to.getTime() + 1);
-            let periodEnd = now;
-            // Bound catch-up so a long-dormant or newly-backfilled tenant closes
-            // its backlog over successive cycles instead of building one
-            // enormous Merkle tree in a single request.
-            if (periodEnd.getTime() - periodStart.getTime() > MAX_ANCHOR_WINDOW_MS) {
-              periodEnd = new Date(periodStart.getTime() + MAX_ANCHOR_WINDOW_MS);
+            // nextAnchorWindow (@brain/audit) is the single source of truth for
+            // deriving a tenant's next window from its coverage; POST
+            // /audit/anchor/publish uses the same helper so the two paths can't
+            // drift apart.
+            const { periodStart, periodEnd } = nextAnchorWindow(
+              row.covered_to,
+              row.oldest_unanchored,
+              now,
+            );
+            if (periodEnd.getTime() < now.getTime()) {
               log.info(
                 { tenantId: row.tenant_id, periodStart, periodEnd },
                 "anchor catch-up window clamped",
@@ -3400,6 +3392,7 @@ async function main(): Promise<void> {
               tenantId: row.tenant_id,
               periodStart,
               periodEnd,
+              logger: log,
             });
             if (pendingAnchor !== null) newAnchorRows.push(pendingAnchor);
           } catch (err) {
