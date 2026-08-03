@@ -16,7 +16,12 @@
 
 import { Pool } from "pg";
 import { InMemoryAuditEmitter, withTenantScope, newPolicyId, newAgentId } from "@brain/shared";
-import { contentHash, type PolicyDocument } from "@brain/policy";
+import {
+  contentHash,
+  runActivationLintGate,
+  validatePolicyDocument,
+  type PolicyDocument,
+} from "@brain/policy";
 import { seedGoldenPath } from "./index.js";
 import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
 
@@ -27,15 +32,24 @@ import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
  * production — there policies are signed and agents are registered on-chain.
  * Skipped when BRAIN_SEED_DEMO_GOVERNANCE=false. Idempotent (deactivates any
  * prior active policy; replaces the demo agent).
+ *
+ * Validated + lint-gated below with the SAME runActivationLintGate every HTTP
+ * activation path uses (POST /policy/:tenant_id/sign,
+ * POST /v1/demo/policy/activate), always enforcing (this seed never targets
+ * a production tenant): `outbound_payment` / `onchain_tx` auto rules cannot
+ * carry a real counterparty allowlist here (no seeded counterparty data to
+ * scope to), so they require confirmation instead of auto-executing, same
+ * tradeoff services/api/src/demo/policy-activate-route.ts makes.
  */
 const DEMO_POLICY: PolicyDocument = {
   version: 1,
   rules: [
     {
-      id: "auto-small-payment",
+      id: "confirm-small-payment",
       applies_to: ["outbound_payment"],
       when: { "amount.lte": { currency: "USD", value: "1000.00" } },
-      execute: "auto",
+      require: "owner_approval",
+      execute: "confirm",
     },
     {
       id: "reject-excessive-payment",
@@ -54,7 +68,13 @@ const DEMO_POLICY: PolicyDocument = {
       execute: "confirm",
     },
     { id: "auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
-    { id: "auto-onchain-tx", applies_to: ["onchain_tx"], when: {}, execute: "auto" },
+    {
+      id: "confirm-onchain-tx",
+      applies_to: ["onchain_tx"],
+      when: {},
+      require: "owner_approval",
+      execute: "confirm",
+    },
   ],
 };
 
@@ -65,12 +85,22 @@ async function seedDemoGovernance(
 ): Promise<{ policy_id: string; agent_id: string }> {
   const smartAccount =
     process.env.BRAIN_ONCHAIN_SMART_ACCOUNT ?? "0x0000000000000000000000000000000000000000";
-  const policyJson = JSON.stringify(DEMO_POLICY);
+  // Structural validation + the H-18 lint gate, same as every HTTP activation
+  // path. This is a raw-SQL writer of policies.state='active' outside the
+  // policy service's compose/sign routes, so nothing else would catch a
+  // regression here (e.g. a future edit reintroducing an unbounded
+  // applies_to:["any"] auto rule).
+  const content = validatePolicyDocument(DEMO_POLICY);
+  const gate = runActivationLintGate(content, { lintEnforce: true, confidenceEnforce: false });
+  if (gate.blocking.length > 0) {
+    throw new Error(`DEMO_POLICY failed activation lint: ${JSON.stringify(gate.blocking)}`);
+  }
+  const policyJson = JSON.stringify(content);
   // Canonical hash, NOT sha256(JSON.stringify(doc)); see the same note in
   // services/api/src/demo/brainsaas-seed.ts. getActive recomputes content_hash on
   // read and fails closed on drift, so a naive digest here would take the seeded
   // golden-path tenant's policy offline.
-  const policyHash = contentHash(DEMO_POLICY);
+  const policyHash = contentHash(content);
   const scopeHash = demoAgentScopeHash();
   const policyId = newPolicyId();
   const agentId = newAgentId();

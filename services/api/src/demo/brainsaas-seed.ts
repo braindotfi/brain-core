@@ -57,7 +57,7 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { Pool } from "pg";
-import { contentHash, type PolicyDocument } from "@brain/policy";
+import { contentHash, validatePolicyDocument, type PolicyDocument } from "@brain/policy";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
 
 // ---------------------------------------------------------------------------
@@ -774,9 +774,13 @@ async function seedDemoFakeConnectedSources(
 //        confirm(escalate, ≈ dual_key_above_50k); unapproved → reject
 //        (≈ vendor_approved).
 //   Treasury (onchain_tx): large deploy >$250k USD → confirm (≈ buffer /
-//        concentration breach escalation); otherwise auto. The marquee AP
-//        settlement is a symbolic ETH transfer — its currency never matches the
-//        USD threshold, so it stays auto and the verified money path is intact.
+//        concentration breach escalation); every other on-chain transfer also
+//        confirms (treasury-confirm-onchain has no counterparty allowlist or
+//        risk bound to scope an "auto" grant to, so H-18's lintPolicy flags an
+//        unscoped auto onchain_tx rule as unsafe-for-money the same way it
+//        flags one on outbound_payment). The marquee AP settlement (a symbolic
+//        ETH transfer whose currency never matches the USD threshold above)
+//        now requires approval like any other on-chain transfer this catches.
 //   AR (agent_action): outstanding >$500k -> confirm (approval_above_500k);
 //        otherwise corroborated actions require single-signer confirmation.
 // The buffer minimum, per-venue concentration cap, approved-venue list, the
@@ -830,7 +834,7 @@ async function seedPolicy(
       // Treasury — a large on-chain deploy escalates (proxy for an operating-
       // buffer or per-venue concentration breach, which the DSL can't express
       // directly). USD-denominated so the symbolic ETH marquee settlement never
-      // matches it and stays auto via treasury-auto-onchain below.
+      // matches it and falls through to treasury-confirm-onchain below.
       {
         id: "treasury-confirm-large-deploy",
         applies_to: ["onchain_tx"],
@@ -838,7 +842,13 @@ async function seedPolicy(
         require: "owner_approval",
         execute: "confirm",
       },
-      { id: "treasury-auto-onchain", applies_to: ["onchain_tx"], when: {}, execute: "auto" },
+      {
+        id: "treasury-confirm-onchain",
+        applies_to: ["onchain_tx"],
+        when: {},
+        require: "owner_approval",
+        execute: "confirm",
+      },
       // AR — chasing an account with very large outstanding requires approval
       // before any counterparty-facing action (≈ the old approval_above_500k).
       {
@@ -857,6 +867,13 @@ async function seedPolicy(
       },
     ],
   };
+  // Structural validation only (not the H-18 lintPolicy ERROR gate): this is a
+  // raw-SQL writer of policies.state='active' like the golden-path seed, so
+  // nothing else catches a malformed rule shape reaching vm.ts on first
+  // evaluation the way compose/sign catch it for caller-submitted documents.
+  // The cast mirrors the one on contentHash below (this seed's `params` key
+  // and widened rule literals are not part of the PolicyDocument type).
+  validatePolicyDocument(policy as unknown as PolicyDocument);
   const policyJson = JSON.stringify(policy);
   // Canonical hash, NOT sha256(JSON.stringify(doc)). content_hash is the hash the
   // EIP-712 signing payload commits to (buildTypedData in services/policy), and

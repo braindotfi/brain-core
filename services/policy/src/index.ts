@@ -26,7 +26,16 @@ export {
 } from "./signing.js";
 export { canonicalize, contentHash, contentHashHex, allowedActionsFor } from "./dsl.js";
 export { simulateHistorical, type ReplayAction, type SimulationResult } from "./simulator.js";
-export { lintPolicy, type LintFinding, type LintSeverity, type LintOptions } from "./linter.js";
+export {
+  lintPolicy,
+  runActivationLintGate,
+  type LintFinding,
+  type LintSeverity,
+  type LintOptions,
+  type ActivationLintGateOptions,
+  type ActivationLintGateResult,
+} from "./linter.js";
+export { validatePolicyDocument } from "./validate.js";
 export {
   diffPolicies,
   type PolicyDiff,

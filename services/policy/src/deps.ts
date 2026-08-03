@@ -29,13 +29,9 @@ export interface PolicyDeps {
    * switch for that enforcement, independent of confidenceFloorReject, so
    * either can be flipped without the other. A production tenant enforces
    * regardless of this flag (see routes.ts sign handler). Sourced from
-   * BRAIN_POLICY_LINT_REJECT, default true (fail closed).
-   *
-   * TODO(main.ts wiring): this field is not yet threaded through composition.
-   * Add, next to the existing `confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,`
-   * line in services/api/src/main.ts (around line 727):
-   *   lintReject: cfg.BRAIN_POLICY_LINT_REJECT,
-   * Left undone here because another agent holds main.ts in this change set.
+   * BRAIN_POLICY_LINT_REJECT, default true (fail closed), and threaded
+   * through composition at `policyDeps` in services/api/src/main.ts. The same
+   * flag also gates POST /v1/demo/policy/activate (demo/policy-activate-route.ts).
    */
   lintReject?: boolean;
 }

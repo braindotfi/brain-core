@@ -79,7 +79,12 @@ export interface RegisterPolicyResult {
   version: number;
 }
 
-export function buildPolicyRegistrar(opts: PolicyRegistrarOptions) {
+/** Structural type of buildPolicyRegistrar's return value, for callers that inject it as a dependency (e.g. demo/policy-activate-route.ts). */
+export interface PolicyRegistrar {
+  registerPolicy(tenantId: string, policyHash: Buffer): Promise<RegisterPolicyResult>;
+}
+
+export function buildPolicyRegistrar(opts: PolicyRegistrarOptions): PolicyRegistrar {
   const account = privateKeyToAccount(opts.privateKey);
   const publicClient = createPublicClient({
     chain: baseSepolia,

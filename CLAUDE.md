@@ -355,6 +355,34 @@ Done
   `services/internal-agents/src/policy-template-lint-inventory.test.ts` so the
   list shrinks deliberately; narrowing each agent's authority envelope is an
   open product decision.
+- All three activation paths enforce identically: `POST /policy/:tenant_id/sign`,
+  `POST /policy/:tenant_id/compose` (structural validation only; compose writes
+  `draft`, not `active`), and `POST /v1/demo/policy/activate`
+  (`services/api/src/demo/policy-activate-route.ts`, extracted out of `main.ts`
+  so it is unit-testable). The demo route used to run only a shallow
+  `typeof version === "number" && Array.isArray(rules)` check before inserting
+  `state = 'active'` directly, so a caller holding `policy:write` in
+  `BRAIN_DEMO_MODE` could activate the exact unbounded auto-executing `any`
+  rule the lint gate above exists to reject. It now calls
+  `validatePolicyDocument` and the same blocking-findings logic sign uses,
+  factored into `runActivationLintGate` (`services/policy/src/linter.ts`) so
+  the two routes cannot drift. The route's own `DEMO_POLICY` fixture required
+  the same treatment `buildDefaultPolicyDocument` (`onboarding/provision.ts`)
+  already uses: its `outbound_payment` / `onchain_tx` auto rules became
+  `confirm` because this route has no seeded counterparty data to scope a
+  `counterparty.in` allowlist to, and `agent.risk_level.lte` is fail-closed
+  against the unset `risk_level` a demo-created PaymentIntent carries.
+  `tools/seed-golden-path/src/cli.ts` (a separate raw-SQL `policies.state =
+'active'` writer used to seed a fresh testnet deploy) got the identical
+  content fix plus a `validatePolicyDocument` + `runActivationLintGate` check
+  before its insert. `services/api/src/demo/brainsaas-seed.ts` (also raw SQL)
+  now calls `validatePolicyDocument` and had its own unbounded
+  `treasury-auto-onchain` catch-all rule tightened to `confirm`; its
+  `ap-auto-approved-within` rule still carries two pre-existing lint findings
+  (`no_approval_path_high_value`, `auto_no_risk_bound`) that were deliberately
+  left unenforced there because fixing them safely needs BrainSaaS-side
+  coordination (wiring real `risk_level` signals into payment-intent creation,
+  or redesigning the $50k auto ceiling) rather than a brain-core-only change.
 - Submitted policy documents are structurally validated by
   `validatePolicyDocument` (`services/policy/src/validate.ts`) at compose, lint,
   simulate-historical, and again at activation against the stored row. It
