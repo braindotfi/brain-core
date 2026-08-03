@@ -60,6 +60,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
         model: deps.questionModel,
       },
       outputs: {
+        answered: result.answered,
         answer: result.answer,
         evidence_count: result.evidence.length,
         input_tokens: result.usage.inputTokens,
@@ -70,6 +71,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
     reply.status(200);
     return {
       question,
+      answered: result.answered,
       answer: result.answer,
       evidence: result.evidence,
       model: result.model,

@@ -1138,10 +1138,11 @@
           "required_scope": "wiki:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "{ question, as_of?, max_evidence_depth? }",
-          "response_shape": "200 { question, answer, evidence, model, usage }",
+          "response_shape": "200 { question, answered, answer, evidence, model, usage }",
           "example_request": { "body": { "question": "What changed in policy?" } },
           "example_response": {
             "question": "What changed in policy?",
+            "answered": false,
             "answer": "",
             "evidence": [],
             "model": "configured",

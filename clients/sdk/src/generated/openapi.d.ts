@@ -1388,11 +1388,12 @@ export interface paths {
         put?: never;
         /**
          * Natural-language question against the Wiki
-         * @description Requires `wiki:read`. Translates a natural-language question into
-         *     a set of SQL queries against the Wiki, executes them, and
-         *     composes an answer with an evidence path attached. This is the
-         *     LLM-in-hot-path endpoint. Costs apply per call; see pricing
-         *     documentation.
+         * @description Requires `wiki:read`. Grounds questions in tenant Ledger rows and
+         *     returns an answer with cited evidence. Transaction count, total, and
+         *     average questions use a deterministic Ledger query when the intent is
+         *     unambiguous; other questions use the grounded LLM path. `answered`
+         *     distinguishes a grounded or deterministic answer from a refusal.
+         *     Costs apply only when the LLM path runs; see pricing documentation.
          */
         post: operations["askWiki"];
         delete?: never;
@@ -3938,21 +3939,21 @@ export interface components {
             }[];
         };
         WikiAnswer: {
-            question?: string;
-            answer?: string;
-            confidence?: number;
-            evidence_path?: {
-                step?: number;
-                description?: string;
-                entity_id?: string | null;
-                sql_query?: string | null;
-                result_summary?: string;
+            question: string;
+            /** @description True when Brain produced a grounded or deterministic answer. False means `answer` is a refusal or cannot be grounded from the available data. */
+            answered: boolean;
+            answer: string;
+            evidence: {
+                /** @enum {string} */
+                entityType: "transaction" | "obligation" | "counterparty";
+                entityId: string;
+                excerpt: string;
             }[];
-            llm_metadata?: {
-                model?: string;
-                tokens_input?: number;
-                tokens_output?: number;
-                latency_ms?: number;
+            /** @description The configured LLM model, or `structured-ledger-query` for deterministic aggregates. */
+            model: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
             };
         };
         /**

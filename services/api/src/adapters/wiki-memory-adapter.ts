@@ -71,6 +71,7 @@ export function buildWikiMemoryService(
       );
       return {
         question: req.question,
+        answered: result.answered,
         answer: result.answer,
         evidence: result.evidence,
         model: result.model,

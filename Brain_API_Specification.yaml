@@ -3288,11 +3288,12 @@ paths:
       tags: [Wiki]
       summary: Natural-language question against the Wiki
       description: |
-        Requires `wiki:read`. Translates a natural-language question into
-        a set of SQL queries against the Wiki, executes them, and
-        composes an answer with an evidence path attached. This is the
-        LLM-in-hot-path endpoint. Costs apply per call; see pricing
-        documentation.
+        Requires `wiki:read`. Grounds questions in tenant Ledger rows and
+        returns an answer with cited evidence. Transaction count, total, and
+        average questions use a deterministic Ledger query when the intent is
+        unambiguous; other questions use the grounded LLM path. `answered`
+        distinguishes a grounded or deterministic answer from a refusal.
+        Costs apply only when the LLM path runs; see pricing documentation.
       operationId: askWiki
       requestBody:
         required: true
@@ -7560,27 +7561,31 @@ components:
 
     WikiAnswer:
       type: object
+      required: [question, answered, answer, evidence, model, usage]
       properties:
         question: { type: string }
+        answered:
+          type: boolean
+          description: True when Brain produced a grounded or deterministic answer. False means `answer` is a refusal or cannot be grounded from the available data.
         answer: { type: string }
-        confidence: { type: number, minimum: 0, maximum: 1 }
-        evidence_path:
+        evidence:
           type: array
           items:
             type: object
+            required: [entityType, entityId, excerpt]
             properties:
-              step: { type: integer }
-              description: { type: string }
-              entity_id: { type: [string, "null"], pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
-              sql_query: { type: [string, "null"] }
-              result_summary: { type: string }
-        llm_metadata:
+              entityType: { type: string, enum: [transaction, obligation, counterparty] }
+              entityId: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+              excerpt: { type: string }
+        model:
+          type: string
+          description: The configured LLM model, or `structured-ledger-query` for deterministic aggregates.
+        usage:
           type: object
+          required: [inputTokens, outputTokens]
           properties:
-            model: { type: string }
-            tokens_input: { type: integer }
-            tokens_output: { type: integer }
-            latency_ms: { type: integer }
+            inputTokens: { type: integer, minimum: 0 }
+            outputTokens: { type: integer, minimum: 0 }
 
     EntityAnnotation:
       type: object

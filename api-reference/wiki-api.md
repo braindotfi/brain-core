@@ -32,24 +32,22 @@ Content-Type: application/json
 
 ```json
 {
-  "question": "What did we spend on AWS last quarter, by environment?",
-  "answer": "In 2026-Q1, Acme spent $182,431 on AWS across three environments: production ($138,212), staging ($31,005), and dev ($13,214)...",
-  "confidence": 0.94,
-  "evidence_path": [
-    { "raw_id": "raw_8231", "parser": "invoice_v2", "confidence": 0.98 },
-    { "ledger_id": "tx_4127" },
-    { "ledger_id": "tx_4128" }
+  "question": "How many transactions do I have in June 2026?",
+  "answered": true,
+  "answer": "You have 19 transactions in June 2026.",
+  "evidence": [
+    {
+      "entityType": "transaction",
+      "entityId": "tx_01HQ7K3AAAAAAAAAAAAAAAAAAAA",
+      "excerpt": "outflow 500.00 USD on 2026-06-12 cp=cp_example vendor payment"
+    }
   ],
-  "llm_metadata": {
-    "model": "claude-...",
-    "tokens_input": 4123,
-    "tokens_output": 612,
-    "latency_ms": 1841
-  }
+  "model": "structured-ledger-query",
+  "usage": { "inputTokens": 0, "outputTokens": 0 }
 }
 ```
 
-`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). This route puts an LLM in the hot path. Per-call costs apply. Every answer carries `evidence_path` back to Ledger rows and Raw artifacts.
+`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). Transaction count, sum, and average questions with an unambiguous transaction scope run as deterministic Ledger queries. Other questions use the LLM path and may incur per-call costs. `answered` is the machine-readable result status: `true` means the response is grounded or deterministic; `false` means `answer` is a refusal rather than an answer. Every response carries cited Ledger evidence.
 
 ### Search Entities
 

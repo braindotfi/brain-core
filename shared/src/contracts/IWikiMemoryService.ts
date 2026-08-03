@@ -43,6 +43,8 @@ export interface QuestionRequest {
 
 export interface QuestionAnswer {
   question: string;
+  /** Whether Brain produced a grounded or deterministic answer. */
+  answered: boolean;
   answer: string;
   evidence: Array<{ entityType: string; entityId: string; excerpt: string }>;
   model: string;
