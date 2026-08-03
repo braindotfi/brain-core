@@ -94,10 +94,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for service in brain-prod-api brain-prod-worker; do
-            value="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-              "docker exec $service printenv BRAIN_TRUST_GATE_ENABLED")"
-            test "$value" = "true"
-            echo "$service trust_gate_enabled=$value"
-          done
+          api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -e
+            docker inspect brain-prod-api >/dev/null
+            docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED
+          ')"
+          if [[ "$api_flag" != "true" ]]; then
+            echo "brain-prod-api trust_gate_enabled=${api_flag:-unset}" >&2
+            exit 1
+          fi
+          echo "brain-prod-api trust_gate_enabled=$api_flag"
+
+          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -e
+            docker inspect brain-prod-worker >/dev/null
+            docker exec brain-prod-worker printenv GIT_SHA
+          ')"
+          test -n "$worker_sha"
+          echo "brain-prod-worker git_sha=$worker_sha"
           curl -fsS "$HEALTH_URL"
