@@ -1,5 +1,10 @@
 export * from "./types.js";
 export * from "./gate.js";
+export {
+  APPROVER_ROLE_TOKENS,
+  hasRequiredRoleQuorum,
+  type ApproverRoleToken,
+} from "./approverRoles.js";
 export { computeLedgerSnapshot, type LedgerStateInput } from "./snapshot.js";
 export {
   validateEvidence,

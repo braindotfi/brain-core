@@ -11,6 +11,7 @@
 
 import {
   brainError,
+  hasRequiredRoleQuorum,
   newApprovalId,
   withTenantScope,
   type ApprovalRecord,
@@ -285,22 +286,6 @@ export class ApprovalService implements IApprovalService {
   ): Promise<string[]> {
     return this.signedValidRoles(ctx, subject, null);
   }
-}
-
-function hasRequiredRoleQuorum(
-  requiredRoles: readonly string[],
-  signedRoles: ReadonlySet<string>,
-): boolean {
-  const available = new Set(signedRoles);
-  let signerSlots = 0;
-  for (const requiredRole of requiredRoles) {
-    if (requiredRole === "signer") {
-      signerSlots += 1;
-      continue;
-    }
-    if (!available.delete(requiredRole)) return false;
-  }
-  return available.size >= signerSlots;
 }
 
 function toRecord(row: {

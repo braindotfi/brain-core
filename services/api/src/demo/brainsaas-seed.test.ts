@@ -396,7 +396,7 @@ describe("seedBrainSaasDemo", () => {
     expect(evaluate(policy, largeAgentAction)).toMatchObject({
       outcome: "confirm",
       matched_rule_id: "ar-confirm-above-500k",
-      required_approvers: ["owner"],
+      required_approvers: ["admin"],
     });
   });
 
