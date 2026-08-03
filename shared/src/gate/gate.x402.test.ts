@@ -377,7 +377,7 @@ describe("§6 — check 5.5: agent-counterparty attestation (RFC 0001 §6.3)", (
       evaluatePolicy: async () => makeDecision({ onchain_settlement_permitted: true }),
       attestCounterpartyAgent: async (input) => {
         seen = { counterpartyId: input.counterpartyId, agentId: input.agentId };
-        return { attested: true, registered: true, paused: false };
+        return { attested: true, registered: true, revoked: false };
       },
     });
     const result = await run(deps, x402Intent());
@@ -398,15 +398,15 @@ describe("§6 — check 5.5: agent-counterparty attestation (RFC 0001 §6.3)", (
       attestCounterpartyAgent: async () => ({
         attested: false,
         registered: true,
-        paused: true,
-        reason: "agent paused",
+        revoked: true,
+        reason: "agent_revoked",
       }),
     });
     const result = await run(deps, x402Intent());
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.failedCheck.index).toBe(5.5);
-      expect(result.failedCheck.detail!.paused).toBe(true);
+      expect(result.failedCheck.detail!.revoked).toBe(true);
       expect(result.checks.some((c) => c.index === 6)).toBe(false); // short-circuits
     }
   });
@@ -648,7 +648,7 @@ describe("§6 — x402 happy path threads 3.5 / 5.5 / 6.5 / 8.5 then audit-befor
           onchain_settlement_permitted: true,
           micropayment_window_cap: { currency: "USDC", value: "100.00", window_seconds: 3600 },
         }),
-      attestCounterpartyAgent: async () => ({ attested: true, registered: true, paused: false }),
+      attestCounterpartyAgent: async () => ({ attested: true, registered: true, revoked: false }),
       sumAgentWindowSpend: async () => "0",
     });
     const result = await run(deps, x402Intent());

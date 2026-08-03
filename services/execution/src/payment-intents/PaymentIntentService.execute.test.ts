@@ -887,6 +887,7 @@ describe("PaymentIntentService.execute — escrow gate-loader pass-through (3E-2
           payer: "0x" + "cd".repeat(20),
           payee: "0x" + "99".repeat(20),
           token: "0x" + "ef".repeat(20),
+          assetMatchesSettlement: true,
           amount: "10.00",
           released: "0",
           refunded: "0",

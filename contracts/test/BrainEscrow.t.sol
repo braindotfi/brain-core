@@ -58,8 +58,9 @@ contract ReentrantToken {
         if (!attacking) {
             attacking = true;
             try escrow.release(targetId, 1) {
-                // unreachable — the guard must revert the reentrant call
-            } catch {
+            // unreachable — the guard must revert the reentrant call
+            }
+            catch {
                 reentryReverted = true;
             }
         }
@@ -137,7 +138,7 @@ contract BrainEscrowTest is Test {
 
     bytes32 internal constant ID = keccak256("escrow-1");
     bytes32 internal constant TERMS = keccak256("job-terms");
-    uint256 internal constant AMOUNT = 1_000e6; // 1000 USDC (6 decimals)
+    uint256 internal constant AMOUNT = 1000e6; // 1000 USDC (6 decimals)
     uint64 internal deadline;
 
     function setUp() public {
@@ -184,8 +185,17 @@ contract BrainEscrowTest is Test {
 
         assertEq(token.balanceOf(address(escrow)), AMOUNT);
         assertEq(token.balanceOf(payer), 0);
-        (address p, address pe, address t, uint256 a, uint256 rel, uint256 ref, bytes32 h, uint64 d, IBrainEscrow.State s)
-        = escrow.getEscrow(ID);
+        (
+            address p,
+            address pe,
+            address t,
+            uint256 a,
+            uint256 rel,
+            uint256 ref,
+            bytes32 h,
+            uint64 d,
+            IBrainEscrow.State s
+        ) = escrow.getEscrow(ID);
         assertEq(p, payer);
         assertEq(pe, payee);
         assertEq(t, address(token));
@@ -224,7 +234,7 @@ contract BrainEscrowTest is Test {
     function test_lock_feeOnTransfer_recordsReceivedNotNominal() public {
         FeeOnTransferToken fee = new FeeOnTransferToken();
         bytes32 id = keccak256("fee");
-        uint256 nominal = 1_000e6;
+        uint256 nominal = 1000e6;
         uint256 net = nominal - (nominal * 100) / 10_000; // 1% skim → 990e6
 
         fee.mint(payer, nominal);
@@ -316,9 +326,7 @@ contract BrainEscrowTest is Test {
         escrow.release(ID, 600e6);
         // remaining is 400e6; releasing 500e6 must revert.
         vm.prank(payer);
-        vm.expectRevert(
-            abi.encodeWithSelector(IBrainEscrow.AmountExceedsRemaining.selector, ID, 500e6, 400e6)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IBrainEscrow.AmountExceedsRemaining.selector, ID, 500e6, 400e6));
         escrow.release(ID, 500e6);
     }
 

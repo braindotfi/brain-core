@@ -45,19 +45,38 @@ export interface ResolvedEscrowState {
   readonly payer: string;
   /** On-chain payee (beneficiary) address — must match the release counterparty. */
   readonly payee: string;
-  /** ERC-20 settled (USDC on Base). */
+  /** ERC-20 settled, as the address read from the on-chain escrow. */
   readonly token: string;
-  /** Total locked amount as a decimal string. */
+  /**
+   * Whether `token` is the configured settlement asset (USDC on Base).
+   *
+   * `BrainEscrow.lock` accepts ANY ERC-20 by design (an on-chain allowlist
+   * would need an admin with a path to escrowed funds), so binding the asset is
+   * the gate's job, exactly as check 6.5 binds `X402_ASSET` for x402. The
+   * resolver owns the comparison because it holds the chain config, and the
+   * gate must stay chain-agnostic.
+   *
+   * When this is false the gate MUST reject WITHOUT reading the amount fields
+   * below: they are scaled with the settlement asset's decimals, so an escrow
+   * denominated in another token reports a meaningless magnitude (an
+   * 18-decimal token read as 6-decimal inflates by 10^12).
+   */
+  readonly assetMatchesSettlement: boolean;
+  /** Total locked amount, in MAJOR units of the settlement asset. */
   readonly amount: string;
-  /** Cumulative amount already released to the payee (decimal string). */
+  /** Cumulative amount already released to the payee (major units). */
   readonly released: string;
-  /** Cumulative amount already refunded to the payer (decimal string). */
+  /** Cumulative amount already refunded to the payer (major units). */
   readonly refunded: string;
   /**
-   * Unsettled balance left to release or refund, as a decimal string —
-   * `amount - released - refunded`, computed by the resolver in exact base
-   * units. The gate binds the intent's release amount against this (the release
-   * must satisfy `remaining >= intent.amount`), supporting partial milestones.
+   * Unsettled balance left to release or refund: `amount - released -
+   * refunded`, as a decimal string in MAJOR units of the settlement asset —
+   * the same denomination as `intent.amount`, so the two are directly
+   * comparable. The gate binds the intent's release amount against this (the
+   * release must satisfy `remaining >= intent.amount`), supporting partial
+   * milestones.
+   *
+   * Only meaningful when `assetMatchesSettlement` is true.
    */
   readonly remaining: string;
   /** keccak256 commitment of the off-chain job terms (hash-only, RFC §3). */

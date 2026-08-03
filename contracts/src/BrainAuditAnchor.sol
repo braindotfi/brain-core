@@ -35,6 +35,7 @@ contract BrainAuditAnchor {
         uint256 eventCount;
         uint256 periodEnd;
     }
+
     mapping(bytes32 => Latest) private _latestByTenant;
 
     /// @dev §5.3: idempotent by (tenantId, root). Re-publishing the same
@@ -51,6 +52,7 @@ contract BrainAuditAnchor {
     error RootAlreadyPublished(bytes32 tenantId, bytes32 root);
     error ZeroAddress();
     error InvalidPeriod();
+    error EmptyAnchor();
     error BatchLengthMismatch();
     error BatchTooLarge(uint256 length);
 
@@ -69,7 +71,10 @@ contract BrainAuditAnchor {
     /// @notice Publish a Merkle root for a tenant's audit window.
     /// @param tenantId    keccak256 of the Brain tenant id (tnt_<ulid>).
     /// @param root        Merkle root over the event hashes in the window.
-    /// @param eventCount  Number of leaves in the tree (sanity bound).
+    /// @param eventCount  Number of leaves in the tree. Must be non-zero: an
+    ///                    empty window has nothing to prove and its root is a
+    ///                    constant, which would consume the (tenantId, root)
+    ///                    slot for every future empty window.
     /// @param periodStart Window start (unix seconds).
     /// @param periodEnd   Window end (unix seconds, inclusive of last event).
     function anchor(bytes32 tenantId, bytes32 root, uint256 eventCount, uint256 periodStart, uint256 periodEnd)
@@ -77,11 +82,11 @@ contract BrainAuditAnchor {
         onlyPublisher
     {
         if (periodEnd < periodStart) revert InvalidPeriod();
+        if (eventCount == 0) revert EmptyAnchor();
         if (_published[tenantId][root]) revert RootAlreadyPublished(tenantId, root);
 
         _published[tenantId][root] = true;
-        _latestByTenant[tenantId] =
-            Latest({root: root, blockNumber: block.number, eventCount: eventCount, periodEnd: periodEnd});
+        _recordLatest(tenantId, root, eventCount, periodEnd);
 
         emit AnchorPublished(tenantId, root, eventCount, periodStart, periodEnd);
     }
@@ -106,16 +111,32 @@ contract BrainAuditAnchor {
 
         for (uint256 i = 0; i < len; ++i) {
             if (periodEnds[i] < periodStarts[i]) revert InvalidPeriod();
+            if (eventCounts[i] == 0) revert EmptyAnchor();
             bytes32 tenantId = tenantIds[i];
             bytes32 root = roots[i];
             if (_published[tenantId][root]) continue;
 
             _published[tenantId][root] = true;
-            _latestByTenant[tenantId] =
-                Latest({root: root, blockNumber: block.number, eventCount: eventCounts[i], periodEnd: periodEnds[i]});
+            _recordLatest(tenantId, root, eventCounts[i], periodEnds[i]);
 
             emit AnchorPublished(tenantId, root, eventCounts[i], periodStarts[i], periodEnds[i]);
         }
+    }
+
+    /// @dev Advance the per-tenant "latest" pointer only when this anchor is at
+    ///      least as recent as the one already recorded.
+    ///
+    ///      Publication order is not guaranteed to be chronological: a retry, a
+    ///      backfill, or a catch-up batch can carry an OLDER window than what is
+    ///      already stored. The pointer used to be overwritten unconditionally,
+    ///      so `latestAnchor` could regress and report a stale root as current
+    ///      to any third party verifying without trusting Brain. The
+    ///      (tenantId, root) publication record is unaffected: every anchor is
+    ///      still recorded and still emits its event.
+    function _recordLatest(bytes32 tenantId, bytes32 root, uint256 eventCount, uint256 periodEnd) private {
+        if (periodEnd < _latestByTenant[tenantId].periodEnd) return;
+        _latestByTenant[tenantId] =
+            Latest({root: root, blockNumber: block.number, eventCount: eventCount, periodEnd: periodEnd});
     }
 
     /// @notice Begin a two-step publisher rotation (multi-sig membership change).
@@ -147,6 +168,14 @@ contract BrainAuditAnchor {
     ///         `leaf` is raw leaf data; `proof` elements are already-computed
     ///         node hashes at each level (leaf hashes for bottom-level siblings,
     ///         internal node hashes for higher levels).
+    ///
+    ///         Known and accepted: the tree duplicates a trailing odd node, so
+    ///         the root does not commit to the leaf COUNT and [A,B,C] hashes to
+    ///         the same root as [A,B,C,C]. Binding the count would invalidate
+    ///         every anchor already published and force a dual-scheme verifier,
+    ///         so it is recorded as accepted risk rather than changed. The
+    ///         domain separation above already blocks the exploitable case
+    ///         (presenting an internal node as a leaf).
     function verifyInclusion(bytes32 root, bytes32 leaf, bytes32[] calldata proof) external pure returns (bool) {
         bytes32 computed = keccak256(abi.encodePacked(bytes1(0x00), leaf));
         uint256 len = proof.length;

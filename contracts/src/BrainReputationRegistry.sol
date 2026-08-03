@@ -16,7 +16,8 @@ import {IBrainReputationRegistry} from "./IBrainReputationRegistry.sol";
 ///         **batched into the external audit** (correctness of the monotonic
 ///         epoch, attestor authorization, hash-only ABI) and runs on Base Sepolia
 ///         (testnet) until that audit clears. Immutable — no upgrade, no pause;
-///         the only privileged action is attestor rotation (itself attestor-only).
+///         the only privileged action is attestor rotation (itself attestor-only,
+///         and two-step).
 ///
 ///         **Policy input only (Standards §6, Principle #5).** Brain's Policy
 ///         layer reads this pointer as a *threshold* input and may only TIGHTEN a
@@ -24,8 +25,13 @@ import {IBrainReputationRegistry} from "./IBrainReputationRegistry.sol";
 ///         pre-execution-gate precondition and can never authorize a payment.
 contract BrainReputationRegistry is IBrainReputationRegistry {
     /// @notice Reputation oracle. The only address that may publish pointers.
-    ///         A Safe multi-sig in production (rotatable via {setAttestor}).
+    ///         A Safe multi-sig in production (rotatable via {setAttestor} +
+    ///         {acceptAttestor}).
     address public attestor;
+
+    /// @notice Proposed next attestor, who must call {acceptAttestor} to take
+    ///         the role. Zero when no rotation is pending.
+    address public pendingAttestor;
 
     struct Reputation {
         bytes32 scoreRoot; // Merkle root committing to the off-chain dataset (pointer).
@@ -50,11 +56,7 @@ contract BrainReputationRegistry is IBrainReputationRegistry {
     }
 
     /// @inheritdoc IBrainReputationRegistry
-    function publishReputation(bytes32 agentId, bytes32 scoreRoot, uint64 epoch)
-        external
-        override
-        onlyAttestor
-    {
+    function publishReputation(bytes32 agentId, bytes32 scoreRoot, uint64 epoch) external override onlyAttestor {
         if (scoreRoot == bytes32(0)) revert ZeroRoot();
         Reputation storage r = _repByAgent[agentId];
         // Strictly-increasing epoch: anti-replay + total ordering. A stale or
@@ -71,10 +73,17 @@ contract BrainReputationRegistry is IBrainReputationRegistry {
 
     /// @inheritdoc IBrainReputationRegistry
     function setAttestor(address next) external override onlyAttestor {
-        if (next == address(0)) revert ZeroAddress();
+        pendingAttestor = next;
+        emit AttestorTransferStarted(attestor, next);
+    }
+
+    /// @inheritdoc IBrainReputationRegistry
+    function acceptAttestor() external override {
+        if (msg.sender != pendingAttestor) revert NotPendingAttestor();
         address prev = attestor;
-        attestor = next;
-        emit AttestorChanged(prev, next);
+        attestor = pendingAttestor;
+        pendingAttestor = address(0);
+        emit AttestorChanged(prev, attestor);
     }
 
     /// @inheritdoc IBrainReputationRegistry

@@ -860,12 +860,18 @@ async function main(): Promise<void> {
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
   });
   const sumAgentWindowSpend = makeSumAgentWindowSpend(pool);
+  // Check 6.6 needs the settlement asset to bind the escrow token against, so
+  // the escrow resolver is wired only when BOTH the escrow address and the USDC
+  // address are configured. Without the asset binding an escrow funded with an
+  // arbitrary ERC-20 would satisfy a release intent, so a half-configured
+  // escrow leaves the check dormant rather than running it unbound.
   const resolveEscrowState =
-    cfg.BRAIN_ESCROW_ADDRESS !== undefined
+    cfg.BRAIN_ESCROW_ADDRESS !== undefined && cfg.BRAIN_X402_USDC_ADDRESS !== undefined
       ? makeResolveEscrowState({
           escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
           chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          settlementToken: cfg.BRAIN_X402_USDC_ADDRESS,
         })
       : undefined;
 

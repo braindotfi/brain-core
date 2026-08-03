@@ -28,17 +28,15 @@ contract BrainPolicyRegistryTest is Test {
     // --- Helpers ---------------------------------------------------------
 
     function _signerChangeDigest(address s, bool allowed, uint256 nonce) internal view returns (bytes32) {
-        bytes32 typeHash =
-            keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
+        bytes32 typeHash = keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
         bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, s, allowed, nonce));
-        return keccak256(abi.encodePacked(hex"19_01", registry.domainSeparator(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash));
     }
 
     function _digest(bytes32 policyHash, uint256 version) internal view returns (bytes32) {
-        bytes32 typeHash =
-            keccak256("PolicyRegistration(bytes32 tenantId,uint256 version,bytes32 policyHash)");
+        bytes32 typeHash = keccak256("PolicyRegistration(bytes32 tenantId,uint256 version,bytes32 policyHash)");
         bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, version, policyHash));
-        return keccak256(abi.encodePacked(hex"19_01", registry.domainSeparator(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash));
     }
 
     function _sign(uint256 pk, bytes32 digest) internal pure returns (bytes memory) {
@@ -107,7 +105,7 @@ contract BrainPolicyRegistryTest is Test {
 
         registry.registerPolicy(TENANT, 1, hash, signers, sigs);
 
-        (bytes32 storedHash, address[] memory storedSigners, uint256 activatedAt) = registry.getPolicy(TENANT, 1);
+        (bytes32 storedHash, address[] memory storedSigners, uint256 activatedAt,) = registry.getPolicy(TENANT, 1);
         assertEq(storedHash, hash);
         assertEq(storedSigners.length, 1);
         assertEq(storedSigners[0], signer1);
@@ -235,7 +233,7 @@ contract BrainPolicyRegistryTest is Test {
         sigs[1] = _sign(pk1, _digest(hash, 1));
         registry.registerPolicy(TENANT, 1, hash, signers, sigs);
 
-        (, address[] memory stored,) = registry.getPolicy(TENANT, 1);
+        (, address[] memory stored,,) = registry.getPolicy(TENANT, 1);
         assertEq(stored.length, 2);
         assertEq(stored[0], s0);
         assertEq(stored[1], s1);

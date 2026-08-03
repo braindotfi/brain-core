@@ -338,8 +338,10 @@ jobs:
         run: forge install foundry-rs/forge-std
 
       - name: forge fmt check
+        # Hard gate. The continue-on-error placeholder here predated stage-5
+        # (its comment still claimed there were no contracts), so formatting was
+        # never actually enforced on six live contracts.
         run: forge fmt --check
-        continue-on-error: true # no contracts yet — placeholder until stage-5
 
       - name: forge build
         run: forge build --sizes

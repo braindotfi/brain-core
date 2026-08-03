@@ -63,6 +63,43 @@ const KNOWN_VARS = {
   BRAIN_SMART_ACCOUNT_ABI: "BrainSmartAccount",
 };
 
+/**
+ * Hand-rolled 4-byte selector literals.
+ *
+ * A hand-written selector is invisible to the parseAbi scan above, and that is
+ * exactly how `escrow-base.ts` shipped `0x84f97fba` for
+ * `release(bytes32,uint256)` -- a selector BrainEscrow does not dispatch at
+ * all. Since the contract has no fallback, every escrow release reverted, and
+ * this guard reported OK the whole time.
+ *
+ * Every selector constant must therefore be registered here with the signature
+ * it claims to encode. The guard verifies that signature still exists on the
+ * named contract; the KECCAK correctness of the literal itself is pinned by the
+ * companion unit test named in `pinnedBy`, which recomputes it with viem.
+ *
+ * Prefer `parseAbi` + `encodeFunctionData` over a literal. Register one here
+ * only when the module must stay SDK-free.
+ */
+const PINNED_SELECTORS = {
+  RELEASE_SELECTOR: {
+    contract: "BrainEscrow",
+    signature: "function release(bytes32 escrowId, uint256 amount)",
+    pinnedBy: "services/execution/src/rails/escrow-base.selector.test.ts",
+  },
+};
+
+/**
+ * Standard ERC-20 selectors. Out of scope for the same reason USDC_ABI is:
+ * these are governed by the token standard, not by us, and they cannot drift.
+ * Keyed by literal so a typo in one still trips the guard.
+ */
+const THIRD_PARTY_SELECTORS = new Set([
+  "0xa9059cbb", // transfer(address,uint256)
+  "0x23b872dd", // transferFrom(address,address,uint256)
+  "0x095ea7b3", // approve(address,uint256)
+  "0x70a08231", // balanceOf(address)
+]);
+
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
@@ -165,6 +202,33 @@ function parseSignature(sig) {
   return { name, inputTypes };
 }
 
+/**
+ * Extract `const <NAME> = "0x<8 hex>"` occurrences -- hand-rolled 4-byte
+ * selectors. Returns { file, variable, literal, line }.
+ *
+ * Deliberately matches ANY 8-hex-digit string constant, not just names ending
+ * in _SELECTOR, so a selector cannot hide behind a different name.
+ */
+function extractSelectorLiterals(file) {
+  // Tests legitimately hand-build calldata and bytecode fixtures (a contract's
+  // 0x60806040 creation prefix matches the same shape). The guard is about
+  // production call sites.
+  if (/\.(test|spec)\.tsx?$/.test(file)) return [];
+  const src = readFileSync(file, "utf8");
+  const out = [];
+  const re = /(?:^|\s)(?:const|let|var|export\s+const)\s+(\w+)\s*(?::\s*[^=]+)?=\s*["'`](0x[0-9a-fA-F]{8})["'`]/gm;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    out.push({
+      file,
+      variable: m[1],
+      literal: m[2].toLowerCase(),
+      line: src.slice(0, m.index).split("\n").length,
+    });
+  }
+  return out;
+}
+
 function loadAbi(contract) {
   const path = join(CONTRACTS_OUT, `${contract}.sol`, `${contract}.json`);
   if (!existsSync(path)) return null;
@@ -208,8 +272,62 @@ function main() {
   }
 
   const blocks = [];
+  const selectorLiterals = [];
   for (const file of walkTs(ROOT)) {
     blocks.push(...extractParseAbiBlocks(file));
+    selectorLiterals.push(...extractSelectorLiterals(file));
+  }
+
+  // Selector-literal findings are collected before the early exits below, so a
+  // repo with no parseAbi blocks still cannot smuggle in a raw selector.
+  const selectorFindings = [];
+  for (const lit of selectorLiterals) {
+    if (THIRD_PARTY_SELECTORS.has(lit.literal)) continue;
+    const pinned = PINNED_SELECTORS[lit.variable];
+    if (pinned === undefined) {
+      selectorFindings.push({
+        kind: "selector-unregistered",
+        file: lit.file,
+        line: lit.line,
+        variable: lit.variable,
+        msg:
+          `hand-rolled 4-byte selector ${lit.literal} is not registered in PINNED_SELECTORS. ` +
+          "Prefer parseAbi + encodeFunctionData; if the module must stay SDK-free, register it " +
+          "with its signature and a unit test that recomputes the keccak.",
+      });
+      continue;
+    }
+    const abi = loadAbi(pinned.contract);
+    if (abi === null) {
+      selectorFindings.push({
+        kind: "selector-abi-missing",
+        file: lit.file,
+        line: lit.line,
+        variable: lit.variable,
+        msg: `forge artifact missing for ${pinned.contract}. Run \`forge build\`.`,
+      });
+      continue;
+    }
+    const parsed = parseSignature(pinned.signature);
+    if (parsed === null || findMatchingFunction(abi, parsed.name, parsed.inputTypes) === null) {
+      selectorFindings.push({
+        kind: "selector-drift",
+        file: lit.file,
+        line: lit.line,
+        variable: lit.variable,
+        msg:
+          `registered signature "${pinned.signature}" has no exact-match function in ` +
+          `${pinned.contract}.json. The selector encodes a call the contract no longer has.`,
+      });
+    }
+  }
+
+  if (selectorFindings.length > 0) {
+    for (const f of selectorFindings) {
+      console.error(`[SELECTOR] ${f.file}:${f.line} (${f.variable})`);
+      console.error(`           ${f.msg}`);
+    }
+    process.exit(1);
   }
 
   if (blocks.length === 0) {

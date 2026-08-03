@@ -59,7 +59,9 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes memory sig = _sign(externalPk, _regDigest(agentId, vm.addr(externalPk), keccak256("scope")));
         vm.expectRevert();
-        registry.registerAgent(agentId, vm.addr(externalPk), TENANT, keccak256("scope"), BEHAVIOR, sig);
+        registry.registerAgent(
+            agentId, vm.addr(externalPk), TENANT, keccak256("scope"), BEHAVIOR, vm.addr(externalPk), sig
+        );
     }
 
     function test_register_happyPath() public {
@@ -69,7 +71,7 @@ contract BrainMCPAgentRegistryTest is Test {
         address agentAddr = vm.addr(externalPk);
 
         bytes memory sig = _sign(signerPk, _regDigest(agentId, agentAddr, scope));
-        registry.registerAgent(agentId, agentAddr, TENANT, scope, BEHAVIOR, sig);
+        registry.registerAgent(agentId, agentAddr, TENANT, scope, BEHAVIOR, signer, sig);
 
         assertTrue(registry.isAuthorized(agentId, TENANT));
         BrainMCPAgentRegistry.AgentRegistration memory reg = registry.getAgent(agentId);
@@ -93,9 +95,9 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
         bytes memory sig = _sign(signerPk, _regDigest(agentId, a, scope));
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, sig);
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, signer, sig);
         vm.expectRevert(abi.encodeWithSelector(BrainMCPAgentRegistry.AgentAlreadyRegistered.selector, agentId));
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, sig);
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, signer, sig);
     }
 
     function test_revoke_happyPath() public {
@@ -104,10 +106,10 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
         bytes memory regSig = _sign(signerPk, _regDigest(agentId, a, scope));
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, regSig);
+        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, signer, regSig);
 
         bytes memory revSig = _sign(signerPk, _revDigest(agentId));
-        registry.revokeAgent(agentId, revSig);
+        registry.revokeAgent(agentId, signer, revSig);
         assertFalse(registry.isAuthorized(agentId, TENANT));
         assertEq(registry.revocationNonce(agentId), 1);
     }
@@ -132,7 +134,7 @@ contract BrainMCPAgentRegistryTest is Test {
             bytes32 scope = keccak256(abi.encodePacked("s", i));
             address a = address(uint160(i + 1));
             bytes memory sig = _sign(signerPk, _regDigest(agentId, a, scope));
-            registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, sig);
+            registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, signer, sig);
             BrainMCPAgentRegistry.AgentRegistration memory reg = registry.getAgent(agentId);
             assertEq(reg.scopeHash, scope);
             assertEq(reg.agentAddress, a);
@@ -163,12 +165,14 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
+        registry.registerAgent(
+            agentId, a, TENANT, scope, BEHAVIOR, signer, _sign(signerPk, _regDigest(agentId, a, scope))
+        );
         assertEq(registry.getAgent(agentId).behaviorHash, BEHAVIOR);
 
         // Promote to a new behavior with a fresh tenant-signed attestation.
         bytes32 next = keccak256("behavior.v2");
-        registry.updateBehaviorHash(agentId, next, _sign(signerPk, _behaviorDigest(agentId, next)));
+        registry.updateBehaviorHash(agentId, next, signer, _sign(signerPk, _behaviorDigest(agentId, next)));
         assertEq(registry.getAgent(agentId).behaviorHash, next);
         assertEq(registry.behaviorNonce(agentId), 1);
     }
@@ -178,21 +182,23 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
+        registry.registerAgent(
+            agentId, a, TENANT, scope, BEHAVIOR, signer, _sign(signerPk, _regDigest(agentId, a, scope))
+        );
 
         bytes32 older = keccak256("behavior.old");
         bytes memory olderSig = _sign(signerPk, _behaviorDigestWithNonce(agentId, older, 0));
-        registry.updateBehaviorHash(agentId, older, olderSig);
+        registry.updateBehaviorHash(agentId, older, signer, olderSig);
         assertEq(registry.getAgent(agentId).behaviorHash, older);
         assertEq(registry.behaviorNonce(agentId), 1);
 
         bytes32 newer = keccak256("behavior.new");
-        registry.updateBehaviorHash(agentId, newer, _sign(signerPk, _behaviorDigest(agentId, newer)));
+        registry.updateBehaviorHash(agentId, newer, signer, _sign(signerPk, _behaviorDigest(agentId, newer)));
         assertEq(registry.getAgent(agentId).behaviorHash, newer);
         assertEq(registry.behaviorNonce(agentId), 2);
 
         vm.expectRevert();
-        registry.updateBehaviorHash(agentId, older, olderSig);
+        registry.updateBehaviorHash(agentId, older, signer, olderSig);
         assertEq(registry.getAgent(agentId).behaviorHash, newer);
     }
 
@@ -201,7 +207,9 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes32 agentId = keccak256("agent");
         bytes32 scope = keccak256("scope");
         address a = vm.addr(externalPk);
-        registry.registerAgent(agentId, a, TENANT, scope, BEHAVIOR, _sign(signerPk, _regDigest(agentId, a, scope)));
+        registry.registerAgent(
+            agentId, a, TENANT, scope, BEHAVIOR, signer, _sign(signerPk, _regDigest(agentId, a, scope))
+        );
         bytes32 next = keccak256("behavior.v2");
         // Compute the signature BEFORE expectRevert: _behaviorDigest() makes an
         // external call (registry.domainSeparator()), and a bare expectRevert
@@ -212,6 +220,6 @@ contract BrainMCPAgentRegistryTest is Test {
         bytes memory sig = _sign(externalPk, _behaviorDigest(agentId, next));
         // externalPk is not a tenant signer → reject.
         vm.expectRevert(abi.encodeWithSelector(BrainMCPAgentRegistry.NotTenantSigner.selector, a));
-        registry.updateBehaviorHash(agentId, next, sig);
+        registry.updateBehaviorHash(agentId, next, a, sig);
     }
 }

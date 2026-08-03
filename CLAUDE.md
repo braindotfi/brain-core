@@ -678,6 +678,20 @@ Pending Dmitriy sign-off
   Missing or malformed policy data fails closed to human approval. `x402_settle`
   and `escrow_release` intentionally skip `ledger_reservations`; their spend
   ceilings are the on-chain session-key caps and escrow `remaining` amount.
+  The session-key half of that ceiling is only real when the key is granted in
+  the right cap mode. `BrainSmartAccount` has three: NATIVE meters `msg.value`
+  and forbids calldata outright, ERC20 meters the decoded token amount and binds
+  the recipient, and CALL meters the uint256 word at a grant-time
+  `capAmountOffset`. An escrow release is a contract call with `value = 0`, so it
+  MUST be granted in CALL mode with `capAmountOffset = 36` (the `amount` word of
+  `release(bytes32,uint256)`). Under the older single-mode model it metered
+  `msg.value` and therefore always measured zero, so the documented ceiling did
+  not exist for `escrow_release` at all. There is no longer any un-metered call
+  path: every mode either forbids calldata or names where the amount lives.
+  The escrow `remaining` half is enforced by gate check 6.6, which also binds the
+  escrow's `token` to the configured settlement asset. Without that binding the
+  amount comparison was meaningless, because the resolver scales every amount
+  with the settlement asset's decimals and `BrainEscrow.lock` accepts any ERC-20.
 - Tier 1 Group B applies the same human-approval posture to fiat rails. `wire`
   always requires a recorded human approval when policy allows. ACH and card
   can execute autonomously only when the matched signed policy rule carries a

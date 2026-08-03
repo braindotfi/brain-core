@@ -23,9 +23,18 @@ interface IERC20Minimal {
 ///         the on-chain settlement venue, never an un-gated money path.
 /// @dev    ⚠️ UNAUDITED — NOT FOR MAINNET. Pre-audit reference implementation
 ///         (RFC 0001 §9: "Audit required before mainnet"). Base Sepolia testnet
-///         only until an external audit clears. Immutable — no admin, no upgrade,
-///         no pause. Hash-only (RFC 0001 §3): no string / PII on the ABI; the
-///         only job datum on-chain is `jobTermsHash`.
+///         only until an external audit clears. No upgrade, no pause. Hash-only
+///         (RFC 0001 §3): no string / PII on the ABI; the only job datum on-chain
+///         is `jobTermsHash`.
+///
+///         The escrow accepts ANY ERC-20 by design (no on-chain token
+///         allowlist, which would need an admin). Binding the settled asset is
+///         the §6 gate's job: check 6.6 compares the on-chain `token` against
+///         the configured settlement asset, exactly as check 6.5 does for x402.
+///
+///         Known and accepted: tokens transferred directly to this contract,
+///         outside `lock`, are unrecoverable. There is deliberately no sweep,
+///         because a sweep needs an admin with a path to escrowed funds.
 contract BrainEscrow is IBrainEscrow {
     struct Escrow {
         address payer;
@@ -40,8 +49,15 @@ contract BrainEscrow is IBrainEscrow {
     }
 
     /// @notice Dispute arbiter (Brain's attester; a Safe multi-sig in prod).
-    ///         Immutable — set once at deploy, never rotated (no admin surface).
-    address public immutable arbiter;
+    ///         Rotatable through a two-step transfer only. It was previously
+    ///         immutable, which meant a lost or compromised arbiter key could
+    ///         never be replaced: an escrow whose payer refused to release was
+    ///         then locked forever with no dispute path.
+    address public arbiter;
+
+    /// @notice Proposed next arbiter, who must call {acceptArbiter}. Zero when
+    ///         no rotation is pending.
+    address public pendingArbiter;
 
     /// @dev escrowId → escrow. A non-None state marks the id permanently used,
     ///      so a settled id can never be reused (replay-safe).
@@ -61,6 +77,23 @@ contract BrainEscrow is IBrainEscrow {
     constructor(address _arbiter) {
         if (_arbiter == address(0)) revert ZeroAddress();
         arbiter = _arbiter;
+        emit ArbiterChanged(address(0), _arbiter);
+    }
+
+    /// @inheritdoc IBrainEscrow
+    function setArbiter(address next) external override {
+        if (msg.sender != arbiter) revert NotAuthorized();
+        pendingArbiter = next;
+        emit ArbiterTransferStarted(arbiter, next);
+    }
+
+    /// @inheritdoc IBrainEscrow
+    function acceptArbiter() external override {
+        if (msg.sender != pendingArbiter) revert NotPendingArbiter();
+        address prev = arbiter;
+        arbiter = pendingArbiter;
+        pendingArbiter = address(0);
+        emit ArbiterChanged(prev, arbiter);
     }
 
     /// @inheritdoc IBrainEscrow
@@ -71,17 +104,18 @@ contract BrainEscrow is IBrainEscrow {
     ///      believed it held the full sum, breaking the solvency invariant that
     ///      release/refund rely on. For standard tokens (USDC) the delta equals
     ///      `amount`. Reverts if nothing was received.
-    function lock(
-        bytes32 escrowId,
-        address payee,
-        address token,
-        uint256 amount,
-        bytes32 jobTermsHash,
-        uint64 deadline
-    ) external override nonReentrant {
+    function lock(bytes32 escrowId, address payee, address token, uint256 amount, bytes32 jobTermsHash, uint64 deadline)
+        external
+        override
+        nonReentrant
+    {
         if (_escrows[escrowId].state != State.None) revert EscrowExists(escrowId);
         if (payee == address(0) || token == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        // A deadline at or before now makes the escrow refundable by the payer
+        // in the same block it is funded, so a payee could deliver against a
+        // lock the payer can withdraw at will.
+        if (deadline <= block.timestamp) revert DeadlineInPast(deadline);
 
         // Pull funds first: the safe wrapper reverts on failure, so a failed
         // transfer rolls the whole tx back and records no escrow. nonReentrant
@@ -176,25 +210,14 @@ contract BrainEscrow is IBrainEscrow {
         )
     {
         Escrow storage e = _escrows[escrowId];
-        return (
-            e.payer,
-            e.payee,
-            e.token,
-            e.amount,
-            e.released,
-            e.refunded,
-            e.jobTermsHash,
-            e.deadline,
-            e.state
-        );
+        return (e.payer, e.payee, e.token, e.amount, e.released, e.refunded, e.jobTermsHash, e.deadline, e.state);
     }
 
     /// @dev SafeERC20-style transfer: tolerates tokens that return no data
     ///      (non-standard) and those that return a bool. Reverts on a false
     ///      return or a failed call. USDC returns bool true.
     function _safeTransfer(address token, address to, uint256 amount) private {
-        (bool ok, bytes memory data) =
-            token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
         if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 

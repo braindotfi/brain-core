@@ -327,7 +327,10 @@ contract BrainAuditAnchorTest is Test {
     // --- Fuzz ---
 
     function testFuzz_anchor_idempotentRejection(bytes32 root, uint256 count, uint256 start) public {
-        vm.assume(count < 1e12);
+        // eventCount 0 is now rejected outright: an empty window has nothing to
+        // prove and its root is a constant, which would burn the (tenant, root)
+        // slot for every future empty window.
+        vm.assume(count != 0 && count < 1e12);
         vm.assume(start < 1e10);
         vm.startPrank(publisher);
         anchor.anchor(TENANT_A, root, count, start, start + 1);

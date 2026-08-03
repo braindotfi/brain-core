@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.24;
 
+import {BrainSignatureChecker} from "./BrainSignatureChecker.sol";
+
 /// @title BrainMCPAgentRegistry
 /// @notice Public registry of third-party agents authorized to connect to a
 ///         tenant's MCP interface. On-chain scope attestation — any observer
@@ -9,7 +11,16 @@ pragma solidity 0.8.24;
 /// @dev    Third-party agents cannot self-register. Registration requires an
 ///         EIP-712 signature from an address the tenant has pre-registered
 ///         as a signer. Revocation is immediate and requires the same.
+///
+///         Revocation is TERMINAL: a revoked agentId can never be re-registered
+///         or re-attested, and the id is permanently consumed. Off-chain callers
+///         must surface this as revoked, never as "paused" — there is no unpause.
+///
+///         Signatures are verified through {BrainSignatureChecker}, so a tenant
+///         signer may be an EOA or an ERC-1271 smart-contract wallet (Safe).
 contract BrainMCPAgentRegistry {
+    using BrainSignatureChecker for address;
+
     struct AgentRegistration {
         bytes32 agentId;
         address agentAddress;
@@ -32,9 +43,13 @@ contract BrainMCPAgentRegistry {
     );
     event AgentRevoked(bytes32 indexed agentId, bytes32 indexed tenantId);
     event AgentBehaviorUpdated(bytes32 indexed agentId, bytes32 indexed tenantId, bytes32 behaviorHash);
+    event AgentScopeUpdated(bytes32 indexed agentId, bytes32 indexed tenantId, bytes32 scopeHash);
     event TenantSignerSet(bytes32 indexed tenantId, address indexed signer, bool allowed);
+    event AdminTransferStarted(address indexed currentAdmin, address indexed pendingAdmin);
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
-    /// @dev Registered agents keyed by agentId (global namespace).
+    /// @dev Registered agents keyed by agentId (global namespace). An id is
+    ///      consumed permanently on first registration.
     mapping(bytes32 => AgentRegistration) private _agents;
 
     /// @dev Per-tenant allowlist of signer addresses. A tenant must have
@@ -55,6 +70,8 @@ contract BrainMCPAgentRegistry {
         keccak256("AgentRevocation(bytes32 agentId,bytes32 tenantId,uint256 nonce)");
     bytes32 private constant _BEHAVIOR_WITH_NONCE_TYPEHASH =
         keccak256("AgentBehaviorUpdate(bytes32 agentId,bytes32 tenantId,bytes32 behaviorHash,uint256 nonce)");
+    bytes32 private constant _SCOPE_WITH_NONCE_TYPEHASH =
+        keccak256("AgentScopeUpdate(bytes32 agentId,bytes32 tenantId,bytes32 scopeHash,uint256 nonce)");
     bytes32 private constant _SIGNER_TYPEHASH =
         keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
     bytes32 private constant _DOMAIN_TYPEHASH =
@@ -65,9 +82,15 @@ contract BrainMCPAgentRegistry {
     bytes32 private immutable _cachedDomainSeparator;
     uint256 private immutable _cachedChainId;
 
-    address public immutable initialAdmin;
+    /// @notice Bootstraps the first signer per tenant. Rotatable via
+    ///         {transferAdmin} / {acceptAdmin}.
+    address public initialAdmin;
+    /// @notice Proposed next admin, who must call {acceptAdmin}.
+    address public pendingAdmin;
+
     mapping(bytes32 => uint256) public signerNonce;
     mapping(bytes32 => uint256) public behaviorNonce;
+    mapping(bytes32 => uint256) public scopeNonce;
     mapping(bytes32 => uint256) public revocationNonce;
 
     error AgentAlreadyRegistered(bytes32 agentId);
@@ -77,6 +100,8 @@ contract BrainMCPAgentRegistry {
     error NotTenantSigner(address signer);
     error ZeroAddress();
     error TenantMismatch();
+    error NotAdmin();
+    error NotPendingAdmin();
 
     constructor(address admin) {
         if (admin == address(0)) revert ZeroAddress();
@@ -86,11 +111,36 @@ contract BrainMCPAgentRegistry {
         _hashedVersion = keccak256(bytes("1"));
         _cachedChainId = block.chainid;
         _cachedDomainSeparator = _buildDomainSeparator();
+        emit AdminTransferred(address(0), admin);
+    }
+
+    // --- Admin rotation ---------------------------------------------------
+
+    /// @notice Begin a two-step admin rotation. Takes effect only when `next`
+    ///         calls {acceptAdmin}.
+    /// @param  next The proposed next admin, or address(0) to cancel.
+    function transferAdmin(address next) external {
+        if (msg.sender != initialAdmin) revert NotAdmin();
+        pendingAdmin = next;
+        emit AdminTransferStarted(initialAdmin, next);
+    }
+
+    /// @notice Complete a two-step admin rotation.
+    function acceptAdmin() external {
+        if (msg.sender != pendingAdmin) revert NotPendingAdmin();
+        address previous = initialAdmin;
+        initialAdmin = pendingAdmin;
+        pendingAdmin = address(0);
+        emit AdminTransferred(previous, initialAdmin);
     }
 
     // --- Tenant signer management (EIP-712 signed by an existing signer, or
     //     initialAdmin for the very first signer of a tenant). -------------
 
+    /// @param authSigner The address claimed to have produced `signature`.
+    ///        Required for ERC-1271: a contract signature cannot be recovered
+    ///        from, so the claimed signer must be supplied for the membership
+    ///        check.
     function setTenantSigner(
         bytes32 tenantId,
         address signer,
@@ -98,14 +148,14 @@ contract BrainMCPAgentRegistry {
         address authSigner,
         bytes calldata signature
     ) external {
+        if (signer == address(0)) revert ZeroAddress();
         bytes32 digest = _hashSignerChange(tenantId, signer, allowed, signerNonce[tenantId]);
-        address recovered = _recover(digest, signature);
-        if (recovered == address(0)) revert InvalidSignature();
+        if (!authSigner.isValidSignature(digest, signature)) revert InvalidSignature();
 
-        bool authorized = (_tenantSigners[tenantId][recovered] && recovered == authSigner);
+        bool authorized = _tenantSigners[tenantId][authSigner];
         // Bootstrap: first-ever signer must come from initialAdmin.
         bool firstSigner = !_hasAnySigner(tenantId);
-        if (!authorized && !(firstSigner && recovered == initialAdmin)) {
+        if (!authorized && !(firstSigner && authSigner == initialAdmin)) {
             revert NotTenantSigner(authSigner);
         }
 
@@ -132,16 +182,14 @@ contract BrainMCPAgentRegistry {
         bytes32 tenantId,
         bytes32 scopeHash,
         bytes32 behaviorHash,
+        address authSigner,
         bytes calldata tenantSignature
     ) external {
         if (agentAddress == address(0)) revert ZeroAddress();
         if (_agents[agentId].registeredAt != 0) revert AgentAlreadyRegistered(agentId);
 
         bytes32 digest = _hashRegistration(agentId, agentAddress, tenantId, scopeHash, behaviorHash);
-        address recovered = _recover(digest, tenantSignature);
-        if (recovered == address(0) || !_tenantSigners[tenantId][recovered]) {
-            revert NotTenantSigner(recovered);
-        }
+        _requireTenantSignature(tenantId, authSigner, digest, tenantSignature);
 
         _agents[agentId] = AgentRegistration({
             agentId: agentId,
@@ -160,32 +208,46 @@ contract BrainMCPAgentRegistry {
     ///         re-attestation (an EIP-712 signature over the new behaviorHash)
     ///         from a tenant signer — the on-chain analogue of re-signing the
     ///         ScopeAttestation when the model/prompt/tools change (2.3).
-    function updateBehaviorHash(bytes32 agentId, bytes32 behaviorHash, bytes calldata tenantSignature) external {
-        AgentRegistration storage r = _agents[agentId];
-        if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
-        if (r.revokedAt != 0) revert AgentRevokedError(agentId);
+    function updateBehaviorHash(
+        bytes32 agentId,
+        bytes32 behaviorHash,
+        address authSigner,
+        bytes calldata tenantSignature
+    ) external {
+        AgentRegistration storage r = _liveAgent(agentId);
 
         bytes32 digest = _hashBehaviorUpdate(agentId, r.tenantId, behaviorHash, behaviorNonce[agentId]);
-        address recovered = _recover(digest, tenantSignature);
-        if (recovered == address(0) || !_tenantSigners[r.tenantId][recovered]) {
-            revert NotTenantSigner(recovered);
-        }
+        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
 
         behaviorNonce[agentId] += 1;
         r.behaviorHash = behaviorHash;
         emit AgentBehaviorUpdated(agentId, r.tenantId, behaviorHash);
     }
 
-    function revokeAgent(bytes32 agentId, bytes calldata tenantSignature) external {
-        AgentRegistration storage r = _agents[agentId];
-        if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
-        if (r.revokedAt != 0) revert AgentRevokedError(agentId);
+    /// @notice Re-scope a registered agent under fresh tenant attestation.
+    /// @dev    scopeHash was previously immutable for an agent's whole life, so
+    ///         changing an agent's permissions meant burning its agentId (the id
+    ///         is globally unique and never freed) and minting a new one.
+    function updateScopeHash(bytes32 agentId, bytes32 scopeHash, address authSigner, bytes calldata tenantSignature)
+        external
+    {
+        AgentRegistration storage r = _liveAgent(agentId);
+
+        bytes32 digest = _hashScopeUpdate(agentId, r.tenantId, scopeHash, scopeNonce[agentId]);
+        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
+
+        scopeNonce[agentId] += 1;
+        r.scopeHash = scopeHash;
+        emit AgentScopeUpdated(agentId, r.tenantId, scopeHash);
+    }
+
+    /// @notice Permanently revoke an agent. Terminal: the agentId can never be
+    ///         re-registered or re-attested.
+    function revokeAgent(bytes32 agentId, address authSigner, bytes calldata tenantSignature) external {
+        AgentRegistration storage r = _liveAgent(agentId);
 
         bytes32 digest = _hashRevocation(agentId, r.tenantId, revocationNonce[agentId]);
-        address recovered = _recover(digest, tenantSignature);
-        if (recovered == address(0) || !_tenantSigners[r.tenantId][recovered]) {
-            revert NotTenantSigner(recovered);
-        }
+        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
 
         revocationNonce[agentId] += 1;
         r.revokedAt = block.timestamp;
@@ -194,6 +256,11 @@ contract BrainMCPAgentRegistry {
 
     // --- Views -----------------------------------------------------------
 
+    /// @notice Whether `agentId` is a live registration belonging to `tenantId`.
+    /// @dev    The tenant binding is the point: `_agents` is a GLOBAL namespace,
+    ///         so an agent registered by one tenant must not satisfy an
+    ///         authorization check made on behalf of another. Callers must use
+    ///         this rather than reading {getAgent} and ignoring `tenantId`.
     function isAuthorized(bytes32 agentId, bytes32 tenantId) external view returns (bool) {
         AgentRegistration memory r = _agents[agentId];
         return r.registeredAt != 0 && r.revokedAt == 0 && r.tenantId == tenantId;
@@ -212,6 +279,23 @@ contract BrainMCPAgentRegistry {
     }
 
     // --- Internals -------------------------------------------------------
+
+    /// @dev Load a registered, non-revoked agent or revert.
+    function _liveAgent(bytes32 agentId) private view returns (AgentRegistration storage r) {
+        r = _agents[agentId];
+        if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
+        if (r.revokedAt != 0) revert AgentRevokedError(agentId);
+    }
+
+    /// @dev Verify `authSigner` signed `digest` AND is an authorized signer for
+    ///      `tenantId`.
+    function _requireTenantSignature(bytes32 tenantId, address authSigner, bytes32 digest, bytes calldata signature)
+        private
+        view
+    {
+        if (!authSigner.isValidSignature(digest, signature)) revert InvalidSignature();
+        if (!_tenantSigners[tenantId][authSigner]) revert NotTenantSigner(authSigner);
+    }
 
     function _hasAnySigner(bytes32 tenantId) private view returns (bool) {
         return _tenantSignerCount[tenantId] > 0;
@@ -234,47 +318,36 @@ contract BrainMCPAgentRegistry {
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    function _hashBehaviorUpdate(bytes32 agentId, bytes32 tenantId, bytes32 behaviorHash, uint256 nonce)
+    function _hashBehaviorUpdate(bytes32 agentId, bytes32 tenantId, bytes32 behaviorHash, uint256 nonceValue)
         private
         view
         returns (bytes32)
     {
         bytes32 structHash =
-            keccak256(abi.encode(_BEHAVIOR_WITH_NONCE_TYPEHASH, agentId, tenantId, behaviorHash, nonce));
+            keccak256(abi.encode(_BEHAVIOR_WITH_NONCE_TYPEHASH, agentId, tenantId, behaviorHash, nonceValue));
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    function _hashRevocation(bytes32 agentId, bytes32 tenantId, uint256 nonce) private view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(_REVOKE_WITH_NONCE_TYPEHASH, agentId, tenantId, nonce));
-        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
-    }
-
-    function _hashSignerChange(bytes32 tenantId, address signer, bool allowed, uint256 nonce)
+    function _hashScopeUpdate(bytes32 agentId, bytes32 tenantId, bytes32 scopeHash, uint256 nonceValue)
         private
         view
         returns (bytes32)
     {
-        bytes32 structHash = keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, signer, allowed, nonce));
+        bytes32 structHash = keccak256(abi.encode(_SCOPE_WITH_NONCE_TYPEHASH, agentId, tenantId, scopeHash, nonceValue));
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    function _recover(bytes32 digest, bytes calldata sig) private pure returns (address) {
-        if (sig.length != 65) return address(0);
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            let offset := sig.offset
-            r := calldataload(offset)
-            s := calldataload(add(offset, 32))
-            v := byte(0, calldataload(add(offset, 64)))
-        }
-        if (v < 27) v += 27;
-        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
-            return address(0);
-        }
-        if (v != 27 && v != 28) return address(0);
-        return ecrecover(digest, v, r, s);
+    function _hashRevocation(bytes32 agentId, bytes32 tenantId, uint256 nonceValue) private view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(_REVOKE_WITH_NONCE_TYPEHASH, agentId, tenantId, nonceValue));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
+    }
+
+    function _hashSignerChange(bytes32 tenantId, address signer, bool allowed, uint256 nonceValue)
+        private
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash = keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, signer, allowed, nonceValue));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 }

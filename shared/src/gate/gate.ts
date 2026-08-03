@@ -666,7 +666,7 @@ export async function runPreExecutionGate(
           counterparty_id: counterparty.id,
           agent_id: counterparty.agent_id ?? null,
           registered: attestation.registered ?? false,
-          paused: attestation.paused ?? false,
+          revoked: attestation.revoked ?? false,
           reason: attestation.reason ?? "agent payee is not attested",
         });
       }
@@ -763,7 +763,15 @@ export async function runPreExecutionGate(
       if (onchain.state !== "Locked") {
         failures.push(`escrow is not Locked (state=${onchain.state})`);
       }
-      if (cmpDecimal(onchain.remaining, input.intent.amount) < 0) {
+      // Asset binding, the escrow analogue of 6.5's `asset must be USDC`.
+      // BrainEscrow.lock takes any ERC-20, so an escrow funded with a worthless
+      // or differently-scaled token would otherwise satisfy a release intent.
+      // The amount comparison is skipped when the asset is wrong: `remaining`
+      // is denominated in the settlement asset, so it carries no meaning here
+      // (an 18-decimal token read as 6-decimal inflates it by 10^12).
+      if (!onchain.assetMatchesSettlement) {
+        failures.push("escrow token is not the configured settlement asset");
+      } else if (cmpDecimal(onchain.remaining, input.intent.amount) < 0) {
         failures.push("release amount exceeds escrow remaining balance");
       }
       if (onchain.jobTermsHash !== input.intent.escrow.jobTermsHash) {

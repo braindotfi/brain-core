@@ -29,16 +29,29 @@ const ESCROW_STATE_MAP: Record<number, "None" | "Locked" | "Settled"> = {
   2: "Settled",
 };
 
-// USDC uses 6 decimals on Base.
-const USDC_DECIMALS = 6;
+/**
+ * Decimals of the settlement asset. USDC uses 6 on Base.
+ *
+ * This constant is only sound because `assetMatchesSettlement` is computed
+ * below and the gate refuses to read any amount when it is false. Applying it
+ * blindly to whatever token an escrow happens to hold is what let an
+ * 18-decimal token report a `remaining` inflated by 10^12.
+ */
+const SETTLEMENT_DECIMALS = 6;
 
 export function makeResolveEscrowState(opts: {
   escrowAddress: string;
   rpcUrl: string;
   chainId?: number;
+  /**
+   * The settlement asset the escrow is expected to hold (USDC on Base). An
+   * escrow denominated in anything else fails check 6.6.
+   */
+  settlementToken: string;
 }): (ctx: ServiceCallContext, input: EscrowStateInput) => Promise<ResolvedEscrowState | null> {
   const chain = opts.chainId === 8453 ? base : baseSepolia;
   const client = createPublicClient({ chain, transport: http(opts.rpcUrl) });
+  const settlementToken = opts.settlementToken.toLowerCase();
 
   return async function resolveEscrowState(
     _ctx: ServiceCallContext,
@@ -63,10 +76,11 @@ export function makeResolveEscrowState(opts: {
       payer,
       payee,
       token,
-      amount: formatUnits(amount, USDC_DECIMALS),
-      released: formatUnits(released, USDC_DECIMALS),
-      refunded: formatUnits(refunded, USDC_DECIMALS),
-      remaining: formatUnits(remaining, USDC_DECIMALS),
+      assetMatchesSettlement: token.toLowerCase() === settlementToken,
+      amount: formatUnits(amount, SETTLEMENT_DECIMALS),
+      released: formatUnits(released, SETTLEMENT_DECIMALS),
+      refunded: formatUnits(refunded, SETTLEMENT_DECIMALS),
+      remaining: formatUnits(remaining, SETTLEMENT_DECIMALS),
       jobTermsHash,
     };
   };

@@ -123,19 +123,59 @@ contract BrainReputationRegistryTest is Test {
 
     // --- attestor rotation ---------------------------------------------------
 
+    /// M8: rotation is two-step. A one-step set to a mistyped or uncontrolled
+    /// address would permanently strand the only privileged role on this
+    /// contract, so the proposal alone must NOT move the role.
     function test_setAttestor_rotates() public {
         address next = address(0xC0FFEE);
         vm.expectEmit(true, true, false, false, address(registry));
-        emit IBrainReputationRegistry.AttestorChanged(attestor, next);
+        emit IBrainReputationRegistry.AttestorTransferStarted(attestor, next);
         vm.prank(attestor);
         registry.setAttestor(next);
+
+        // Not rotated yet.
+        assertEq(registry.attestor(), attestor);
+        assertEq(registry.pendingAttestor(), next);
+
+        vm.expectEmit(true, true, false, false, address(registry));
+        emit IBrainReputationRegistry.AttestorChanged(attestor, next);
+        vm.prank(next);
+        registry.acceptAttestor();
         assertEq(registry.attestor(), next);
+        assertEq(registry.pendingAttestor(), address(0));
+    }
+
+    function test_acceptAttestor_onlyPendingAttestor() public {
+        address next = address(0xC0FFEE);
+        vm.prank(attestor);
+        registry.setAttestor(next);
+
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(IBrainReputationRegistry.NotPendingAttestor.selector);
+        registry.acceptAttestor();
+        assertEq(registry.attestor(), attestor);
+    }
+
+    function test_setAttestor_cancelWithZeroAddress() public {
+        address next = address(0xC0FFEE);
+        vm.prank(attestor);
+        registry.setAttestor(next);
+        vm.prank(attestor);
+        registry.setAttestor(address(0));
+        assertEq(registry.pendingAttestor(), address(0));
+
+        vm.prank(next);
+        vm.expectRevert(IBrainReputationRegistry.NotPendingAttestor.selector);
+        registry.acceptAttestor();
+        assertEq(registry.attestor(), attestor);
     }
 
     function test_setAttestor_oldAttestorLosesRights_newGains() public {
         address next = address(0xC0FFEE);
         vm.prank(attestor);
         registry.setAttestor(next);
+        vm.prank(next);
+        registry.acceptAttestor();
 
         // old attestor can no longer publish
         vm.prank(attestor);
@@ -154,10 +194,15 @@ contract BrainReputationRegistryTest is Test {
         registry.setAttestor(stranger);
     }
 
-    function test_setAttestor_rejectsZeroAddress() public {
+    /// M8: address(0) is the documented CANCEL for a pending two-step rotation,
+    /// so the proposal itself no longer rejects it. What must never happen is
+    /// the role actually moving to the zero address, which acceptAttestor
+    /// prevents because nobody can call from address(0).
+    function test_setAttestor_zeroAddressCancelsRatherThanStranding() public {
         vm.prank(attestor);
-        vm.expectRevert(IBrainReputationRegistry.ZeroAddress.selector);
         registry.setAttestor(address(0));
+        assertEq(registry.attestor(), attestor);
+        assertEq(registry.pendingAttestor(), address(0));
     }
 
     // --- views ---------------------------------------------------------------
@@ -174,9 +219,7 @@ contract BrainReputationRegistryTest is Test {
 
     /// @dev A strictly-increasing epoch sequence always stores the latest root +
     ///      epoch; the stored epoch never regresses below a prior publish.
-    function testFuzz_strictlyIncreasingEpochsStoreLatest(bytes32 agentId, uint64 e1, uint64 e2, bytes32 root)
-        public
-    {
+    function testFuzz_strictlyIncreasingEpochsStoreLatest(bytes32 agentId, uint64 e1, uint64 e2, bytes32 root) public {
         e1 = uint64(bound(e1, 1, type(uint64).max - 1));
         e2 = uint64(bound(e2, uint256(e1) + 1, type(uint64).max));
         vm.assume(root != bytes32(0));

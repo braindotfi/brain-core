@@ -30,12 +30,23 @@ export interface AgentAttestationInput {
 }
 
 export interface AgentAttestationResult {
-  /** True ⇒ the payee agent is registered, attested, and not paused. */
+  /**
+   * True ⇒ the payee agent is registered, not revoked, AND belongs to the
+   * calling tenant. The registry's agent namespace is global, so the tenant
+   * binding is part of the decision, not a detail.
+   */
   readonly attested: boolean;
   /** Whether the agent id resolves to a registry entry at all. */
   readonly registered?: boolean;
-  /** Whether the registry entry is currently paused (a hard fail). */
-  readonly paused?: boolean;
+  /**
+   * Whether the registry entry has been revoked (a hard fail).
+   *
+   * Revocation is TERMINAL in `BrainMCPAgentRegistry`: there is no unpause, and
+   * the agentId can never be re-registered or re-attested. This was previously
+   * surfaced as `paused`, which implied a recoverable state and sent operators
+   * looking for a switch that does not exist.
+   */
+  readonly revoked?: boolean;
   /** Human-readable reason when `attested` is false (for the audit trail). */
   readonly reason?: string;
 }
