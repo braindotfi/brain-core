@@ -6,6 +6,7 @@ Natural-language and structured access to the tenant's memory graph. The Wiki is
 | -------------------------------- | ------------------------------------------- |
 | Ask a natural-language question  | `POST /v1/wiki/question`                    |
 | Get suggested questions          | `GET  /v1/wiki/suggested-questions`         |
+| Get persisted assistant records  | `GET  /v1/assistant/questions`              |
 | Search entities                  | `GET  /v1/wiki/search`                      |
 | Get an entity                    | `GET  /v1/wiki/entity/{entity_id}`          |
 | Evidence chain for an entity     | `GET  /v1/wiki/entity/{entity_id}/evidence` |
@@ -77,6 +78,11 @@ without sharing usage data between tenants. The deterministic intent registry
 is the single source for both question execution and this endpoint, so a
 suggestion cannot advertise a question that the grounded Q&A layer cannot
 answer.
+
+`GET /v1/assistant/questions` is a separate, legacy persisted-record feed. It
+returns rows from `assistant_questions` and does not evaluate deterministic
+intent eligibility. Clients that need tenant-aware question suggestions must
+use `GET /v1/wiki/suggested-questions`.
 
 ### Search Entities
 

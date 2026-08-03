@@ -1200,9 +1200,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List suggested assistant questions
-         * @description Requires `wiki:read`. Returns tenant-scoped assistant questions when
-         *     present. Empty tenants receive `questions: []`.
+         * List persisted assistant question records
+         * @description Requires `wiki:read`. Returns tenant-scoped persisted assistant question
+         *     records when present. Empty tenants receive `questions: []`. This is
+         *     distinct from `GET /wiki/suggested-questions`, which derives eligible
+         *     deterministic suggestions from current Ledger data.
          */
         get: operations["listAssistantQuestions"];
         put?: never;
