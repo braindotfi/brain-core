@@ -10,7 +10,18 @@
 
 export const SERVICE_NAME = "brain-api" as const;
 
-// BrainSaaS "Brain Playground" demo seed — re-exported so the
+// BrainSaaS "Brain Playground" demo seed - re-exported so the
 // `brain-seed-brainsaas` CLI (tools/seed-golden-path) and the
 // POST /v1/demo/provision-run handler share one implementation.
 export { seedBrainSaasDemo, type BrainSaasSeed } from "./demo/brainsaas-seed.js";
+
+// Fixed golden-path demo identity - re-exported so
+// `brain-seed-golden-path` (tools/seed-golden-path) can seed a `members` row
+// for the exact id GET /v1/demo/token mints, making that session
+// member-resolvable for approval workflows. See golden-tenant.ts.
+export { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
+
+// Bootstrap admin-member insert - reused by the golden-path seed CLI so the
+// demo token's principal has a real `members` row (see above), not just by
+// provision.ts / brainsaas-seed.ts.
+export { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";

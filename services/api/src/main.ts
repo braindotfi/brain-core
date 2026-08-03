@@ -47,7 +47,6 @@ import {
   isDomainEvent,
   isTenantCategory,
   newTokenId,
-  newPolicyId,
   newTenantId,
   newUserId,
   isBrainId,
@@ -88,6 +87,7 @@ import { TenantExportService } from "./tenant-export/service.js";
 import { startTenantExportWorker } from "./tenant-export/worker.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerDemoPolicyActivateRoute } from "./demo/policy-activate-route.js";
+import { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
 import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
@@ -156,7 +156,6 @@ import {
   registerPolicyRoutes,
   PolicyService,
   allowedActionsFor,
-  contentHash,
   getActive as policyGetActive,
   getById as policyGetById,
   makeAttestCounterpartyAgent,
@@ -541,8 +540,6 @@ async function main(): Promise<void> {
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
   // inline literals means a typo breaks verification silently.
   const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
-  const DEMO_GOLDEN_USER = "user_00000000020000000000000001" as const;
-  const DEMO_GOLDEN_TENANT = "tnt_00000000010000000000000000" as const;
 
   const revocationStore = new RedisRevocationStore(redis);
   const jwtVerifier = new JwtVerifier({

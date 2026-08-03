@@ -41,7 +41,13 @@ import type { PolicyRegistrar } from "../policyRegistrar.js";
  * require confirmation instead of auto-executing -- the same tradeoff
  * onboarding/provision.ts's buildDefaultPolicyDocument makes for the same
  * reason. `agent_action` is not a money-mover applies_to value, so it stays
- * auto without tripping the gate.
+ * auto without tripping the gate. `require` uses `admin_approval`, not
+ * `owner_approval`: the section 6 gate's check 11
+ * (approval_granted_when_required, shared/src/gate/gate.ts) matches
+ * `decision.required_approvers` against the literal `members.role` that
+ * signed, and `MemberRole` (services/execution/src/members/types.ts) is only
+ * `admin | approver | viewer` -- there is no `owner` role a real member can
+ * hold, so `owner_approval` can never be satisfied by any approval.
  */
 export const DEMO_POLICY: PolicyDocument = {
   version: 1,
@@ -51,7 +57,7 @@ export const DEMO_POLICY: PolicyDocument = {
       applies_to: ["outbound_payment"],
       when: { "amount.lte": { currency: "USD", value: "1000.00" } },
       ach_autonomous_max_amount: { currency: "USD", value: "1000.00" },
-      require: "owner_approval",
+      require: "admin_approval",
       execute: "confirm",
     },
     {
@@ -67,7 +73,7 @@ export const DEMO_POLICY: PolicyDocument = {
         "amount.gt": { currency: "USD", value: "1000.00" },
         "amount.lte": { currency: "USD", value: "10000.00" },
       },
-      require: "owner_approval",
+      require: "admin_approval",
       execute: "confirm",
     },
     { id: "auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
@@ -75,7 +81,7 @@ export const DEMO_POLICY: PolicyDocument = {
       id: "confirm-onchain-tx",
       applies_to: ["onchain_tx"],
       when: {},
-      require: "owner_approval",
+      require: "admin_approval",
       execute: "confirm",
     },
   ],

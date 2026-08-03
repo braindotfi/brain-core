@@ -383,6 +383,34 @@ Done
   left unenforced there because fixing them safely needs BrainSaaS-side
   coordination (wiring real `risk_level` signals into payment-intent creation,
   or redesigning the $50k auto ceiling) rather than a brain-core-only change.
+- Moving `scripts/demo/golden-path.sh`'s payment rule from `auto` to `confirm`
+  (above) exposed two more gaps in the golden-path flow, both now fixed.
+  First: `GET /v1/demo/token` (main.ts) mints a `type: "user"` session for the
+  fixed `DEMO_GOLDEN_USER` in `DEMO_GOLDEN_TENANT`
+  (`services/api/src/demo/golden-tenant.ts`), but nothing seeded a `members`
+  row for that id, so `ActorResolver`'s session lookup always returned null
+  and every approval attempt failed `actor_unresolved` regardless of the
+  token's scopes; `tools/seed-golden-path/src/cli.ts` now seeds a bootstrap
+  admin member for that exact id (via the same `insertBootstrapAdminMember`
+  helper `onboarding/provision.ts` uses, now re-exported from `@brain/api`),
+  so the SAME demo token both proposes and approves, matching how a real
+  member session would. Second: policy `require: "owner_approval"` can never
+  be satisfied by any real approval, because the section 6 gate's check 11
+  (`approval_granted_when_required`, `shared/src/gate/gate.ts`) matches
+  `decision.required_approvers` against the literal `members.role` string
+  that signed, and `MemberRole` (`services/execution/src/members/types.ts`)
+  is only `admin | approver | viewer`; there is no `owner` role a member can
+  actually hold. `require: "single_signer"` has the same problem for its
+  `"signer"` label. This was a pre-existing, dormant defect (the confirm-tier
+  rules in these demo policies already used `owner_approval` before this fix;
+  golden-path.sh just never exercised a confirm outcome before), not
+  introduced by moving the payment rule to `confirm`; the demo policies here
+  were changed to `require: "admin_approval"` to match a role a seeded member
+  can actually hold. The same defect likely still affects
+  `onboarding/provision.ts`'s `buildDefaultPolicyDocument`
+  (`require: "single_signer"`) and `brainsaas-seed.ts`'s
+  `require: "owner_and_cfo"`; neither is fixed here, both are out of scope for
+  this change and worth a dedicated look.
 - Submitted policy documents are structurally validated by
   `validatePolicyDocument` (`services/policy/src/validate.ts`) at compose, lint,
   simulate-historical, and again at activation against the stored row. It
