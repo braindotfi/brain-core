@@ -295,6 +295,18 @@ services:
       # has no env_file, so no production secret beyond what is explicitly
       # listed here reaches what is a public browser-facing origin.
       DATABASE_URL: postgres://unused:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production}@localhost:5432/unused
+      # Required, not cosmetic. createPool defaults ssl to "auto"
+      # (shared/src/db/pool.ts), which enables TLS for any host that is not
+      # localhost. This service reaches Postgres by compose service name, so
+      # "auto" turns TLS ON against the in-compose Postgres, which does not
+      # serve TLS. Every other service opts out via the *brain-common-env
+      # anchor or an explicit copy (migrate, db-roles, seed); this one has
+      # neither, by design (no env_file on a public browser-facing origin),
+      # so it needs its own copy. Without it the container still passes
+      # /healthz, JWKS and RFC 8414 metadata (all DB-free) while every
+      # DB-backed route fails with "The server does not support SSL
+      # connections": login, authorize, consent, token, revoke, register.
+      DATABASE_SSL: disable
       REDIS_URL: redis://localhost:6379
       AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
       AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}

@@ -2,7 +2,7 @@ import { JwtSigner, loadConfig, PostgresAuditEmitter } from "@brain/shared";
 import { CachedOnchainScopeChecker } from "@brain/mcp";
 import { buildAuthApp } from "./server.js";
 import { assertValidIssuer } from "./issuer.js";
-import { buildAuthDbPools } from "./db.js";
+import { assertAuthDbReachable, buildAuthDbPools } from "./db.js";
 import { ResolverUserCredentialReader } from "./credentials.js";
 import { buildForgotPasswordEmailDelivery } from "./email.js";
 import { createAuthOnchainScopeChecker } from "./onchain-scope-checker.js";
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   let humanAuth: Parameters<typeof buildAuthApp>[0]["humanAuth"];
   let oauthCore: OauthRouteDeps;
   try {
-    const { authPool, resolverPool, auditPool } = buildAuthDbPools({
+    const pools = buildAuthDbPools({
       nodeEnv: cfg.NODE_ENV,
       authDbUrl: cfg.BRAIN_AUTH_DB_URL,
       resolverDbUrl: cfg.BRAIN_RESOLVER_DB_URL,
@@ -45,6 +45,8 @@ async function main(): Promise<void> {
       serviceName: cfg.SERVICE_NAME,
       statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
     });
+    await assertAuthDbReachable(pools, cfg.NODE_ENV);
+    const { authPool, resolverPool, auditPool } = pools;
     const deliverForgotPasswordEmail = buildForgotPasswordEmailDelivery({
       emailEndpoint: cfg.EMAIL_ENDPOINT,
       emailApiKey: cfg.EMAIL_API_KEY,
