@@ -220,6 +220,12 @@ services:
       SERVICE_NAME: brain-auth
       PORT: "3000"
       DATABASE_URL: postgres://brain:brain@postgres:5432/brain
+      # Same reason as the api and worker blocks above: createPool defaults ssl
+      # to "auto" (shared/src/db/pool.ts), which enables TLS for any host that
+      # is not localhost. This container reaches Postgres by compose service
+      # name, so without this every DB-backed route fails with "The server does
+      # not support SSL connections" while /healthz and JWKS stay green.
+      DATABASE_SSL: disable
       REDIS_URL: redis://redis:6379
       AUTH_JWKS_URL: https://auth.brain.fi/.well-known/jwks.json
       AUTH_SIGN_KEY: ${AUTH_SIGN_KEY:-}

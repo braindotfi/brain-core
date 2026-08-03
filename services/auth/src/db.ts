@@ -85,3 +85,35 @@ export function buildAuthDbPools(input: AuthDbPoolsInput): AuthDbPools {
     }),
   };
 }
+
+/**
+ * pg.Pool connects lazily, so a connection that can never succeed (wrong host,
+ * wrong role, or TLS enabled against a server that does not serve TLS) stays
+ * invisible until the first request that needs it. That is exactly how a
+ * production auth container reported itself healthy while every DB-backed
+ * route returned 500: /healthz, /.well-known/jwks.json and the RFC 8414
+ * metadata document all touch no pool, and those are what the deploy workflow
+ * gates on. One probe per pool at boot converts that silent half-up state into
+ * a failed deploy.
+ *
+ * Production only, matching resolveRoleUrl above: dev and test boot against a
+ * database that may legitimately not be up yet.
+ */
+export async function assertAuthDbReachable(pools: AuthDbPools, nodeEnv: string): Promise<void> {
+  if (nodeEnv !== "production") return;
+  const named: ReadonlyArray<readonly [AuthRoleUrlName, Pool]> = [
+    ["BRAIN_AUTH_DB_URL", pools.authPool],
+    ["BRAIN_RESOLVER_DB_URL", pools.resolverPool],
+    ["BRAIN_AUTH_AUDIT_DB_URL", pools.auditPool],
+  ];
+  for (const [name, pool] of named) {
+    try {
+      await pool.query("SELECT 1");
+    } catch (error) {
+      throw new Error(
+        `[auth] ${name} is configured but not reachable: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
