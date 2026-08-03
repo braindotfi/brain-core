@@ -20,8 +20,10 @@
 
 import {
   brainError,
+  createLogger,
   newAuditEventId,
   withTenantScope,
+  type Logger,
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
@@ -35,6 +37,13 @@ import {
   type AuditAnchorRow,
 } from "./repository.js";
 
+// Structured fallback for callers that do not pass their own logger (e.g.
+// services/api/main.ts's scheduler passes its own; the on-demand publish
+// route currently does not). Package-level singleton, same pattern
+// services/api/main.ts uses for its own top-level logger -- pino is cheap to
+// construct once and reuse.
+const defaultLogger: Logger = createLogger({ service: "brain-audit" });
+
 export interface BroadcastInput {
   tenantId: string;
   merkleRoot: Buffer;
@@ -47,20 +56,20 @@ export interface BroadcastInput {
  * Outcome of a broadcast attempt. The broadcaster resolves (never throws) for
  * these deterministic on-chain outcomes and throws only on transient errors
  * (RPC/network), which the caller is free to retry on the next cycle:
- *   confirmed        — tx mined status=1; AnchorPublished emitted.
- *   already_anchored — the root was already published on-chain (skip the
+ *   confirmed        -- tx mined status=1; AnchorPublished emitted.
+ *   already_anchored -- the root was already published on-chain (skip the
  *                      redundant broadcast); txHash/blockNumber identify the
  *                      original winning tx so the DB row can be healed.
- *   reverted         — a SINGLE-anchor tx mined status=0 (deterministic
+ *   reverted         -- a SINGLE-anchor tx mined status=0 (deterministic
  *                      revert), where one row is one transaction so the
- *                      revert genuinely is that row's. Terminal — the caller
+ *                      revert genuinely is that row's. Terminal -- the caller
  *                      must NOT retry. txHash is the reverted tx (kept for
  *                      forensics; not persisted as a valid anchor).
- *   unresolved       — a batch anchorBatch() call failed at the transaction
+ *   unresolved       -- a batch anchorBatch() call failed at the transaction
  *                      level (shared by every row in the batch, so it is not
  *                      any one row's fault), or a row's already-anchored
  *                      status could not be confirmed this cycle. NOT
- *                      terminal — leave the row pending for a later cycle.
+ *                      terminal -- leave the row pending for a later cycle.
  */
 export type BroadcastStatus = "confirmed" | "already_anchored" | "reverted" | "unresolved";
 
@@ -98,6 +107,10 @@ export interface PublishOptions {
   tenantId: string;
   periodStart: Date;
   periodEnd: Date;
+  /** Structured logger for diagnostics. Defaults to a package-level pino
+   * logger (see defaultLogger above) so callers that do not pass their own
+   * still get structured, non-clear-text output. */
+  logger?: Logger;
 }
 
 export async function publishAnchor(
@@ -135,15 +148,16 @@ export async function createPendingAnchor(
         // instead of building a retry framework: recovering a genuinely
         // reverted window is a deliberate operator decision (the contract
         // rejected these exact events for a reason), not something to
-        // auto-retry.
-        console.error(
-          "[audit-publisher] recomputed anchor window matches a terminally reverted anchor; it will never advance covered_to without operator intervention",
+        // auto-retry. Routed through the structured logger (not console),
+        // matching how services/api/main.ts logs this same shape.
+        (opts.logger ?? defaultLogger).error(
           {
             tenantId: opts.tenantId,
             anchorId: existing.id,
             periodStart: opts.periodStart,
             periodEnd: opts.periodEnd,
           },
+          "recomputed anchor window matches a terminally reverted anchor; it will never advance covered_to without operator intervention",
         );
       }
       // §5.3 no-op.

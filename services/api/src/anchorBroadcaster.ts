@@ -36,14 +36,14 @@ interface BroadcastInput {
   periodStart: Date;
   periodEnd: Date;
 }
-// confirmed        — tx mined status=1; AnchorPublished emitted.
-// already_anchored — the root was already published on-chain; skip the redundant
+// confirmed        -- tx mined status=1; AnchorPublished emitted.
+// already_anchored -- the root was already published on-chain; skip the redundant
 //                    broadcast and return the original winning tx.
-// reverted         — a SINGLE-anchor call's tx mined status=0, OR that call
+// reverted         -- a SINGLE-anchor call's tx mined status=0, OR that call
 //                    deterministically reverts at estimate time. One row is one
 //                    transaction here, so the revert genuinely belongs to that
 //                    row. Terminal: the caller must NOT retry.
-// unresolved       — a batch anchorBatch() call failed at the TRANSACTION level
+// unresolved       -- a batch anchorBatch() call failed at the TRANSACTION level
 //                    (NotPublisher, BatchTooLarge, BatchLengthMismatch, a failed
 //                    gas estimate, or a mined revert of the whole batch tx), or a
 //                    row's already-anchored status could not be confirmed this

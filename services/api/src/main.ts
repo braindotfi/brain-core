@@ -3392,6 +3392,7 @@ async function main(): Promise<void> {
               tenantId: row.tenant_id,
               periodStart,
               periodEnd,
+              logger: log,
             });
             if (pendingAnchor !== null) newAnchorRows.push(pendingAnchor);
           } catch (err) {

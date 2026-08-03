@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Pool } from "pg";
 import type * as BrainShared from "@brain/shared";
+import type { Logger } from "@brain/shared";
 import type { AuditAnchorRow } from "./repository.js";
 
 // withTenantScope just runs the callback with a throwaway client here — the
@@ -288,18 +289,17 @@ describe("publishAnchor", () => {
     });
   });
 
-  it("logs loudly instead of silently recycling a terminally reverted row for the same recomputed window", async () => {
+  it("logs loudly (through the structured logger, not console) instead of silently recycling a terminally reverted row for the same recomputed window", async () => {
     const revertedRow = anchorRow({ id: "anchor_reverted", onchain_status: "reverted" });
     vi.mocked(repo.findAnchorByRoot).mockResolvedValueOnce(revertedRow);
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logger = { error: vi.fn() } as unknown as Logger;
 
-    const result = await createPendingAnchor(pool, opts);
+    const result = await createPendingAnchor(pool, { ...opts, logger });
 
     expect(result).toBe(revertedRow);
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.stringContaining("terminally reverted anchor"),
+    expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ anchorId: "anchor_reverted" }),
+      expect.stringContaining("terminally reverted anchor"),
     );
-    consoleError.mockRestore();
   });
 });
