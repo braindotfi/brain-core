@@ -189,9 +189,7 @@ describe("section 6 gate counterparty trust", () => {
       checks: result.checks.map((check) => ({
         ...check,
         detail:
-          check.name === "audit_before_emitted"
-            ? { audit_event_id: "generated" }
-            : check.detail,
+          check.name === "audit_before_emitted" ? { audit_event_id: "generated" } : check.detail,
       })),
     });
     // The event id is intentionally generated per invocation. Every decision

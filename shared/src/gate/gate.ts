@@ -616,7 +616,9 @@ export async function runPreExecutionGate(
   let counterpartyLoadFailed = false;
   if (trustGateEnabled) {
     try {
-      preloadedCounterparty = await deps.resolveCounterparty(input.intent.destination_counterparty_id);
+      preloadedCounterparty = await deps.resolveCounterparty(
+        input.intent.destination_counterparty_id,
+      );
     } catch {
       preloadedCounterparty = null;
       counterpartyLoadFailed = true;
@@ -691,7 +693,7 @@ export async function runPreExecutionGate(
 
   // 5 — counterparty allowed (exists, not sanctioned).
   const counterparty = trustGateEnabled
-    ? preloadedCounterparty ?? null
+    ? (preloadedCounterparty ?? null)
     : await deps.resolveCounterparty(input.intent.destination_counterparty_id);
   if (counterparty === null) {
     if (trustGateEnabled) {
@@ -1173,10 +1175,7 @@ function pass(
 
 function isCounterpartyTrustStatus(value: unknown): value is CounterpartyTrustStatus {
   return (
-    value === "unreviewed" ||
-    value === "trusted" ||
-    value === "paused" ||
-    value === "acknowledged"
+    value === "unreviewed" || value === "trusted" || value === "paused" || value === "acknowledged"
   );
 }
 

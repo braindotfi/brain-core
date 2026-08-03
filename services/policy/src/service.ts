@@ -358,10 +358,7 @@ function isCounterpartyTrustStatus(
   value: unknown,
 ): value is NonNullable<Action["counterparty_trust_status"]> {
   return (
-    value === "unreviewed" ||
-    value === "trusted" ||
-    value === "paused" ||
-    value === "acknowledged"
+    value === "unreviewed" || value === "trusted" || value === "paused" || value === "acknowledged"
   );
 }
 

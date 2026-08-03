@@ -695,7 +695,9 @@ describe("PaymentIntentService.execute — gate failure path", () => {
       },
     });
 
-    const afterEvent = audit.events.find((event) => event.action === "payment_intent.execute.after");
+    const afterEvent = audit.events.find(
+      (event) => event.action === "payment_intent.execute.after",
+    );
     expect(afterEvent?.outputs.failed_check).toMatchObject({
       index: 5.25,
       name: "counterparty_trust_allowed",
