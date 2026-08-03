@@ -601,14 +601,26 @@ export async function registerProductionTenancyRoutes(
   );
 }
 
+/**
+ * Verifies either a tenant-scoped bearer principal (with the required scope)
+ * or the cross-tenant platform-service shared secret.
+ *
+ * Returns the tenant id the caller is bound to, or `undefined` when the
+ * genuine platform-service credential was used (that credential is
+ * legitimately cross-tenant, so it names no single tenant here -- callers
+ * take the tenant id from elsewhere, e.g. a path param or request body).
+ * A bearer principal is never cross-tenant: its scopes may permit an action,
+ * but the tenant it can act on is always its own, never one named by an
+ * untrusted query/body field.
+ */
 export function assertPlatformCredential(
   request: FastifyRequest,
   secret: string | undefined,
   scope: Scope,
-): void {
+): string | undefined {
   if (request.principal !== undefined) {
     requireScope(request.principal.scopes, scope);
-    return;
+    return request.principal.tenantId;
   }
   if (secret === undefined || secret.length === 0) {
     throw brainError("dependency_unavailable", "BRAIN_PLATFORM_SERVICE_SECRET is not configured", {
@@ -625,6 +637,7 @@ export function assertPlatformCredential(
       details: { required_scope: scope },
     });
   }
+  return undefined;
 }
 
 function parseDemoSeedRequested(raw: unknown): boolean {

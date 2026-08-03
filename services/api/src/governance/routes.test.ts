@@ -130,6 +130,49 @@ async function build(
   return { app, db, audit };
 }
 
+/**
+ * Builds a governance app with a single Brain API key ("brain_sk_test_key")
+ * authenticating as a tenant-scoped principal for `tenantId` carrying
+ * `scopes`. Used by the cross-tenant regression tests below, which need a
+ * real bearer principal (not the platform-service secret) to exercise
+ * `assertPlatformCredential`'s tenant-binding path.
+ */
+async function buildWithApiKeyPrincipal(
+  tenantId: string,
+  scopes: Principal["scopes"],
+  opts: { agents?: unknown[]; report?: unknown[] } = {},
+) {
+  const app = Fastify();
+  await app.register(errorHandlerPlugin);
+  await app.register(authPlugin, {
+    verifier: {} as unknown as JwtVerifier,
+    apiKeyAuthenticator: async (secret: string) => {
+      if (secret !== "brain_sk_test_key") return null;
+      return {
+        principal: {
+          id: "akey_test",
+          type: "api_partner",
+          tenantId,
+          scopes,
+          tokenId: "akey_test",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        },
+        keyId: "akey_test",
+      };
+    },
+  });
+  const db = buildPool(opts);
+  await registerGovernanceRoutes(app, {
+    pool: db.pool,
+    audit: new InMemoryAuditEmitter(),
+    platformSecret,
+    idempotencyStore: new InMemoryIdempotencyStore(),
+    idempotencyTtlSeconds: 86_400,
+  });
+  await app.ready();
+  return { app, db };
+}
+
 describe("governance routes", () => {
   it("requires the platform service credential", async () => {
     const tenantId = newTenantId();
@@ -192,6 +235,85 @@ describe("governance routes", () => {
       });
       expect(rejected.statusCode).toBe(403);
       expect(rejected.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a tenant-scoped principal reading another tenant's agents via tenant_id", async () => {
+    const ownTenantId = newTenantId();
+    const otherTenantId = newTenantId();
+    const { app, db } = await buildWithApiKeyPrincipal(ownTenantId, ["governance:read"], {
+      agents: [agentRow({ id: "agent_other", tenant_id: otherTenantId })],
+    });
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/governance/agents?tenant_id=${otherTenantId}`,
+        headers: { authorization: "Bearer brain_sk_test_key" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_tenant_mismatch");
+      // No query ever reached the database: the mismatch is rejected before
+      // any tenant-scoped read, so tenant B's agent row is never touched.
+      expect(db.calls).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("scopes a tenant-scoped principal's own tenant when tenant_id is omitted", async () => {
+    const ownTenantId = newTenantId();
+    const { app } = await buildWithApiKeyPrincipal(ownTenantId, ["governance:read"], {
+      agents: [agentRow({ id: "agent_own", tenant_id: ownTenantId })],
+    });
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: "/governance/agents",
+        headers: { authorization: "Bearer brain_sk_test_key" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().agents).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a tenant-scoped principal reading another tenant's governance reports via tenant_id", async () => {
+    const ownTenantId = newTenantId();
+    const otherTenantId = newTenantId();
+    const { app, db } = await buildWithApiKeyPrincipal(ownTenantId, ["governance:read"], {
+      report: [
+        {
+          id: "evt_other",
+          actor: "agent_other",
+          action: "payment_intent.execute.before",
+          inputs: {},
+          outputs: {},
+          policy_decision_id: "pd_1",
+          policy_check_id: null,
+          outcome: null,
+          native_policy_check_id: null,
+          native_outcome: null,
+          joined_policy_decision_id: "pd_1",
+          joined_outcome: "reject",
+          joined_policy_check_id: "rule_high_risk",
+          created_at: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url:
+          `/governance/reports?tenant_id=${otherTenantId}` +
+          "&period_start=2026-07-01T00:00:00.000Z&period_end=2026-07-02T00:00:00.000Z",
+        headers: { authorization: "Bearer brain_sk_test_key" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_tenant_mismatch");
+      expect(db.calls).toHaveLength(0);
     } finally {
       await app.close();
     }

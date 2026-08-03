@@ -287,8 +287,14 @@ Done
   `GET /v1/governance/reports`. Governance Phase 2 adds
   `POST /v1/governance/reports/snapshot` and
   `GET /v1/governance/reports/{report_id}` for immutable report snapshots.
-  These routes are mounted with `skipAuth` but require
-  `X-Platform-Service-Auth` carrying `governance:read`. Agent creation is not
+  These routes are mounted with `skipAuth` and `optionalAuth`, so they accept
+  either the cross-tenant `X-Platform-Service-Auth` shared secret or a
+  tenant-scoped bearer principal (a Brain API key) carrying `governance:read`,
+  both checked by `assertPlatformCredential`. A bearer principal is bound to
+  its own tenant: a `tenant_id` query or body param naming a different tenant
+  is rejected with `auth_tenant_mismatch`, and an absent one defaults to the
+  principal's tenant. Only the platform-service secret is genuinely
+  cross-tenant and requires an explicit `tenant_id`. Agent creation is not
   exposed. Reports are built from audit events, join `policy_decisions` when
   historical rows have `policy_decision_id`, and return
   `decision_data_status=unavailable` for rows that lack a native outcome or a

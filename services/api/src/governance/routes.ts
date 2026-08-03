@@ -101,8 +101,8 @@ export async function registerGovernanceRoutes(
         };
       }>,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const tenantId = requireTenantId(request.query.tenant_id);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const tenantId = resolveTenantId(boundTenantId, request.query.tenant_id);
       const limit = parsePositiveIntParam("limit", request.query.limit, {
         fallback: 100,
         max: 500,
@@ -140,8 +140,8 @@ export async function registerGovernanceRoutes(
         Querystring: { tenant_id?: string };
       }>,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const tenantId = requireTenantId(request.query.tenant_id);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const tenantId = resolveTenantId(boundTenantId, request.query.tenant_id);
       const result = await withTenantScope(deps.pool, tenantId, async (client) => {
         const agent = await findGovernanceAgent(client, request.params.agent_id);
         if (agent === null) return null;
@@ -170,9 +170,9 @@ export async function registerGovernanceRoutes(
       }>,
       reply,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
       const body = request.body ?? {};
-      const tenantId = requireTenantId(body.tenant_id);
+      const tenantId = resolveTenantId(boundTenantId, body.tenant_id);
       const transition = requireTransition(body.transition);
       const reason = requireString(body.reason, "reason");
       const actor = requireString(body.actor, "actor");
@@ -225,8 +225,8 @@ export async function registerGovernanceRoutes(
       }>,
       reply,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const params = requireReportParams(request.query);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const params = requireReportParams(request.query, boundTenantId);
       const rows = await withTenantScope(deps.pool, params.tenantId, (client) =>
         queryReportEvents(client, {
           periodStart: params.periodStart,
@@ -259,8 +259,8 @@ export async function registerGovernanceRoutes(
       }>,
       reply,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const params = requireReportParams(request.query);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const params = requireReportParams(request.query, boundTenantId);
       if (params.format !== "json") {
         throw brainError("request_params_invalid", "snapshot format must be json");
       }
@@ -324,8 +324,8 @@ export async function registerGovernanceRoutes(
         Querystring: { tenant_id?: string };
       }>,
     ) => {
-      assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
-      const tenantId = requireTenantId(request.query.tenant_id);
+      const boundTenantId = assertPlatformCredential(request, deps.platformSecret, GOVERNANCE_READ);
+      const tenantId = resolveTenantId(boundTenantId, request.query.tenant_id);
       const snapshot = await withTenantScope(deps.pool, tenantId, (client) =>
         findReportSnapshot(client, request.params.report_id),
       );
@@ -346,6 +346,28 @@ function requireTenantId(value: unknown): string {
   return value;
 }
 
+/**
+ * Resolves which tenant a governance request is scoped to, given the tenant
+ * id `assertPlatformCredential` bound the caller to (or `undefined` for the
+ * genuine cross-tenant platform-service credential).
+ *
+ * A bearer principal is never allowed to read a tenant other than its own,
+ * even one it names explicitly: on a named mismatch this rejects rather than
+ * silently substituting the principal's tenant, so an integrator who asks
+ * for tenant B never gets tenant A's data back without knowing it. The
+ * platform-service credential remains genuinely cross-tenant and still
+ * requires an explicit tenant_id.
+ */
+function resolveTenantId(boundTenantId: string | undefined, requested: unknown): string {
+  if (boundTenantId === undefined) {
+    return requireTenantId(requested);
+  }
+  if (requested !== undefined && requested !== boundTenantId) {
+    throw brainError("auth_tenant_mismatch", "tenant_id does not match the authenticated tenant");
+  }
+  return boundTenantId;
+}
+
 function requireDate(name: string, value: string | undefined): Date {
   const parsed = parseDateParam(name, value);
   if (parsed === undefined) {
@@ -354,20 +376,23 @@ function requireDate(name: string, value: string | undefined): Date {
   return parsed;
 }
 
-function requireReportParams(query: {
-  tenant_id?: string;
-  period_start?: string;
-  period_end?: string;
-  agent_id?: string;
-  format?: string;
-}): {
+function requireReportParams(
+  query: {
+    tenant_id?: string;
+    period_start?: string;
+    period_end?: string;
+    agent_id?: string;
+    format?: string;
+  },
+  boundTenantId: string | undefined,
+): {
   tenantId: string;
   periodStart: Date;
   periodEnd: Date;
   agentId?: string;
   format: "json" | "csv";
 } {
-  const tenantId = requireTenantId(query.tenant_id);
+  const tenantId = resolveTenantId(boundTenantId, query.tenant_id);
   const periodStart = requireDate("period_start", query.period_start);
   const periodEnd = requireDate("period_end", query.period_end);
   if (periodEnd.getTime() <= periodStart.getTime()) {
