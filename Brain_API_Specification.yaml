@@ -3327,6 +3327,31 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /wiki/suggested-questions:
+    get:
+      tags: [Wiki]
+      summary: List tenant-aware deterministic question suggestions
+      description: |
+        Requires `wiki:read`. Returns only currently eligible questions backed
+        by the deterministic Wiki-question registry. `usage_rank_score` is the
+        tenant's all-time invocation count for that intent and is used to rank
+        otherwise eligible suggestions.
+      operationId: listSuggestedWikiQuestions
+      responses:
+        '200':
+          description: Eligible deterministic question suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestions]
+                properties:
+                  suggestions:
+                    type: array
+                    items: { $ref: '#/components/schemas/WikiSuggestedQuestion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /wiki/annotate:
     post:
       tags: [Wiki]
@@ -7588,6 +7613,25 @@ components:
           properties:
             inputTokens: { type: integer, minimum: 0 }
             outputTokens: { type: integer, minimum: 0 }
+
+    WikiSuggestedQuestion:
+      type: object
+      required: [intent_id, display_text, usage_rank_score]
+      properties:
+        intent_id:
+          type: string
+          enum:
+            - transaction_count
+            - transaction_sum
+            - transaction_average
+            - transaction_listing
+            - cash_flow_listing
+            - invoice_listing
+        display_text: { type: string }
+        usage_rank_score:
+          type: integer
+          minimum: 0
+          description: All-time invocation count for this deterministic intent in the calling tenant.
 
     EntityAnnotation:
       type: object
