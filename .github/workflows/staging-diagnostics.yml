@@ -1,0 +1,132 @@
+name: staging-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      diagnostic:
+        description: "Fixed staging diagnostic to run."
+        required: true
+        type: choice
+        options:
+          - counterparty-trust-gate-impact
+      tenant_ids:
+        description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: run fixed staging diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Match the staging deploy group so diagnostics never overlap a deploy.
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      COMPOSE_PROJECT: brain-staging
+      DIAGNOSTIC: ${{ inputs.diagnostic }}
+      TENANT_IDS: ${{ inputs.tenant_ids }}
+    steps:
+      - name: Validate fixed diagnostic inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact"
+            exit 1
+          fi
+
+          if [[ ${#TENANT_IDS} -gt 540 ]]; then
+            echo "tenant_ids must be 540 characters or less"
+            exit 1
+          fi
+          if [[ -n "$TENANT_IDS" ]]; then
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            if [[ ${#tenant_ids[@]} -gt 20 ]]; then
+              echo "tenant_ids accepts at most 20 ids"
+              exit 1
+            fi
+            for tenant_id in "${tenant_ids[@]}"; do
+              if [[ ! "$tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+                echo "every tenant_ids entry must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
+                exit 1
+              fi
+            done
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install lockfile dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile fixed report for stdin execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/staging-diagnostics"
+          pnpm exec tsc \
+            --target es2022 \
+            --module es2022 \
+            --moduleResolution bundler \
+            --skipLibCheck \
+            --esModuleInterop \
+            --outDir "$RUNNER_TEMP/staging-diagnostics" \
+            scripts/ops/report-counterparty-trust-gate-impact.ts
+          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/report-counterparty-trust-gate-impact.js" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Print staging worker SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "docker exec brain-prod-worker printenv GIT_SHA")"
+          echo "staging_git_sha=$worker_sha"
+
+      - name: Run counterparty trust gate impact report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_report() {
+            local tenant_id="$1"
+            local remote_command
+            remote_command="cd ~/brain-core && set -a && . './$VM_ENV_FILE' && set +a && db_url=\${BRAIN_LEDGER_PROJECTOR_DB_URL:-\${DATABASE_URL:-}} && test -n \"\$db_url\" && docker exec -i -e BRAIN_LEDGER_PROJECTOR_DB_URL=\"\$db_url\" brain-prod-api node --input-type=module -"
+            if [[ -n "$tenant_id" ]]; then
+              remote_command+=" -- --tenant-id '$tenant_id'"
+            fi
+            cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
+              "azureuser@$VM_HOST" "$remote_command"
+          }
+
+          if [[ -z "$TENANT_IDS" ]]; then
+            run_report ""
+            exit 0
+          fi
+
+          IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+          for tenant_id in "${tenant_ids[@]}"; do
+            echo "tenant_id=$tenant_id"
+            run_report "$tenant_id"
+          done
