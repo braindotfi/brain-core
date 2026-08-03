@@ -44,12 +44,23 @@ jobs:
         id: resolve
         run: |
           sha="${{ inputs.sha }}"
+          if [ -n "$sha" ] && ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "inputs.sha must be a 40-character lowercase hex commit SHA, got: $sha"
+            exit 1
+          fi
           if [ -z "$sha" ]; then
             body=$(curl -s https://staging-api.brain.fi/health || true)
             sha=$(echo "$body" | grep -o '"commit":"[^"]*"' | sed 's/.*:"//;s/"$//')
           fi
           if [ -z "$sha" ]; then
             echo "Could not resolve a SHA to promote (no input given and staging-api.brain.fi/health returned no commit)."
+            exit 1
+          fi
+          # staging-api.brain.fi/health's body is remote-controlled text on the
+          # same path as inputs.sha below (docker pull, ssh, actions/checkout
+          # ref) -- validate it exactly the same way regardless of source.
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Resolved SHA is not a 40-character lowercase hex commit SHA, refusing to use it: $sha"
             exit 1
           fi
           echo "Promoting commit: $sha"
