@@ -755,8 +755,13 @@ uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
 reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
 `worker`, `agents`, `auth`, and `surface-gateway`, then reloads the Caddy
 config, and smokes `https://api.brain.fi/health` plus `auth`'s `/healthz`
-(via SSH, since `auth.brain.fi` DNS does not resolve yet) for a commit match
-against the resolved SHA.
+for a commit match against the resolved SHA. The auth probe goes over SSH to
+the container's loopback port rather than `https://auth.brain.fi/healthz`,
+deliberately: it asserts that the container is serving the expected commit,
+not that the edge in front of it is healthy, so a Caddy or DNS problem does
+not fail the promote for an unrelated reason. (`auth.brain.fi` does resolve
+and serve publicly as of 2026-08-03; the loopback probe is a scoping choice,
+no longer a DNS workaround.)
 
 **JWKS sidecar retirement (Phase 4, OAUTH-AS-PLAN.md §8).** `docker-compose.prod.yml`'s
 standalone `jwks` service (the `tools/static-jwks` sidecar on :8085) has been

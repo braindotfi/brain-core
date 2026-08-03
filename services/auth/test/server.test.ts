@@ -110,3 +110,38 @@ describe("Phase 2a increment 3: oauthCore replaces the stubs when supplied", () 
     }
   });
 });
+
+describe("GET / (bare root)", () => {
+  it("404s in a discovery-only build, which has no /login to send anyone to", async () => {
+    const r = await app.inject({ method: "GET", url: "/" });
+    expect(r.statusCode).toBe(404);
+  });
+
+  it("redirects to /login once human auth is wired, so the public origin is not a bare JSON 404", async () => {
+    const jwk = await generateSignKeyJwk();
+    const withHumanAuth = await buildAuthApp({
+      issuer: ISSUER,
+      signKey: JSON.stringify(jwk),
+      serviceName: "brain-auth",
+      serviceVersion: "0.0.0-dev",
+      commit: "deadbeef",
+      logger: false,
+      humanAuth: {
+        authPool: { query: async () => ({ rows: [], rowCount: 0 }) } as never,
+        credentialReader: { findByEmail: async () => null } as never,
+        cookieSecret: "test-cookie-secret-do-not-use-in-prod",
+        audit: {
+          emit: async () => ({ id: "evt_test", eventHash: "h", prevEventHash: null }),
+        } as never,
+        deliverForgotPasswordEmail: async () => true,
+      },
+    });
+    try {
+      const r = await withHumanAuth.inject({ method: "GET", url: "/" });
+      expect(r.statusCode).toBe(302);
+      expect(r.headers.location).toBe("/login");
+    } finally {
+      await withHumanAuth.close();
+    }
+  });
+});
