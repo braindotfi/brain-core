@@ -325,10 +325,11 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       - name: Enable staging API key auth
@@ -392,6 +393,36 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
+
+      # scripts/ops/repair-policy-content-hash.mjs (dry run, no --apply) fails
+      # closed when any `policies` row still carries the pre-6b544ed
+      # insertion-order content_hash (services/api/src/demo/brainsaas-seed.ts
+      # and tools/seed-golden-path/src/cli.ts both used to write it).
+      # getActive (services/policy/src/repository.ts) recomputes the canonical
+      # hash on every read and throws policy_not_active on drift, so an
+      # unrepaired row is a hard outage for that tenant's whole money path the
+      # moment this deploy ships, not a warning. Runs the check with `docker
+      # exec` against the already-running `api` container: its image already
+      # resolves `@brain/policy` and `pg` as real dependencies (the same
+      # module-resolution context getActive itself runs in), which sidesteps
+      # the script's documented "needs pnpm build first" caveat about a bare
+      # checkout. Skips (does not fail) on a genuine cold-start VM where `api`
+      # has never been created yet: an empty `policies` table has nothing to
+      # repair. Never passes --apply here: an automatic silent re-stamp during
+      # a deploy is exactly the "manual DB surgery as a fix" this repo
+      # forbids; repair is a deliberate operator action, run ahead of time.
+      - name: Policy content-hash repair gate
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             api_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q api); \
+             if [ -z \"\$api_id\" ]; then echo 'api container not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
+             docker cp scripts/ops/repair-policy-content-hash.mjs brain-prod-api:/app/services/api/ops-repair-policy-content-hash.mjs && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml exec -T api node services/api/ops-repair-policy-content-hash.mjs; \
+             rc=\$?; \
+             docker exec brain-prod-api rm -f /app/services/api/ops-repair-policy-content-hash.mjs; \
+             exit \$rc" \
+          || { echo "policy content_hash repair required before deploy -- run: DATABASE_URL=<staging owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply (see docs/r03-staging-deploy-runbook.md)"; exit 1; }
 
       # Tag the box's current :prod image as a rollback point BEFORE the
       # `docker tag` below overwrites the :prod tag. See docs/rollback.md §B.

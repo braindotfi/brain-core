@@ -381,10 +381,15 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   `content_hash` was not written by `contentHash` is fatal on deploy. Two demo
   seeders wrote `sha256(JSON.stringify(doc))` (insertion order) instead of the
   canonical sorted-key hash; both are fixed, but rows they already wrote must be
-  re-stamped BEFORE deploying, with
+  re-stamped before deploying, with
   `node scripts/ops/repair-policy-content-hash.mjs` (dry run by default). It
   refuses to re-stamp a row with signatures, since those were collected over the
-  stored digest. See the pre-deploy step in
+  stored digest. **This is CI-enforced, not operator-trusted**: both
+  `deploy_staging` (`main.yml`) and `promote-prod.yml` run a "Policy
+  content-hash repair gate" step (dry run, `docker exec` into the already-running
+  `api` container) right after the required-secret presence check and before
+  rollback tagging, image pull, migrations, or any compose recreate, and fail
+  the workflow closed if any row is still outstanding. See
   `docs/r03-staging-deploy-runbook.md`.
 - Audit anchor coverage is derived per tenant from `MAX(period_end)` over its
   non-reverted anchors, not from a fixed `now - AUDIT_ANCHOR_INTERVAL_MS`
@@ -726,6 +731,18 @@ provisioning, external agents, and surface integrations. Auth's
 are compose-required as well as boot-fenced. This would have stopped both the
 missing `AUTH_COOKIE_SECRET` and missing `BRAIN_MCP_READER_DB_PASSWORD`
 incidents before any image pull.
+
+Immediately after that secret check, both workflows also run a "Policy
+content-hash repair gate": `scripts/ops/repair-policy-content-hash.mjs`
+(dry run, no `--apply`) via `docker exec` into the already-running `api`
+container, still before rollback tagging, image pull, migrations, or compose
+recreate. It fails the workflow closed if any `policies` row still carries a
+pre-6b544ed non-canonical `content_hash` (see the policy-layer section
+above), and skips with a message rather than failing on a genuine cold-start
+VM where `api` has never been created (nothing to repair against an empty
+table). Repair is a deliberate operator action (`--apply`, run ahead of the
+deploy) -- the gate never mutates data itself, matching the no-manual-DB-surgery
+default of failing rather than silently re-stamping in CI.
 
 Supply-chain controls run on every pull request and main push. `pnpm audit`
 fails on high and critical dependency advisories, tfsec scans `infra/` at the

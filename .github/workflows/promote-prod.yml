@@ -93,7 +93,7 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init'
+            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           if [ -f docker-compose.caddy.yml ]; then
             scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
@@ -103,6 +103,7 @@ jobs:
           fi
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
       - name: Pre-promote required-secret presence check
@@ -112,6 +113,25 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
+
+      # See main.yml's matching "Policy content-hash repair gate" step for the
+      # full rationale. Same mechanics against the production VM: `docker
+      # exec` into the already-running `api` container (module resolution for
+      # `@brain/policy` and `pg` already works there), dry run only, skip on a
+      # genuine cold-start box with no `api` container yet. Runs before
+      # rollback tagging, image pull, migrations, or compose recreate.
+      - name: Policy content-hash repair gate
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             api_id=\$(docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml ps -q api); \
+             if [ -z \"\$api_id\" ]; then echo 'api container not running yet (cold-start VM); nothing to repair, skipping'; exit 0; fi; \
+             docker cp scripts/ops/repair-policy-content-hash.mjs brain-prod-api:/app/services/api/ops-repair-policy-content-hash.mjs && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml exec -T api node services/api/ops-repair-policy-content-hash.mjs; \
+             rc=\$?; \
+             docker exec brain-prod-api rm -f /app/services/api/ops-repair-policy-content-hash.mjs; \
+             exit \$rc" \
+          || { echo "policy content_hash repair required before promote -- run: DATABASE_URL=<prod owner/migration role> node scripts/ops/repair-policy-content-hash.mjs --apply (see docs/r03-staging-deploy-runbook.md)"; exit 1; }
 
       # Prune images untouched for 24h+ so the rollback tags minted
       # above don't accumulate forever and fill the disk. `docker image
