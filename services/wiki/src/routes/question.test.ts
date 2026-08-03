@@ -8,6 +8,7 @@ import type { WikiDeps } from "../deps.js";
 
 vi.mock("../question/orchestrator.js", () => ({
   askWiki: vi.fn(async () => ({
+    answered: true,
     answer: "Revenue increased.",
     evidence: [],
     model: "test-model",
@@ -76,12 +77,14 @@ describe("POST /wiki/question audit emission", () => {
         model: "test-model",
       },
       outputs: {
+        answered: true,
         answer: "Revenue increased.",
         evidence_count: 0,
         input_tokens: 10,
         output_tokens: 4,
       },
     });
+    expect(res.json()).toMatchObject({ answered: true, answer: "Revenue increased." });
 
     await app.close();
   });

@@ -90,7 +90,7 @@ function fakeRedis(): {
 
 function fakeClient(rows: FakeRows): TenantScopedClient {
   return {
-    query: async (text: string) => {
+    query: async (text: string, values?: unknown[]) => {
       if (text.includes("FROM ledger_reconciliation_matches")) {
         return {
           rows: (rows.reconciliationMatches ?? []) as never[],
@@ -98,6 +98,45 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         };
       }
       if (text.includes("FROM ledger_transactions")) {
+        if (text.includes("COUNT(*) OVER ()")) {
+          const parameters = values ?? [];
+          let parameterIndex = 0;
+          let transactions = rows.transactions;
+          if (text.includes("transaction_date >= $")) {
+            const start = parameters[parameterIndex++] as Date;
+            const end = parameters[parameterIndex++] as Date;
+            transactions = transactions.filter(
+              (transaction) =>
+                transaction.transaction_date >= start && transaction.transaction_date < end,
+            );
+          }
+          if (text.includes("transaction_date <= $")) {
+            const asOf = parameters[parameterIndex++] as Date;
+            transactions = transactions.filter(
+              (transaction) => transaction.transaction_date <= asOf,
+            );
+          }
+          if (text.includes("direction = $")) {
+            const direction = parameters[parameterIndex++] as string;
+            transactions = transactions.filter(
+              (transaction) => transaction.direction === direction,
+            );
+          }
+          const total = transactions.reduce(
+            (sum, transaction) => sum + Number(transaction.amount),
+            0,
+          );
+          const average = transactions.length === 0 ? 0 : total / transactions.length;
+          const aggregate = {
+            matching_count: String(transactions.length),
+            matching_sum: total.toFixed(2),
+            matching_average: average.toFixed(2),
+          };
+          return {
+            rows: transactions.map((transaction) => ({ ...transaction, ...aggregate })) as never[],
+            rowCount: transactions.length,
+          };
+        }
         const transactions = text.includes("reconciliation_status = 'unreconciled'")
           ? rows.transactions.filter((r) =>
               (r.description_normalized ?? r.description_raw ?? "").includes("unreconciled"),
@@ -218,6 +257,213 @@ async function askWithEmptyEvidence(question: string, model: string): Promise<st
 }
 
 describe("askWiki — Ledger-grounded retrieval", () => {
+  it("answers month-scoped transaction counts deterministically with matching evidence", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_JUNE_INFLOW",
+          amount: "100.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-06-03T00:00:00Z"),
+          description_normalized: "June deposit",
+          description_raw: null,
+          counterparty_id: "cp_CUSTOMER",
+        },
+        {
+          id: "tx_JUNE_OUTFLOW",
+          amount: "25.50",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-06-14T00:00:00Z"),
+          description_normalized: "June expense",
+          description_raw: null,
+          counterparty_id: "cp_VENDOR",
+        },
+        {
+          id: "tx_JULY_OUTFLOW",
+          amount: "40.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-07-02T00:00:00Z"),
+          description_normalized: "July expense",
+          description_raw: null,
+          counterparty_id: "cp_VENDOR",
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("deterministic aggregation must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        evidenceBoundaryFactory: boundaryFactory,
+      },
+      {
+        question: "How many transactions do I have in June?",
+        asOf: new Date("2026-06-30T23:59:59Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-aggregate",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "You have 2 transactions in June 2026.",
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "tx_JUNE_INFLOW",
+      "tx_JUNE_OUTFLOW",
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("filters deterministic transaction sums by direction", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_JUNE_INFLOW",
+          amount: "100.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-06-03T00:00:00Z"),
+          description_normalized: "June deposit",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JUNE_OUTFLOW_A",
+          amount: "25.50",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-06-14T00:00:00Z"),
+          description_normalized: "June expense A",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JUNE_OUTFLOW_B",
+          amount: "74.50",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-06-18T00:00:00Z"),
+          description_normalized: "June expense B",
+          description_raw: null,
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("deterministic aggregation must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What is the total outflow transaction amount in June 2026?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-aggregate",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "The total for outflow transactions in June 2026 is $100.00.",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "tx_JUNE_OUTFLOW_A",
+      "tx_JUNE_OUTFLOW_B",
+    ]);
+  });
+
+  it("answers date-range transaction averages deterministically", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_JUNE_INFLOW_A",
+          amount: "10.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-06-01T00:00:00Z"),
+          description_normalized: "First deposit",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JUNE_INFLOW_B",
+          amount: "30.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-06-30T00:00:00Z"),
+          description_normalized: "Second deposit",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JULY_INFLOW",
+          amount: "90.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-07-01T00:00:00Z"),
+          description_normalized: "July deposit",
+          description_raw: null,
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("deterministic aggregation must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question:
+          "What is the average inflow transaction amount from 2026-06-01 through 2026-06-30?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-aggregate",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "The average inflow amount from 2026-06-01 through 2026-06-30 is $20.00.",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "tx_JUNE_INFLOW_A",
+      "tx_JUNE_INFLOW_B",
+    ]);
+  });
+
   it("returns a grounded answer citing only retrieved Ledger rows", async () => {
     const rows: FakeRows = {
       transactions: [
@@ -542,6 +788,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       },
     );
     expect(result.answer).toContain("Risky Corp");
+    expect(result.answered).toBe(true);
     expect(result.evidence[0]!.entityId).toBe("cp_RISK");
   });
 
@@ -712,6 +959,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       { question: "test", asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m3" },
     );
     expect(result.answer).toBe("I couldn't produce a grounded answer from the available evidence");
+    expect(result.answered).toBe(false);
     expect(result.evidence).toHaveLength(0);
   });
 
@@ -776,6 +1024,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
 
     expect(result.answer).toBe("The fenced answer parsed.");
+    expect(result.answered).toBe(false);
     expect(result.evidence).toHaveLength(0);
   });
 
@@ -822,6 +1071,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
 
     expect(result.answer).toBe("I couldn't produce a grounded answer from the available evidence");
+    expect(result.answered).toBe(false);
     expect(result.evidence).toHaveLength(0);
   });
 

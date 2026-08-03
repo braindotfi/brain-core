@@ -6,6 +6,16 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.13 (grounded Wiki aggregation answers)
+
+- **Wiki question answers now carry `answered`.** This boolean is `true` only
+  for grounded or deterministic answers. Clients no longer need to infer a
+  refusal from prose.
+- **Transaction counts, totals, and averages use a deterministic Ledger
+  query when the transaction scope is unambiguous.** Month-scoped and
+  direction-scoped questions return the exact computed value and matching
+  transaction evidence without relying on an LLM to perform arithmetic.
+
 ### v0.5.12 (counterparty trust contract correction)
 
 Documentation and integration-contract correction. No route, service, gate, or

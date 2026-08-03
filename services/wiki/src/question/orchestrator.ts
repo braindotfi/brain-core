@@ -53,6 +53,8 @@ export interface AskEvidenceItem {
 }
 
 export interface AskResult {
+  /** True only when Brain produced a grounded or deterministic answer. */
+  answered: boolean;
   answer: string;
   evidence: AskEvidenceItem[];
   model: string;
@@ -74,6 +76,7 @@ const CACHE_TTL_SECONDS = 300;
 const MAX_TRANSACTIONS = 30;
 const MAX_OBLIGATIONS = 15;
 const MAX_COUNTERPARTIES = 15;
+const MAX_AGGREGATE_EVIDENCE = 100;
 const DEFAULT_EVIDENCE_BOUNDARY_PREFIX = "brain_evidence_";
 
 export const WIKI_ANSWER_SYSTEM_PROMPT =
@@ -87,16 +90,53 @@ interface LedgerCandidate {
 
 type QuestionIntent = "accounts_receivable" | "reconciliation" | "generic";
 
+type AggregateOperation = "count" | "sum" | "average";
+
+interface TransactionAggregateIntent {
+  operation: AggregateOperation;
+  direction: "inflow" | "outflow" | "transfer" | null;
+  range: { start: Date; end: Date; label: string } | null;
+  asOf: Date | null;
+}
+
+interface TransactionAggregateRow {
+  id: string;
+  amount: string;
+  currency: string;
+  direction: string;
+  transaction_date: Date;
+  description_normalized: string | null;
+  description_raw: string | null;
+  counterparty_id: string | null;
+  matching_count: string;
+  matching_sum: string;
+  matching_average: string;
+}
+
 export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResult> {
   const key = dedupKey(opts);
   const cached = await deps.redis.get(cacheKey(key));
   if (cached !== null) {
     const parsed = JSON.parse(cached) as AskResult;
     deps.metrics.increment("brain.wiki.question.cache_hit", { tenant_id: opts.tenantId });
-    return { ...parsed, cachedAt: new Date().toISOString() };
+    return {
+      ...parsed,
+      // Cached answers from before the response-contract addition expire after
+      // five minutes. Treat them conservatively until they do.
+      answered: parsed.answered === true,
+      cachedAt: new Date().toISOString(),
+    };
   }
 
   const started = Date.now();
+
+  const aggregateIntent = parseTransactionAggregateIntent(opts.question, opts.asOf);
+  if (aggregateIntent !== null) {
+    const result = await answerTransactionAggregate(deps.client, aggregateIntent);
+    await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
+    recordQuestionMetrics(deps.metrics, opts, started, result.usage);
+    return result;
+  }
 
   // 1. Pull a bounded slice of recent Ledger state. Phase 5 layers in
   //    wiki_pages embeddings; Phase 3 keeps the retrieval surface narrow.
@@ -129,6 +169,7 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   const parsed = parseLlmAnswer(completion.text, candidates, boundaryToken);
 
   const result: AskResult = {
+    answered: parsed.answered,
     answer: parsed.answer,
     evidence: parsed.evidenceIds
       .map((id) => candidates.find((c) => c.id === id))
@@ -140,19 +181,146 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 
   await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
 
+  recordQuestionMetrics(deps.metrics, opts, started, completion.usage);
+
+  return result;
+}
+
+function recordQuestionMetrics(
+  metrics: MetricsEmitter,
+  opts: AskOptions,
+  started: number,
+  usage: { inputTokens: number; outputTokens: number },
+): void {
   // §6.2 / §7.2 metrics.
-  const latencyMs = Date.now() - started;
-  deps.metrics.duration("brain.wiki.question.latency", latencyMs, {
+  metrics.duration("brain.wiki.question.latency", Date.now() - started, {
     model: opts.model,
     tenant_id: opts.tenantId,
   });
-  deps.metrics.histogram(
-    "brain.wiki.question.cost",
-    completion.usage.inputTokens + completion.usage.outputTokens,
-    { model: opts.model, tenant_id: opts.tenantId },
+  metrics.histogram("brain.wiki.question.cost", usage.inputTokens + usage.outputTokens, {
+    model: opts.model,
+    tenant_id: opts.tenantId,
+  });
+}
+
+async function answerTransactionAggregate(
+  client: TenantScopedClient,
+  intent: TransactionAggregateIntent,
+): Promise<AskResult> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`transaction_date <= $${values.length}`);
+  }
+  if (intent.direction !== null) {
+    values.push(intent.direction);
+    clauses.push(`direction = $${values.length}`);
+  }
+  values.push(MAX_AGGREGATE_EVIDENCE);
+
+  const rows = await client.query<TransactionAggregateRow>(
+    `SELECT id,
+            amount::text AS amount,
+            currency,
+            direction,
+            transaction_date,
+            description_normalized,
+            description_raw,
+            counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(amount) OVER (), 0)::text AS matching_sum,
+            COALESCE(ROUND(AVG(amount) OVER (), 2), 0)::text AS matching_average
+       FROM ledger_transactions
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY transaction_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
   );
 
-  return result;
+  const matchingCount = rows.rows.length === 0 ? 0 : Number(rows.rows[0]!.matching_count);
+  const currencies = [...new Set(rows.rows.map((row) => row.currency))];
+  const rangeLabel = intent.range === null ? "" : ` ${intent.range.label}`;
+  const directionLabel = intent.direction ?? "";
+
+  if (intent.operation !== "count" && currencies.length > 1) {
+    return {
+      answered: false,
+      answer: "I can't calculate one total across transactions in multiple currencies.",
+      evidence: rows.rows.map(toTransactionEvidence),
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const amount =
+    rows.rows.length === 0
+      ? "0"
+      : intent.operation === "sum"
+        ? rows.rows[0]!.matching_sum
+        : rows.rows[0]!.matching_average;
+  const currency = currencies[0] ?? null;
+  const answer = buildAggregateAnswer(
+    intent.operation,
+    matchingCount,
+    amount,
+    currency,
+    directionLabel,
+    rangeLabel,
+  );
+
+  return {
+    answered: true,
+    answer,
+    evidence: rows.rows.map(toTransactionEvidence),
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function toTransactionEvidence(row: TransactionAggregateRow): AskEvidenceItem {
+  const counterparty = row.counterparty_id === null ? "" : ` cp=${row.counterparty_id}`;
+  const memo = row.description_normalized ?? row.description_raw ?? "";
+  return {
+    entityType: "transaction",
+    entityId: row.id,
+    excerpt:
+      `${row.direction} ${row.amount} ${row.currency} on ${row.transaction_date.toISOString().slice(0, 10)}${counterparty} ${memo}`.trim(),
+  };
+}
+
+function buildAggregateAnswer(
+  operation: AggregateOperation,
+  matchingCount: number,
+  amount: string,
+  currency: string | null,
+  directionLabel: string,
+  rangeLabel: string,
+): string {
+  const scope = `${directionLabel === "" ? "" : `${directionLabel} `}transactions${rangeLabel}`;
+  if (operation === "count") {
+    return `You have ${matchingCount} ${scope}.`;
+  }
+  const value = formatCurrencyAmount(amount, currency);
+  if (operation === "sum") {
+    return `The total for ${scope} is ${value}.`;
+  }
+  return `The average ${directionLabel || "transaction"} amount${rangeLabel} is ${value}.`;
+}
+
+function formatCurrencyAmount(amount: string, currency: string | null): string {
+  const [wholeRaw = "0", fractionRaw = ""] = amount.split(".");
+  const sign = wholeRaw.startsWith("-") ? "-" : "";
+  const whole = (sign === "-" ? wholeRaw.slice(1) : wholeRaw).replace(/^0+(?=\d)/, "");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = fractionRaw.padEnd(2, "0").slice(0, 2);
+  const prefix = currency === "USD" ? "$" : currency === null ? "" : `${currency} `;
+  return `${sign}${prefix}${grouped}.${fraction}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +648,87 @@ function classifyQuestionIntent(question: string): QuestionIntent {
   return "generic";
 }
 
+function parseTransactionAggregateIntent(
+  question: string,
+  asOf: Date | null,
+): TransactionAggregateIntent | null {
+  const q = question.toLowerCase();
+  if (!/\btransactions?\b/.test(q)) return null;
+
+  const operation: AggregateOperation | null = /\b(how many|count|number of)\b/.test(q)
+    ? "count"
+    : /\b(average|avg|mean)\b/.test(q)
+      ? "average"
+      : /\b(total|sum|how much)\b/.test(q)
+        ? "sum"
+        : null;
+  if (operation === null) return null;
+
+  const direction = /\b(inflows?|deposits?|credits?)\b/.test(q)
+    ? "inflow"
+    : /\b(outflows?|withdrawals?|debits?|spend)\b/.test(q)
+      ? "outflow"
+      : /\btransfers?\b/.test(q)
+        ? "transfer"
+        : null;
+
+  return {
+    operation,
+    direction,
+    range: parseIsoDateRange(q) ?? parseMonthRange(q, asOf),
+    asOf,
+  };
+}
+
+function parseIsoDateRange(question: string): TransactionAggregateIntent["range"] | null {
+  const values = [...question.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)].map((match) => match[1]!);
+  if (values.length === 0) return null;
+
+  const start = parseIsoDate(values[0]!);
+  const endDate = parseIsoDate(values[1] ?? values[0]!);
+  if (start === null || endDate === null || endDate < start) return null;
+  const end = new Date(endDate);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const label = values.length === 1 ? `on ${values[0]}` : `from ${values[0]} through ${values[1]}`;
+  return { start, end, label };
+}
+
+function parseIsoDate(value: string): Date | null {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) return null;
+  return parsed;
+}
+
+function parseMonthRange(question: string, asOf: Date | null): TransactionAggregateIntent["range"] {
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+  const monthMatch = new RegExp(`\\b(${months.join("|")})\\b(?:\\s+(20\\d{2}))?`).exec(question);
+  if (monthMatch === null) return null;
+
+  const month = months.indexOf(monthMatch[1]!);
+  const year =
+    monthMatch[2] === undefined ? (asOf ?? new Date()).getUTCFullYear() : Number(monthMatch[2]);
+  const start = new Date(Date.UTC(year, month, 1));
+  const end = new Date(Date.UTC(year, month + 1, 1));
+  return {
+    start,
+    end,
+    label: `in ${months[month]![0]!.toUpperCase()}${months[month]!.slice(1)} ${year}`,
+  };
+}
+
 function composeEvidenceContext(
   candidates: ReadonlyArray<LedgerCandidate>,
   boundaryToken: string,
@@ -506,18 +755,22 @@ function parseLlmAnswer(
   text: string,
   candidates: ReadonlyArray<LedgerCandidate>,
   boundaryToken: string,
-): { answer: string; evidenceIds: string[] } {
+): { answered: boolean; answer: string; evidenceIds: string[] } {
   try {
     const json = JSON.parse(stripCodeFence(text)) as { answer?: string; evidence_ids?: string[] };
     const guarded = guardGroundedAnswer(json.answer, { boundaryToken });
     const ids = Array.isArray(json.evidence_ids) ? json.evidence_ids : [];
     const allowed = new Set(candidates.map((c) => c.id));
+    const evidenceIds = ids.filter((id) => typeof id === "string" && allowed.has(id));
     return {
+      // A generative answer is only answerable when the output passed the
+      // safety guard and cites retrieved tenant-scoped evidence.
+      answered: guarded.accepted && evidenceIds.length > 0,
       answer: guarded.answer,
-      evidenceIds: ids.filter((id) => typeof id === "string" && allowed.has(id)),
+      evidenceIds,
     };
   } catch {
-    return { answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
+    return { answered: false, answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
   }
 }
 
