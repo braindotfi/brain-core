@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check publication credential
         id: auth
@@ -52,7 +52,7 @@ jobs:
 
       - name: Check out public skills repository
         if: steps.auth.outputs.configured == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: braindotfi/brain-skills
           path: brain-skills

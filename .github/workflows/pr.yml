@@ -25,7 +25,7 @@ jobs:
     if: github.event_name == 'pull_request'
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.1.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -42,7 +42,7 @@ jobs:
     if: github.event_name == 'pull_request'
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
       - name: Scan Terraform
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
@@ -56,7 +56,7 @@ jobs:
     if: github.event_name == 'pull_request'
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
       - name: Build production images once for scanning
         run: |
           docker build --build-arg GIT_SHA=${{ github.sha }} --build-arg SERVICE_VERSION=${{ github.sha }} -t brain-core:ci -f Dockerfile .
@@ -110,7 +110,7 @@ jobs:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # check-migrations-append-only (run via `pnpm run lint` below) needs
           # origin/main reachable for `git merge-base`, same reason the
@@ -213,7 +213,7 @@ jobs:
       DATABASE_URL_AUTH_AUDIT: postgres://brain_auth_audit_writer:brain_auth_audit_writer@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v4
 
@@ -286,7 +286,7 @@ jobs:
       run:
         working-directory: services/agents
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -320,7 +320,7 @@ jobs:
       run:
         working-directory: contracts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -366,7 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -418,7 +418,7 @@ jobs:
       BRAIN_BASE_URL: http://localhost:3000
       BRAIN_DEMO_E2E_FULL: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
