@@ -199,8 +199,9 @@ Trust transitions emit `counterparty.trust.granted`,
 `counterparty.trust.acknowledged` audit events with the counterparty id, acting
 user, prior state, new state, and optional reason.
 
-`trust_status` is not read by the policy VM, §6 gate, or payment path in this
-contract version.
+Trust state is informational today. Payment execution is enforced through
+`verified_status`, sanctions screening, and policy checks. `trust_status` is not
+read by the policy VM, §6 gate, or payment path in this contract version.
 
 ## Rejected Fields
 

@@ -886,7 +886,8 @@ export interface paths {
          *     counterparty types. Allowed from `unreviewed` or `acknowledged`; invalid
          *     transitions return `ledger_status_invalid` with HTTP 409. This changes
          *     `trust_status` only and does not alter `verified_status` or payment gate
-         *     behavior.
+         *     behavior. Trust state is informational today: payment execution is
+         *     enforced through `verified_status`, sanctions screening, and policy checks.
          */
         post: operations["grantCounterpartyTrust"];
         delete?: never;
@@ -910,7 +911,9 @@ export interface paths {
          *     counterparty types. Allowed from `unreviewed`, `trusted`, or
          *     `acknowledged`; invalid transitions return `ledger_status_invalid` with
          *     HTTP 409. This changes `trust_status` only and does not alter
-         *     `verified_status` or payment gate behavior.
+         *     `verified_status` or payment gate behavior. Trust state is informational
+         *     today: payment execution is enforced through `verified_status`, sanctions
+         *     screening, and policy checks.
          */
         post: operations["pauseCounterpartyTrust"];
         delete?: never;
@@ -934,7 +937,8 @@ export interface paths {
          *     counterparty types. Allowed only from `paused`; invalid transitions
          *     return `ledger_status_invalid` with HTTP 409. This changes
          *     `trust_status` only and does not alter `verified_status` or payment
-         *     gate behavior.
+         *     gate behavior. Trust state is informational today: payment execution is
+         *     enforced through `verified_status`, sanctions screening, and policy checks.
          */
         post: operations["restoreCounterpartyTrust"];
         delete?: never;
@@ -958,7 +962,8 @@ export interface paths {
          *     counterparty types. Allowed from `unreviewed` or `paused`; invalid
          *     transitions return `ledger_status_invalid` with HTTP 409. This changes
          *     `trust_status` only and does not alter `verified_status` or payment gate
-         *     behavior.
+         *     behavior. Trust state is informational today: payment execution is
+         *     enforced through `verified_status`, sanctions screening, and policy checks.
          */
         post: operations["acknowledgeCounterpartyTrust"];
         delete?: never;

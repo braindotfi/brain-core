@@ -6,6 +6,21 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.12 (counterparty trust contract correction)
+
+Documentation and integration-contract correction. No route, service, gate, or
+authentication behavior changed.
+
+- **BrainMVB's API surface now includes all four mounted counterparty trust
+  transitions.** Grant, pause, restore, and acknowledge require a user bearer
+  JWT with `ledger:write`; platform shared-secret callers and API keys cannot
+  call them.
+- **Counterparty trust terminology now matches the live state machine.** The
+  state vocabulary is `unreviewed`, `trusted`, `paused`, and `acknowledged`.
+- **Trust-state docs now state the current enforcement boundary.** Trust state is
+  advisory only. Payment execution is enforced through `verified_status`,
+  sanctions screening, and policy checks.
+
 ### v0.5.11 (production launch documentation reconciliation)
 
 Documentation-only correction. No API or contract behavior changed.

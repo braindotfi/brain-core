@@ -3,7 +3,7 @@
   "version": 1,
   "generated_from": {
     "repository": "brain-core",
-    "head": "64c3a218dffc71be0cb145e2664fc15a8d5b06ee",
+    "head": "4aff16fcde625c0e14d2387ac0ad49bdb586e0d4",
     "openapi_source": "Brain_API_Specification.yaml",
     "runtime_sources": [
       "services/api/src/main.ts",
@@ -713,7 +713,7 @@
           "auth": "bearer or api_key_when_enabled",
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
-          "request_shape": "query { q?, type?, verified_status?, limit?, cursor? }",
+          "request_shape": "query { q?, type?, verified_status?, trust_status?, limit?, cursor? }",
           "response_shape": "200 { counterparties[{..., payment_count, payment_total}], next_cursor }",
           "example_request": "GET /v1/ledger/counterparties",
           "example_response": {
@@ -765,6 +765,66 @@
           "example_request": { "body": { "name": "Acme LLC" } },
           "example_response": { "counterparty": { "id": "cp_example" } },
           "openapi": "documented:/ledger/counterparties/{counterparty_id}"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/counterparties/{counterparty_id}/trust/grant",
+          "auth": "bearer user JWT only",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }; optional body { reason? }; user principal required, platform shared-secret and API keys are rejected",
+          "response_shape": "200 { counterparty, previous_trust_status }",
+          "example_request": { "body": { "reason": "Reviewed supporting documents" } },
+          "example_response": {
+            "counterparty": { "id": "cp_example", "trust_status": "trusted" },
+            "previous_trust_status": "unreviewed"
+          },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}/trust/grant"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/counterparties/{counterparty_id}/trust/pause",
+          "auth": "bearer user JWT only",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }; optional body { reason? }; user principal required, platform shared-secret and API keys are rejected",
+          "response_shape": "200 { counterparty, previous_trust_status }",
+          "example_request": { "body": { "reason": "Review requires follow-up" } },
+          "example_response": {
+            "counterparty": { "id": "cp_example", "trust_status": "paused" },
+            "previous_trust_status": "trusted"
+          },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}/trust/pause"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/counterparties/{counterparty_id}/trust/restore",
+          "auth": "bearer user JWT only",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }; optional body { reason? }; user principal required, platform shared-secret and API keys are rejected",
+          "response_shape": "200 { counterparty, previous_trust_status }",
+          "example_request": { "body": { "reason": "Follow-up complete" } },
+          "example_response": {
+            "counterparty": { "id": "cp_example", "trust_status": "trusted" },
+            "previous_trust_status": "paused"
+          },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}/trust/restore"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/ledger/counterparties/{counterparty_id}/trust/acknowledge",
+          "auth": "bearer user JWT only",
+          "required_scope": "ledger:write",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { counterparty_id }; optional body { reason? }; user principal required, platform shared-secret and API keys are rejected",
+          "response_shape": "200 { counterparty, previous_trust_status }",
+          "example_request": { "body": { "reason": "Review noted" } },
+          "example_response": {
+            "counterparty": { "id": "cp_example", "trust_status": "acknowledged" },
+            "previous_trust_status": "unreviewed"
+          },
+          "openapi": "documented:/ledger/counterparties/{counterparty_id}/trust/acknowledge"
         },
         {
           "method": "GET",

@@ -2,19 +2,23 @@
 
 Query the deterministic structured records the Brain protocol produces from Raw evidence. The Ledger is the single source of financial truth. Every row carries provenance, evidence references, and a confidence score.
 
-| Operation                         | Endpoint                                        |
-| --------------------------------- | ----------------------------------------------- |
-| List accounts                     | `GET  /v1/ledger/accounts`                      |
-| Account detail (+ latest balance) | `GET /v1/ledger/accounts/{account_id}`          |
-| List balances (point-in-time)     | `GET  /v1/ledger/balances`                      |
-| List counterparties               | `GET  /v1/ledger/counterparties`                |
-| List invoices                     | `GET  /v1/ledger/invoices`                      |
-| List obligations                  | `GET  /v1/ledger/obligations`                   |
-| List transactions                 | `GET  /v1/ledger/transactions`                  |
-| Transaction detail                | `GET  /v1/ledger/transactions/{transaction_id}` |
-| Promote Raw → Ledger              | `POST /v1/ledger/normalize`                     |
-| Trigger reconciliation            | `POST /v1/ledger/reconcile`                     |
-| List reconciliation matches       | `GET  /v1/ledger/reconciliation-matches`        |
+| Operation                         | Endpoint                                                             |
+| --------------------------------- | -------------------------------------------------------------------- |
+| List accounts                     | `GET  /v1/ledger/accounts`                                           |
+| Account detail (+ latest balance) | `GET /v1/ledger/accounts/{account_id}`                               |
+| List balances (point-in-time)     | `GET  /v1/ledger/balances`                                           |
+| List counterparties               | `GET  /v1/ledger/counterparties`                                     |
+| Grant counterparty trust          | `POST /v1/ledger/counterparties/{counterparty_id}/trust/grant`       |
+| Pause counterparty trust          | `POST /v1/ledger/counterparties/{counterparty_id}/trust/pause`       |
+| Restore counterparty trust        | `POST /v1/ledger/counterparties/{counterparty_id}/trust/restore`     |
+| Acknowledge counterparty review   | `POST /v1/ledger/counterparties/{counterparty_id}/trust/acknowledge` |
+| List invoices                     | `GET  /v1/ledger/invoices`                                           |
+| List obligations                  | `GET  /v1/ledger/obligations`                                        |
+| List transactions                 | `GET  /v1/ledger/transactions`                                       |
+| Transaction detail                | `GET  /v1/ledger/transactions/{transaction_id}`                      |
+| Promote Raw → Ledger              | `POST /v1/ledger/normalize`                                          |
+| Trigger reconciliation            | `POST /v1/ledger/reconcile`                                          |
+| List reconciliation matches       | `GET  /v1/ledger/reconciliation-matches`                             |
 
 ### List Transactions
 
@@ -116,7 +120,33 @@ GET /v1/ledger/counterparties?q=AWS&type=vendor&verified_status=document_verifie
 Authorization: Bearer <token>
 ```
 
-`type` enum: `merchant | vendor | customer | employer | employee | bank | wallet | exchange | tax_authority | agent | other`. `verified_status`: `unverified | self_attested | document_verified | sanctions_cleared`. Each counterparty carries `risk_level` (`low | medium | high | sanctioned`), `aliases[]`, and `linked_accounts[]`.
+`type` enum: `merchant | vendor | customer | employer | employee | bank | wallet | exchange | tax_authority | agent | other`. `verified_status`: `unverified | self_attested | document_verified | sanctions_cleared`. `trust_status`: `unreviewed | trusted | paused | acknowledged`. Each counterparty carries `risk_level` (`low | medium | high | sanctioned`), `aliases[]`, and `linked_accounts[]`. Filter list results with `trust_status` when needed.
+
+### Counterparty Trust
+
+Trust transitions apply uniformly to every counterparty type, including vendors
+and customers. Each route requires a user bearer JWT with `ledger:write`.
+Platform shared-secret callers and API keys cannot use these routes.
+
+| Transition  | Endpoint                                                             | Allowed prior state                     | Result         |
+| ----------- | -------------------------------------------------------------------- | --------------------------------------- | -------------- |
+| Grant       | `POST /v1/ledger/counterparties/{counterparty_id}/trust/grant`       | `unreviewed`, `acknowledged`            | `trusted`      |
+| Pause       | `POST /v1/ledger/counterparties/{counterparty_id}/trust/pause`       | `unreviewed`, `trusted`, `acknowledged` | `paused`       |
+| Restore     | `POST /v1/ledger/counterparties/{counterparty_id}/trust/restore`     | `paused`                                | `trusted`      |
+| Acknowledge | `POST /v1/ledger/counterparties/{counterparty_id}/trust/acknowledge` | `unreviewed`, `paused`                  | `acknowledged` |
+
+Every transition accepts an optional audit-only reason:
+
+```json
+{ "reason": "Reviewed supporting documents" }
+```
+
+Invalid transitions return `409` with `ledger_status_invalid`. Successful
+responses return the updated `counterparty` and `previous_trust_status`.
+
+Trust state is informational today: payment execution is enforced through
+`verified_status`, sanctions screening, and policy checks. Trust state does not
+gate payment execution.
 
 ### List Invoices and Obligations
 
