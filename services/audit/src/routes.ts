@@ -13,6 +13,7 @@ import {
   type Scope,
 } from "@brain/shared";
 import { FORWARDED_EVENTS, generateWebhookSecret } from "@brain/shared";
+import { nextAnchorWindow } from "./anchorWindow.js";
 import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import { publishAnchor } from "./publisher.js";
 import {
@@ -248,14 +249,38 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       }
 
       const now = new Date();
-      const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      // Derive the window the same way the scheduled cross-tenant publisher
+      // does (nextAnchorWindow) instead of a fixed [now-24h, now] lookback --
+      // a fixed window silently orphans everything older than 24h the first
+      // time an operator triggers this endpoint for a backlogged tenant.
+      const coverage = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
+        const { rows } = await c.query<{ covered_to: Date | null; oldest_unanchored: Date | null }>(
+          `WITH cov AS (
+             SELECT MAX(period_end) AS covered_to
+               FROM audit_anchors
+              WHERE onchain_status <> 'reverted'
+           )
+           SELECT cov.covered_to,
+                  (SELECT MIN(created_at) FROM audit_events
+                     WHERE cov.covered_to IS NULL OR created_at > cov.covered_to) AS oldest_unanchored
+             FROM cov`,
+        );
+        return rows[0] ?? { covered_to: null, oldest_unanchored: null };
+      });
+      const { periodStart, periodEnd } = nextAnchorWindow(
+        coverage.covered_to,
+        // No unanchored events at all collapses to a zero-length window, so
+        // publishAnchor's existing "no events" path fires below.
+        coverage.oldest_unanchored ?? now,
+        now,
+      );
       const anchor = await publishAnchor(deps.pool, broadcaster, {
         tenantId: principal.tenantId,
         periodStart,
-        periodEnd: now,
+        periodEnd,
       });
       if (anchor === null) {
-        throw brainError("audit_no_events", "no audit events in the last 24 hours");
+        throw brainError("audit_no_events", "no unanchored audit events to publish");
       }
       reply.status(200);
       const txHashHex = anchor.onchain_tx_hash?.toString("hex") ?? null;
