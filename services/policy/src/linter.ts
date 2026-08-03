@@ -223,3 +223,44 @@ export function lintPolicy(doc: PolicyDocument, opts: LintOptions = {}): LintFin
 
   return findings;
 }
+
+const CONFIDENCE_FLOOR_CODES: ReadonlySet<string> = new Set([
+  "confidence_floor_missing",
+  "confidence_floor_too_low",
+]);
+
+export interface ActivationLintGateOptions {
+  /** Reject on every OTHER ERROR finding (auto_no_amount_cap, ...), not only confidence-floor. */
+  lintEnforce: boolean;
+  /** Escalate the confidence-floor findings from WARN to ERROR. */
+  confidenceEnforce: boolean;
+}
+
+export interface ActivationLintGateResult {
+  findings: LintFinding[];
+  /** ERROR findings that must block activation given the two enforcement flags. */
+  blocking: LintFinding[];
+  /** WARN findings, surfaced to the caller but never blocking. */
+  warnings: LintFinding[];
+}
+
+/**
+ * Single source of truth for "which lint findings block activation". Shared
+ * by every activation path (POST /policy/:tenant_id/sign,
+ * POST /v1/demo/policy/activate, and any future one) so they cannot drift:
+ * confidence-floor findings (confidence_floor_missing /
+ * confidence_floor_too_low) block only when confidenceEnforce is set; every
+ * other ERROR finding blocks only when lintEnforce is set. Callers force both
+ * flags true for a tenant.kind='production' tenant regardless of env config.
+ */
+export function runActivationLintGate(
+  doc: PolicyDocument,
+  opts: ActivationLintGateOptions,
+): ActivationLintGateResult {
+  const findings = lintPolicy(doc, { confidenceFloorReject: opts.confidenceEnforce });
+  const blocking = findings.filter(
+    (f) => f.severity === "ERROR" && (opts.lintEnforce || CONFIDENCE_FLOOR_CODES.has(f.code)),
+  );
+  const warnings = findings.filter((f) => f.severity === "WARN");
+  return { findings, blocking, warnings };
+}

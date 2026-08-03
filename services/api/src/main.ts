@@ -47,7 +47,6 @@ import {
   isDomainEvent,
   isTenantCategory,
   newTokenId,
-  newPolicyId,
   newTenantId,
   newUserId,
   isBrainId,
@@ -87,6 +86,8 @@ import { registerTenantExportRoute } from "./tenant-export/route.js";
 import { TenantExportService } from "./tenant-export/service.js";
 import { startTenantExportWorker } from "./tenant-export/worker.js";
 import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
+import { registerDemoPolicyActivateRoute } from "./demo/policy-activate-route.js";
+import { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
 import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
@@ -155,7 +156,6 @@ import {
   registerPolicyRoutes,
   PolicyService,
   allowedActionsFor,
-  contentHash,
   getActive as policyGetActive,
   getById as policyGetById,
   makeAttestCounterpartyAgent,
@@ -163,7 +163,7 @@ import {
   makeResolveEscrowState,
   makeResolveReputation,
 } from "@brain/policy";
-import type { PolicyDeps, PolicyDocument, PolicyRow } from "@brain/policy";
+import type { PolicyDeps, PolicyRow } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
@@ -541,8 +541,6 @@ async function main(): Promise<void> {
   // (to accept demo tokens) and JwtSigner (to mint them). Having it in two
   // inline literals means a typo breaks verification silently.
   const DEMO_SIGN_SECRET = "brain-demo-mode-insecure-dev-only";
-  const DEMO_GOLDEN_USER = "user_00000000020000000000000001" as const;
-  const DEMO_GOLDEN_TENANT = "tnt_00000000010000000000000000" as const;
 
   const revocationStore = new RedisRevocationStore(redis);
   const jwtVerifier = new JwtVerifier({
@@ -2333,170 +2331,21 @@ async function main(): Promise<void> {
             },
           );
 
-          // POST /v1/demo/policy/activate — inserts a 3-rule demo policy as
-          // active for the requester's tenant. Bypasses the EIP-712 signing
-          // ceremony so investors/demo operators can activate a policy with a
-          // single curl. Only available in BRAIN_DEMO_MODE=true.
-          const DEMO_POLICY: PolicyDocument = {
-            version: 1,
-            rules: [
-              {
-                id: "auto-small-payment",
-                applies_to: ["outbound_payment"],
-                when: { "amount.lte": { currency: "USD", value: "1000.00" } },
-                ach_autonomous_max_amount: { currency: "USD", value: "1000.00" },
-                execute: "auto",
-              },
-              {
-                id: "reject-excessive-payment",
-                applies_to: ["outbound_payment"],
-                when: { "amount.gt": { currency: "USD", value: "10000.00" } },
-                execute: "reject",
-              },
-              {
-                id: "confirm-mid-payment",
-                applies_to: ["outbound_payment"],
-                when: {
-                  "amount.gt": { currency: "USD", value: "1000.00" },
-                  "amount.lte": { currency: "USD", value: "10000.00" },
-                },
-                require: "owner_approval",
-                execute: "confirm",
-              },
-              {
-                id: "auto-agent-action",
-                applies_to: ["agent_action"],
-                when: {},
-                execute: "auto",
-              },
-              {
-                id: "auto-onchain-tx",
-                applies_to: ["onchain_tx"],
-                when: {},
-                execute: "auto",
-              },
-            ],
-          };
-
-          v1.post("/demo/policy/activate", { config: { skipAuth: false } }, async (req, reply) => {
-            if (req.principal === undefined) {
-              throw brainError("auth_token_missing", "principal required");
-            }
-            if (!req.principal.scopes.includes("policy:write")) {
-              throw brainError("auth_scope_insufficient", "policy:write required");
-            }
-
-            const body = req.body as { content?: PolicyDocument } | undefined;
-            const content: PolicyDocument = body?.content ?? DEMO_POLICY;
-
-            if (typeof content.version !== "number" || !Array.isArray(content.rules)) {
-              throw brainError("policy_rule_invalid", "content must be { version, rules[] }");
-            }
-
-            const hash = contentHash(content);
-
-            // ── Idempotency: same content hash already active and on-chain ──
-            type ExistingRow = {
-              id: string;
-              version: number;
-              onchain_tx: string;
-              onchain_version: number;
-            };
-            const existingReg = await withTenantScope(pool, req.principal.tenantId, async (c) => {
-              const res = await c.query<ExistingRow>(
-                `SELECT id, version, onchain_tx, onchain_version FROM policies
-               WHERE state = 'active' AND content_hash = $1 AND onchain_tx IS NOT NULL
-               LIMIT 1`,
-                [hash],
-              );
-              return res.rows[0] ?? null;
-            });
-
-            if (existingReg !== null) {
-              reply.status(200);
-              return {
-                policy_id: existingReg.id,
-                state: "active",
-                version: content.version,
-                rules: content.rules,
-                onchain_policy_tx: existingReg.onchain_tx,
-                onchain_policy_version: existingReg.onchain_version,
-                chain: "base-sepolia",
-              };
-            }
-
-            const id = newPolicyId();
-
-            await withTenantScope(pool, req.principal.tenantId, async (c) => {
-              await c.query(
-                `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
-              );
-              const versionRes = await c.query<{ next_version: number }>(
-                `SELECT COALESCE(MAX(version) + 1, 1) AS next_version FROM policies WHERE tenant_id = $1`,
-                [req.principal!.tenantId],
-              );
-              const nextVersion = versionRes.rows[0]?.next_version ?? 1;
-              await c.query(
-                `INSERT INTO policies
-                 (id, tenant_id, version, content, content_hash, quorum_required,
-                  state, created_by, activated_at)
-               VALUES ($1,$2,$3,$4,$5,1,'active',$6,now())`,
-                [
-                  id,
-                  req.principal!.tenantId,
-                  nextVersion,
-                  JSON.stringify(content),
-                  hash,
-                  req.principal!.id,
-                ],
-              );
-            });
-
-            // ── On-chain policy registration (best-effort) ─────────────────
-            let onchainPolicyTx: string | undefined;
-            let onchainPolicyVersion: number | undefined;
-            if (policyRegistrar !== undefined) {
-              try {
-                const reg = await policyRegistrar.registerPolicy(req.principal.tenantId, hash);
-                onchainPolicyTx = reg.tx_hash;
-                onchainPolicyVersion = reg.version;
-                await withTenantScope(pool, req.principal.tenantId, async (c) => {
-                  await c.query(
-                    `UPDATE policies SET onchain_tx = $1, onchain_version = $2 WHERE id = $3`,
-                    [onchainPolicyTx, onchainPolicyVersion ?? null, id],
-                  );
-                });
-              } catch (err) {
-                log.warn({ err }, "on-chain policy registration failed — demo continues off-chain");
-              }
-            }
-
-            await audit.emit({
-              tenantId: req.principal.tenantId,
-              layer: "policy",
-              actor: req.principal.id,
-              action: "policy.activate",
-              inputs: {
-                version: content.version,
-                policy_hash: hash.toString("hex"),
-                demo_bypass: true,
-                onchain_tx: onchainPolicyTx ?? null,
-              },
-              outputs: { policy_id: id, state: "active" },
-            });
-
-            reply.status(200);
-            return {
-              policy_id: id,
-              state: "active",
-              version: content.version,
-              rules: content.rules,
-              ...(onchainPolicyTx !== undefined && {
-                onchain_policy_tx: onchainPolicyTx,
-                onchain_policy_version: onchainPolicyVersion,
-                chain: "base-sepolia",
-              }),
-            };
+          // POST /v1/demo/policy/activate: inserts a demo policy as active for
+          // the requester's tenant, bypassing the EIP-712 signing ceremony so
+          // investors/demo operators can activate one with a single curl. Only
+          // available in BRAIN_DEMO_MODE=true. Extracted to
+          // demo/policy-activate-route.ts so it runs the same
+          // validatePolicyDocument + H-18 lint gate POST /policy/:tenant_id/sign
+          // runs (see that file's header comment) and is unit-testable without
+          // booting this whole file.
+          await registerDemoPolicyActivateRoute(v1, {
+            pool,
+            audit,
+            log,
+            policyRegistrar,
+            lintReject: cfg.BRAIN_POLICY_LINT_REJECT,
+            confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,
           });
 
           // POST /v1/demo/anchor/trigger — immediately publishes a Merkle anchor

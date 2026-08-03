@@ -26,7 +26,7 @@ import {
 } from "./repository.js";
 import { evaluate, type Action } from "./vm.js";
 import { simulateHistorical, type ReplayAction } from "./simulator.js";
-import { lintPolicy } from "./linter.js";
+import { lintPolicy, runActivationLintGate } from "./linter.js";
 import { diffPolicies } from "./policy-diff.js";
 import type { PolicyDeps } from "./deps.js";
 
@@ -235,38 +235,27 @@ export async function registerPolicyRoutes(app: FastifyInstance, deps: PolicyDep
           const confidenceEnforce =
             deps.confidenceFloorReject === true || tenantKind === "production";
           const lintEnforce = deps.lintReject === true || tenantKind === "production";
-          const findings = lintPolicy(r.content, { confidenceFloorReject: confidenceEnforce });
-          const confidenceFindings = findings.filter(
-            (f) => f.code === "confidence_floor_missing" || f.code === "confidence_floor_too_low",
-          );
-          // Every OTHER ERROR finding used to be computed here and silently
-          // discarded (auto_no_amount_cap, auto_no_counterparty_constraint,
-          // auto_no_verified_counterparty, no_approval_path_high_value,
-          // unsupported_currency, invalid_approval_role, auto_no_risk_bound,
-          // broad_any_auto) -- a tenant could activate an unbounded
-          // auto-executing "any" rule as long as some other rule in the
-          // document happened to carry a confidence floor. Block on those too
-          // when lint enforcement is on.
-          const otherErrorFindings = findings.filter(
-            (f) =>
-              f.severity === "ERROR" &&
-              f.code !== "confidence_floor_missing" &&
-              f.code !== "confidence_floor_too_low",
-          );
-          const blocking = [
-            ...confidenceFindings.filter((f) => f.severity === "ERROR"),
-            ...(lintEnforce ? otherErrorFindings : []),
-          ];
-          if (blocking.length > 0) {
+          // runActivationLintGate (linter.ts) is the single source of truth for
+          // which findings block activation, shared with POST
+          // /v1/demo/policy/activate. Every OTHER ERROR finding used to be
+          // computed here and silently discarded (auto_no_amount_cap,
+          // auto_no_counterparty_constraint, auto_no_verified_counterparty,
+          // no_approval_path_high_value, unsupported_currency,
+          // invalid_approval_role, auto_no_risk_bound, broad_any_auto) -- a
+          // tenant could activate an unbounded auto-executing "any" rule as
+          // long as some other rule in the document happened to carry a
+          // confidence floor. Block on those too when lint enforcement is on.
+          const gate = runActivationLintGate(r.content, { lintEnforce, confidenceEnforce });
+          if (gate.blocking.length > 0) {
             throw brainError("policy_rule_invalid", "policy failed activation lint", {
               statusOverride: 422,
-              details: { findings: blocking },
+              details: { findings: gate.blocking },
             });
           }
           // Surface every WARN finding, not only the confidence-floor ones, so
           // an operator activating a policy also sees unreachable/dead-rule
           // warnings.
-          activationWarnings = findings.filter((f) => f.severity === "WARN");
+          activationWarnings = gate.warnings;
           activatedRow = await transition(c, r.id, "pending_signatures", "active");
         }
         return {

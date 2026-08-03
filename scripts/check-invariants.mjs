@@ -513,18 +513,47 @@ check(
   "policy activation must warn or reject when agent.confidence.gte is missing or not strictly greater than 0.5",
 );
 
-// Activation must block on EVERY ERROR finding, not only the confidence floor.
-// The linter produced eight other ERROR codes that activation computed and then
-// silently discarded, so a tenant could activate an unbounded auto-executing
-// `any` money-movement rule as long as some other rule in the document carried a
-// confidence floor. Pin the enforcement switch and the fact that the non-confidence
-// ERRORs reach the blocking list, so that regression cannot return unnoticed.
+// Activation must block on EVERY ERROR finding, not only the confidence floor,
+// on EVERY writer of policies.state = 'active', not only sign. The blocking
+// logic used to be inlined per route (checked by literal strings in
+// routes.ts); it was later factored into one shared helper,
+// runActivationLintGate (linter.ts), so POST /policy/:tenant_id/sign,
+// POST /v1/demo/policy/activate, and the tools/seed-golden-path seed CLI all
+// enforce identically instead of drifting apart -- which is exactly how the
+// demo route shipped with NO lint gate at all in the first place (it grew a
+// shallow shape check nobody wired to the H-18 findings). A guard that only
+// pins routes.ts's OWN inline logic cannot see that kind of drift: it stays
+// green even when a newer activation writer never calls the shared helper.
+// So this checks two things, at two different layers: (1) the property
+// itself, pinned once in the ONE place it lives (the blocking filter inside
+// runActivationLintGate); and (2) that every known writer of
+// policies.state='active' actually calls that helper, plus that the two
+// tenant-aware HTTP paths force enforcement for a production tenant
+// regardless of the rollback flag (the seed CLI has no tenant-kind lookup at
+// all and simply enforces unconditionally, which is checked directly).
+const demoPolicyActivateSource = read("services/api/src/demo/policy-activate-route.ts");
+const seedGoldenPathCliSource = read("tools/seed-golden-path/src/cli.ts");
+const activationLintGateBody = policyLinterSource.slice(
+  policyLinterSource.indexOf("export function runActivationLintGate"),
+);
 check(
   "policy activation blocks on every lint ERROR",
-  policyRoutesSource.includes('deps.lintReject === true || tenantKind === "production"') &&
-    policyRoutesSource.includes("otherErrorFindings") &&
-    policyRoutesSource.includes("...(lintEnforce ? otherErrorFindings : [])"),
-  "policy activation must block on all ERROR lint findings, not only confidence_floor_*",
+  // The property: an ERROR finding blocks when lint enforcement is on, OR
+  // (regardless of that flag) when it is a confidence-floor code.
+  activationLintGateBody.includes(
+    'f.severity === "ERROR" && (opts.lintEnforce || CONFIDENCE_FLOOR_CODES.has(f.code))',
+  ) &&
+    // Every known activation writer routes through the shared helper.
+    policyRoutesSource.includes("runActivationLintGate(r.content") &&
+    demoPolicyActivateSource.includes("runActivationLintGate(content") &&
+    seedGoldenPathCliSource.includes("runActivationLintGate(content") &&
+    // Production always enforces regardless of BRAIN_POLICY_LINT_REJECT, on
+    // both paths that vary enforcement by tenant kind.
+    policyRoutesSource.includes('deps.lintReject === true || tenantKind === "production"') &&
+    demoPolicyActivateSource.includes('deps.lintReject === true || tenantKind === "production"') &&
+    // The seed CLI has no tenant to look up; it must hardcode enforcement on.
+    seedGoldenPathCliSource.includes("lintEnforce: true, confidenceEnforce: false"),
+  "policy activation must block on all ERROR lint findings, not only confidence_floor_*, on every writer of policies.state='active' (sign, demo activate, seed CLI), and production must enforce regardless of the rollback flag",
 );
 
 // The read side of the signed-policy chain of trust. Activation verifies EIP-712

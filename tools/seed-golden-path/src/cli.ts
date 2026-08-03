@@ -16,7 +16,13 @@
 
 import { Pool } from "pg";
 import { InMemoryAuditEmitter, withTenantScope, newPolicyId, newAgentId } from "@brain/shared";
-import { contentHash, type PolicyDocument } from "@brain/policy";
+import {
+  contentHash,
+  runActivationLintGate,
+  validatePolicyDocument,
+  type PolicyDocument,
+} from "@brain/policy";
+import { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT, insertBootstrapAdminMember } from "@brain/api";
 import { seedGoldenPath } from "./index.js";
 import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
 
@@ -27,15 +33,28 @@ import { demoAgentScopeHash } from "./demo-agent-scope-hash.js";
  * production — there policies are signed and agents are registered on-chain.
  * Skipped when BRAIN_SEED_DEMO_GOVERNANCE=false. Idempotent (deactivates any
  * prior active policy; replaces the demo agent).
+ *
+ * Validated + lint-gated below with the SAME runActivationLintGate every HTTP
+ * activation path uses (POST /policy/:tenant_id/sign,
+ * POST /v1/demo/policy/activate), always enforcing (this seed never targets
+ * a production tenant): `outbound_payment` / `onchain_tx` auto rules cannot
+ * carry a real counterparty allowlist here (no seeded counterparty data to
+ * scope to), so they require confirmation instead of auto-executing, same
+ * tradeoff services/api/src/demo/policy-activate-route.ts makes. `require`
+ * uses `admin_approval`, not `owner_approval`: the section 6 gate's check 11
+ * matches `required_approvers` against the literal `members.role` that
+ * signed, and there is no `owner` MemberRole a real member can hold (only
+ * `admin | approver | viewer`), so `owner_approval` can never be satisfied.
  */
 const DEMO_POLICY: PolicyDocument = {
   version: 1,
   rules: [
     {
-      id: "auto-small-payment",
+      id: "confirm-small-payment",
       applies_to: ["outbound_payment"],
       when: { "amount.lte": { currency: "USD", value: "1000.00" } },
-      execute: "auto",
+      require: "admin_approval",
+      execute: "confirm",
     },
     {
       id: "reject-excessive-payment",
@@ -50,11 +69,17 @@ const DEMO_POLICY: PolicyDocument = {
         "amount.gt": { currency: "USD", value: "1000.00" },
         "amount.lte": { currency: "USD", value: "10000.00" },
       },
-      require: "owner_approval",
+      require: "admin_approval",
       execute: "confirm",
     },
     { id: "auto-agent-action", applies_to: ["agent_action"], when: {}, execute: "auto" },
-    { id: "auto-onchain-tx", applies_to: ["onchain_tx"], when: {}, execute: "auto" },
+    {
+      id: "confirm-onchain-tx",
+      applies_to: ["onchain_tx"],
+      when: {},
+      require: "admin_approval",
+      execute: "confirm",
+    },
   ],
 };
 
@@ -65,12 +90,22 @@ async function seedDemoGovernance(
 ): Promise<{ policy_id: string; agent_id: string }> {
   const smartAccount =
     process.env.BRAIN_ONCHAIN_SMART_ACCOUNT ?? "0x0000000000000000000000000000000000000000";
-  const policyJson = JSON.stringify(DEMO_POLICY);
+  // Structural validation + the H-18 lint gate, same as every HTTP activation
+  // path. This is a raw-SQL writer of policies.state='active' outside the
+  // policy service's compose/sign routes, so nothing else would catch a
+  // regression here (e.g. a future edit reintroducing an unbounded
+  // applies_to:["any"] auto rule).
+  const content = validatePolicyDocument(DEMO_POLICY);
+  const gate = runActivationLintGate(content, { lintEnforce: true, confidenceEnforce: false });
+  if (gate.blocking.length > 0) {
+    throw new Error(`DEMO_POLICY failed activation lint: ${JSON.stringify(gate.blocking)}`);
+  }
+  const policyJson = JSON.stringify(content);
   // Canonical hash, NOT sha256(JSON.stringify(doc)); see the same note in
   // services/api/src/demo/brainsaas-seed.ts. getActive recomputes content_hash on
   // read and fails closed on drift, so a naive digest here would take the seeded
   // golden-path tenant's policy offline.
-  const policyHash = contentHash(DEMO_POLICY);
+  const policyHash = contentHash(content);
   const scopeHash = demoAgentScopeHash();
   const policyId = newPolicyId();
   const agentId = newAgentId();
@@ -93,6 +128,21 @@ async function seedDemoGovernance(
        VALUES ($1, $2, 'internal', 'payment', 'Demo Payment Agent', $3, $4, 'active', now(), now(), 0, 100)`,
       [agentId, tenantId, scopeHash, smartAccount],
     );
+    // Only meaningful when tenantId is the fixed golden tenant: GET
+    // /v1/demo/token (main.ts) always mints a session for DEMO_GOLDEN_USER in
+    // DEMO_GOLDEN_TENANT, but that session is only member-resolvable (able to
+    // approve a payment_intent, per ActorResolver's session branch) if a
+    // `members` row exists for that exact (tenant_id, id). Without this, every
+    // demo-token approve call fails `actor_unresolved` regardless of the
+    // token's scopes. Harmless no-op admin member when seeding any other
+    // tenant. Idempotent (ON CONFLICT DO NOTHING).
+    if (tenantId === DEMO_GOLDEN_TENANT) {
+      await insertBootstrapAdminMember(c, {
+        tenantId,
+        memberId: DEMO_GOLDEN_USER,
+        displayName: "Demo Approver",
+      });
+    }
   });
   return { policy_id: policyId, agent_id: agentId };
 }
