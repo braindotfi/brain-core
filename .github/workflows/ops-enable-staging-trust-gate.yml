@@ -74,7 +74,7 @@ jobs:
           scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:$remote_script"
           rm -f "$script"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "python3 '$remote_script' '$VM_ENV_FILE'; rc=\$?; rm -f '$remote_script'; exit \$rc"
+            "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE'; rc=\$?; rm -f '$remote_script'; exit \$rc"
 
       - name: Validate required staging secrets before restart
         shell: bash
