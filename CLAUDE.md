@@ -169,9 +169,9 @@ Done
   serialization fails closed to the grounded-answer fallback when the parsed or
   stored answer contains raw internal JSON, boundary tokens, or prompt fragments.
   Evidence ids remain subset-filtered against the retrieved tenant-scoped rows.
-  `/v1/wiki/question` returns `answered` separately from prose; deterministic
-  transaction count, total, and average questions return exact Ledger results
-  with transaction evidence.
+  `/v1/wiki/question` returns `answered` separately from prose. Deterministic
+  transaction count, total, average, and bounded transaction, cash-flow, or
+  invoice listing questions return exact Ledger results with cited records.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as

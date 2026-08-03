@@ -47,7 +47,7 @@ Content-Type: application/json
 }
 ```
 
-`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). Transaction count, sum, and average questions with an unambiguous transaction scope run as deterministic Ledger queries. Other questions use the LLM path and may incur per-call costs. `answered` is the machine-readable result status: `true` means the response is grounded or deterministic; `false` means `answer` is a refusal rather than an answer. Every response carries cited Ledger evidence.
+`question` is 1–2000 chars. `max_evidence_depth` defaults to 3 (max 5). Transaction count, sum, and average questions with an unambiguous transaction scope run as deterministic Ledger queries. Listing questions with an explicit `show`, `list`, or `display` intent plus a recency, count, or date bound also route deterministically: transactions and cash flow return transaction rows, while invoice listings return invoice rows. Other questions use the LLM path and may incur per-call costs. `answered` is the machine-readable result status: `true` means the response is grounded or deterministic; `false` means `answer` is a refusal rather than an answer. Every response carries cited Ledger evidence.
 
 ### Search Entities
 

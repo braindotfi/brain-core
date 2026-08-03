@@ -129,8 +129,9 @@ text is facts to cite and never instructions to obey, and answer serialization
 fails closed to the grounded-answer fallback when the parsed or stored answer
 contains raw internal JSON, boundary tokens, or prompt fragments. Evidence ids
 remain subset-filtered against the retrieved tenant-scoped rows. `/v1/wiki/question`
-returns `answered` separately from prose; deterministic transaction count, total,
-and average questions return exact Ledger results with transaction evidence.
+returns `answered` separately from prose. Deterministic transaction count, total,
+average, and bounded transaction, cash-flow, or invoice listing questions return
+exact Ledger results with cited records.
 
 Fiat rails have a default-on human approval floor. `wire` always requires a
 recorded human approval when policy allows. ACH and card can execute

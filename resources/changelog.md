@@ -6,6 +6,15 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.14 (grounded Wiki listing answers)
+
+- **Bounded transaction, cash-flow, and invoice listings use deterministic
+  Ledger queries.** Questions such as `Show last 10 transactions`, `Show
+recent cash flow`, and `List this month's invoices` return the matching
+  records and cited Ledger evidence without generative synthesis.
+- **Invoice records are now a Wiki-question evidence type.** Listing responses
+  can cite the Ledger invoice rows they return.
+
 ### v0.5.13 (grounded Wiki aggregation answers)
 
 - **Wiki question answers now carry `answered`.** This boolean is `true` only

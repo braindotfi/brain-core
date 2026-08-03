@@ -47,7 +47,7 @@ export interface AskOptions {
 }
 
 export interface AskEvidenceItem {
-  entityType: "transaction" | "obligation" | "counterparty";
+  entityType: "transaction" | "obligation" | "counterparty" | "invoice";
   entityId: string;
   excerpt: string;
 }
@@ -77,6 +77,8 @@ const MAX_TRANSACTIONS = 30;
 const MAX_OBLIGATIONS = 15;
 const MAX_COUNTERPARTIES = 15;
 const MAX_AGGREGATE_EVIDENCE = 100;
+const DEFAULT_LISTING_RECORDS = 10;
+const MAX_LISTING_RECORDS = 50;
 const DEFAULT_EVIDENCE_BOUNDARY_PREFIX = "brain_evidence_";
 
 export const WIKI_ANSWER_SYSTEM_PROMPT =
@@ -95,7 +97,23 @@ type AggregateOperation = "count" | "sum" | "average";
 interface TransactionAggregateIntent {
   operation: AggregateOperation;
   direction: "inflow" | "outflow" | "transfer" | null;
-  range: { start: Date; end: Date; label: string } | null;
+  range: DateRange | null;
+  asOf: Date | null;
+}
+
+interface DateRange {
+  start: Date;
+  end: Date;
+  label: string;
+}
+
+type ListingEntity = "transaction" | "cash_flow" | "invoice";
+
+interface StructuredListingIntent {
+  entity: ListingEntity;
+  limit: number;
+  direction: "inflow" | "outflow" | "transfer" | null;
+  range: DateRange | null;
   asOf: Date | null;
 }
 
@@ -111,6 +129,29 @@ interface TransactionAggregateRow {
   matching_count: string;
   matching_sum: string;
   matching_average: string;
+}
+
+interface TransactionListingRow {
+  id: string;
+  amount: string;
+  currency: string;
+  direction: string;
+  transaction_date: Date;
+  description_normalized: string | null;
+  description_raw: string | null;
+  counterparty_id: string | null;
+}
+
+interface InvoiceListingRow {
+  id: string;
+  invoice_number: string;
+  amount_due: string;
+  amount_paid: string;
+  currency: string;
+  issue_date: Date;
+  due_date: Date | null;
+  status: string;
+  counterparty_id: string;
 }
 
 export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResult> {
@@ -133,6 +174,14 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   const aggregateIntent = parseTransactionAggregateIntent(opts.question, opts.asOf);
   if (aggregateIntent !== null) {
     const result = await answerTransactionAggregate(deps.client, aggregateIntent);
+    await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
+    recordQuestionMetrics(deps.metrics, opts, started, result.usage);
+    return result;
+  }
+
+  const listingIntent = parseStructuredListingIntent(opts.question, opts.asOf);
+  if (listingIntent !== null) {
+    const result = await answerStructuredListing(deps.client, listingIntent);
     await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
     recordQuestionMetrics(deps.metrics, opts, started, result.usage);
     return result;
@@ -283,7 +332,19 @@ async function answerTransactionAggregate(
   };
 }
 
-function toTransactionEvidence(row: TransactionAggregateRow): AskEvidenceItem {
+function toTransactionEvidence(
+  row: Pick<
+    TransactionListingRow,
+    | "id"
+    | "amount"
+    | "currency"
+    | "direction"
+    | "transaction_date"
+    | "description_normalized"
+    | "description_raw"
+    | "counterparty_id"
+  >,
+): AskEvidenceItem {
   const counterparty = row.counterparty_id === null ? "" : ` cp=${row.counterparty_id}`;
   const memo = row.description_normalized ?? row.description_raw ?? "";
   return {
@@ -321,6 +382,138 @@ function formatCurrencyAmount(amount: string, currency: string | null): string {
   const fraction = fractionRaw.padEnd(2, "0").slice(0, 2);
   const prefix = currency === "USD" ? "$" : currency === null ? "" : `${currency} `;
   return `${sign}${prefix}${grouped}.${fraction}`;
+}
+
+async function answerStructuredListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  if (intent.entity === "invoice") {
+    return answerInvoiceListing(client, intent);
+  }
+  return answerTransactionListing(client, intent);
+}
+
+async function answerTransactionListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`transaction_date <= $${values.length}`);
+  }
+  if (intent.direction !== null) {
+    values.push(intent.direction);
+    clauses.push(`direction = $${values.length}`);
+  }
+  values.push(intent.limit);
+
+  const { rows } = await client.query<TransactionListingRow>(
+    `SELECT id, amount::text AS amount, currency, direction, transaction_date,
+            description_normalized, description_raw, counterparty_id
+       FROM ledger_transactions
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY transaction_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  const subject = intent.entity === "cash_flow" ? "cash flow transactions" : "transactions";
+  const scope = describeListingScope(intent, subject);
+  if (rows.length === 0) {
+    return structuredListingResult(`No ${scope} found.`, []);
+  }
+  const records = rows.map((row) => formatTransactionListingRow(row)).join("\n");
+  return structuredListingResult(
+    `${capitalize(scope)}:\n${records}`,
+    rows.map(toTransactionEvidence),
+  );
+}
+
+async function answerInvoiceListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`issue_date >= $${values.length - 1}`);
+    clauses.push(`issue_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`issue_date <= $${values.length}`);
+  }
+  values.push(intent.limit);
+  const where = clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`;
+
+  const { rows } = await client.query<InvoiceListingRow>(
+    `SELECT id, invoice_number, amount_due::text AS amount_due, amount_paid::text AS amount_paid,
+            currency, issue_date, due_date, status, counterparty_id
+       FROM ledger_invoices
+       ${where}
+      ORDER BY issue_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  const scope = describeListingScope(intent, "invoices");
+  if (rows.length === 0) {
+    return structuredListingResult(`No ${scope} found.`, []);
+  }
+  const records = rows.map((row) => formatInvoiceListingRow(row)).join("\n");
+  return structuredListingResult(`${capitalize(scope)}:\n${records}`, rows.map(toInvoiceEvidence));
+}
+
+function structuredListingResult(answer: string, evidence: AskEvidenceItem[]): AskResult {
+  return {
+    answered: true,
+    answer,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function describeListingScope(intent: StructuredListingIntent, subject: string): string {
+  const direction = intent.direction === null ? "" : `${intent.direction} `;
+  const range = intent.range === null ? "" : ` ${intent.range.label}`;
+  return `${direction}${subject}${range}`;
+}
+
+function capitalize(value: string): string {
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
+}
+
+function formatTransactionListingRow(row: TransactionListingRow): string {
+  const memo = stripUnsafeControlCharacters(
+    row.description_normalized ?? row.description_raw ?? "",
+  );
+  const counterparty = row.counterparty_id === null ? "" : `, counterparty ${row.counterparty_id}`;
+  return `- ${row.transaction_date.toISOString().slice(0, 10)}: ${row.direction} ${formatCurrencyAmount(row.amount, row.currency)}${counterparty}${memo === "" ? "" : `, ${memo}`}`;
+}
+
+function formatInvoiceListingRow(row: InvoiceListingRow): string {
+  const due =
+    row.due_date === null ? "no due date" : `due ${row.due_date.toISOString().slice(0, 10)}`;
+  return `- ${row.invoice_number}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, issued ${row.issue_date.toISOString().slice(0, 10)}, ${due}, counterparty ${row.counterparty_id}`;
+}
+
+function toInvoiceEvidence(row: InvoiceListingRow): AskEvidenceItem {
+  const due = row.due_date === null ? "" : ` due ${row.due_date.toISOString().slice(0, 10)}`;
+  return {
+    entityType: "invoice",
+    entityId: row.id,
+    excerpt: `${row.invoice_number} amount ${row.amount_due} ${row.currency} status=${row.status} issued ${row.issue_date.toISOString().slice(0, 10)}${due} cp=${row.counterparty_id}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -680,7 +873,54 @@ function parseTransactionAggregateIntent(
   };
 }
 
-function parseIsoDateRange(question: string): TransactionAggregateIntent["range"] | null {
+function parseStructuredListingIntent(
+  question: string,
+  asOf: Date | null,
+): StructuredListingIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(show|list|display)\b/.test(q)) return null;
+
+  const entity: ListingEntity | null = /\b(cash[ -]?flow)\b/.test(q)
+    ? "cash_flow"
+    : /\binvoices?\b/.test(q)
+      ? "invoice"
+      : /\btransactions?\b/.test(q)
+        ? "transaction"
+        : null;
+  if (entity === null) return null;
+
+  const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
+  const limit = parseListingLimit(q);
+  if (range === null && limit === null) return null;
+
+  const direction =
+    entity === "invoice"
+      ? null
+      : /\b(inflows?|deposits?|credits?)\b/.test(q)
+        ? "inflow"
+        : /\b(outflows?|withdrawals?|debits?|spend)\b/.test(q)
+          ? "outflow"
+          : /\btransfers?\b/.test(q)
+            ? "transfer"
+            : null;
+  return {
+    entity,
+    limit: limit ?? MAX_LISTING_RECORDS,
+    direction,
+    range,
+    asOf,
+  };
+}
+
+function parseListingLimit(question: string): number | null {
+  const last = /\blast\s+(\d{1,3})\b/.exec(question);
+  if (last !== null) {
+    return Math.min(Math.max(Number(last[1]), 1), MAX_LISTING_RECORDS);
+  }
+  return /\brecent\b/.test(question) ? DEFAULT_LISTING_RECORDS : null;
+}
+
+function parseIsoDateRange(question: string): DateRange | null {
   const values = [...question.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)].map((match) => match[1]!);
   if (values.length === 0) return null;
 
@@ -699,7 +939,7 @@ function parseIsoDate(value: string): Date | null {
   return parsed;
 }
 
-function parseMonthRange(question: string, asOf: Date | null): TransactionAggregateIntent["range"] {
+function parseMonthRange(question: string, asOf: Date | null): DateRange | null {
   const months = [
     "january",
     "february",
@@ -714,6 +954,15 @@ function parseMonthRange(question: string, asOf: Date | null): TransactionAggreg
     "november",
     "december",
   ];
+  const relativeMonth = /\bthis\s+month(?:'s)?\b/.test(question);
+  if (relativeMonth) {
+    const current = asOf ?? new Date();
+    const start = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1));
+    const monthName = start.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+    return { start, end, label: `in ${monthName} ${start.getUTCFullYear()}` };
+  }
+
   const monthMatch = new RegExp(`\\b(${months.join("|")})\\b(?:\\s+(20\\d{2}))?`).exec(question);
   if (monthMatch === null) return null;
 
