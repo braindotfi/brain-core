@@ -111,7 +111,7 @@ jobs:
             local tenant_id="$1"
             local remote_command
             # The worker owns the scoped ledger-projector URL assembled by Compose.
-            remote_command="docker exec -i -w /app brain-prod-worker node --input-type=module -"
+            remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
             if [[ -n "$tenant_id" ]]; then
               remote_command+=" -- --tenant-id '$tenant_id'"
             fi
