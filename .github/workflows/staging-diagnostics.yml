@@ -30,8 +30,6 @@ jobs:
     env:
       VM_HOST: ${{ secrets.VM_HOST_STAGING }}
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
-      VM_ENV_FILE: .env.staging
-      COMPOSE_PROJECT: brain-staging
       DIAGNOSTIC: ${{ inputs.diagnostic }}
       TENANT_IDS: ${{ inputs.tenant_ids }}
     steps:
@@ -112,7 +110,8 @@ jobs:
           run_report() {
             local tenant_id="$1"
             local remote_command
-            remote_command="cd ~/brain-core && set -a && . './$VM_ENV_FILE' && set +a && db_url=\${BRAIN_LEDGER_PROJECTOR_DB_URL:-\${DATABASE_URL:-}} && test -n \"\$db_url\" && docker exec -i -e BRAIN_LEDGER_PROJECTOR_DB_URL=\"\$db_url\" brain-prod-api node --input-type=module -"
+            # The worker owns the scoped ledger-projector URL assembled by Compose.
+            remote_command="docker exec -i -w /app brain-prod-worker node --input-type=module -"
             if [[ -n "$tenant_id" ]]; then
               remote_command+=" -- --tenant-id '$tenant_id'"
             fi
