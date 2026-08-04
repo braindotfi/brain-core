@@ -10,6 +10,7 @@ on:
         options:
           - counterparty-trust-gate-impact
           - upload-pipeline-state
+          - upload-pipeline-worker-logs
           - document-extractor-connectivity
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
@@ -39,8 +40,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "document-extractor-connectivity" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, or document-extractor-connectivity"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, or document-extractor-connectivity"
             exit 1
           fi
 
@@ -166,6 +167,20 @@ jobs:
                   });
               '\''
             '
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-worker-logs" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-worker-logs requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker logs --tail=3000 brain-prod-worker 2>&1 | grep -F '$tenant_id' | tail -200 || true"
+            done
             exit 0
           fi
 
