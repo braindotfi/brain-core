@@ -1,16 +1,16 @@
 /**
- * C3 regression: gate check 5.5 must bind the agent to the CALLING tenant.
- *
- * `BrainMCPAgentRegistry._agents` is a global namespace, and the registry
- * exposes `isAuthorized(agentId, tenantId)` for exactly this reason. The loader
- * previously read `getAgent` and discarded the `tenantId` it returned, so an
- * agent registered by tenant A satisfied a money-path check made on behalf of
- * tenant B. The 60s cache was keyed on agentId alone, which spread one tenant's
- * verdict to every other tenant for a full TTL.
+ * PRODUCT DECISION: gate check 5.5 verifies the payee agent is genuinely
+ * registered in `BrainMCPAgentRegistry` and not revoked, regardless of which
+ * tenant registered it. `_agents` is a global namespace, and rejecting
+ * tenant A paying tenant B's registered agent would hard-reject the
+ * canonical cross-org M2M/x402 case the rail exists for
+ * (docs/v0.4-open-ecosystem-interop.md §7). This loader reads `getAgent`
+ * only and never calls `isAuthorized`, which additionally requires
+ * `r.tenantId == tenantId`.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { keccak256, toBytes, toHex } from "viem";
+import { keccak256, toBytes } from "viem";
 import type * as Viem from "viem";
 
 const readContract = vi.fn();
@@ -39,9 +39,9 @@ const ctx = {} as never;
 
 function registration(overrides: Record<string, unknown> = {}) {
   return {
-    agentId: AGENT_ID,
+    agentId: AGENT_ID_B32,
     agentAddress: "0x" + "cc".repeat(20),
-    tenantId: keccak256(toHex(TENANT_A)),
+    tenantId: keccak256(toBytes(TENANT_A)),
     scopeHash: "0x" + "00".repeat(32),
     behaviorHash: "0x" + "00".repeat(32),
     registeredAt: 1n,
@@ -61,9 +61,9 @@ beforeEach(() => {
   readContract.mockReset();
 });
 
-describe("agent attestation tenant binding", () => {
-  it("calls isAuthorized with the keccak256 of the agent id and the tenant id", async () => {
-    readContract.mockResolvedValue(true);
+describe("agent attestation, tenant-agnostic registration check", () => {
+  it("reads getAgent with the keccak256 of the agent id, never isAuthorized", async () => {
+    readContract.mockResolvedValue(registration());
     const result = await attest()(ctx, {
       tenantId: TENANT_A,
       counterpartyId: "cp_1",
@@ -71,25 +71,23 @@ describe("agent attestation tenant binding", () => {
     });
 
     expect(result.attested).toBe(true);
+    expect(readContract).toHaveBeenCalledTimes(1);
     expect(readContract).toHaveBeenCalledWith(
       expect.objectContaining({
-        functionName: "isAuthorized",
+        functionName: "getAgent",
         // AGENT_ID is a ULID (ledger_counterparties.agent_id), never hex: it
-        // must be keccak256-encoded before it reaches calldata, exactly like
-        // the tenant id. A bare `as \`0x${string}\`` cast here spliced raw
-        // ASCII into calldata and made every agent payee hard-reject.
-        args: [AGENT_ID_B32, keccak256(toHex(TENANT_A))],
+        // must be keccak256-encoded before it reaches calldata. A bare
+        // `as \`0x${string}\`` cast here spliced raw ASCII into calldata and
+        // made every agent payee hard-reject.
+        args: [AGENT_ID_B32],
       }),
     );
   });
 
-  it("rejects an agent registered under a different tenant", async () => {
-    // isAuthorized is false for tenant B; getAgent shows a live registration
-    // that belongs to tenant A.
-    readContract.mockImplementation(async (args: { functionName: string }) => {
-      if (args.functionName === "isAuthorized") return false;
-      return registration();
-    });
+  it("accepts an agent registered under a DIFFERENT tenant than the caller", async () => {
+    // Registered by tenant A; the caller here is tenant B. Check 5.5 must
+    // not reject this — it is the canonical cross-org M2M/x402 case.
+    readContract.mockResolvedValue(registration());
 
     const result = await attest()(ctx, {
       tenantId: TENANT_B,
@@ -97,32 +95,25 @@ describe("agent attestation tenant binding", () => {
       agentId: AGENT_ID,
     });
 
-    expect(result.attested).toBe(false);
+    expect(result.attested).toBe(true);
     expect(result.registered).toBe(true);
-    expect(result.reason).toBe("agent_tenant_mismatch");
   });
 
-  it("does not leak one tenant's verdict to another through the cache", async () => {
-    readContract.mockImplementation(async (args: { functionName: string; args: unknown[] }) => {
-      if (args.functionName === "isAuthorized") {
-        return args.args[1] === keccak256(toHex(TENANT_A));
-      }
-      return registration();
-    });
+  it("caches the verdict by agent id alone, so a different calling tenant hits the same entry", async () => {
+    readContract.mockResolvedValue(registration());
 
     const resolve = attest();
-    const a = await resolve(ctx, { tenantId: TENANT_A, counterpartyId: "cp_1", agentId: AGENT_ID });
+    await resolve(ctx, { tenantId: TENANT_A, counterpartyId: "cp_1", agentId: AGENT_ID });
     const b = await resolve(ctx, { tenantId: TENANT_B, counterpartyId: "cp_1", agentId: AGENT_ID });
 
-    expect(a.attested).toBe(true);
-    expect(b.attested).toBe(false);
+    expect(b.attested).toBe(true);
+    // One registry read total: the second call (different tenant, same
+    // agent) was served from cache, proving the key is agent-only.
+    expect(readContract).toHaveBeenCalledTimes(1);
   });
 
   it("reports a revoked agent as revoked, never as paused", async () => {
-    readContract.mockImplementation(async (args: { functionName: string }) => {
-      if (args.functionName === "isAuthorized") return false;
-      return registration({ revokedAt: 99n });
-    });
+    readContract.mockResolvedValue(registration({ revokedAt: 99n }));
 
     const result = await attest()(ctx, {
       tenantId: TENANT_A,
@@ -139,10 +130,7 @@ describe("agent attestation tenant binding", () => {
   });
 
   it("reports an unknown agent as not registered", async () => {
-    readContract.mockImplementation(async (args: { functionName: string }) => {
-      if (args.functionName === "isAuthorized") return false;
-      return registration({ registeredAt: 0n });
-    });
+    readContract.mockResolvedValue(registration({ registeredAt: 0n }));
 
     const result = await attest()(ctx, {
       tenantId: TENANT_A,

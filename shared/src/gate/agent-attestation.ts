@@ -18,6 +18,11 @@
  */
 
 export interface AgentAttestationInput {
+  /**
+   * The calling (paying) tenant, for audit context. The registered-and-not-
+   * revoked decision itself is tenant-agnostic (see AgentAttestationResult),
+   * so implementations are not required to use this to gate the verdict.
+   */
   readonly tenantId: string;
   /** The destination counterparty id (a `ledger_counterparties` row). */
   readonly counterpartyId: string;
@@ -31,9 +36,12 @@ export interface AgentAttestationInput {
 
 export interface AgentAttestationResult {
   /**
-   * True ⇒ the payee agent is registered, not revoked, AND belongs to the
-   * calling tenant. The registry's agent namespace is global, so the tenant
-   * binding is part of the decision, not a detail.
+   * True ⇒ the payee agent is registered in `BrainMCPAgentRegistry` and not
+   * revoked. PRODUCT DECISION: this is tenant-agnostic by design — the
+   * registry's agent namespace is global, and a registered agent may be paid
+   * by any tenant, not only the one that registered it. That is the
+   * canonical cross-org M2M/x402 case (docs/v0.4-open-ecosystem-interop.md
+   * §7), not an edge case to reject.
    */
   readonly attested: boolean;
   /** Whether the agent id resolves to a registry entry at all. */
