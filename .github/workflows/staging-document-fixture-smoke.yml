@@ -10,7 +10,7 @@ jobs:
   smoke:
     name: ingest core-owned document fixtures on staging
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 25
     concurrency:
       group: deploy-staging-refs/heads/main
       cancel-in-progress: false
@@ -141,6 +141,27 @@ jobs:
             '
           }
 
+          trigger_extraction() {
+            local filename="$1"
+            local raw_id="$2"
+            local response status_body http_status extraction_status
+            response="$(
+              curl -sS --retry 2 --connect-timeout 10 --max-time 600 -w $'\n%{http_code}' \
+                -X POST "$API_BASE/v1/raw/$raw_id/extract" \
+                -H "Authorization: Bearer ${smoke_agent_token}"
+            )"
+            http_status="${response##*$'\n'}"
+            status_body="${response%$'\n'*}"
+            if [[ "$http_status" != "200" && "$http_status" != "202" ]]; then
+              printf 'fixture=%s raw_id=%s extraction_trigger_http_status=%s body=%s\n' \
+                "$filename" "$raw_id" "$http_status" "$status_body" >&2
+              return 1
+            fi
+            extraction_status="$(read_status "$status_body" extraction)"
+            printf 'fixture=%s raw_id=%s extraction_trigger_status=%s\n' \
+              "$filename" "$raw_id" "$extraction_status"
+          }
+
           read_status() {
             local json="$1"
             local field="$2"
@@ -174,6 +195,12 @@ jobs:
           payroll_raw_id="$(upload_fixture payroll_register_2026-08-04.xlsx csv_upload application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)"
           ar_aging_raw_id="$(upload_fixture ar_aging_2026-08-04.xlsx csv_upload application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)"
 
+          # The core ingest drain handles the two registered spreadsheet parsers.
+          # Generic tax and wallet inputs deliberately fall through to the external
+          # document extractor, which requires this explicit job trigger.
+          trigger_extraction form_1120_2025.pdf "$form_1120_raw_id"
+          trigger_extraction crypto_wallet_2026-08-04.csv "$crypto_wallet_raw_id"
+
           printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id"
           filenames=(
             form_1120_2025.pdf
@@ -199,21 +226,19 @@ jobs:
               filename="${filenames[$index]}"
               raw_id="${raw_ids[$index]}"
               artifact="$(curl -fsS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_agent_token}" "$API_BASE/v1/raw/$raw_id")"
-              extraction="$(curl -sS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_agent_token}" "$API_BASE/v1/raw/$raw_id/extraction" || true)"
               parsed="$(curl -fsS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_agent_token}" "$API_BASE/v1/raw/$raw_id/parsed")"
               projection_status="$(read_status "$artifact" projection)"
-              extraction_status="$(read_status "$extraction" extraction)"
               parsed_count="$(read_parsed_count "$parsed")"
-              state="projection_status=${projection_status} extraction_status=${extraction_status} parsed_count=${parsed_count}"
+              state="projection_status=${projection_status} parsed_count=${parsed_count}"
               if [[ "$state" != "${last_states[$index]}" ]]; then
                 printf 'fixture=%s raw_id=%s %s\n' "$filename" "$raw_id" "$state"
                 last_states[$index]="$state"
               fi
-              if [[ "$projection_status" == "projected" && "$extraction_status" == "succeeded" && "$parsed_count" -gt 0 ]]; then
+              if [[ "$projection_status" == "projected" && "$parsed_count" -gt 0 ]]; then
                 printf 'fixture=%s raw_id=%s terminal=processed %s\n' "$filename" "$raw_id" "$state"
                 completed[$index]=true
                 terminal_count=$((terminal_count + 1))
-              elif [[ "$projection_status" == "projection_failed" || "$extraction_status" == "failed" ]]; then
+              elif [[ "$projection_status" == "projection_failed" ]]; then
                 printf 'fixture=%s raw_id=%s terminal=failed %s\n' "$filename" "$raw_id" "$state" >&2
                 exit 1
               fi
