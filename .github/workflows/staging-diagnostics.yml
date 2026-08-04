@@ -10,6 +10,7 @@ on:
         options:
           - counterparty-trust-gate-impact
           - upload-pipeline-state
+          - document-extractor-connectivity
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -38,8 +39,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact or upload-pipeline-state"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "document-extractor-connectivity" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, or document-extractor-connectivity"
             exit 1
           fi
 
@@ -139,6 +140,29 @@ jobs:
               echo "tenant_id=$tenant_id"
               run_upload_pipeline_report "$tenant_id"
             done
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "document-extractor-connectivity" ]]; then
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+              set -euo pipefail
+              echo "agents_container_state=$(docker inspect --format={{.State.Status}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_container_health=$(docker inspect --format={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} brain-prod-agents 2>/dev/null || echo absent)"
+              docker exec brain-prod-worker node -e '\''
+                const base = process.env.DOCUMENT_EXTRACT_AGENT_URL;
+                console.log(`document_extract_agent_url_set=${base ? "true" : "false"}`);
+                if (!base) process.exit(0);
+                fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) })
+                  .then(async (response) => {
+                    console.log(`document_extract_agent_health_status=${response.status}`);
+                    console.log(`document_extract_agent_health_ok=${response.ok}`);
+                  })
+                  .catch((error) => {
+                    console.log(`document_extract_agent_health_error=${error.name}`);
+                    process.exitCode = 1;
+                  });
+              '\''
+            '
             exit 0
           fi
 
