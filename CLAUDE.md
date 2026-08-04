@@ -645,9 +645,13 @@ Pending Dmitriy sign-off
   fake-connected source rows before the 201 response. This is the supported
   persistent "Continue with Demo" path; it does not change `tenant.kind`, add a
   TTL, or make the tenant eligible for demo cleanup. `demo_seed: true` does not
-  persist the demo fixture bytes as raw artifacts, so extraction and projection
-  verification must use the upload-backed demo seed path rather than this
-  ledger-only provisioning path.
+  persist the demo fixture bytes as raw artifacts. The staging-only
+  `staging-document-fixture-smoke.yml` workflow provisions an isolated
+  non-demo-seeded production tenant, uploads its core-owned source-equivalent
+  tax, wallet, payroll, and AR fixtures through `/v1/raw/ingest`, and waits for
+  each to reach `projection_status=projected`. It is the brain-core-only
+  extraction smoke path and must not be repurposed to change ordinary demo
+  provisioning.
 - Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production
