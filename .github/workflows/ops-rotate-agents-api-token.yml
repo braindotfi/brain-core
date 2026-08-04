@@ -52,7 +52,7 @@ jobs:
             exit 1
           fi
 
-          token="$(docker exec brain-prod-api node --input-type=module - <<'NODE'
+          token="$(docker exec -i brain-prod-api node --input-type=module - <<'NODE'
           import { importJWK, SignJWT } from "jose";
 
           const rawKey = process.env.AUTH_SIGN_KEY;
