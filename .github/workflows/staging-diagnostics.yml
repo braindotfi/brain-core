@@ -12,6 +12,7 @@ on:
           - upload-pipeline-state
           - upload-pipeline-worker-logs
           - document-extractor-connectivity
+          - contextless-payroll-obligation-audit
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -40,8 +41,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, or document-extractor-connectivity"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, or contextless-payroll-obligation-audit"
             exit 1
           fi
 
@@ -141,6 +142,13 @@ jobs:
               echo "tenant_id=$tenant_id"
               run_upload_pipeline_report "$tenant_id"
             done
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "contextless-payroll-obligation-audit" ]]; then
+            cat scripts/ops/report-contextless-payroll-obligations.sql | \
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1"
             exit 0
           fi
 

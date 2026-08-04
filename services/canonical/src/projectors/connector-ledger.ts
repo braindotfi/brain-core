@@ -693,7 +693,8 @@ function projectPayrollRegister(
     const name = str(obj?.["counterparty_name"]) ?? "Payroll";
     const runRef = str(obj?.["run_ref"]);
     const amount = decimal(obj?.["amount"]);
-    if (obj === null || runRef === null || amount === null) {
+    const dueDate = str(obj?.["due_date"]);
+    if (obj === null || runRef === null || amount === null || dueDate === null) {
       skipped(diag, "payroll_register_obligation_missing_required_field");
       continue;
     }
@@ -722,7 +723,7 @@ function projectPayrollRegister(
         amount,
         currency: currency(obj["currency"]),
         issueDate: null,
-        dueDate: str(obj["due_date"]),
+        dueDate,
         status: str(obj["status"]) ?? "upcoming",
         extensions: {
           document_upload: {

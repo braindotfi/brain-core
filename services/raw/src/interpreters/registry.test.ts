@@ -805,7 +805,7 @@ describe("upload document interpreters", () => {
       }),
     );
 
-    expect(out!.parserVersion).toBe("1.0.2");
+    expect(out!.parserVersion).toBe("1.0.3");
     expect(out!.extracted).toMatchObject({
       object_type: "payroll_register",
       obligations: [
@@ -869,6 +869,37 @@ describe("upload document interpreters", () => {
     ]);
     expect(JSON.stringify(out!.extracted)).not.toContain("Amara Osei");
     expect(JSON.stringify(out!.extracted)).not.toContain("E-1001");
+  });
+
+  it("skips context-less payroll summary rows instead of emitting synthetic runs", () => {
+    const csv = [
+      "Employee,Net Pay,FICA,Pay Date",
+      "Payroll Summary,67128.76,0,",
+      "Pay Run: RUN-2026-07A | Pay Date: 2026-07-20",
+      "E-1001,100.00,7.65,",
+      "Pay Run: RUN-2026-08A | Pay Date: 2026-08-04",
+      "E-1002,200.00,15.30,",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        rawArtifactId: "raw_payroll_summary",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    const obligations = (
+      out!.extracted as {
+        obligations: Array<{ run_ref: string; amount: string; due_date: string | null }>;
+      }
+    ).obligations;
+
+    expect(obligations).toEqual([
+      expect.objectContaining({ run_ref: "RUN-2026-07A", amount: "100", due_date: "2026-07-20" }),
+      expect.objectContaining({ run_ref: "RUN-2026-08A", amount: "200", due_date: "2026-08-04" }),
+    ]);
+    expect(obligations.some((obligation) => obligation.run_ref.includes(":payroll:3"))).toBe(false);
   });
 
   it("parses payroll gross fallback and reports unparseable payroll rows", () => {
