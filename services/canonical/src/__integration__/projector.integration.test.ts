@@ -420,7 +420,7 @@ DESCRIBE("canonical doc obligation upload hook integration (requires DATABASE_UR
         JSON.stringify({
           counterparty_name: "Payroll Tax",
           direction: "payable",
-          type: "payroll_tax",
+          type: "tax",
           amount: "2500.00",
           currency: "USD",
           due_date: "2026-08-15",
