@@ -23,12 +23,16 @@ const BASE_ACCOUNT = {
   evidence_ids: ["prs_1"],
 };
 
-function clientStub(): { client: TenantScopedClient; calls: { text: string; values: unknown[] }[] } {
+function clientStub(): {
+  client: TenantScopedClient;
+  calls: { text: string; values: unknown[] }[];
+} {
   const calls: { text: string; values: unknown[] }[] = [];
   const client = {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       calls.push({ text, values });
-      if (text.includes("INSERT INTO ledger_accounts")) return { rows: [{ id: "la_1" }], rowCount: 1 };
+      if (text.includes("INSERT INTO ledger_accounts"))
+        return { rows: [{ id: "la_1" }], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     }),
   } as unknown as TenantScopedClient;
