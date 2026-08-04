@@ -79,11 +79,19 @@ export const RAIL_CATALOG: ReadonlyArray<RailDescriptor> = [
     description:
       "Conditional USDC release via BrainEscrow (RFC 0001 §7.6). Mainnet blocked on external audit.",
     productionAllowed: true,
+    // BRAIN_X402_USDC_ADDRESS is here because §6 gate check 6.6
+    // (resolveEscrowState in main.ts) additionally requires it to bind the
+    // escrow's token to the configured settlement asset. Without it the rail
+    // can still dispatch but the gate cannot bind releases to on-chain
+    // escrow state; assertEscrowRailHasStateLoader (rails-prod-fence.ts)
+    // boot-fences that gap. check-rails-catalog-drift.mjs regex-extracts this
+    // array's literal contents, so keep comments OUTSIDE the brackets.
     requiredEnv: [
       "BRAIN_ESCROW_ADDRESS",
       "BRAIN_ONCHAIN_SMART_ACCOUNT",
       "BRAIN_SESSION_KEY",
       "BASE_RPC_URL",
+      "BRAIN_X402_USDC_ADDRESS",
     ],
     evmChain: true,
     auditRequired: true,

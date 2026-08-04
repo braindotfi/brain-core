@@ -1056,6 +1056,13 @@ async function main(): Promise<void> {
   assertEscrowRailHasStateLoader({
     escrowRailLive: railsBuild.entries.some((entry) => entry.name === "escrow_base" && entry.live),
     hasResolveEscrowState: resolveEscrowState !== undefined,
+    // resolveEscrowState's own two required vars (see its construction
+    // above) -- named here so the thrown error tells an operator which one
+    // to set, rather than only that the loader is unwired.
+    missingEnv: [
+      cfg.BRAIN_ESCROW_ADDRESS === undefined ? "BRAIN_ESCROW_ADDRESS" : null,
+      cfg.BRAIN_X402_USDC_ADDRESS === undefined ? "BRAIN_X402_USDC_ADDRESS" : null,
+    ].filter((name): name is string => name !== null),
   });
   const rails: RailRegistry = railsBuild.rails;
 
