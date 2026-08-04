@@ -285,8 +285,11 @@ Done
   Scope checks are enforced by route handlers through `requireScope`; HEAD does
   not have a central gateway route-to-scope matrix.
   API-key auth and API-key management remain code-gated behind
-  `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today, so
-  they are tracked as feature-gated rather than stable in the BrainMVB surface.
+  `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today.
+  Production API-key authentication is deliberately disabled pending staging
+  acceptance and auth-surface review; no production enablement date is
+  committed. They are tracked as feature-gated rather than stable in the
+  BrainMVB surface.
 - Governance Phase 1 exposes BFF-only `GET /v1/governance/agents`,
   `GET /v1/governance/agents/{agent_id}`,
   `PATCH /v1/governance/agents/{agent_id}`, and

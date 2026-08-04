@@ -475,10 +475,13 @@ export interface paths {
         put?: never;
         /**
          * Ingest a financial artifact
-         * @description Requires `raw:write`. Accepts a financial artifact via direct
-         *     upload or URL reference. Content is stored immutably with SHA-256
-         *     content addressing. Duplicate artifacts (same tenant, same
-         *     SHA-256) return the existing raw_id.
+         * @description Requires `raw:write` on a bearer user JWT or a registered external-agent
+         *     JWT. Standard `brain_sk_` tenant API keys are read-only and cannot be
+         *     issued `raw:write`; API-key authentication is not enabled on the
+         *     production API at launch. Accepts a financial artifact via direct upload
+         *     or URL reference. Content is stored immutably with SHA-256 content
+         *     addressing. Duplicate artifacts (same tenant, same SHA-256) return the
+         *     existing raw_id.
          */
         post: operations["ingestRaw"];
         delete?: never;

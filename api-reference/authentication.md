@@ -2,12 +2,12 @@
 
 Brain authenticates three caller types: humans, internal agents, and external agents. The same API endpoints serve all three. Only the credential differs.
 
-| Caller             | Mode                                                  | Credential                            |
-| ------------------ | ----------------------------------------------------- | ------------------------------------- |
-| **Human**          | Self-serve email + password, **or** a linked wallet   | Bearer owner JWT                      |
-| **Internal agent** | Brain-issued service token (your own backend)         | Bearer service token                  |
-| **API partner**    | Tenant API key in the sandbox integration environment | Bearer `brain_sk_…` key               |
-| **External agent** | SIWX (EIP-4361 over Base) + on-chain scope            | `access_token` from the SIWX exchange |
+| Caller             | Mode                                                             | Credential                            |
+| ------------------ | ---------------------------------------------------------------- | ------------------------------------- |
+| **Human**          | Self-serve email + password, **or** a linked wallet              | Bearer owner JWT                      |
+| **Internal agent** | Brain-issued service token (your own backend)                    | Bearer service token                  |
+| **API partner**    | Tenant API key in the sandbox integration environment, read-only | Bearer `brain_sk_…` key               |
+| **External agent** | SIWX (EIP-4361 over Base) + on-chain scope                       | `access_token` from the SIWX exchange |
 
 Every credential is presented the same way: `Authorization: Bearer <token>`.
 There is one bearer mechanism, not several. The `brain_sk_test_…` /
@@ -17,9 +17,12 @@ below.
 
 {% hint style="warning" %}
 At launch, first-class API-key authentication is enabled in the sandbox
-integration environment. It is not enabled on the production API, where
-`brain_sk_` bearers fail closed as invalid keys. Production access continues to
-use the supported human, service, and agent credentials described on this page.
+integration environment and is limited to read-only scopes. It is deliberately
+not enabled on the production API, where `brain_sk_` bearers fail closed as
+invalid keys. Production enablement remains a separate release gate after
+staging acceptance and auth-surface review; no public enablement date is
+committed. Production access continues to use the supported human, service, and
+agent credentials described on this page.
 {% endhint %}
 
 {% hint style="info" %}
@@ -34,15 +37,15 @@ The internal `POST /v1/auth/service-token` mint route is a break-glass sandbox/t
 
 The credential a server-side integration uses is a Brain-issued tenant API key with a `brain_sk_` prefix. It authenticates directly as a bearer credential; there is no token exchange step.
 
-| Property            | Value                                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Format**          | `brain_sk_test_…` (sandbox) / `brain_sk_live_…` (live)                                                                    |
-| **Availability**    | Sandbox integration environment at launch; production API-key auth is disabled                                            |
-| **Issued by**       | Tenant-admin key routes when API-key auth is enabled for the environment                                                  |
-| **Presented as**    | `Authorization: Bearer brain_sk_…`, or `new Brain({ apiKey: "brain_sk_…" })` in the SDK                                   |
-| **Scopes**          | `ledger:read`, `audit:read`, `governance:read` only                                                                       |
-| **Sandbox vs live** | Distinct `brain_sk_test_…` and `brain_sk_live_…` key formats                                                              |
-| **Lifetime**        | No automatic TTL at issuance. Revocation and rotation are supported; an optional `expires_at` is enforced when populated. |
+| Property            | Value                                                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Format**          | `brain_sk_test_…` (sandbox) / `brain_sk_live_…` (live)                                                                      |
+| **Availability**    | Sandbox integration environment at launch; production API-key auth is deliberately disabled pending a separate release gate |
+| **Issued by**       | Tenant-admin key routes when API-key auth is enabled for the environment                                                    |
+| **Presented as**    | `Authorization: Bearer brain_sk_…`, or `new Brain({ apiKey: "brain_sk_…" })` in the SDK                                     |
+| **Scopes**          | `ledger:read`, `audit:read`, `governance:read` only. API keys cannot ingest source data.                                    |
+| **Sandbox vs live** | Distinct `brain_sk_test_…` and `brain_sk_live_…` key formats                                                                |
+| **Lifetime**        | No automatic TTL at issuance. Revocation and rotation are supported; an optional `expires_at` is enforced when populated.   |
 
 The plaintext secret is returned only when a key is issued or rotated. The
 database retains only a server-peppered SHA-256 digest. Rate limits, idempotency,
