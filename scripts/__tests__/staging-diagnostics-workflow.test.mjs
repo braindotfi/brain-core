@@ -14,5 +14,7 @@ test("staging tenant identity lookup is fixed, validated, and read-only", () => 
   assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
   assert.match(workflow, /member_identity_links l/);
   assert.match(workflow, /tenant\.created', 'tenant\.demo_seeded/);
+  assert.match(workflow, /^ {10}SQL$/m);
+  assert.match(workflow, /^ {10}REMOTE$/m);
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
