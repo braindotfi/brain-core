@@ -277,20 +277,22 @@ contract BrainMCPAgentRegistry {
 
     // --- Agent lifecycle -------------------------------------------------
 
+    /// @param authSigners At least `thresholdOf(tenantId)` tenant signers, in
+    ///        strict ascending address order, matching `signatures`.
     function registerAgent(
         bytes32 agentId,
         address agentAddress,
         bytes32 tenantId,
         bytes32 scopeHash,
         bytes32 behaviorHash,
-        address authSigner,
-        bytes calldata tenantSignature
+        address[] calldata authSigners,
+        bytes[] calldata signatures
     ) external {
         if (agentAddress == address(0)) revert ZeroAddress();
         if (_agents[agentId].registeredAt != 0) revert AgentAlreadyRegistered(agentId);
 
         bytes32 digest = _hashRegistration(agentId, agentAddress, tenantId, scopeHash, behaviorHash);
-        _requireTenantSignature(tenantId, authSigner, digest, tenantSignature);
+        _requireQuorum(tenantId, digest, authSigners, signatures);
 
         _agents[agentId] = AgentRegistration({
             agentId: agentId,
@@ -312,13 +314,13 @@ contract BrainMCPAgentRegistry {
     function updateBehaviorHash(
         bytes32 agentId,
         bytes32 behaviorHash,
-        address authSigner,
-        bytes calldata tenantSignature
+        address[] calldata authSigners,
+        bytes[] calldata signatures
     ) external {
         AgentRegistration storage r = _liveAgent(agentId);
 
         bytes32 digest = _hashBehaviorUpdate(agentId, r.tenantId, behaviorHash, behaviorNonce[agentId]);
-        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
+        _requireQuorum(r.tenantId, digest, authSigners, signatures);
 
         behaviorNonce[agentId] += 1;
         r.behaviorHash = behaviorHash;
@@ -329,13 +331,16 @@ contract BrainMCPAgentRegistry {
     /// @dev    scopeHash was previously immutable for an agent's whole life, so
     ///         changing an agent's permissions meant burning its agentId (the id
     ///         is globally unique and never freed) and minting a new one.
-    function updateScopeHash(bytes32 agentId, bytes32 scopeHash, address authSigner, bytes calldata tenantSignature)
-        external
-    {
+    function updateScopeHash(
+        bytes32 agentId,
+        bytes32 scopeHash,
+        address[] calldata authSigners,
+        bytes[] calldata signatures
+    ) external {
         AgentRegistration storage r = _liveAgent(agentId);
 
         bytes32 digest = _hashScopeUpdate(agentId, r.tenantId, scopeHash, scopeNonce[agentId]);
-        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
+        _requireQuorum(r.tenantId, digest, authSigners, signatures);
 
         scopeNonce[agentId] += 1;
         r.scopeHash = scopeHash;
@@ -344,15 +349,59 @@ contract BrainMCPAgentRegistry {
 
     /// @notice Permanently revoke an agent. Terminal: the agentId can never be
     ///         re-registered or re-attested.
-    function revokeAgent(bytes32 agentId, address authSigner, bytes calldata tenantSignature) external {
+    function revokeAgent(bytes32 agentId, address[] calldata authSigners, bytes[] calldata signatures) external {
         AgentRegistration storage r = _liveAgent(agentId);
 
         bytes32 digest = _hashRevocation(agentId, r.tenantId, revocationNonce[agentId]);
-        _requireTenantSignature(r.tenantId, authSigner, digest, tenantSignature);
+        _requireQuorum(r.tenantId, digest, authSigners, signatures);
 
         revocationNonce[agentId] += 1;
         r.revokedAt = block.timestamp;
         emit AgentRevoked(agentId, r.tenantId);
+    }
+
+    // --- Single-signature overloads --------------------------------------
+    //
+    // Retained for ABI compatibility with existing off-chain callers. Each
+    // delegates to the array form above, so there is exactly one authorization
+    // path to audit; a tenant whose threshold is above 1 reverts
+    // {BelowThreshold} here and must use the array form. The self-calls are
+    // safe: no form reads `msg.sender`, and revert data bubbles through
+    // unchanged.
+
+    function registerAgent(
+        bytes32 agentId,
+        address agentAddress,
+        bytes32 tenantId,
+        bytes32 scopeHash,
+        bytes32 behaviorHash,
+        address authSigner,
+        bytes calldata tenantSignature
+    ) external {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, tenantSignature);
+        this.registerAgent(agentId, agentAddress, tenantId, scopeHash, behaviorHash, s, sg);
+    }
+
+    function updateBehaviorHash(
+        bytes32 agentId,
+        bytes32 behaviorHash,
+        address authSigner,
+        bytes calldata tenantSignature
+    ) external {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, tenantSignature);
+        this.updateBehaviorHash(agentId, behaviorHash, s, sg);
+    }
+
+    function updateScopeHash(bytes32 agentId, bytes32 scopeHash, address authSigner, bytes calldata tenantSignature)
+        external
+    {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, tenantSignature);
+        this.updateScopeHash(agentId, scopeHash, s, sg);
+    }
+
+    function revokeAgent(bytes32 agentId, address authSigner, bytes calldata tenantSignature) external {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, tenantSignature);
+        this.revokeAgent(agentId, s, sg);
     }
 
     // --- Views -----------------------------------------------------------
@@ -386,19 +435,6 @@ contract BrainMCPAgentRegistry {
         r = _agents[agentId];
         if (r.registeredAt == 0) revert AgentNotRegistered(agentId);
         if (r.revokedAt != 0) revert AgentRevokedError(agentId);
-    }
-
-    /// @dev Single-signature form of {_requireQuorum}, for the agent-lifecycle
-    ///      operations that still take one signature. Fails closed on an M-of-N
-    ///      tenant rather than silently accepting one key.
-    function _requireTenantSignature(bytes32 tenantId, address authSigner, bytes32 digest, bytes calldata signature)
-        private
-        view
-    {
-        uint256 required = thresholdOf(tenantId);
-        if (required > 1) revert BelowThreshold(tenantId, 1, required);
-        if (!_tenantSigners[tenantId][authSigner]) revert NotTenantSigner(authSigner);
-        if (!authSigner.isValidSignature(digest, signature)) revert InvalidSignature();
     }
 
     /// @dev Authorize a tenant-scoped change: at least `thresholdOf(tenantId)`

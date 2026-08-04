@@ -401,6 +401,50 @@ contract BrainMCPAgentRegistryTest is Test {
         assertEq(registry.getAgent(AGENT_ID).behaviorHash, BEHAVIOR);
     }
 
+    /// @notice The array forms are the working path for an M-of-N tenant:
+    ///         register, re-scope and revoke all succeed under a full quorum.
+    function test_quorum_fullQuorumDrivesTheAgentLifecycle() public {
+        _make3of3();
+        address a = vm.addr(externalPk);
+        (address[] memory qs, bytes[] memory qsig) = _quorum3(_regDigest(AGENT_ID, a, SCOPE));
+        registry.registerAgent(AGENT_ID, a, TENANT, SCOPE, BEHAVIOR, qs, qsig);
+        assertTrue(registry.isAuthorized(AGENT_ID, TENANT));
+
+        bytes32 next = keccak256("scope.v2");
+        (qs, qsig) = _quorum3(_scopeDigest(AGENT_ID, next));
+        registry.updateScopeHash(AGENT_ID, next, qs, qsig);
+        assertEq(registry.getAgent(AGENT_ID).scopeHash, next);
+
+        (qs, qsig) = _quorum3(_revDigest(AGENT_ID));
+        registry.revokeAgent(AGENT_ID, qs, qsig);
+        assertFalse(registry.isAuthorized(AGENT_ID, TENANT));
+    }
+
+    function test_quorum_fullQuorumUpdatesBehaviorHash() public {
+        _make3of3WithLiveAgent();
+        bytes32 next = keccak256("behavior.v2");
+        (address[] memory qs, bytes[] memory qsig) = _quorum3(_behaviorDigest(AGENT_ID, next));
+        registry.updateBehaviorHash(AGENT_ID, next, qs, qsig);
+        assertEq(registry.getAgent(AGENT_ID).behaviorHash, next);
+    }
+
+    /// @notice One key cannot pad itself to quorum size: distinctness is enforced
+    ///         by strict ascending order.
+    function test_quorum_rejectsRepeatedSigner() public {
+        _make3of3();
+        address a = vm.addr(externalPk);
+        bytes memory sig = _sign(signerPk, _regDigest(AGENT_ID, a, SCOPE));
+        address[] memory qs = new address[](3);
+        bytes[] memory qsig = new bytes[](3);
+        for (uint256 i = 0; i < 3; ++i) {
+            qs[i] = signer;
+            qsig[i] = sig;
+        }
+
+        vm.expectRevert(abi.encodeWithSelector(BrainMCPAgentRegistry.DuplicateSigner.selector, signer));
+        registry.registerAgent(AGENT_ID, a, TENANT, SCOPE, BEHAVIOR, qs, qsig);
+    }
+
     function test_setTenantThreshold_lowersWithFullQuorum() public {
         _make3of3();
         uint256 n = registry.signerNonce(TENANT);
