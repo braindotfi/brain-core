@@ -592,6 +592,16 @@ Pending Dmitriy sign-off
   `failed` jobs. Source connector sync requests persist a tenant-scoped
   `raw_source_sync_jobs` row; clients poll
   `GET /v1/sources/:source_id/sync/:job_id` for status.
+- A repaired external extractor credential does not make already exhausted jobs
+  retry forever. Recovery migrations may requeue only the recorded terminal
+  `document extraction agent unreachable` outage state against the retained
+  bytes. Payroll upload recovery removes only stale rebuildable canonical and
+  compact rows when both the old per-employee parser output and current
+  run-level output exist, then replays the current parsed row. Historical raw
+  bytes and parsed evidence remain intact. The `brain_ledger_projector` role
+  needs SELECT, INSERT, and UPDATE on both `ledger_counterparties` and
+  `ledger_obligations`; missing runtime grants block compact AP/AR projection
+  even when canonical projection succeeds.
 - Plaid, Stripe, and Finch parser rows no longer write Ledger entities directly
   from `LedgerService.normalizeFromRaw`. Their `plaid_tx_v1`, `stripe_v1`, and
   `finch_payroll_v1` extractors validate shape and return no direct rows.

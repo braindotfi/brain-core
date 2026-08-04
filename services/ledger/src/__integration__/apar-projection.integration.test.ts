@@ -135,6 +135,32 @@ DESCRIBE("ledger AP/AR projection integration (requires DATABASE_URL)", () => {
     expect(Number(c[0]!.n)).toBe(1);
   });
 
+  it("keeps canonical obligations out of the legacy content dedup target", async () => {
+    const secondObligation = newCanonicalObligationId();
+    await pool.query(
+      `INSERT INTO canonical_obligation
+         (id, tenant_id, source_system, source_natural_key, direction, type,
+          canonical_counterparty_id, counterparty_source_key, amount, currency, due_date, status, provenance, confidence)
+       VALUES ($1,$2,'netsuite','inv_1005','payable','bill',$3,'con_acme','1250.00','USD','2026-07-01','OPEN','extracted',NULL)`,
+      [secondObligation, tenant, cpId],
+    );
+
+    const result = await rebuildAparProjectionFromCanonical(pool, audit, ctx);
+    expect(result).toEqual({ counterparties: 1, obligations: 2, invoices: 0 });
+
+    const { rows } = await pool.query<{ external_key: string }>(
+      `SELECT external_key
+         FROM ledger_obligations
+        WHERE owner_id = $1
+        ORDER BY external_key`,
+      [tenant],
+    );
+    expect(rows.map((row) => row.external_key)).toEqual([
+      `canonical:${oblId}`,
+      `canonical:${secondObligation}`,
+    ]);
+  });
+
   it("projects document-upload receivables and payroll obligations into compact AP/AR tables", async () => {
     const documentTenant = newTenantId();
     const arCounterparty = newCanonicalCounterpartyId();

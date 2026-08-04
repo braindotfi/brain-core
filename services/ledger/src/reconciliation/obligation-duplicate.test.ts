@@ -122,5 +122,8 @@ describe("ObligationDuplicateMatcher — scan filters", () => {
     expect(q.text).toContain("currency = $3");
     expect(q.text).toContain("direction IS NOT DISTINCT FROM $4");
     expect(q.text).toContain("identity_key");
+    // Canonical projection keys are storage idempotency keys, not provider
+    // invoice identities. They must not suppress a cross-source duplicate.
+    expect(q.text).toContain("external_key LIKE 'canonical:%'");
   });
 });
