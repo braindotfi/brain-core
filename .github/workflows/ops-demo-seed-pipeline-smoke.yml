@@ -91,6 +91,8 @@ jobs:
               });
             '
           )"
+          # Retain the isolated tenant id even when a bounded poll fails.
+          printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id" >&2
 
           for attempt in $(seq 1 40); do
             state="$(
