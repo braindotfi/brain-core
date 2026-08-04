@@ -72,6 +72,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Compile fixed report for stdin execution
+        if: inputs.diagnostic == 'counterparty-trust-gate-impact'
         shell: bash
         run: |
           set -euo pipefail
@@ -121,6 +122,90 @@ jobs:
         run: |
           set -euo pipefail
 
+          run_upload_pipeline_report() {
+            local tenant_id="$1"
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TENANT_ID='$tenant_id' bash -s" <<'REMOTE'
+            set -euo pipefail
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'raw_artifacts'
+            SELECT ra.id AS raw_artifact_id,
+                   ra.source_ref->>'filename' AS filename,
+                   ra.source_type,
+                   ra.mime_type,
+                   ra.projection_status,
+                   ej.status AS extraction_status,
+                   ej.attempt_count,
+                   ej.parsed_id,
+                   ej.error->>'code' AS extraction_error_code,
+                   rp.parser,
+                   rp.parser_version,
+                   rp.extracted->>'object_type' AS object_type,
+                   cpl.projector,
+                   cpl.records_written,
+                   cpl.error AS canonical_error,
+                   cpl.quarantined
+              FROM raw_artifacts ra
+              LEFT JOIN LATERAL (
+                SELECT status, attempt_count, parsed_id, error
+                  FROM extraction_jobs
+                 WHERE tenant_id = ra.tenant_id AND raw_id = ra.id
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+              ) ej ON true
+              LEFT JOIN raw_parsed rp ON rp.id = ej.parsed_id AND rp.tenant_id = ra.tenant_id
+              LEFT JOIN canonical_projection_log cpl ON cpl.raw_parsed_id = rp.id
+             WHERE ra.tenant_id = :'tenant_id'
+             ORDER BY ra.ingested_at ASC, ra.id ASC;
+
+            \echo 'canonical_obligations'
+            SELECT source_system, source_natural_key, direction, type, amount, currency, due_date, status,
+                   source_ids, evidence_ids
+              FROM canonical_obligation
+             WHERE tenant_id = :'tenant_id'
+             ORDER BY updated_at ASC, id ASC;
+
+            \echo 'ledger_obligations'
+            SELECT lo.id, lo.type, lo.direction, lo.amount_due, lo.currency, lo.due_date, lo.status,
+                   cp.name AS counterparty_name, lo.source_ids, lo.evidence_ids
+              FROM ledger_obligations lo
+              LEFT JOIN ledger_counterparties cp ON cp.owner_id = lo.owner_id AND cp.id = lo.counterparty_id
+             WHERE lo.owner_id = :'tenant_id'
+             ORDER BY lo.due_date ASC, lo.id ASC;
+
+            \echo 'ledger_invoices'
+            SELECT li.id, li.invoice_number, li.amount_due, li.currency, li.due_date, li.status,
+                   cp.name AS counterparty_name, li.source_ids, li.evidence_ids
+              FROM ledger_invoices li
+              LEFT JOIN ledger_counterparties cp ON cp.owner_id = li.owner_id AND cp.id = li.counterparty_id
+             WHERE li.owner_id = :'tenant_id'
+             ORDER BY li.due_date ASC, li.id ASC;
+
+            \echo 'ledger_transaction_count'
+            SELECT count(*)::int AS count FROM ledger_transactions WHERE owner_id = :'tenant_id';
+            COMMIT;
+            SQL
+            REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-state" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-state requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              run_upload_pipeline_report "$tenant_id"
+            done
+            exit 0
+          fi
+
           run_report() {
             local tenant_id="$1"
             local remote_command
@@ -132,11 +217,6 @@ jobs:
             cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" "$remote_command"
           }
-
-          if [[ "$DIAGNOSTIC" == "upload-pipeline-state" && -z "$TENANT_IDS" ]]; then
-            echo "upload-pipeline-state requires tenant_ids"
-            exit 1
-          fi
 
           if [[ -z "$TENANT_IDS" ]]; then
             run_report ""
