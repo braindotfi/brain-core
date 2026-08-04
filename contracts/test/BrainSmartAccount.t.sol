@@ -270,6 +270,7 @@ contract BrainSmartAccountTest is Test {
     function test_grant_rejectsEmptyTargets() public {
         BrainSmartAccount.SessionKey memory key;
         key.holder = holder;
+        key.validAfter = block.timestamp;
         key.validUntil = block.timestamp + 3600;
         key.allowedSelectors = _sels(Target.ping.selector);
         key.policyVersion = POLICY_VER;
@@ -1256,5 +1257,86 @@ contract BrainSmartAccountTest is Test {
         (bool ok,) = address(acct).call{value: 1 ether}("");
         assertTrue(ok);
         assertEq(address(acct).balance, before + 1 ether);
+    }
+
+    // --- H1 (second half): a re-grant must not reopen the period window ---
+
+    /// Every grant script sets validAfter = block.timestamp. When the window
+    /// derived from validAfter, a ROUTINE key refresh moved the window slot and
+    /// handed the holder a fresh maxPerPeriod on the spot — the H1 double-spend
+    /// through the ordinary operational path, no boundary straddling needed.
+    function test_H1_regrantDoesNotResetTheWindowBudget() public {
+        uint256 amount = 1 ether;
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        uint256 anchor = acct.windowAnchor(holder);
+        assertEq(anchor, block.timestamp);
+
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
+        assertEq(acct.spentInCurrentWindow(holder), amount);
+
+        // Routine refresh, well inside the same period.
+        vm.warp(block.timestamp + 60);
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+
+        assertEq(acct.windowAnchor(holder), anchor, "anchor moved on re-grant");
+        assertEq(acct.spentInCurrentWindow(holder), amount, "window budget reset on re-grant");
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
+        acct.executeViaSessionKey(1, address(target), 0, _ping(amount));
+    }
+
+    /// Revoke-then-regrant is the same reset with one extra owner transaction.
+    function test_H1_revokeThenRegrantDoesNotResetTheWindowBudget() public {
+        uint256 amount = 1 ether;
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
+
+        vm.prank(ownerKey);
+        acct.revokeSessionKey(holder);
+        vm.warp(block.timestamp + 60);
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+
+        assertEq(acct.spentInCurrentWindow(holder), amount);
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerPeriodCap.selector);
+        acct.executeViaSessionKey(1, address(target), 0, _ping(amount));
+    }
+
+    /// The anchor still rolls over normally: a re-grant does not FREEZE the
+    /// window either, it just refuses to move it.
+    function test_H1_regrantStillRollsOverAtTheNextPeriod() public {
+        uint256 amount = 1 ether;
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        uint256 anchor = acct.windowAnchor(holder);
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
+
+        vm.warp(anchor + 600);
+        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        assertEq(acct.spentInCurrentWindow(holder), 0);
+
+        vm.prank(holder);
+        acct.executeViaSessionKey(1, address(target), 0, _ping(amount));
+        assertEq(acct.spentInCurrentWindow(holder), amount);
+    }
+
+    /// validAfter == 0 is an unset field, not "valid from the epoch".
+    function test_grant_rejectsZeroValidAfter() public {
+        BrainSmartAccount.SessionKey memory key;
+        key.holder = holder;
+        key.validAfter = 0;
+        key.validUntil = block.timestamp + 3600;
+        key.allowedTargets = _addrs(address(target));
+        key.allowedSelectors = _sels(Target.ping.selector);
+        key.capMode = BrainSmartAccount.CapMode.CALL;
+        key.capAmountOffset = PING_AMOUNT_OFFSET;
+        key.policyVersion = POLICY_VER;
+
+        vm.prank(ownerKey);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.InvalidValidityWindow.selector, 0, key.validUntil));
+        acct.grantSessionKey(key);
     }
 }

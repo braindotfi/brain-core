@@ -124,8 +124,16 @@ contract BrainSmartAccount {
 
     mapping(address => SessionKey) private _keys;
     /// @dev holder => window_start_timestamp => spent_in_window. Windows are
-    ///      anchored to the key's validAfter, not to the unix epoch.
+    ///      anchored to _windowAnchor[holder], not to the unix epoch.
     mapping(address => mapping(uint256 => uint256)) private _windowSpent;
+    /// @dev holder => timestamp of the holder's FIRST grant. Set once and never
+    ///      moved, including across re-grants and revocations. Period windows
+    ///      derive from it rather than from the current key's validAfter: every
+    ///      grant script sets validAfter = block.timestamp, so re-anchoring made a
+    ///      routine key refresh open a fresh maxPerPeriod window immediately —
+    ///      the same double-spend the epoch-aligned window used to allow, reached
+    ///      through the ordinary operational path instead of a rare boundary.
+    mapping(address => uint256) private _windowAnchor;
     /// @dev Kill-switch flag. Paused keys cannot execute but keep their record,
     ///      window spend, limits, and metadata so resume needs no re-grant.
     mapping(address => bool) private _paused;
@@ -228,7 +236,12 @@ contract BrainSmartAccount {
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
-        if (key.validAfter >= key.validUntil) revert InvalidValidityWindow(key.validAfter, key.validUntil);
+        // validAfter == 0 is rejected rather than read as "no lower bound": it is
+        // indistinguishable from an unset struct field, and a zero start bound
+        // makes the key active for all of history before validUntil.
+        if (key.validAfter == 0 || key.validAfter >= key.validUntil) {
+            revert InvalidValidityWindow(key.validAfter, key.validUntil);
+        }
         if (key.allowedTargets.length == 0) revert TargetsRequired();
         if (key.policyVersion == bytes32(0)) revert PolicyVersionMismatch();
         if (
@@ -279,6 +292,11 @@ contract BrainSmartAccount {
             }
         }
 
+        // First grant fixes the accounting anchor for this holder forever. A
+        // re-grant deliberately does NOT move it and does NOT clear
+        // _windowSpent, so refreshing a key cannot reset the period budget.
+        if (_windowAnchor[key.holder] == 0) _windowAnchor[key.holder] = block.timestamp;
+
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil, key.capMode);
     }
@@ -291,6 +309,9 @@ contract BrainSmartAccount {
     /// @notice Revoke a session key. Owner-only. Takes effect immediately.
     /// @dev    Final removal: deletes the key record entirely. Distinct from
     ///         pauseSessionKey, which preserves it. Also clears any pause flag.
+    ///         The holder's window anchor and accumulated window spend are
+    ///         deliberately NOT cleared: revoke-then-regrant would otherwise be a
+    ///         one-owner-transaction reset of the period cap.
     function revokeSessionKey(address holder) external onlyOwner {
         delete _keys[holder];
         delete _paused[holder];
@@ -394,14 +415,15 @@ contract BrainSmartAccount {
         // Per-tx cap.
         if (capAmount > key.maxPerTx) revert ExceedsPerTxCap();
 
-        // Per-period cumulative cap. The window is anchored to the key's
-        // validAfter, NOT to the unix epoch. An epoch-aligned window let a key
-        // whose lifetime straddled a boundary spend its full cumulative cap
-        // twice, which defeated per-task keys entirely: their lifetime equals
-        // one period, so a boundary almost always fell inside it.
+        // Per-period cumulative cap. The window is anchored to this holder's
+        // FIRST grant, NOT to the unix epoch and NOT to the current key's
+        // validAfter. An epoch-aligned window let a key whose lifetime straddled a
+        // boundary spend its full cumulative cap twice; re-anchoring per grant let
+        // any key refresh do the same on demand.
         if (key.periodSeconds > 0) {
-            uint256 elapsed = block.timestamp - key.validAfter;
-            uint256 window = key.validAfter + (elapsed - (elapsed % key.periodSeconds));
+            uint256 anchor = _windowAnchor[msg.sender];
+            uint256 elapsed = block.timestamp - anchor;
+            uint256 window = anchor + (elapsed - (elapsed % key.periodSeconds));
             uint256 spent = _windowSpent[msg.sender][window] + capAmount;
             if (spent > key.maxPerPeriod) revert ExceedsPerPeriodCap();
             _windowSpent[msg.sender][window] = spent;
@@ -481,10 +503,17 @@ contract BrainSmartAccount {
     function spentInCurrentWindow(address holder) external view returns (uint256) {
         SessionKey storage key = _keys[holder];
         if (key.periodSeconds == 0) return 0;
-        if (block.timestamp < key.validAfter) return 0;
-        uint256 elapsed = block.timestamp - key.validAfter;
-        uint256 window = key.validAfter + (elapsed - (elapsed % key.periodSeconds));
+        uint256 anchor = _windowAnchor[holder];
+        if (anchor == 0 || block.timestamp < anchor) return 0;
+        uint256 elapsed = block.timestamp - anchor;
+        uint256 window = anchor + (elapsed - (elapsed % key.periodSeconds));
         return _windowSpent[holder][window];
+    }
+
+    /// @notice The timestamp every period window for `holder` is measured from.
+    ///         Fixed at the holder's first grant; zero if never granted.
+    function windowAnchor(address holder) external view returns (uint256) {
+        return _windowAnchor[holder];
     }
 
     /// @dev Plain value receipts only. There is deliberately no payable
