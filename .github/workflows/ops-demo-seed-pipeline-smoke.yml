@@ -95,8 +95,7 @@ jobs:
           for attempt in $(seq 1 40); do
             state="$(
               docker exec -i brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
-                -v tenant_id="$smoke_tenant_id" \
-                -c "SELECT COUNT(*), COUNT(*) FILTER (WHERE projection_status = 'projected'), COUNT(*) FILTER (WHERE projection_status = 'projection_failed') FROM raw_artifacts WHERE tenant_id = :'tenant_id';"
+                -c "SELECT COUNT(*), COUNT(*) FILTER (WHERE projection_status = 'projected'), COUNT(*) FILTER (WHERE projection_status = 'projection_failed') FROM raw_artifacts WHERE tenant_id = '$smoke_tenant_id';"
             )"
             IFS='|' read -r raw_count projected_count failed_count <<< "$state"
             if [[ "$raw_count" == "4" && "$projected_count" == "4" && "$failed_count" == "0" ]]; then
@@ -111,13 +110,11 @@ jobs:
 
           artifact_summary="$(
             docker exec -i brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
-              -v tenant_id="$smoke_tenant_id" \
-              -c "SELECT source_ref->>'filename', projection_status FROM raw_artifacts WHERE tenant_id = :'tenant_id' ORDER BY source_ref->>'filename';"
+              -c "SELECT source_ref->>'filename', projection_status FROM raw_artifacts WHERE tenant_id = '$smoke_tenant_id' ORDER BY source_ref->>'filename';"
           )"
           payroll_obligation_summary="$(
             docker exec -i brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
-              -v tenant_id="$smoke_tenant_id" \
-              -c "SELECT lo.id, lo.amount_due::TEXT, lo.currency, lo.direction FROM ledger_obligations lo JOIN raw_artifacts ra ON ra.tenant_id = lo.owner_id AND ra.id = ANY(lo.source_ids) WHERE lo.owner_id = :'tenant_id' AND ra.source_ref->>'filename' = 'payroll_register_2026-08-04.xlsx' ORDER BY lo.due_date, lo.id;"
+              -c "SELECT lo.id, lo.amount_due::TEXT, lo.currency, lo.direction FROM ledger_obligations lo JOIN raw_artifacts ra ON ra.tenant_id = lo.owner_id AND ra.id = ANY(lo.source_ids) WHERE lo.owner_id = '$smoke_tenant_id' AND ra.source_ref->>'filename' = 'payroll_register_2026-08-04.xlsx' ORDER BY lo.due_date, lo.id;"
           )"
           if [[ -z "$payroll_obligation_summary" ]]; then
             echo "payroll_ledger_obligations=false"
@@ -126,8 +123,7 @@ jobs:
 
           ap_summary="$(
             docker exec -i brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
-              -v tenant_id="$smoke_tenant_id" \
-              -c "SELECT lo.id, cp.name, lo.amount_due::TEXT, lo.direction FROM ledger_obligations lo JOIN ledger_counterparties cp ON cp.owner_id = lo.owner_id AND cp.id = lo.counterparty_id WHERE lo.owner_id = :'tenant_id' AND lo.direction = 'payable' AND cp.name IN ('CloudOps Inc', 'Datacenter Hosting Ltd', 'Quick Pay Solutions') ORDER BY cp.name;"
+              -c "SELECT lo.id, cp.name, lo.amount_due::TEXT, lo.direction FROM ledger_obligations lo JOIN ledger_counterparties cp ON cp.owner_id = lo.owner_id AND cp.id = lo.counterparty_id WHERE lo.owner_id = '$smoke_tenant_id' AND lo.direction = 'payable' AND cp.name IN ('CloudOps Inc', 'Datacenter Hosting Ltd', 'Quick Pay Solutions') ORDER BY cp.name;"
           )"
           expected_ap="$(printf '%s\n' "$ap_summary" | awk -F'|' '$2 == "CloudOps Inc" && $3 == "19400.00000000" && $4 == "payable" {a++} $2 == "Datacenter Hosting Ltd" && $3 == "187000.00000000" && $4 == "payable" {b++} $2 == "Quick Pay Solutions" && $3 == "4800.00000000" && $4 == "payable" {c++} END {print a,b,c}')"
           if [[ "$expected_ap" != "1 1 1" ]]; then
