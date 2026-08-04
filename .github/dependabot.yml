@@ -16,6 +16,7 @@ updates:
       # pinned at 1.58.0 until that work is done.
       # Reason: upgrade requires a code change. Expiry: 2026-11-03.
       - dependency-name: "@scalar/fastify-api-reference"
+        versions: [">=1.63.0"]
 
   - package-ecosystem: github-actions
     directory: /
