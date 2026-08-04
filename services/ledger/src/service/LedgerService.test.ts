@@ -111,13 +111,13 @@ describe("LedgerService — limit clamping and reads", () => {
     expect(list.values).toEqual(["unverified", 51]);
   });
 
-  it("lists payable obligations by default", async () => {
+  it("does not filter obligations by direction without an explicit caller filter", async () => {
     const { pool, calls } = fakePool();
     const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
     await service.listObligations(ctx, { limit: 10 });
     const list = calls.find((c) => c.text.includes("FROM ledger_obligations"))!;
-    expect(list.text).toContain("direction = $1");
-    expect(list.values).toEqual(["payable", 11]);
+    expect(list.text).not.toContain("direction = $1");
+    expect(list.values).toEqual([11]);
   });
 
   it("allows callers to request receivable obligations explicitly", async () => {

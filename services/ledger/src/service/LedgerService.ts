@@ -215,7 +215,7 @@ export class LedgerService implements ILedgerService {
     const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listObligationsRepo(c, {
-        direction: f.direction ?? "payable",
+        ...(f.direction !== undefined ? { direction: f.direction } : {}),
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.type !== undefined ? { type: f.type } : {}),
         ...(f.due_before !== undefined ? { due_before: new Date(f.due_before) } : {}),
