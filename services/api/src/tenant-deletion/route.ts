@@ -45,10 +45,7 @@ export async function registerTenantDeletionRoute(
         throw brainError("auth_token_missing", "principal required");
       }
       if (request.principal.type !== "user") {
-        throw brainError(
-          "auth_scope_insufficient",
-          "tenant deletion requires principal_type=user",
-        );
+        throw brainError("auth_scope_insufficient", "tenant deletion requires principal_type=user");
       }
       requireScope(request.principal.scopes, "execution:admin");
       const targetId = request.params.id;
@@ -58,11 +55,9 @@ export async function registerTenantDeletionRoute(
         });
       }
       if (request.body?.confirm !== targetId) {
-        throw brainError(
-          "request_body_invalid",
-          "confirm must equal the tenant id being deleted",
-          { details: { required_field: "confirm" } },
-        );
+        throw brainError("request_body_invalid", "confirm must equal the tenant id being deleted", {
+          details: { required_field: "confirm" },
+        });
       }
       // The service re-checks the caller is a live, active admin member
       // (F2) before deleting anything -- see TenantDeletionService.deleteTenant.

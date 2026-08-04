@@ -15,7 +15,7 @@ const USER = newUserId();
 
 function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = []): Pool {
   const client = {
-    query: vi.fn((sql: string, values?: unknown[]) => {
+    query: vi.fn((sql: string, _values?: unknown[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return Promise.resolve({ rows: [], rowCount: 0 });
       }
@@ -26,7 +26,10 @@ function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = [
       // deletes. Every fixture in this file deletes as an active admin
       // unless a test builds its own bespoke pool.
       if (sql.startsWith("SELECT role, active, status FROM members")) {
-        return Promise.resolve({ rows: [{ role: "admin", active: true, status: "active" }], rowCount: 1 });
+        return Promise.resolve({
+          rows: [{ role: "admin", active: true, status: "active" }],
+          rowCount: 1,
+        });
       }
       // Pre-DELETE snapshot of raw_artifacts blob URIs.
       if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
@@ -200,7 +203,10 @@ describe("TenantDeletionService", () => {
     const client = {
       query: vi.fn((sql: string) => {
         if (sql.startsWith("SELECT role, active, status FROM members")) {
-          return Promise.resolve({ rows: [{ role: "admin", active: true, status: "active" }], rowCount: 1 });
+          return Promise.resolve({
+            rows: [{ role: "admin", active: true, status: "active" }],
+            rowCount: 1,
+          });
         }
         if (sql.includes("ledger_payment_intents")) {
           return Promise.reject(new Error("constraint violation"));
@@ -230,7 +236,10 @@ describe("TenantDeletionService", () => {
     const client = {
       query: vi.fn((sql: string) => {
         if (sql.startsWith("SELECT role, active, status FROM members")) {
-          return Promise.resolve({ rows: [{ role: "admin", active: true, status: "active" }], rowCount: 1 });
+          return Promise.resolve({
+            rows: [{ role: "admin", active: true, status: "active" }],
+            rowCount: 1,
+          });
         }
         if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
           return Promise.resolve({ rows: [{ blob_uri: "tnt_x/a" }], rowCount: 1 });

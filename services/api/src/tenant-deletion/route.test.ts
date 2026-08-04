@@ -73,7 +73,13 @@ async function buildApp(opts: BuildOpts) {
             const [memberId, tenantId] = (values ?? []) as [string, string];
             return Promise.resolve({
               rows: [
-                { id: memberId, tenant_id: tenantId, role: memberRole, active: true, status: "active" },
+                {
+                  id: memberId,
+                  tenant_id: tenantId,
+                  role: memberRole,
+                  active: true,
+                  status: "active",
+                },
               ],
               rowCount: 1,
             });

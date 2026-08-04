@@ -286,10 +286,10 @@ export class TenantDeletionService {
         role: "admin" | "approver" | "viewer";
         active: boolean;
         status: "invited" | "active" | "deactivated";
-      }>(
-        `SELECT role, active, status FROM members WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-        [ctx.actor, targetTenantId],
-      );
+      }>(`SELECT role, active, status FROM members WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
+        ctx.actor,
+        targetTenantId,
+      ]);
       const member = memberRes.rows[0];
       if (member === undefined || !member.active || member.status !== "active") {
         throw brainError("payment_intent_approval_invalid", "actor_unresolved", {

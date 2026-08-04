@@ -361,7 +361,10 @@ function makeSelfServeState(): {
         for (const user of users.values()) {
           if (user.id === userId) status = user.status;
         }
-        return { rows: status === undefined ? [] : [{ status }], rowCount: status === undefined ? 0 : 1 };
+        return {
+          rows: status === undefined ? [] : [{ status }],
+          rowCount: status === undefined ? 0 : 1,
+        };
       }
       if (/UPDATE users SET status = 'active'/.test(sql)) {
         const [userId] = values as [string];

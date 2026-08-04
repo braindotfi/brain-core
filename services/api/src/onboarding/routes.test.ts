@@ -172,7 +172,12 @@ describe("POST /auth/verify-email — RFC 0002 Phase B", () => {
   it("F5: refuses to reactivate a disabled user, burns the token, and reports the same generic invalid error", async () => {
     const client = {
       query: vi.fn((sql: string) => {
-        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK" || sql.startsWith("SELECT set_config")) {
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
           return Promise.resolve({ rows: [], rowCount: 0 });
         }
         if (/UPDATE email_verifications/.test(sql)) {
@@ -204,9 +209,9 @@ describe("POST /auth/verify-email — RFC 0002 Phase B", () => {
     // The single-use claim (UPDATE ... RETURNING) still ran -- the token is
     // burned either way, so this creates no new oracle for "disabled" vs.
     // "never existed".
-    expect(client.query.mock.calls.some(([sql]) => /UPDATE email_verifications/.test(String(sql)))).toBe(
-      true,
-    );
+    expect(
+      client.query.mock.calls.some(([sql]) => /UPDATE email_verifications/.test(String(sql))),
+    ).toBe(true);
     expect(audit.events.map((e) => e.action)).not.toContain("user.email_verified");
     await app.close();
   });

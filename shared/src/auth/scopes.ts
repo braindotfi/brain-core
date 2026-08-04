@@ -170,14 +170,7 @@ export const MEMBER_ROLE_SCOPES = {
     "payment_intent:approve",
     "audit:read",
   ],
-  viewer: [
-    "ledger:read",
-    "wiki:read",
-    "raw:read",
-    "policy:read",
-    "execution:read",
-    "audit:read",
-  ],
+  viewer: ["ledger:read", "wiki:read", "raw:read", "policy:read", "execution:read", "audit:read"],
 } as const satisfies Record<"admin" | "approver" | "viewer", readonly Scope[]>;
 
 export type MemberSessionRole = keyof typeof MEMBER_ROLE_SCOPES;

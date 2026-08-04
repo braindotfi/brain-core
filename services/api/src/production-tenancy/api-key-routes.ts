@@ -362,7 +362,10 @@ async function requireTenantAdmin(
   const principal = requireTenantRead(request, tenantId);
   requireScope(principal.scopes, "execution:admin");
   if (principal.type !== "user") {
-    throw brainError("auth_scope_insufficient", "tenant key management requires principal_type=user");
+    throw brainError(
+      "auth_scope_insufficient",
+      "tenant key management requires principal_type=user",
+    );
   }
   await requireAdminMember(pool, tenantId, principal.id);
   return principal;

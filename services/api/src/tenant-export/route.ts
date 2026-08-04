@@ -58,12 +58,7 @@ export async function registerTenantExportRoute(
   app.get<{ Params: { id: string; job_id: string } }>(
     "/tenants/:id/export/:job_id/download",
     async (request, reply) => {
-      await requireTenantAdminUser(
-        request,
-        deps.pool,
-        request.params.id,
-        "tenant export download",
-      );
+      await requireTenantAdminUser(request, deps.pool, request.params.id, "tenant export download");
       const job = await loadJob(deps.pool, request.params.id, request.params.job_id);
       assertExportDownloadable(job, new Date());
       const stream = await deps.blob.get(job.output_blob_uri!);
