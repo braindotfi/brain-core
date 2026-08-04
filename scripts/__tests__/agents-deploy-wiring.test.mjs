@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 
 const workflow = readFileSync(".github/workflows/main.yml", "utf8");
 const promoteWorkflow = readFileSync(".github/workflows/promote-prod.yml", "utf8");
+const rotateAgentsTokenWorkflow = readFileSync(
+  ".github/workflows/ops-rotate-agents-api-token.yml",
+  "utf8",
+);
 const composeProd = readFileSync("docker-compose.prod.yml", "utf8");
 const envProdExample = readFileSync(".env.prod.example", "utf8");
 
@@ -204,6 +208,13 @@ test("production env example documents API to agents extraction wiring", () => {
   ]) {
     assert.match(envProdExample, new RegExp(`^${name}=`, "m"));
   }
+});
+
+test("agents token rotation supplies its signer program through docker stdin", () => {
+  assert.match(
+    rotateAgentsTokenWorkflow,
+    /docker exec -i brain-prod-api node --input-type=module - <<'NODE'/,
+  );
 });
 
 test("production env example documents self-serve signup email delivery wiring", () => {
