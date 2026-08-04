@@ -951,6 +951,13 @@ four user-authenticated transitions through the public API, and verifies both
 the returned state and five audit events. Keep `prod-tenant-diagnostics.yml`
 read-only; do not add mutable checks to that workflow.
 
+`staging-diagnostics.yml` is staging-only and read-only. Its
+`tenant-identity-lookup` diagnostic accepts only one validated platform user
+UUID or email, joins `member_identity_links` to the matching member and tenant,
+and reports only `tenant.created` and `tenant.demo_seeded` audit events. It is
+for correlating a BFF identity to a core tenant without arbitrary SQL or VM
+writes.
+
 Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
 shipped by CI, but only to the **production** VM (`promote-prod.yml`), and
 that vendored `Caddyfile` was read directly off the prod box: it carries only

@@ -13,8 +13,14 @@ on:
           - upload-pipeline-worker-logs
           - document-extractor-connectivity
           - contextless-payroll-obligation-audit
+          - tenant-identity-lookup
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
+        required: false
+        type: string
+        default: ""
+      identity_lookup:
+        description: "Exact platform user UUID or email for tenant-identity-lookup only."
         required: false
         type: string
         default: ""
@@ -36,14 +42,24 @@ jobs:
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
       DIAGNOSTIC: ${{ inputs.diagnostic }}
       TENANT_IDS: ${{ inputs.tenant_ids }}
+      IDENTITY_LOOKUP: ${{ inputs.identity_lookup }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, or contextless-payroll-obligation-audit"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, or tenant-identity-lookup"
             exit 1
+          fi
+
+          if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
+            if [[ "$IDENTITY_LOOKUP" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ || "$IDENTITY_LOOKUP" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
+              :
+            else
+              echo "tenant-identity-lookup requires an exact UUID or email"
+              exit 1
+            fi
           fi
 
           if [[ ${#TENANT_IDS} -gt 540 ]]; then
@@ -124,6 +140,96 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          identity_lookup_b64="$(printf '%s' "$IDENTITY_LOOKUP" | base64 | tr -d '\n')"
+
+          run_tenant_identity_lookup() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "IDENTITY_LOOKUP_B64='$identity_lookup_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            identity_lookup="$(printf '%s' "$IDENTITY_LOOKUP_B64" | base64 -d)"
+            if [[ ! "$identity_lookup" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ && ! "$identity_lookup" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
+              echo "tenant-identity-lookup remote validation failed"
+              exit 1
+            fi
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v identity_lookup="$identity_lookup" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'matching platform identity links'
+            WITH matches AS (
+              SELECT l.tenant_id,
+                     l.member_id,
+                     l.external_ref,
+                     l.linked_at,
+                     m.email,
+                     m.display_name,
+                     m.status AS member_status,
+                     m.active AS member_active,
+                     t.kind,
+                     t.sandbox,
+                     t.created_via,
+                     t.created_at AS tenant_created_at
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+                JOIN tenants t ON t.id = l.tenant_id
+               WHERE l.surface = 'platform'
+                 AND (l.external_ref = :'identity_lookup'
+                      OR lower(m.email) = lower(:'identity_lookup'))
+            )
+            SELECT tenant_id,
+                   member_id,
+                   external_ref,
+                   email,
+                   display_name,
+                   member_status,
+                   member_active,
+                   kind,
+                   sandbox,
+                   created_via,
+                   tenant_created_at,
+                   linked_at
+              FROM matches
+             ORDER BY tenant_created_at DESC, tenant_id DESC;
+
+            \echo 'tenant creation audit events for matching identities'
+            WITH matching_tenants AS (
+              SELECT DISTINCT l.tenant_id
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+               WHERE l.surface = 'platform'
+                 AND (l.external_ref = :'identity_lookup'
+                      OR lower(m.email) = lower(:'identity_lookup'))
+            )
+            SELECT ae.tenant_id,
+                   ae.id AS audit_event_id,
+                   ae.created_at,
+                   ae.action,
+                   ae.actor,
+                   ae.inputs,
+                   ae.outputs
+              FROM audit_events ae
+              JOIN matching_tenants mt ON mt.tenant_id = ae.tenant_id
+             WHERE ae.action IN ('tenant.created', 'tenant.demo_seeded')
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            COMMIT;
+            SQL
+            REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
+            run_tenant_identity_lookup
+            exit 0
+          fi
 
           run_upload_pipeline_report() {
             local tenant_id="$1"
