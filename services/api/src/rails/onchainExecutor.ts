@@ -89,6 +89,15 @@ export function buildOnchainExecutor(opts: {
         maxPriorityFeePerGas,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      // F2: viem does NOT throw on a mined-but-reverted tx (status "reverted")
+      // -- waitForTransactionReceipt resolves normally either way. Without this
+      // check a reverted executeViaSessionKey call still returns a txHash that
+      // satisfies validateRailReceipt, so the outbox marks the intent
+      // `executed` having moved no money. Mirrors anchorBroadcaster.ts's
+      // receipt.status handling.
+      if (receipt.status !== "success") {
+        throw new Error(`executeViaSessionKey reverted (tx ${receipt.transactionHash})`);
+      }
       return {
         txHash: receipt.transactionHash,
         blockNumber: receipt.blockNumber,
