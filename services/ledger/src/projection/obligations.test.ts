@@ -60,6 +60,18 @@ describe("projectCanonicalObligation", () => {
     expect(insert.values).toContain("USD");
   });
 
+  it("uses the canonical id as an external key outside the legacy dedup target", async () => {
+    const { client, calls } = clientWithCounterparty();
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", { ...BASE_OBLIGATION, currency: "USD" }),
+    ).resolves.toBe(true);
+
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.text).toContain("external_key");
+    expect(insert.values).toContain("canonical:co_1");
+  });
+
   it("rejects a non-null malformed currency instead of folding it into USD", async () => {
     const { client, calls } = clientWithCounterparty();
 
