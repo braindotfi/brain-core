@@ -122,7 +122,7 @@ Granting the wrong mode is the easiest way to ship an unmetered key.
 | ----------------------- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
 | Native ETH transfer     | `NATIVE` | 0                            | `data` MUST be empty; selector and recipient lists MUST be empty                                 |
 | USDC / ERC-20 payment   | `ERC20`  | 0                            | target MUST be the token; `allowedRecipients` is the counterparty binding; `approve` is rejected |
-| `BrainEscrow.release`   | `CALL`   | **36**                       | the `amount` word of `release(bytes32,uint256)`; pin `escrowId` at `pinOffset` 4                |
+| `BrainEscrow.release`   | `CALL`   | **36**                       | the `amount` word of `release(bytes32,uint256)`; pin `escrowId` at `pinOffset` 4                 |
 | Any other contract call | `CALL`   | offset of its uint256 amount | must be `>= 4` and word-aligned                                                                  |
 
 A `CALL`-mode key can only target functions that carry a uint256 amount at a
@@ -132,12 +132,12 @@ because `CALL` has neither allowance accounting nor a recipient binding. Grant
 token movement in `ERC20` mode.
 
 Whether the word at `capAmountOffset` is really an amount is the GRANTOR's
-responsibility — the account cannot read an ABI. A `CALL` grant therefore
+responsibility. The account cannot read an ABI. A `CALL` grant therefore
 carries exactly ONE selector, so the offset names one argument of one known
 function rather than being shared across up to 32 selectors where it may be
 `amount` in one and a timestamp in another. The remaining duty is yours: if that
 argument is a DYNAMIC type (`bytes`, `bytes[]`, `string`, a dynamic array) the
-word is an ABI head offset, not a value, and the key meters a constant —
+word is an ABI head offset, not a value, and the key meters a constant.
 `multicall(bytes[])` at offset 4 meters `32` no matter how much it moves. Grant
 `CALL` keys only over static `uint256` arguments.
 

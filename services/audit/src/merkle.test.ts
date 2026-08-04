@@ -159,7 +159,10 @@ describe("single-leaf tree", () => {
     expect(Buffer.compare(t.root, hashLeafKeccak(leaf))).not.toBe(0);
     expect(Buffer.compare(t.root, leaf)).not.toBe(0);
     expect(
-      Buffer.compare(t.root, hashInternalKeccak(hashLeafKeccak(countLeaf(1)), hashLeafKeccak(leaf))),
+      Buffer.compare(
+        t.root,
+        hashInternalKeccak(hashLeafKeccak(countLeaf(1)), hashLeafKeccak(leaf)),
+      ),
     ).toBe(0);
     expect(verifyProof(t.root, leaf, makeProof(t, 0))).toBe(true);
   });
