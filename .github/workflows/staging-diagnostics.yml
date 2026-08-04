@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - counterparty-trust-gate-impact
+          - upload-pipeline-state
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -37,8 +38,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact or upload-pipeline-state"
             exit 1
           fi
 
@@ -75,6 +76,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/staging-diagnostics"
+          report_source=""
+          case "$DIAGNOSTIC" in
+            counterparty-trust-gate-impact)
+              report_source="scripts/ops/report-counterparty-trust-gate-impact.ts"
+              ;;
+            upload-pipeline-state)
+              report_source="scripts/ops/report-upload-pipeline-state.ts"
+              ;;
+            *)
+              echo "unsupported diagnostic: $DIAGNOSTIC"
+              exit 1
+              ;;
+          esac
           pnpm exec tsc \
             --target es2022 \
             --module es2022 \
@@ -82,8 +96,8 @@ jobs:
             --skipLibCheck \
             --esModuleInterop \
             --outDir "$RUNNER_TEMP/staging-diagnostics" \
-            scripts/ops/report-counterparty-trust-gate-impact.ts
-          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/report-counterparty-trust-gate-impact.js" >> "$GITHUB_ENV"
+            "$report_source"
+          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         shell: bash
@@ -102,7 +116,7 @@ jobs:
             "docker exec brain-prod-worker printenv GIT_SHA")"
           echo "staging_git_sha=$worker_sha"
 
-      - name: Run counterparty trust gate impact report
+      - name: Run fixed staging diagnostic
         shell: bash
         run: |
           set -euo pipefail
@@ -118,6 +132,11 @@ jobs:
             cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" "$remote_command"
           }
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-state" && -z "$TENANT_IDS" ]]; then
+            echo "upload-pipeline-state requires tenant_ids"
+            exit 1
+          fi
 
           if [[ -z "$TENANT_IDS" ]]; then
             run_report ""
