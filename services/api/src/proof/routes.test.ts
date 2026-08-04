@@ -123,9 +123,12 @@ describe("poolProofBuilder", () => {
     expect(proof.evidence[0]?.raw_parsed_id).toBe("prs_1");
     expect(proof.audit_events[0]?.id).toBe("evt_before");
     expect(proof.behavior_hash).toBe("bb".repeat(32));
-    // Single-leaf window: a real (domain-separated) Merkle root, empty path.
+    // Single-event window: a real (domain-separated) Merkle root. The path is
+    // one element, not empty — every tree carries the synthetic leaf-count leaf
+    // at index 0, so the lone event's sibling is that leaf's hash.
     expect(proof.merkle_root).toMatch(/^[0-9a-f]{64}$/);
-    expect(proof.merkle_proof).toEqual([]);
+    expect(proof.merkle_proof).toHaveLength(1);
+    expect(proof.merkle_proof[0]).toMatch(/^[0-9a-f]{64}$/);
     expect(proof.chain_anchor).toEqual({
       tx_hash: "aa".repeat(32),
       block_number: 100,
