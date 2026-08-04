@@ -53,6 +53,7 @@ describe("reconciliationHandler", () => {
 
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
+      expect(proposed.informational).not.toBe(true);
       expect(proposed.action).toMatchObject({
         type: "reconciliation",
         recommended_action: "propose_match",
@@ -98,11 +99,51 @@ describe("reconciliationHandler", () => {
 
     expect(proposed.channel).toBe("agent");
     if (proposed.channel === "agent") {
+      expect(proposed.informational).not.toBe(true);
       expect(proposed.action).toMatchObject({
         recommended_action: "no_match",
         match_type: "no_match",
         right_entity_id: null,
         confidence_score: 0.65,
+      });
+    }
+  });
+
+  it("routes a date-only no-match candidate as informational", () => {
+    const proposed = reconciliationHandler.build({
+      action: "propose_match",
+      context: {
+        transaction_id: "tx_meridian",
+        amount: "12450.00",
+        currency: "USD",
+        direction: "inflow",
+        transaction_date: "2026-07-02T00:00:00.000Z",
+        counterparty_id: "cp_meridian",
+        counterparty_name: "Meridian Retail Group",
+        candidates: [
+          {
+            kind: "obligation",
+            id: "obl_date_only",
+            amount: "4150.00",
+            currency: "USD",
+            date: "2026-07-05T00:00:00.000Z",
+            counterparty_id: "cp_other",
+            counterparty_name: "Alderbrook Distribution",
+          },
+        ],
+      },
+      evidence: EVIDENCE,
+      definition: reconciliationDefinition,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.informational).toBe(true);
+      expect(proposed.action).toMatchObject({
+        recommended_action: "no_match",
+        match_type: "no_match",
+        right_entity_id: null,
+        confidence_score: 0.15,
       });
     }
   });

@@ -528,9 +528,12 @@ jobs:
 
       # Pre-flight gate. auth opens three Postgres pools before it starts
       # listening, so give it a bounded wait rather than a single curl.
-      # auth.brain.fi DNS does not resolve yet, so this SSHes into the VM and
-      # curls the container's 127.0.0.1-bound port directly instead of going
-      # over Caddy/DNS (same approach as promote-prod.yml's auth smoke test).
+      # Deliberately probes the container's 127.0.0.1-bound port over SSH
+      # rather than the public hostname. This gate answers one question, "is
+      # the auth container up on the new image", and must answer it before the
+      # verifiers are recreated; going over Caddy/DNS would fold edge health
+      # into that answer and fail the deploy for an unrelated reason (same
+      # approach as promote-prod.yml's auth smoke test).
       - name: Wait for auth healthy on VM before recreating verifiers
         run: |
           expected="${{ github.sha }}"

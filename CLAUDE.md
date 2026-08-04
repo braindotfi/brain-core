@@ -169,6 +169,12 @@ Done
   serialization fails closed to the grounded-answer fallback when the parsed or
   stored answer contains raw internal JSON, boundary tokens, or prompt fragments.
   Evidence ids remain subset-filtered against the retrieved tenant-scoped rows.
+  `/v1/wiki/question` returns `answered` separately from prose. Deterministic
+  transaction count, total, average, and bounded transaction, cash-flow, or
+  invoice listing questions return exact Ledger results with cited records.
+  `GET /v1/wiki/suggested-questions` derives tenant-aware suggestions only from
+  that deterministic registry. Each registered intent supplies its eligibility
+  query, and eligible intents are ranked by tenant-local invocation count.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as
@@ -755,8 +761,13 @@ uses `.env.prod`, pulls the resolved SHA's images, runs `tools/migrate up`,
 reruns `infra/db-roles.sql` before any compose recreate, recreates `api`,
 `worker`, `agents`, `auth`, and `surface-gateway`, then reloads the Caddy
 config, and smokes `https://api.brain.fi/health` plus `auth`'s `/healthz`
-(via SSH, since `auth.brain.fi` DNS does not resolve yet) for a commit match
-against the resolved SHA.
+for a commit match against the resolved SHA. The auth probe goes over SSH to
+the container's loopback port rather than `https://auth.brain.fi/healthz`,
+deliberately: it asserts that the container is serving the expected commit,
+not that the edge in front of it is healthy, so a Caddy or DNS problem does
+not fail the promote for an unrelated reason. (`auth.brain.fi` does resolve
+and serve publicly as of 2026-08-03; the loopback probe is a scoping choice,
+no longer a DNS workaround.)
 
 **JWKS sidecar retirement (Phase 4, OAUTH-AS-PLAN.md §8).** `docker-compose.prod.yml`'s
 standalone `jwks` service (the `tools/static-jwks` sidecar on :8085) has been

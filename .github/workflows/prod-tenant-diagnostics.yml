@@ -221,6 +221,65 @@ jobs:
            ORDER BY p.created_at DESC, p.id DESC
            LIMIT 50;
 
+          \echo 'reconciliation proposal and correlated policy decision details'
+          WITH reconciliation_proposals AS (
+            SELECT p.id,
+                   p.created_at,
+                   p.proposing_agent,
+                   p.status,
+                   p.policy_decision,
+                   p.required_approvers,
+                   p.action,
+                   p.policy_trace
+              FROM proposals p
+             WHERE p.tenant_id = :'tenant_id'
+               AND COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'kind', ''), 'unknown')
+                   = 'reconciliation'
+          )
+          SELECT p.id AS proposal_id,
+                 p.created_at AS proposal_created_at,
+                 p.proposing_agent,
+                 p.status AS proposal_status,
+                 p.policy_decision AS proposal_policy_decision,
+                 p.required_approvers,
+                 p.action->>'summary' AS summary,
+                 p.action->>'narrative' AS narrative,
+                 p.action->>'transaction_id' AS transaction_id,
+                 p.action->>'left_entity_id' AS left_entity_id,
+                 p.action->>'right_entity_id' AS right_entity_id,
+                 p.action->>'match_type' AS match_type,
+                 p.action->'match_basis' AS match_basis,
+                 p.action->>'confidence' AS confidence,
+                 p.action->>'confidence_score' AS confidence_score,
+                 p.action AS action_payload,
+                 pd.id AS policy_decision_id,
+                 pd.subject_id AS policy_subject_id,
+                 pd.outcome AS policy_outcome,
+                 pd.matched_rule_id,
+                 pd.required_approvers AS policy_required_approvers,
+                 pd.trace AS policy_trace,
+                 pd.decided_at AS policy_decided_at
+            FROM reconciliation_proposals p
+            LEFT JOIN LATERAL (
+              SELECT pd.id,
+                     pd.subject_id,
+                     pd.outcome,
+                     pd.matched_rule_id,
+                     pd.required_approvers,
+                     pd.trace,
+                     pd.decided_at
+                FROM policy_decisions pd
+               WHERE pd.tenant_id = :'tenant_id'
+                 AND pd.subject_type = 'agent_action'
+                 AND pd.outcome = p.policy_decision
+                 AND pd.trace = p.policy_trace
+                 AND pd.decided_at BETWEEN p.created_at - INTERVAL '5 seconds'
+                                        AND p.created_at + INTERVAL '1 second'
+               ORDER BY ABS(EXTRACT(EPOCH FROM (pd.decided_at - p.created_at)))
+               LIMIT 1
+            ) pd ON TRUE
+           ORDER BY p.created_at DESC, p.id DESC;
+
           \echo 'recent rejected agent_action policy decisions'
           SELECT id,
                  decided_at,

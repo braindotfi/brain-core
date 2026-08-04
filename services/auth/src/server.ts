@@ -240,6 +240,17 @@ export async function buildAuthApp(opts: BuildAuthAppOptions): Promise<FastifyIn
   }
 
   if (opts.humanAuth !== undefined) {
+    // An OAuth authorization server has nothing to serve at its bare root, so
+    // Fastify's default handler answers `GET /` with a JSON 404. That is
+    // correct and spec-neutral, but auth.brain.fi is a public browser-facing
+    // origin: anyone who pastes the hostname into an address bar reads that
+    // 404 as a broken deployment. Point them at the one page that is useful
+    // to a human instead.
+    //
+    // Registered inside this branch on purpose. A discovery-only build (no
+    // humanAuth, see this file's header) has no /login to redirect to, and a
+    // 302 into a route that does not exist is worse than the 404 it replaces.
+    app.get("/", async (_req, reply) => reply.redirect("/login"));
     await registerHumanAuthRoutes(app, opts.humanAuth);
   }
 

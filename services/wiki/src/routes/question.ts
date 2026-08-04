@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { brainError, requireScope, withTenantScope, type Scope } from "@brain/shared";
-import { askWiki } from "../question/orchestrator.js";
+import { askWiki, recordDeterministicIntentUsage } from "../question/orchestrator.js";
 import type { WikiDeps } from "../deps.js";
 
 const READ_SCOPE: Scope = "wiki:read";
@@ -26,8 +26,8 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
     const asOf = parseAsOf(body.as_of);
     const depth = Math.min(body.max_evidence_depth ?? 3, 5);
 
-    const result = await withTenantScope(deps.pool, request.principal.tenantId, async (client) =>
-      askWiki(
+    const result = await withTenantScope(deps.pool, request.principal.tenantId, async (client) => {
+      const result = await askWiki(
         {
           client,
           llm: deps.llm,
@@ -42,8 +42,12 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
           tenantId: request.principal!.tenantId,
           model: deps.questionModel,
         },
-      ),
-    );
+      );
+      if (result.deterministicIntentId !== undefined) {
+        await recordDeterministicIntentUsage(client, result.deterministicIntentId);
+      }
+      return result;
+    });
 
     await deps.audit.emit({
       tenantId: request.principal.tenantId,
@@ -60,6 +64,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
         model: deps.questionModel,
       },
       outputs: {
+        answered: result.answered,
         answer: result.answer,
         evidence_count: result.evidence.length,
         input_tokens: result.usage.inputTokens,
@@ -70,6 +75,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
     reply.status(200);
     return {
       question,
+      answered: result.answered,
       answer: result.answer,
       evidence: result.evidence,
       model: result.model,

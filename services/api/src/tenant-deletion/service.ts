@@ -115,6 +115,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "normalization_log", column: "tenant_id" },
 
   // ---- Layer 3: Wiki ----
+  { table: "wiki_question_intent_usage", column: "tenant_id" },
   { table: "wiki_relations", column: "tenant_id" },
   { table: "wiki_pages", column: "tenant_id" },
   { table: "wiki_entities", column: "tenant_id" },

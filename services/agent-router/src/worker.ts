@@ -208,6 +208,19 @@ export async function routeAndPropose(
     }
   }
 
+  if (
+    decision.selected_agent_id === "reconciliation" &&
+    proposed.channel === "agent" &&
+    proposed.informational
+  ) {
+    return {
+      selected_agent_id: decision.selected_agent_id,
+      action,
+      status: "notify_only",
+      reason: "informational_low_confidence_reconciliation",
+    };
+  }
+
   // SHADOW GATE (parity with AgentRunService /agents/run): a financial proposal
   // moves no money — and is NOT created — when the agent is shadowed, OR
   // (graduated rollout) when it's live but the action's rail is not allowlisted.

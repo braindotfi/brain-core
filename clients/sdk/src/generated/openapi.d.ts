@@ -1200,9 +1200,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List suggested assistant questions
-         * @description Requires `wiki:read`. Returns tenant-scoped assistant questions when
-         *     present. Empty tenants receive `questions: []`.
+         * List persisted assistant question records
+         * @description Requires `wiki:read`. Returns tenant-scoped persisted assistant question
+         *     records when present. Empty tenants receive `questions: []`. This is
+         *     distinct from `GET /wiki/suggested-questions`, which derives eligible
+         *     deterministic suggestions from current Ledger data.
          */
         get: operations["listAssistantQuestions"];
         put?: never;
@@ -1388,13 +1390,39 @@ export interface paths {
         put?: never;
         /**
          * Natural-language question against the Wiki
-         * @description Requires `wiki:read`. Translates a natural-language question into
-         *     a set of SQL queries against the Wiki, executes them, and
-         *     composes an answer with an evidence path attached. This is the
-         *     LLM-in-hot-path endpoint. Costs apply per call; see pricing
-         *     documentation.
+         * @description Requires `wiki:read`. Grounds questions in tenant Ledger rows and
+         *     returns an answer with cited evidence. Transaction count, total, and
+         *     average questions use a deterministic Ledger query when the intent is
+         *     unambiguous. Explicit transaction, cash-flow, and invoice listing
+         *     questions with a recency, count, or date bound also use a deterministic
+         *     Ledger query. Other questions use the grounded LLM path. `answered`
+         *     distinguishes a grounded or deterministic answer from a refusal.
+         *     Costs apply only when the LLM path runs; see pricing documentation.
          */
         post: operations["askWiki"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wiki/suggested-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tenant-aware deterministic question suggestions
+         * @description Requires `wiki:read`. Returns only currently eligible questions backed
+         *     by the deterministic Wiki-question registry. `usage_rank_score` is the
+         *     tenant's all-time invocation count for that intent and is used to rank
+         *     otherwise eligible suggestions.
+         */
+        get: operations["listSuggestedWikiQuestions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3938,22 +3966,29 @@ export interface components {
             }[];
         };
         WikiAnswer: {
-            question?: string;
-            answer?: string;
-            confidence?: number;
-            evidence_path?: {
-                step?: number;
-                description?: string;
-                entity_id?: string | null;
-                sql_query?: string | null;
-                result_summary?: string;
+            question: string;
+            /** @description True when Brain produced a grounded or deterministic answer. False means `answer` is a refusal or cannot be grounded from the available data. */
+            answered: boolean;
+            answer: string;
+            evidence: {
+                /** @enum {string} */
+                entityType: "transaction" | "obligation" | "counterparty" | "invoice";
+                entityId: string;
+                excerpt: string;
             }[];
-            llm_metadata?: {
-                model?: string;
-                tokens_input?: number;
-                tokens_output?: number;
-                latency_ms?: number;
+            /** @description The configured LLM model, or `structured-ledger-query` for deterministic aggregates and listings. */
+            model: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
             };
+        };
+        WikiSuggestedQuestion: {
+            /** @enum {string} */
+            intent_id: "transaction_count" | "transaction_sum" | "transaction_average" | "transaction_listing" | "cash_flow_listing" | "invoice_listing";
+            display_text: string;
+            /** @description All-time invocation count for this deterministic intent in the calling tenant. */
+            usage_rank_score: number;
         };
         /**
          * @description Phase 3 only accepts `kind` in `policy`/`agent` (WIKI_KINDS).
@@ -7747,6 +7782,30 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listSuggestedWikiQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eligible deterministic question suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        suggestions: components["schemas"]["WikiSuggestedQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     annotateWiki: {

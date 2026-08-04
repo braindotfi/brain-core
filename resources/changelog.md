@@ -6,6 +6,38 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.15 (tenant-aware Wiki question suggestions)
+
+- **`GET /v1/wiki/suggested-questions` returns eligible deterministic
+  questions for the calling tenant.** Suggestions derive from the same intent
+  registry as deterministic Wiki question execution, so unavailable or
+  generative-only questions are never suggested.
+- **Suggestions are ranked by tenant-local deterministic question use.** The
+  `usage_rank_score` is an all-time invocation count scoped by tenant and is
+  never shared across tenants.
+- **`GET /v1/assistant/questions` remains a separate persisted-record feed.**
+  It does not evaluate deterministic eligibility; clients needing suggestions
+  must call `GET /v1/wiki/suggested-questions`.
+
+### v0.5.14 (grounded Wiki listing answers)
+
+- **Bounded transaction, cash-flow, and invoice listings use deterministic
+  Ledger queries.** Questions such as `Show last 10 transactions`, `Show
+recent cash flow`, and `List this month's invoices` return the matching
+  records and cited Ledger evidence without generative synthesis.
+- **Invoice records are now a Wiki-question evidence type.** Listing responses
+  can cite the Ledger invoice rows they return.
+
+### v0.5.13 (grounded Wiki aggregation answers)
+
+- **Wiki question answers now carry `answered`.** This boolean is `true` only
+  for grounded or deterministic answers. Clients no longer need to infer a
+  refusal from prose.
+- **Transaction counts, totals, and averages use a deterministic Ledger
+  query when the transaction scope is unambiguous.** Month-scoped and
+  direction-scoped questions return the exact computed value and matching
+  transaction evidence without relying on an LLM to perform arithmetic.
+
 ### v0.5.12 (counterparty trust contract correction)
 
 Documentation and integration-contract correction. No route, service, gate, or

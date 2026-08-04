@@ -1030,7 +1030,7 @@
           "required_scope": "wiki:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { limit? }",
-          "response_shape": "200 { questions }",
+          "response_shape": "200 { questions }; persisted assistant question records only, not deterministic eligibility suggestions",
           "example_request": "GET /v1/assistant/questions",
           "example_response": { "questions": [] },
           "openapi": "documented:/assistant/questions"
@@ -1138,16 +1138,37 @@
           "required_scope": "wiki:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "{ question, as_of?, max_evidence_depth? }",
-          "response_shape": "200 { question, answer, evidence, model, usage }",
+          "response_shape": "200 { question, answered, answer, evidence, model, usage }; count/sum/average and bounded show/list/display transaction, cash-flow, and invoice questions use deterministic Ledger queries",
           "example_request": { "body": { "question": "What changed in policy?" } },
           "example_response": {
             "question": "What changed in policy?",
+            "answered": false,
             "answer": "",
             "evidence": [],
             "model": "configured",
             "usage": {}
           },
           "openapi": "documented:/wiki/question"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/wiki/suggested-questions",
+          "auth": "bearer",
+          "required_scope": "wiki:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "none",
+          "response_shape": "200 { suggestions: [{ intent_id, display_text, usage_rank_score }] }; the tenant-aware deterministic suggestion endpoint. Only eligible Wiki-question intents are returned, ranked by tenant-local invocation count",
+          "example_request": "GET /v1/wiki/suggested-questions",
+          "example_response": {
+            "suggestions": [
+              {
+                "intent_id": "transaction_listing",
+                "display_text": "Show my last 10 transactions",
+                "usage_rank_score": 4
+              }
+            ]
+          },
+          "openapi": "documented:/wiki/suggested-questions"
         },
         {
           "method": "POST",

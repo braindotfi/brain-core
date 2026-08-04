@@ -1,0 +1,115 @@
+name: ops-enable-staging-trust-gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    name: enable staging counterparty trust gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      COMPOSE_PROJECT: brain-staging
+      HEALTH_URL: ${{ vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
+      TRUST_GATE_BASE_SHA: 0da5cbcc43fff5cc3c06af5c4898b4213ceaf36d
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+        with:
+          fetch-depth: 0
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Verify staging trust-gate baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "docker exec brain-prod-worker printenv GIT_SHA")"
+          git merge-base --is-ancestor "$TRUST_GATE_BASE_SHA" "$staging_sha"
+          echo "staging_git_sha=$staging_sha"
+
+      - name: Enable trust gate in staging only
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$(mktemp)"
+          cat > "$script" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          key = "BRAIN_TRUST_GATE_ENABLED"
+          value = "true"
+          lines = path.read_text().splitlines() if path.exists() else []
+          output = []
+          replaced = False
+          for line in lines:
+              current = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+              if current == key:
+                  output.append(f"{key}={value}")
+                  replaced = True
+              else:
+                  output.append(line)
+          if not replaced:
+              output.append(f"{key}={value}")
+          path.write_text("\n".join(output) + "\n")
+          PY
+          remote_script="/tmp/enable-staging-trust-gate-${{ github.run_id }}.py"
+          scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:$remote_script"
+          rm -f "$script"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE'; rc=\$?; rm -f '$remote_script'; exit \$rc"
+
+      - name: Validate required staging secrets before restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/check-required-compose-secrets.sh --compose docker-compose.prod.yml --env $VM_ENV_FILE"
+
+      - name: Recreate staging trust-gate consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && BRAIN_ENV_FILE='$VM_ENV_FILE' docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --force-recreate --no-deps --no-build api worker agents surface-gateway"
+
+      - name: Verify staging health and flag
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -e
+            docker inspect brain-prod-api >/dev/null
+            docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED
+          ')"
+          if [[ "$api_flag" != "true" ]]; then
+            echo "brain-prod-api trust_gate_enabled=${api_flag:-unset}" >&2
+            exit 1
+          fi
+          echo "brain-prod-api trust_gate_enabled=$api_flag"
+
+          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -e
+            docker inspect brain-prod-worker >/dev/null
+            docker exec brain-prod-worker printenv GIT_SHA
+          ')"
+          test -n "$worker_sha"
+          echo "brain-prod-worker git_sha=$worker_sha"
+          curl -fsS "$HEALTH_URL"

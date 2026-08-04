@@ -47,17 +47,28 @@ export interface AskOptions {
 }
 
 export interface AskEvidenceItem {
-  entityType: "transaction" | "obligation" | "counterparty";
+  entityType: "transaction" | "obligation" | "counterparty" | "invoice";
   entityId: string;
   excerpt: string;
 }
 
 export interface AskResult {
+  /** True only when Brain produced a grounded or deterministic answer. */
+  answered: boolean;
   answer: string;
   evidence: AskEvidenceItem[];
   model: string;
   usage: { inputTokens: number; outputTokens: number };
+  /** Internal routing metadata used to record tenant-specific intent usage. */
+  deterministicIntentId?: DeterministicIntentId;
   cachedAt?: string;
+}
+
+export interface SuggestedQuestion {
+  intentId: DeterministicIntentId;
+  displayText: string;
+  /** Invocation count for this intent in the current tenant. */
+  usageRankScore: number;
 }
 
 export interface AskDeps {
@@ -74,6 +85,9 @@ const CACHE_TTL_SECONDS = 300;
 const MAX_TRANSACTIONS = 30;
 const MAX_OBLIGATIONS = 15;
 const MAX_COUNTERPARTIES = 15;
+const MAX_AGGREGATE_EVIDENCE = 100;
+const DEFAULT_LISTING_RECORDS = 10;
+const MAX_LISTING_RECORDS = 50;
 const DEFAULT_EVIDENCE_BOUNDARY_PREFIX = "brain_evidence_";
 
 export const WIKI_ANSWER_SYSTEM_PROMPT =
@@ -87,16 +101,112 @@ interface LedgerCandidate {
 
 type QuestionIntent = "accounts_receivable" | "reconciliation" | "generic";
 
+type AggregateOperation = "count" | "sum" | "average";
+
+export type DeterministicIntentId =
+  | "transaction_count"
+  | "transaction_sum"
+  | "transaction_average"
+  | "transaction_listing"
+  | "cash_flow_listing"
+  | "invoice_listing";
+
+interface TransactionAggregateIntent {
+  operation: AggregateOperation;
+  direction: "inflow" | "outflow" | "transfer" | null;
+  range: DateRange | null;
+  asOf: Date | null;
+}
+
+interface DateRange {
+  start: Date;
+  end: Date;
+  label: string;
+}
+
+type ListingEntity = "transaction" | "cash_flow" | "invoice";
+
+interface StructuredListingIntent {
+  entity: ListingEntity;
+  limit: number;
+  direction: "inflow" | "outflow" | "transfer" | null;
+  range: DateRange | null;
+  asOf: Date | null;
+}
+
+interface TransactionAggregateRow {
+  id: string;
+  amount: string;
+  currency: string;
+  direction: string;
+  transaction_date: Date;
+  description_normalized: string | null;
+  description_raw: string | null;
+  counterparty_id: string | null;
+  matching_count: string;
+  matching_sum: string;
+  matching_average: string;
+}
+
+interface TransactionListingRow {
+  id: string;
+  amount: string;
+  currency: string;
+  direction: string;
+  transaction_date: Date;
+  description_normalized: string | null;
+  description_raw: string | null;
+  counterparty_id: string | null;
+}
+
+interface InvoiceListingRow {
+  id: string;
+  invoice_number: string;
+  amount_due: string;
+  amount_paid: string;
+  currency: string;
+  issue_date: Date;
+  due_date: Date | null;
+  status: string;
+  counterparty_id: string;
+}
+
+interface DeterministicIntentDefinition {
+  id: DeterministicIntentId;
+  displayText: string;
+  parse: (question: string, asOf: Date | null) => unknown | null;
+  answer: (client: TenantScopedClient, intent: unknown) => Promise<AskResult>;
+  isEligible: (client: TenantScopedClient, asOf: Date) => Promise<boolean>;
+}
+
 export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResult> {
   const key = dedupKey(opts);
   const cached = await deps.redis.get(cacheKey(key));
   if (cached !== null) {
     const parsed = JSON.parse(cached) as AskResult;
     deps.metrics.increment("brain.wiki.question.cache_hit", { tenant_id: opts.tenantId });
-    return { ...parsed, cachedAt: new Date().toISOString() };
+    return {
+      ...parsed,
+      // Cached answers from before the response-contract addition expire after
+      // five minutes. Treat them conservatively until they do.
+      answered: parsed.answered === true,
+      cachedAt: new Date().toISOString(),
+    };
   }
 
   const started = Date.now();
+
+  const deterministicIntent = resolveDeterministicIntent(opts.question, opts.asOf);
+  if (deterministicIntent !== null) {
+    const result = await deterministicIntent.definition.answer(
+      deps.client,
+      deterministicIntent.intent,
+    );
+    result.deterministicIntentId = deterministicIntent.definition.id;
+    await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
+    recordQuestionMetrics(deps.metrics, opts, started, result.usage);
+    return result;
+  }
 
   // 1. Pull a bounded slice of recent Ledger state. Phase 5 layers in
   //    wiki_pages embeddings; Phase 3 keeps the retrieval surface narrow.
@@ -129,6 +239,7 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   const parsed = parseLlmAnswer(completion.text, candidates, boundaryToken);
 
   const result: AskResult = {
+    answered: parsed.answered,
     answer: parsed.answer,
     evidence: parsed.evidenceIds
       .map((id) => candidates.find((c) => c.id === id))
@@ -140,19 +251,350 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 
   await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
 
+  recordQuestionMetrics(deps.metrics, opts, started, completion.usage);
+
+  return result;
+}
+
+/**
+ * Records use of an executed deterministic intent. This runs in the same
+ * tenant-scoped request transaction as the question, so RLS prevents a usage
+ * count from being attributed to another tenant.
+ */
+export async function recordDeterministicIntentUsage(
+  client: TenantScopedClient,
+  intentId: DeterministicIntentId,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO wiki_question_intent_usage (
+       tenant_id, intent_id, invocation_count, first_invoked_at, last_invoked_at
+     )
+     VALUES (current_setting('app.tenant_id', true), $1, 1, now(), now())
+     ON CONFLICT (tenant_id, intent_id)
+     DO UPDATE SET
+       invocation_count = wiki_question_intent_usage.invocation_count + 1,
+       last_invoked_at = now()`,
+    [intentId],
+  );
+}
+
+/**
+ * Returns only questions backed by registered deterministic handlers. Adding a
+ * handler to DETERMINISTIC_INTENT_REGISTRY automatically opts it into this
+ * surface, subject to its own tenant-scoped eligibility query.
+ */
+export async function listSuggestedQuestions(
+  client: TenantScopedClient,
+  asOf: Date = new Date(),
+): Promise<SuggestedQuestion[]> {
+  const usage = await client.query<{ intent_id: string; invocation_count: string }>(
+    `SELECT intent_id, invocation_count::text AS invocation_count
+       FROM wiki_question_intent_usage
+      WHERE tenant_id = current_setting('app.tenant_id', true)`,
+  );
+  const usageByIntent = new Map(
+    usage.rows.map((row) => [row.intent_id, Number(row.invocation_count)]),
+  );
+  const eligibility = await Promise.all(
+    DETERMINISTIC_INTENT_REGISTRY.map(async (definition) => ({
+      definition,
+      eligible: await definition.isEligible(client, asOf),
+    })),
+  );
+
+  return eligibility
+    .filter((entry) => entry.eligible)
+    .map(({ definition }) => ({
+      intentId: definition.id,
+      displayText: definition.displayText,
+      usageRankScore: usageByIntent.get(definition.id) ?? 0,
+    }))
+    .sort(
+      (left, right) =>
+        right.usageRankScore - left.usageRankScore ||
+        left.displayText.localeCompare(right.displayText),
+    );
+}
+
+function recordQuestionMetrics(
+  metrics: MetricsEmitter,
+  opts: AskOptions,
+  started: number,
+  usage: { inputTokens: number; outputTokens: number },
+): void {
   // §6.2 / §7.2 metrics.
-  const latencyMs = Date.now() - started;
-  deps.metrics.duration("brain.wiki.question.latency", latencyMs, {
+  metrics.duration("brain.wiki.question.latency", Date.now() - started, {
     model: opts.model,
     tenant_id: opts.tenantId,
   });
-  deps.metrics.histogram(
-    "brain.wiki.question.cost",
-    completion.usage.inputTokens + completion.usage.outputTokens,
-    { model: opts.model, tenant_id: opts.tenantId },
+  metrics.histogram("brain.wiki.question.cost", usage.inputTokens + usage.outputTokens, {
+    model: opts.model,
+    tenant_id: opts.tenantId,
+  });
+}
+
+async function answerTransactionAggregate(
+  client: TenantScopedClient,
+  intent: TransactionAggregateIntent,
+): Promise<AskResult> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`transaction_date <= $${values.length}`);
+  }
+  if (intent.direction !== null) {
+    values.push(intent.direction);
+    clauses.push(`direction = $${values.length}`);
+  }
+  values.push(MAX_AGGREGATE_EVIDENCE);
+
+  const rows = await client.query<TransactionAggregateRow>(
+    `SELECT id,
+            amount::text AS amount,
+            currency,
+            direction,
+            transaction_date,
+            description_normalized,
+            description_raw,
+            counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(amount) OVER (), 0)::text AS matching_sum,
+            COALESCE(ROUND(AVG(amount) OVER (), 2), 0)::text AS matching_average
+       FROM ledger_transactions
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY transaction_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
   );
 
-  return result;
+  const matchingCount = rows.rows.length === 0 ? 0 : Number(rows.rows[0]!.matching_count);
+  const currencies = [...new Set(rows.rows.map((row) => row.currency))];
+  const rangeLabel = intent.range === null ? "" : ` ${intent.range.label}`;
+  const directionLabel = intent.direction ?? "";
+
+  if (intent.operation !== "count" && currencies.length > 1) {
+    return {
+      answered: false,
+      answer: "I can't calculate one total across transactions in multiple currencies.",
+      evidence: rows.rows.map(toTransactionEvidence),
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const amount =
+    rows.rows.length === 0
+      ? "0"
+      : intent.operation === "sum"
+        ? rows.rows[0]!.matching_sum
+        : rows.rows[0]!.matching_average;
+  const currency = currencies[0] ?? null;
+  const answer = buildAggregateAnswer(
+    intent.operation,
+    matchingCount,
+    amount,
+    currency,
+    directionLabel,
+    rangeLabel,
+  );
+
+  return {
+    answered: true,
+    answer,
+    evidence: rows.rows.map(toTransactionEvidence),
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function toTransactionEvidence(
+  row: Pick<
+    TransactionListingRow,
+    | "id"
+    | "amount"
+    | "currency"
+    | "direction"
+    | "transaction_date"
+    | "description_normalized"
+    | "description_raw"
+    | "counterparty_id"
+  >,
+): AskEvidenceItem {
+  const counterparty = row.counterparty_id === null ? "" : ` cp=${row.counterparty_id}`;
+  const memo = row.description_normalized ?? row.description_raw ?? "";
+  return {
+    entityType: "transaction",
+    entityId: row.id,
+    excerpt:
+      `${row.direction} ${row.amount} ${row.currency} on ${row.transaction_date.toISOString().slice(0, 10)}${counterparty} ${memo}`.trim(),
+  };
+}
+
+function buildAggregateAnswer(
+  operation: AggregateOperation,
+  matchingCount: number,
+  amount: string,
+  currency: string | null,
+  directionLabel: string,
+  rangeLabel: string,
+): string {
+  const scope = `${directionLabel === "" ? "" : `${directionLabel} `}transactions${rangeLabel}`;
+  if (operation === "count") {
+    return `You have ${matchingCount} ${scope}.`;
+  }
+  const value = formatCurrencyAmount(amount, currency);
+  if (operation === "sum") {
+    return `The total for ${scope} is ${value}.`;
+  }
+  return `The average ${directionLabel || "transaction"} amount${rangeLabel} is ${value}.`;
+}
+
+function formatCurrencyAmount(amount: string, currency: string | null): string {
+  const [wholeRaw = "0", fractionRaw = ""] = amount.split(".");
+  const sign = wholeRaw.startsWith("-") ? "-" : "";
+  const whole = (sign === "-" ? wholeRaw.slice(1) : wholeRaw).replace(/^0+(?=\d)/, "");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const fraction = fractionRaw.padEnd(2, "0").slice(0, 2);
+  const prefix = currency === "USD" ? "$" : currency === null ? "" : `${currency} `;
+  return `${sign}${prefix}${grouped}.${fraction}`;
+}
+
+async function answerStructuredListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  if (intent.entity === "invoice") {
+    return answerInvoiceListing(client, intent);
+  }
+  return answerTransactionListing(client, intent);
+}
+
+async function answerTransactionListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`transaction_date <= $${values.length}`);
+  }
+  if (intent.direction !== null) {
+    values.push(intent.direction);
+    clauses.push(`direction = $${values.length}`);
+  }
+  values.push(intent.limit);
+
+  const { rows } = await client.query<TransactionListingRow>(
+    `SELECT id, amount::text AS amount, currency, direction, transaction_date,
+            description_normalized, description_raw, counterparty_id
+       FROM ledger_transactions
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY transaction_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  const subject = intent.entity === "cash_flow" ? "cash flow transactions" : "transactions";
+  const scope = describeListingScope(intent, subject);
+  if (rows.length === 0) {
+    return structuredListingResult(`No ${scope} found.`, []);
+  }
+  const records = rows.map((row) => formatTransactionListingRow(row)).join("\n");
+  return structuredListingResult(
+    `${capitalize(scope)}:\n${records}`,
+    rows.map(toTransactionEvidence),
+  );
+}
+
+async function answerInvoiceListing(
+  client: TenantScopedClient,
+  intent: StructuredListingIntent,
+): Promise<AskResult> {
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  if (intent.range !== null) {
+    values.push(intent.range.start, intent.range.end);
+    clauses.push(`issue_date >= $${values.length - 1}`);
+    clauses.push(`issue_date < $${values.length}`);
+  }
+  if (intent.asOf !== null) {
+    values.push(intent.asOf);
+    clauses.push(`issue_date <= $${values.length}`);
+  }
+  values.push(intent.limit);
+  const where = clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`;
+
+  const { rows } = await client.query<InvoiceListingRow>(
+    `SELECT id, invoice_number, amount_due::text AS amount_due, amount_paid::text AS amount_paid,
+            currency, issue_date, due_date, status, counterparty_id
+       FROM ledger_invoices
+       ${where}
+      ORDER BY issue_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  const scope = describeListingScope(intent, "invoices");
+  if (rows.length === 0) {
+    return structuredListingResult(`No ${scope} found.`, []);
+  }
+  const records = rows.map((row) => formatInvoiceListingRow(row)).join("\n");
+  return structuredListingResult(`${capitalize(scope)}:\n${records}`, rows.map(toInvoiceEvidence));
+}
+
+function structuredListingResult(answer: string, evidence: AskEvidenceItem[]): AskResult {
+  return {
+    answered: true,
+    answer,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function describeListingScope(intent: StructuredListingIntent, subject: string): string {
+  const direction = intent.direction === null ? "" : `${intent.direction} `;
+  const range = intent.range === null ? "" : ` ${intent.range.label}`;
+  return `${direction}${subject}${range}`;
+}
+
+function capitalize(value: string): string {
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
+}
+
+function formatTransactionListingRow(row: TransactionListingRow): string {
+  const memo = stripUnsafeControlCharacters(
+    row.description_normalized ?? row.description_raw ?? "",
+  );
+  const counterparty = row.counterparty_id === null ? "" : `, counterparty ${row.counterparty_id}`;
+  return `- ${row.transaction_date.toISOString().slice(0, 10)}: ${row.direction} ${formatCurrencyAmount(row.amount, row.currency)}${counterparty}${memo === "" ? "" : `, ${memo}`}`;
+}
+
+function formatInvoiceListingRow(row: InvoiceListingRow): string {
+  const due =
+    row.due_date === null ? "no due date" : `due ${row.due_date.toISOString().slice(0, 10)}`;
+  return `- ${row.invoice_number}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, issued ${row.issue_date.toISOString().slice(0, 10)}, ${due}, counterparty ${row.counterparty_id}`;
+}
+
+function toInvoiceEvidence(row: InvoiceListingRow): AskEvidenceItem {
+  const due = row.due_date === null ? "" : ` due ${row.due_date.toISOString().slice(0, 10)}`;
+  return {
+    entityType: "invoice",
+    entityId: row.id,
+    excerpt: `${row.invoice_number} amount ${row.amount_due} ${row.currency} status=${row.status} issued ${row.issue_date.toISOString().slice(0, 10)}${due} cp=${row.counterparty_id}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +922,270 @@ function classifyQuestionIntent(question: string): QuestionIntent {
   return "generic";
 }
 
+function parseTransactionAggregateIntent(
+  question: string,
+  asOf: Date | null,
+): TransactionAggregateIntent | null {
+  const q = question.toLowerCase();
+  if (!/\btransactions?\b/.test(q)) return null;
+
+  const operation: AggregateOperation | null = /\b(how many|count|number of)\b/.test(q)
+    ? "count"
+    : /\b(average|avg|mean)\b/.test(q)
+      ? "average"
+      : /\b(total|sum|how much)\b/.test(q)
+        ? "sum"
+        : null;
+  if (operation === null) return null;
+
+  const direction = /\b(inflows?|deposits?|credits?)\b/.test(q)
+    ? "inflow"
+    : /\b(outflows?|withdrawals?|debits?|spend)\b/.test(q)
+      ? "outflow"
+      : /\btransfers?\b/.test(q)
+        ? "transfer"
+        : null;
+
+  return {
+    operation,
+    direction,
+    range: parseIsoDateRange(q) ?? parseMonthRange(q, asOf),
+    asOf,
+  };
+}
+
+function parseStructuredListingIntent(
+  question: string,
+  asOf: Date | null,
+): StructuredListingIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(show|list|display)\b/.test(q)) return null;
+
+  const entity: ListingEntity | null = /\b(cash[ -]?flow)\b/.test(q)
+    ? "cash_flow"
+    : /\binvoices?\b/.test(q)
+      ? "invoice"
+      : /\btransactions?\b/.test(q)
+        ? "transaction"
+        : null;
+  if (entity === null) return null;
+
+  const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
+  const limit = parseListingLimit(q);
+  if (range === null && limit === null) return null;
+
+  const direction =
+    entity === "invoice"
+      ? null
+      : /\b(inflows?|deposits?|credits?)\b/.test(q)
+        ? "inflow"
+        : /\b(outflows?|withdrawals?|debits?|spend)\b/.test(q)
+          ? "outflow"
+          : /\btransfers?\b/.test(q)
+            ? "transfer"
+            : null;
+  return {
+    entity,
+    limit: limit ?? MAX_LISTING_RECORDS,
+    direction,
+    range,
+    asOf,
+  };
+}
+
+function parseAggregateOperationIntent(
+  operation: AggregateOperation,
+): (question: string, asOf: Date | null) => TransactionAggregateIntent | null {
+  return (question, asOf) => {
+    const intent = parseTransactionAggregateIntent(question, asOf);
+    return intent?.operation === operation ? intent : null;
+  };
+}
+
+function parseListingEntityIntent(
+  entity: ListingEntity,
+): (question: string, asOf: Date | null) => StructuredListingIntent | null {
+  return (question, asOf) => {
+    const intent = parseStructuredListingIntent(question, asOf);
+    return intent?.entity === entity ? intent : null;
+  };
+}
+
+async function hasEligibleTransactions(
+  client: TenantScopedClient,
+  asOf: Date,
+  range: DateRange | null,
+): Promise<boolean> {
+  const clauses = ["status IN ('posted','cleared')"];
+  const values: unknown[] = [];
+  if (range !== null) {
+    values.push(range.start, range.end);
+    clauses.push(`transaction_date >= $${values.length - 1}`);
+    clauses.push(`transaction_date < $${values.length}`);
+  }
+  values.push(asOf);
+  clauses.push(`transaction_date <= $${values.length}`);
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_transactions
+        WHERE ${clauses.join(" AND ")}
+     ) AS eligible`,
+    values,
+  );
+  return rows[0]?.eligible === true;
+}
+
+async function hasEligibleInvoices(
+  client: TenantScopedClient,
+  asOf: Date,
+  range: DateRange,
+): Promise<boolean> {
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_invoices
+        WHERE issue_date >= $1
+          AND issue_date < $2
+          AND issue_date <= $3
+     ) AS eligible`,
+    [range.start, range.end, asOf],
+  );
+  return rows[0]?.eligible === true;
+}
+
+function currentMonthRange(asOf: Date): DateRange {
+  const start = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() + 1, 1));
+  const monthName = start.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  return { start, end, label: `in ${monthName} ${start.getUTCFullYear()}` };
+}
+
+export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefinition[] = [
+  {
+    id: "transaction_count",
+    displayText: "How many transactions do I have this month?",
+    parse: parseAggregateOperationIntent("count"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_sum",
+    displayText: "What is my total transaction volume this month?",
+    parse: parseAggregateOperationIntent("sum"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_average",
+    displayText: "What is my average transaction amount this month?",
+    parse: parseAggregateOperationIntent("average"),
+    answer: (client, intent) =>
+      answerTransactionAggregate(client, intent as TransactionAggregateIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "transaction_listing",
+    displayText: "Show my last 10 transactions",
+    parse: parseListingEntityIntent("transaction"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, null),
+  },
+  {
+    id: "cash_flow_listing",
+    displayText: "Show recent cash flow",
+    parse: parseListingEntityIntent("cash_flow"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, null),
+  },
+  {
+    id: "invoice_listing",
+    displayText: "List this month's invoices",
+    parse: parseListingEntityIntent("invoice"),
+    answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
+    isEligible: (client, asOf) => hasEligibleInvoices(client, asOf, currentMonthRange(asOf)),
+  },
+];
+
+function resolveDeterministicIntent(
+  question: string,
+  asOf: Date | null,
+): { definition: DeterministicIntentDefinition; intent: unknown } | null {
+  for (const definition of DETERMINISTIC_INTENT_REGISTRY) {
+    const intent = definition.parse(question, asOf);
+    if (intent !== null) return { definition, intent };
+  }
+  return null;
+}
+
+function parseListingLimit(question: string): number | null {
+  const last = /\blast\s+(\d{1,3})\b/.exec(question);
+  if (last !== null) {
+    return Math.min(Math.max(Number(last[1]), 1), MAX_LISTING_RECORDS);
+  }
+  return /\brecent\b/.test(question) ? DEFAULT_LISTING_RECORDS : null;
+}
+
+function parseIsoDateRange(question: string): DateRange | null {
+  const values = [...question.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)].map((match) => match[1]!);
+  if (values.length === 0) return null;
+
+  const start = parseIsoDate(values[0]!);
+  const endDate = parseIsoDate(values[1] ?? values[0]!);
+  if (start === null || endDate === null || endDate < start) return null;
+  const end = new Date(endDate);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const label = values.length === 1 ? `on ${values[0]}` : `from ${values[0]} through ${values[1]}`;
+  return { start, end, label };
+}
+
+function parseIsoDate(value: string): Date | null {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) return null;
+  return parsed;
+}
+
+function parseMonthRange(question: string, asOf: Date | null): DateRange | null {
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+  const relativeMonth = /\bthis\s+month(?:'s)?\b/.test(question);
+  if (relativeMonth) {
+    const current = asOf ?? new Date();
+    const start = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1));
+    const monthName = start.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+    return { start, end, label: `in ${monthName} ${start.getUTCFullYear()}` };
+  }
+
+  const monthMatch = new RegExp(`\\b(${months.join("|")})\\b(?:\\s+(20\\d{2}))?`).exec(question);
+  if (monthMatch === null) return null;
+
+  const month = months.indexOf(monthMatch[1]!);
+  const year =
+    monthMatch[2] === undefined ? (asOf ?? new Date()).getUTCFullYear() : Number(monthMatch[2]);
+  const start = new Date(Date.UTC(year, month, 1));
+  const end = new Date(Date.UTC(year, month + 1, 1));
+  return {
+    start,
+    end,
+    label: `in ${months[month]![0]!.toUpperCase()}${months[month]!.slice(1)} ${year}`,
+  };
+}
+
 function composeEvidenceContext(
   candidates: ReadonlyArray<LedgerCandidate>,
   boundaryToken: string,
@@ -506,18 +1212,22 @@ function parseLlmAnswer(
   text: string,
   candidates: ReadonlyArray<LedgerCandidate>,
   boundaryToken: string,
-): { answer: string; evidenceIds: string[] } {
+): { answered: boolean; answer: string; evidenceIds: string[] } {
   try {
     const json = JSON.parse(stripCodeFence(text)) as { answer?: string; evidence_ids?: string[] };
     const guarded = guardGroundedAnswer(json.answer, { boundaryToken });
     const ids = Array.isArray(json.evidence_ids) ? json.evidence_ids : [];
     const allowed = new Set(candidates.map((c) => c.id));
+    const evidenceIds = ids.filter((id) => typeof id === "string" && allowed.has(id));
     return {
+      // A generative answer is only answerable when the output passed the
+      // safety guard and cites retrieved tenant-scoped evidence.
+      answered: guarded.accepted && evidenceIds.length > 0,
       answer: guarded.answer,
-      evidenceIds: ids.filter((id) => typeof id === "string" && allowed.has(id)),
+      evidenceIds,
     };
   } catch {
-    return { answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
+    return { answered: false, answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
   }
 }
 

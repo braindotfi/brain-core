@@ -3013,10 +3013,12 @@ paths:
   /assistant/questions:
     get:
       tags: [Wiki]
-      summary: List suggested assistant questions
+      summary: List persisted assistant question records
       description: |
-        Requires `wiki:read`. Returns tenant-scoped assistant questions when
-        present. Empty tenants receive `questions: []`.
+        Requires `wiki:read`. Returns tenant-scoped persisted assistant question
+        records when present. Empty tenants receive `questions: []`. This is
+        distinct from `GET /wiki/suggested-questions`, which derives eligible
+        deterministic suggestions from current Ledger data.
       operationId: listAssistantQuestions
       parameters:
         - name: limit
@@ -3288,11 +3290,14 @@ paths:
       tags: [Wiki]
       summary: Natural-language question against the Wiki
       description: |
-        Requires `wiki:read`. Translates a natural-language question into
-        a set of SQL queries against the Wiki, executes them, and
-        composes an answer with an evidence path attached. This is the
-        LLM-in-hot-path endpoint. Costs apply per call; see pricing
-        documentation.
+        Requires `wiki:read`. Grounds questions in tenant Ledger rows and
+        returns an answer with cited evidence. Transaction count, total, and
+        average questions use a deterministic Ledger query when the intent is
+        unambiguous. Explicit transaction, cash-flow, and invoice listing
+        questions with a recency, count, or date bound also use a deterministic
+        Ledger query. Other questions use the grounded LLM path. `answered`
+        distinguishes a grounded or deterministic answer from a refusal.
+        Costs apply only when the LLM path runs; see pricing documentation.
       operationId: askWiki
       requestBody:
         required: true
@@ -3323,6 +3328,31 @@ paths:
                 $ref: '#/components/schemas/WikiAnswer'
         '400': { $ref: '#/components/responses/BadRequest' }
         '429': { $ref: '#/components/responses/RateLimited' }
+
+  /wiki/suggested-questions:
+    get:
+      tags: [Wiki]
+      summary: List tenant-aware deterministic question suggestions
+      description: |
+        Requires `wiki:read`. Returns only currently eligible questions backed
+        by the deterministic Wiki-question registry. `usage_rank_score` is the
+        tenant's all-time invocation count for that intent and is used to rank
+        otherwise eligible suggestions.
+      operationId: listSuggestedWikiQuestions
+      responses:
+        '200':
+          description: Eligible deterministic question suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestions]
+                properties:
+                  suggestions:
+                    type: array
+                    items: { $ref: '#/components/schemas/WikiSuggestedQuestion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /wiki/annotate:
     post:
@@ -7560,27 +7590,50 @@ components:
 
     WikiAnswer:
       type: object
+      required: [question, answered, answer, evidence, model, usage]
       properties:
         question: { type: string }
+        answered:
+          type: boolean
+          description: True when Brain produced a grounded or deterministic answer. False means `answer` is a refusal or cannot be grounded from the available data.
         answer: { type: string }
-        confidence: { type: number, minimum: 0, maximum: 1 }
-        evidence_path:
+        evidence:
           type: array
           items:
             type: object
+            required: [entityType, entityId, excerpt]
             properties:
-              step: { type: integer }
-              description: { type: string }
-              entity_id: { type: [string, "null"], pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
-              sql_query: { type: [string, "null"] }
-              result_summary: { type: string }
-        llm_metadata:
+              entityType: { type: string, enum: [transaction, obligation, counterparty, invoice] }
+              entityId: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
+              excerpt: { type: string }
+        model:
+          type: string
+          description: The configured LLM model, or `structured-ledger-query` for deterministic aggregates and listings.
+        usage:
           type: object
+          required: [inputTokens, outputTokens]
           properties:
-            model: { type: string }
-            tokens_input: { type: integer }
-            tokens_output: { type: integer }
-            latency_ms: { type: integer }
+            inputTokens: { type: integer, minimum: 0 }
+            outputTokens: { type: integer, minimum: 0 }
+
+    WikiSuggestedQuestion:
+      type: object
+      required: [intent_id, display_text, usage_rank_score]
+      properties:
+        intent_id:
+          type: string
+          enum:
+            - transaction_count
+            - transaction_sum
+            - transaction_average
+            - transaction_listing
+            - cash_flow_listing
+            - invoice_listing
+        display_text: { type: string }
+        usage_rank_score:
+          type: integer
+          minimum: 0
+          description: All-time invocation count for this deterministic intent in the calling tenant.
 
     EntityAnnotation:
       type: object
