@@ -796,10 +796,10 @@ async function main(): Promise<void> {
   const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
 
   // Resolve on-chain dispatch params at execute time. Only wired when both the
-  // session key and the BrainSmartAccount address are configured. The closure
-  // looks up the destination counterparty's aliases for the target address.
+  // session key and the BrainSmartAccount address are configured.
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
+  const ONCHAIN_TRANSFER_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
   const resolveOnchainParams:
     | ((
         ctx: ServiceCallContext,
@@ -818,9 +818,15 @@ async function main(): Promise<void> {
             intent.destination_counterparty_id,
           );
           if (cp === null) return null;
-          const ETH_ADDR = /^0x[0-9a-fA-F]{40}$/;
-          const target = cp.aliases.find((a) => ETH_ADDR.test(a));
-          if (target === undefined) return null;
+          // F4: bind the recipient to the counterparty's onchain_address --
+          // the SAME field the gate binds for x402_settle (6.5) and
+          // escrow_release (6.6) -- rather than scanning the agent-writable
+          // `aliases` array. `aliases` is a free-form identity field an agent
+          // principal can PATCH via /ledger/counterparties; onchain_address is
+          // not a PATCH-able field on that route at all. Refuse to dispatch
+          // rather than falling back to aliases.
+          const target = cp.onchain_address;
+          if (target === null || !ONCHAIN_TRANSFER_ADDRESS.test(target)) return null;
           const valueWei =
             intent.currency.toUpperCase() === "ETH" ? parseEther(intent.amount).toString() : "0";
           return {
