@@ -194,4 +194,30 @@ contract BrainSignatureCheckerTest is Test {
     function test_erc1271_nonSignerContractFailsClosed() public view {
         assertFalse(h.isValid(address(h), digest, _sign(pk, digest)));
     }
+
+    // --- EIP-7702 delegated EOAs -----------------------------------------
+
+    /// Post-Pectra (live on Base) a 7702-delegated EOA carries 23 bytes of
+    /// 0xef0100 ++ address and its private key still signs. A
+    /// `code.length == 0` discriminator would route it to ERC-1271, which the
+    /// delegate here deliberately does not honour — and a sole tenant signer at threshold 1
+    /// would be permanently locked out, since re-bootstrapping needs a signature
+    /// from that same signer.
+    function test_eip7702_delegatedEoaStillVerifies() public {
+        bytes memory delegation = abi.encodePacked(hex"ef0100", address(new RejectingSigner()));
+        assertEq(delegation.length, 23);
+        vm.etch(signer, delegation);
+        assertEq(signer.code.length, 23);
+
+        assertTrue(h.isValid(signer, digest, _sign(pk, digest)));
+    }
+
+    /// The delegation is not a blanket bypass: a wrong signature from a
+    /// delegated EOA still fails, and a delegate that does not honour the digest
+    /// cannot rescue it either.
+    function test_eip7702_delegatedEoaStillRejectsWrongSignature() public {
+        vm.etch(signer, abi.encodePacked(hex"ef0100", address(new RejectingSigner())));
+        assertFalse(h.isValid(signer, digest, _sign(0xB0B, digest)));
+        assertFalse(h.isValid(signer, keccak256("other"), _sign(pk, digest)));
+    }
 }

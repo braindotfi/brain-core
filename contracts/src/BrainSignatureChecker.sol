@@ -56,15 +56,26 @@ library BrainSignatureChecker {
     }
 
     /// @notice Whether `signer` authorized `digest`.
-    /// @dev    An address with no code is verified by ECDSA recovery; an address
-    ///         with code is asked through ERC-1271. A staticcall is used so a
-    ///         malicious signer contract cannot mutate state or re-enter.
+    /// @dev    ECDSA recovery is tried FIRST, then ERC-1271 for addresses that
+    ///         carry code. A staticcall is used so a malicious signer contract
+    ///         cannot mutate state or re-enter.
+    ///
+    ///         Order matters. `signer.code.length == 0` is no longer an EOA/
+    ///         contract discriminator: post-Pectra (live on Base) an EIP-7702
+    ///         delegated EOA carries 23 bytes of `0xef0100 ++ address` while its
+    ///         private key still signs. Asking 1271 first would route a plain-EOA
+    ///         tenant signer to a delegate that does not implement it the moment
+    ///         the user opts into a 7702 wallet — and a sole signer at threshold 1
+    ///         would be PERMANENTLY locked out, because re-bootstrapping requires
+    ///         `_tenantSignerCount == 0`, which requires a signature from that
+    ///         same signer. Trying recovery first costs one ecrecover for contract
+    ///         signers and cannot produce a false accept: matching would mean
+    ///         holding the private key of the contract's own address.
     function isValidSignature(address signer, bytes32 digest, bytes calldata sig) internal view returns (bool) {
         if (signer == address(0)) return false;
 
-        if (signer.code.length == 0) {
-            return recoverEoa(digest, sig) == signer;
-        }
+        if (recoverEoa(digest, sig) == signer) return true;
+        if (signer.code.length == 0) return false;
 
         (bool ok, bytes memory ret) =
             signer.staticcall(abi.encodeWithSelector(IERC1271.isValidSignature.selector, digest, sig));
