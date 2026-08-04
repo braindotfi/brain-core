@@ -204,11 +204,39 @@ contract BrainSmartAccountInvariantTest is Test {
         assertEq(acct.nonce(address(handler)), handler.accepted());
     }
 
-    /// Everything above is satisfied by a run in which nothing succeeded. Assert
-    /// once per run that the account was actually exercised, and that time
-    /// actually crossed a window boundary so the period arithmetic was covered.
-    function afterInvariant() public view {
-        assertGt(handler.accepted(), 0, "no call was ever accepted; the run proved nothing");
-        assertGt(handler.currentWindow(), acct.windowAnchor(address(handler)), "no window ever rolled over");
+    /// Every invariant above is satisfied by a run in which nothing succeeded, so
+    /// the suite needs one check that the handler can actually drive the account.
+    /// Deliberately a deterministic unit test rather than an afterInvariant()
+    /// assertion: afterInvariant observes per-run state, so `accepted > 0` there
+    /// is seed-dependent and flakes. This pins every handler outcome instead —
+    /// accept, reject, out-of-scope refusal, value refusal, and a window rollover
+    /// with fresh budget.
+    function test_handlerExercisesEveryOutcome() public {
+        handler.execute(0.5 ether); // under both caps
+        assertEq(handler.accepted(), 1);
+        assertEq(acct.spentInCurrentWindow(address(handler)), 0.5 ether);
+
+        handler.execute(1.5 ether); // over maxPerTx
+        assertEq(handler.accepted(), 1);
+        assertEq(handler.rejected(), 1);
+
+        handler.executeOutOfScope(0.1 ether, address(0xBEEF));
+        assertEq(handler.outOfScopeAccepted(), 0);
+
+        handler.executeWithValue(0.1 ether, 1);
+        assertEq(handler.valueAccepted(), 0);
+        assertEq(address(acct).balance, 100 ether);
+
+        // Time crosses a period boundary: new window, fresh budget, and the
+        // handler's independent per-window tally follows it.
+        uint256 previous = handler.currentWindow();
+        handler.warp(PERIOD);
+        assertGt(handler.currentWindow(), previous);
+        assertEq(acct.spentInCurrentWindow(address(handler)), 0);
+
+        handler.execute(0.5 ether);
+        assertEq(acct.spentInCurrentWindow(address(handler)), 0.5 ether);
+        assertEq(handler.ghostByWindow(handler.currentWindow()), 0.5 ether);
+        assertEq(handler.ghostSpent(), 1 ether);
     }
 }
