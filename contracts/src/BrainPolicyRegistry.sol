@@ -148,29 +148,44 @@ contract BrainPolicyRegistry {
 
     // --- Tenant signer management ----------------------------------------
 
-    /// @notice Add or remove an authorized signer for a tenant.
-    /// @dev    When signer count is zero, `initialAdmin` may bootstrap the
-    ///         first signer. Subsequent changes require an existing tenant
-    ///         signer. If all signers are removed, `initialAdmin` may
+    /// @notice Add or remove an authorized signer for a tenant. Carries the SAME
+    ///         M-of-N quorum a policy registration does.
+    /// @dev    When signer count is zero, `initialAdmin` alone may bootstrap the
+    ///         first signer. Thereafter the change needs `thresholdOf(tenantId)`
+    ///         distinct tenant signatures. One signature used to be enough, which
+    ///         defeated the threshold outright: a single compromised key of an
+    ///         M-of-N tenant could seat M-1 signers it controlled (or drop the
+    ///         threshold to 1 via {setTenantThreshold}) and then register a forged
+    ///         policy. If all signers are removed, `initialAdmin` may
     ///         re-bootstrap, preventing permanent lockout.
-    /// @param  authSigner The address claimed to have produced `signature`.
-    ///         Required (not redundant): an ERC-1271 contract signature cannot
-    ///         be recovered from, so the claimed signer must be supplied for the
-    ///         membership check.
+    /// @param  authSigners The addresses claimed to have produced `signatures`,
+    ///         in strict ascending order. Required (not redundant): an ERC-1271
+    ///         contract signature cannot be recovered from, so the claimed signer
+    ///         must be supplied for the membership check.
     function setTenantSigner(
         bytes32 tenantId,
         address signer,
         bool allowed,
-        address authSigner,
-        bytes calldata signature
+        address[] calldata authSigners,
+        bytes[] calldata signatures
     ) external {
         if (signer == address(0)) revert ZeroAddress();
+        if (authSigners.length == 0) revert EmptySignerSet();
+        if (authSigners.length != signatures.length) revert SignatureLengthMismatch();
         bytes32 digest = _hashSignerChange(tenantId, signer, allowed, tenantSignerNonce[tenantId]);
-        if (!authSigner.isValidSignature(digest, signature)) revert InvalidSignature(authSigner);
 
-        bool authorized = _tenantSigners[tenantId][authSigner];
-        bool canBootstrap = (_tenantSignerCount[tenantId] == 0 && authSigner == initialAdmin);
-        if (!authorized && !canBootstrap) revert NotTenantSigner(authSigner);
+        if (_tenantSignerCount[tenantId] == 0) {
+            // Bootstrap. No quorum exists yet to ask, so `initialAdmin` seats the
+            // first signer alone. This is the ONLY single-key authorization path.
+            if (authSigners.length != 1 || authSigners[0] != initialAdmin) {
+                revert NotTenantSigner(authSigners[0]);
+            }
+            if (!initialAdmin.isValidSignature(digest, signatures[0])) {
+                revert InvalidSignature(initialAdmin);
+            }
+        } else {
+            _requireQuorum(tenantId, digest, authSigners, signatures);
+        }
 
         if (allowed && !_tenantSigners[tenantId][signer]) {
             _tenantSignerCount[tenantId] += 1;
@@ -191,17 +206,21 @@ contract BrainPolicyRegistry {
     }
 
     /// @notice Set the M-of-N approval threshold for a tenant's policy
-    ///         registrations. Requires a signature from an existing tenant
-    ///         signer.
+    ///         registrations. Requires the CURRENT threshold's worth of tenant
+    ///         signatures, so lowering M is itself an M-of-N decision.
     /// @dev    A single authorized signer could previously register any policy
     ///         version, so the registry's answer to "which policy was in force"
-    ///         rested on one key.
-    function setTenantThreshold(bytes32 tenantId, uint256 threshold, address authSigner, bytes calldata signature)
-        external
-    {
+    ///         rested on one key. Requiring only one signature HERE reintroduced
+    ///         exactly that: one key of a 3-of-3 tenant could set the threshold to
+    ///         1 and then register alone.
+    function setTenantThreshold(
+        bytes32 tenantId,
+        uint256 threshold,
+        address[] calldata authSigners,
+        bytes[] calldata signatures
+    ) external {
         bytes32 digest = _hashThresholdChange(tenantId, threshold, tenantSignerNonce[tenantId]);
-        if (!authSigner.isValidSignature(digest, signature)) revert InvalidSignature(authSigner);
-        if (!_tenantSigners[tenantId][authSigner]) revert NotTenantSigner(authSigner);
+        _requireQuorum(tenantId, digest, authSigners, signatures);
 
         uint256 count = _tenantSignerCount[tenantId];
         if (threshold == 0 || threshold > count) revert InvalidThreshold(threshold, count);
@@ -209,6 +228,76 @@ contract BrainPolicyRegistry {
         _tenantThreshold[tenantId] = threshold;
         tenantSignerNonce[tenantId] += 1;
         emit TenantThresholdSet(tenantId, threshold);
+    }
+
+    /// @notice Single-signature convenience form of {setTenantSigner}. Valid only
+    ///         while ONE signature genuinely satisfies the tenant: bootstrap, or a
+    ///         tenant whose threshold is 1. An M-of-N tenant reverts
+    ///         {BelowThreshold} here and must use the array form.
+    /// @dev    Delegates to the array form so there is exactly one authorization
+    ///         path to audit. The self-call is safe: neither form reads
+    ///         `msg.sender`, and revert data bubbles through unchanged.
+    function setTenantSigner(
+        bytes32 tenantId,
+        address signer,
+        bool allowed,
+        address authSigner,
+        bytes calldata signature
+    ) external {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, signature);
+        this.setTenantSigner(tenantId, signer, allowed, s, sg);
+    }
+
+    /// @notice Single-signature convenience form of {setTenantThreshold}. Same
+    ///         rule: only valid while the tenant's current threshold is 1.
+    function setTenantThreshold(bytes32 tenantId, uint256 threshold, address authSigner, bytes calldata signature)
+        external
+    {
+        (address[] memory s, bytes[] memory sg) = _singleton(authSigner, signature);
+        this.setTenantThreshold(tenantId, threshold, s, sg);
+    }
+
+    /// @dev Authorize a tenant-scoped change: at least `thresholdOf(tenantId)`
+    ///      valid signatures over `digest` from distinct pre-authorized tenant
+    ///      signers, supplied in strict ascending address order (which is what
+    ///      enforces distinctness). Deliberately has NO bootstrap branch:
+    ///      `registerPolicy` and `setTenantThreshold` must never be reachable by
+    ///      `initialAdmin` alone.
+    function _requireQuorum(bytes32 tenantId, bytes32 digest, address[] calldata signers, bytes[] calldata signatures)
+        private
+        view
+    {
+        if (signers.length == 0) revert EmptySignerSet();
+        if (signers.length != signatures.length) revert SignatureLengthMismatch();
+
+        uint256 required = thresholdOf(tenantId);
+        if (signers.length < required) revert BelowThreshold(tenantId, signers.length, required);
+
+        uint256 len = signers.length;
+        for (uint256 i = 0; i < len; ++i) {
+            // Enforce uniqueness via strict ordering.
+            if (i > 0 && signers[i] <= signers[i - 1]) {
+                revert DuplicateSigner(signers[i]);
+            }
+            // All signers must be pre-authorized for this tenant.
+            if (!_tenantSigners[tenantId][signers[i]]) {
+                revert NotTenantSigner(signers[i]);
+            }
+            if (!signers[i].isValidSignature(digest, signatures[i])) {
+                revert InvalidSignature(signers[i]);
+            }
+        }
+    }
+
+    function _singleton(address a, bytes calldata sig)
+        private
+        pure
+        returns (address[] memory signers, bytes[] memory signatures)
+    {
+        signers = new address[](1);
+        signers[0] = a;
+        signatures = new bytes[](1);
+        signatures[0] = sig;
     }
 
     /// @notice The number of distinct tenant signatures a registration needs.
@@ -256,27 +345,8 @@ contract BrainPolicyRegistry {
         if (version <= latestVersion[tenantId]) {
             revert VersionNotMonotonic(tenantId, version, latestVersion[tenantId]);
         }
-        if (signers.length == 0) revert EmptySignerSet();
-        if (signers.length != signatures.length) revert SignatureLengthMismatch();
-
-        uint256 required = thresholdOf(tenantId);
-        if (signers.length < required) revert BelowThreshold(tenantId, signers.length, required);
-
         bytes32 digest = _hashPolicyRegistration(tenantId, version, policyHash);
-        uint256 len = signers.length;
-        for (uint256 i = 0; i < len; ++i) {
-            // Enforce uniqueness via strict ordering.
-            if (i > 0 && signers[i] <= signers[i - 1]) {
-                revert DuplicateSigner(signers[i]);
-            }
-            // All signers must be pre-authorized for this tenant.
-            if (!_tenantSigners[tenantId][signers[i]]) {
-                revert NotTenantSigner(signers[i]);
-            }
-            if (!signers[i].isValidSignature(digest, signatures[i])) {
-                revert InvalidSignature(signers[i]);
-            }
-        }
+        _requireQuorum(tenantId, digest, signers, signatures);
 
         _registrations[tenantId][version] =
             RegisteredPolicy({policyHash: policyHash, signers: signers, activatedAt: block.timestamp, exists: true});
