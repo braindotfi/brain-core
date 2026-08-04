@@ -632,7 +632,8 @@ Pending Dmitriy sign-off
   must clear the bank-statement confidence floor, while AR aging and payroll
   PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
   emit the upload-projected hook so compact AP/AR rebuilds and projection status
-  are not stranded.
+  are not stranded. Payroll aggregation emits only dated pay runs; context-less
+  summary rows are not payable obligations.
 - Production tenancy is governed by
   `docs/contracts/production-tenancy.md`. Production tenants are created only by
   `POST /v1/tenants` with the platform service credential. The route creates
