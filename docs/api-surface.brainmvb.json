@@ -1030,7 +1030,7 @@
           "required_scope": "wiki:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { limit? }",
-          "response_shape": "200 { questions }",
+          "response_shape": "200 { questions }; persisted assistant question records only, not deterministic eligibility suggestions",
           "example_request": "GET /v1/assistant/questions",
           "example_response": { "questions": [] },
           "openapi": "documented:/assistant/questions"
@@ -1157,7 +1157,7 @@
           "required_scope": "wiki:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "none",
-          "response_shape": "200 { suggestions: [{ intent_id, display_text, usage_rank_score }] }; only eligible deterministic Wiki-question intents are returned, ranked by tenant-local invocation count",
+          "response_shape": "200 { suggestions: [{ intent_id, display_text, usage_rank_score }] }; the tenant-aware deterministic suggestion endpoint. Only eligible Wiki-question intents are returned, ranked by tenant-local invocation count",
           "example_request": "GET /v1/wiki/suggested-questions",
           "example_response": {
             "suggestions": [

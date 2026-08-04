@@ -15,6 +15,9 @@ User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Inte
 - **Suggestions are ranked by tenant-local deterministic question use.** The
   `usage_rank_score` is an all-time invocation count scoped by tenant and is
   never shared across tenants.
+- **`GET /v1/assistant/questions` remains a separate persisted-record feed.**
+  It does not evaluate deterministic eligibility; clients needing suggestions
+  must call `GET /v1/wiki/suggested-questions`.
 
 ### v0.5.14 (grounded Wiki listing answers)
 

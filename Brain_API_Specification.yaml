@@ -3013,10 +3013,12 @@ paths:
   /assistant/questions:
     get:
       tags: [Wiki]
-      summary: List suggested assistant questions
+      summary: List persisted assistant question records
       description: |
-        Requires `wiki:read`. Returns tenant-scoped assistant questions when
-        present. Empty tenants receive `questions: []`.
+        Requires `wiki:read`. Returns tenant-scoped persisted assistant question
+        records when present. Empty tenants receive `questions: []`. This is
+        distinct from `GET /wiki/suggested-questions`, which derives eligible
+        deterministic suggestions from current Ledger data.
       operationId: listAssistantQuestions
       parameters:
         - name: limit
