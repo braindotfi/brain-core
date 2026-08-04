@@ -52,32 +52,15 @@ jobs:
             exit 1
           fi
 
-          token="$(docker exec -i brain-prod-api node --input-type=module - <<'NODE'
-          import { importJWK, SignJWT } from "jose";
-
-          const rawKey = process.env.AUTH_SIGN_KEY;
-          if (rawKey === undefined || rawKey === "") {
-            throw new Error("AUTH_SIGN_KEY unavailable in api container");
-          }
-          const jwk = JSON.parse(rawKey);
-          const alg = jwk.alg ?? "RS256";
-          const signer = await importJWK(jwk, alg);
-          const now = Math.floor(Date.now() / 1000);
-          const token = await new SignJWT({
-            tenant_id: "tnt_00000000010000000000000000",
-            principal_type: "agent",
-            scopes: ["raw:write"],
-          })
-            .setProtectedHeader(jwk.kid === undefined ? { alg } : { alg, kid: jwk.kid })
-            .setIssuer(process.env.AUTH_ISSUER ?? "https://auth.brain.fi")
-            .setAudience(process.env.AUTH_AUDIENCE ?? "brain-api")
-            .setSubject("agent_00000000020000000000000001")
-            .setIssuedAt(now)
-            .setExpirationTime(now + 365 * 24 * 60 * 60)
-            .sign(signer);
-          process.stdout.write(token);
-          NODE
-          )"
+          # The runtime image intentionally installs dependencies per workspace.
+          # Use the bundled token tool so its `jose` import resolves from its
+          # own workspace rather than assuming it is available at /app.
+          token="$(docker exec brain-prod-api node tools/dev-token/dist/index.js \
+            --tenant tnt_00000000010000000000000000 \
+            --principal agent_00000000020000000000000001 \
+            --principal-type agent \
+            --scopes raw:write \
+            --ttl 31536000)"
           if [[ "$token" != *.*.* ]]; then
             echo "agents_api_token_status=mint_failed"
             exit 1

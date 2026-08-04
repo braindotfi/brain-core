@@ -210,11 +210,13 @@ test("production env example documents API to agents extraction wiring", () => {
   }
 });
 
-test("agents token rotation supplies its signer program through docker stdin", () => {
+test("agents token rotation uses the bundled runtime token signer", () => {
   assert.match(
     rotateAgentsTokenWorkflow,
-    /docker exec -i brain-prod-api node --input-type=module - <<'NODE'/,
+    /docker exec brain-prod-api node tools\/dev-token\/dist\/index\.js/,
   );
+  assert.match(rotateAgentsTokenWorkflow, /--principal-type agent/);
+  assert.match(rotateAgentsTokenWorkflow, /--scopes raw:write/);
 });
 
 test("production env example documents self-serve signup email delivery wiring", () => {
