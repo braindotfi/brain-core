@@ -1237,7 +1237,9 @@ function payrollAggregates(
     // not become separate obligations or collide in Ledger's legacy dedupe key.
     const runRef =
       explicitRunRef ??
-      (payDate === null ? `${ctx.rawArtifactId}:payroll:${out.size + 1}` : `${ctx.rawArtifactId}:payroll:${payDate}`);
+      (payDate === null
+        ? `${ctx.rawArtifactId}:payroll:${out.size + 1}`
+        : `${ctx.rawArtifactId}:payroll:${payDate}`);
     const cadence =
       firstField(record, ["cadence", "frequency", "run_cadence"]) ??
       currentContext.cadence ??
