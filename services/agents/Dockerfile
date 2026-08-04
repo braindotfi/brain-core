@@ -14,6 +14,10 @@ COPY brain_agents/ ./brain_agents/
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Non-root runtime user, matching the core image (Dockerfile: USER node).
+RUN groupadd -r brain && useradd -r -g brain brain
+USER brain
+
 EXPOSE 8001
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=10 \
