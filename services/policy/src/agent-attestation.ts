@@ -18,7 +18,7 @@
  * within one cache TTL.
  */
 
-import { createPublicClient, http, keccak256, parseAbi, toHex } from "viem";
+import { createPublicClient, http, keccak256, parseAbi, toBytes, toHex } from "viem";
 import { baseSepolia, base } from "viem/chains";
 import type {
   AgentAttestationInput,
@@ -37,6 +37,17 @@ const REGISTRY_ABI = parseAbi([
  */
 function onchainTenantId(tenantId: string): `0x${string}` {
   return keccak256(toHex(tenantId));
+}
+
+/**
+ * On-chain agent id: `keccak256(bytes(agent_id))`, matching
+ * `scripts/ops/register-prod-agent.ts` and `viemScopeChecker.ts`. `agentId`
+ * here is the ULID stored in `ledger_counterparties.agent_id`
+ * (`^agent_[0-9A-HJKMNP-TV-Z]{26}$`), never a hex value, so it must be hashed
+ * before it reaches calldata the same way registration hashed it.
+ */
+function onchainAgentId(agentId: string): `0x${string}` {
+  return keccak256(toBytes(agentId));
 }
 
 interface CacheEntry {
@@ -75,7 +86,7 @@ export function makeAttestCounterpartyAgent(opts: {
 
     let result: AgentAttestationResult;
     try {
-      const agentId = input.agentId as `0x${string}`;
+      const agentId = onchainAgentId(input.agentId);
       const tenantId = onchainTenantId(input.tenantId);
 
       // The authorization decision. Registered AND not revoked AND belonging to

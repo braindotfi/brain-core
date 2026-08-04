@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { keccak256, toHex } from "viem";
+import { keccak256, toBytes, toHex } from "viem";
 import type * as Viem from "viem";
 
 const readContract = vi.fn();
@@ -27,7 +27,11 @@ vi.mock("viem", async () => {
 const { makeAttestCounterpartyAgent } = await import("./agent-attestation.js");
 
 const REGISTRY = "0x" + "aa".repeat(20);
-const AGENT_ID = "0x" + "bb".repeat(32);
+// A realistic ULID, matching ledger_counterparties.agent_id's
+// ^agent_[0-9A-HJKMNP-TV-Z]{26}$ constraint. Never a hex value — the loader
+// must hash it before it reaches calldata (see agent-attestation.ts).
+const AGENT_ID = "agent_01JABCDEFGHJKMNPQRSTVWXYZ0";
+const AGENT_ID_B32 = keccak256(toBytes(AGENT_ID));
 const TENANT_A = "tnt_00000000010000000000000000";
 const TENANT_B = "tnt_00000000020000000000000000";
 
@@ -58,7 +62,7 @@ beforeEach(() => {
 });
 
 describe("agent attestation tenant binding", () => {
-  it("calls isAuthorized with the keccak256 of the tenant id", async () => {
+  it("calls isAuthorized with the keccak256 of the agent id and the tenant id", async () => {
     readContract.mockResolvedValue(true);
     const result = await attest()(ctx, {
       tenantId: TENANT_A,
@@ -70,7 +74,11 @@ describe("agent attestation tenant binding", () => {
     expect(readContract).toHaveBeenCalledWith(
       expect.objectContaining({
         functionName: "isAuthorized",
-        args: [AGENT_ID, keccak256(toHex(TENANT_A))],
+        // AGENT_ID is a ULID (ledger_counterparties.agent_id), never hex: it
+        // must be keccak256-encoded before it reaches calldata, exactly like
+        // the tenant id. A bare `as \`0x${string}\`` cast here spliced raw
+        // ASCII into calldata and made every agent payee hard-reject.
+        args: [AGENT_ID_B32, keccak256(toHex(TENANT_A))],
       }),
     );
   });
