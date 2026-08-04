@@ -194,7 +194,9 @@ describe("validateEvidence — pay_invoice", () => {
     const r = validateEvidence(
       payInvoiceInput({
         actionType: "erp_writeback",
-        evidence: [invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } })],
+        evidence: [
+          invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } }),
+        ],
       }),
     );
     expect(r).toEqual({ passed: true, failures: [] });
@@ -204,7 +206,9 @@ describe("validateEvidence — pay_invoice", () => {
     const r = validateEvidence(
       payInvoiceInput({
         paymentIntent: { counterpartyId: "cp_acme", amount: "5000.00", currency: "USD" },
-        evidence: [invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } })],
+        evidence: [
+          invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } }),
+        ],
       }),
     );
     expect(r).toEqual({ passed: true, failures: [] });
