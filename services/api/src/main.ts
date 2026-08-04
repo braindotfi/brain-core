@@ -1012,15 +1012,22 @@ async function main(): Promise<void> {
       cfg.BRAIN_X402_FACILITATOR_URL !== undefined &&
       cfg.BRAIN_X402_USDC_ADDRESS !== undefined &&
       cfg.BRAIN_SESSION_KEY !== undefined &&
-      cfg.BASE_RPC_URL !== undefined
+      cfg.BASE_RPC_URL !== undefined &&
+      // F1: x402 now routes through BrainSmartAccount.executeViaSessionKey
+      // (the same executor + smart account OnchainBaseRail/EscrowBaseRail
+      // use), so it needs the same on-chain executor and smart-account
+      // configuration those rails require.
+      cfg.BRAIN_ONCHAIN_SMART_ACCOUNT !== undefined &&
+      onchainExecutor !== undefined
     ) {
       const x402Client = buildX402Client({
         facilitatorUrl: cfg.BRAIN_X402_FACILITATOR_URL,
         usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
         network: cfg.BRAIN_X402_NETWORK,
-        privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
-        rpcUrl: cfg.BASE_RPC_URL,
-        chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        executor: onchainExecutor,
+        smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
+        holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
+        getUsdcDecimals: makeBaseGetErc20Decimals(cfg.BASE_RPC_URL, cfg.BRAIN_BASE_CHAIN_ID),
       });
       configured.push(new X402BaseRail({ client: x402Client }));
       liveNames.push("x402_base");
