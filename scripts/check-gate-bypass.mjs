@@ -88,9 +88,12 @@ const EXECUTED_TRANSITION_ALLOWED = [
   "services/execution/src/payment-intents/PaymentIntentService.ts",
 ];
 
+const SKIP_DIR_NAMES = new Set(["node_modules", "dist", ".git"]);
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
+    if (SKIP_DIR_NAMES.has(entry)) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...walk(full));
     else if (full.endsWith(".ts") && !full.endsWith(".test.ts")) out.push(full);
