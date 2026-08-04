@@ -9,8 +9,8 @@ from typing import Any
 
 import httpx
 
-from brain_agents.auth import expected_signature
 from brain_agents.jwt_util import jwt_expiry_epoch, jwt_tenant_id
+from brain_agents.service_auth import compute_service_auth_signature_v2
 
 _log = logging.getLogger(__name__)
 
@@ -51,16 +51,23 @@ class BrainApiClient:
         self._refresh_lock = asyncio.Lock()
 
     def _service_auth_headers(self, tenant_id: str | None, body_bytes: bytes) -> dict[str, str]:
-        """X-Brain-Write-Tenant + X-Brain-Service-Auth, proving to the api side
-        that a caller-supplied tenant_id is trustworthy (see post_parsed's
-        docstring for the full trust model). Empty unless both a
-        service_secret is configured and the caller names a tenant_id.
+        """X-Brain-Write-Tenant + X-Brain-Service-Timestamp + X-Brain-Service-Auth
+        (v2, F4), proving to the api side that a caller-supplied tenant_id is
+        trustworthy (see post_parsed's docstring for the full trust model).
+        Empty unless both a service_secret is configured and the caller names
+        a tenant_id. The timestamp is generated fresh per call -- never
+        cached or reused -- and is itself part of the signed material, so it
+        must be sent as-is alongside the signature.
         """
         if tenant_id is None or self._service_secret == "":
             return {}
+        timestamp = str(int(time.time()))
         return {
             "X-Brain-Write-Tenant": tenant_id,
-            "X-Brain-Service-Auth": expected_signature(self._service_secret, body_bytes),
+            "X-Brain-Service-Timestamp": timestamp,
+            "X-Brain-Service-Auth": compute_service_auth_signature_v2(
+                self._service_secret, timestamp, tenant_id, body_bytes
+            ),
         }
 
     def _refresh_configured(self) -> bool:

@@ -13,10 +13,11 @@
  *   - Constructs an app with in-memory blob + in-memory audit emitter.
  */
 
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { Client, Pool } from "pg";
 import Fastify from "fastify";
 import {
+  computeServiceAuthSignatureV2,
   InMemoryAuditEmitter,
   InMemoryIdempotencyStore,
   MemoryBlobAdapter,
@@ -39,15 +40,29 @@ import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/inde
 export const CROSS_TENANT_SERVICE_SECRET = "test-cross-tenant-service-secret";
 
 /**
- * Sign a raw request body with the same HMAC construction the api uses to
- * verify X-Brain-Service-Auth (see services/raw/src/routes/parsed.ts and
- * services/agents/brain_agents/auth.py's expected_signature). Tests must
- * sign the EXACT bytes they POST as the body.
+ * Sign a raw request body with the v2 HMAC construction the api verifies for
+ * X-Brain-Service-Auth (see services/raw/src/routes/parsed.ts and
+ * shared/src/http/service-auth.ts's computeServiceAuthSignatureV2). Returns
+ * the exact `x-brain-service-auth` / `x-brain-service-timestamp` header pair
+ * -- callers must also send `x-brain-write-tenant: writeTenant` themselves
+ * whenever writeTenant is non-empty (an empty writeTenant is the signed
+ * value for "header omitted"). Tests must sign the EXACT bytes they POST as
+ * the body.
  */
-export function signCrossTenantServiceAuth(rawBody: string): string {
-  return (
-    "sha256=" + createHmac("sha256", CROSS_TENANT_SERVICE_SECRET).update(rawBody).digest("hex")
-  );
+export function signCrossTenantServiceAuth(
+  rawBody: string,
+  writeTenant = "",
+): { "x-brain-service-auth": string; "x-brain-service-timestamp": string } {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  return {
+    "x-brain-service-auth": computeServiceAuthSignatureV2(
+      CROSS_TENANT_SERVICE_SECRET,
+      timestamp,
+      writeTenant,
+      Buffer.from(rawBody, "utf8"),
+    ),
+    "x-brain-service-timestamp": timestamp,
+  };
 }
 
 export interface Harness {

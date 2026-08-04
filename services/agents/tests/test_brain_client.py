@@ -15,8 +15,8 @@ import httpx
 import pytest
 import respx
 
-from brain_agents.auth import expected_signature
 from brain_agents.client import BrainApiClient, TenantBindingUnavailableError
+from brain_agents.service_auth import compute_service_auth_signature_v2
 
 BASE = "http://localhost:3001"
 TOKEN = "test-token"
@@ -126,8 +126,9 @@ async def test_propose_forwards_signed_tenant_header_when_service_secret_configu
 
     assert seen_headers.get("x-brain-write-tenant") == "tnt_x"
     assert seen_headers.get("x-brain-service-auth") != "shared-secret"
-    assert seen_headers.get("x-brain-service-auth") == expected_signature(
-        "shared-secret", seen_body
+    timestamp = seen_headers["x-brain-service-timestamp"]
+    assert seen_headers.get("x-brain-service-auth") == compute_service_auth_signature_v2(
+        "shared-secret", timestamp, "tnt_x", seen_body
     )
 
 
@@ -272,8 +273,9 @@ async def test_post_parsed_forwards_signed_tenant_header_when_service_secret_con
     # The raw secret must never appear on the wire, only a signature bound
     # to the exact body sent.
     assert seen_headers.get("x-brain-service-auth") != "shared-secret"
-    assert seen_headers.get("x-brain-service-auth") == expected_signature(
-        "shared-secret", seen_body
+    timestamp = seen_headers["x-brain-service-timestamp"]
+    assert seen_headers.get("x-brain-service-auth") == compute_service_auth_signature_v2(
+        "shared-secret", timestamp, "tnt_x", seen_body
     )
 
 

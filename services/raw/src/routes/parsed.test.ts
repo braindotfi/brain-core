@@ -1,11 +1,11 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { isBrainError } from "@brain/shared";
 import {
   computeServiceAuthSignatureV2,
-  parseRawParsedWriteBody,
+  isBrainError,
   verifyServiceAuthSignatureV2,
-} from "./parsed.js";
+} from "@brain/shared";
+import { parseRawParsedWriteBody } from "./parsed.js";
 
 // Pure-function coverage for the POST /raw/{id}/parsed body validator.
 // The full write path (live DB, RLS, audit) is exercised in

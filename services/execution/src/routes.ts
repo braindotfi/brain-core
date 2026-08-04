@@ -23,7 +23,8 @@ import {
   isBrainId,
   newProposalId,
   requireScope,
-  verifyServiceAuthSignature,
+  singleHeaderValue,
+  verifyServiceAuthSignatureV2,
   withTenantScope,
   type Scope,
 } from "@brain/shared";
@@ -54,15 +55,17 @@ function proposedAgentId(principal: NonNullable<FastifyRequest["principal"]>, re
 
 /**
  * Resolve which tenant a proposal (and its execution.propose audit event)
- * should land in. Same trust model as Raw's resolveWriteAuthorization
- * (services/raw/src/routes/parsed.ts): defaults to the JWT principal's own
- * tenant, and only honors a caller-supplied X-Brain-Write-Tenant header when
+ * should land in. Same trust model and v2 HMAC scheme as Raw's
+ * resolveWriteAuthorization (services/raw/src/routes/parsed.ts, the same
+ * @brain/shared primitives): defaults to the JWT principal's own tenant, and
+ * only honors a caller-supplied X-Brain-Write-Tenant header when
  * deps.crossTenantServiceSecret is configured AND the request carries a
- * verified X-Brain-Service-Auth HMAC over the raw request body. Any missing
- * configuration or signature mismatch falls back to the principal's tenant
- * (RFC F2 back-compat for every caller except propose itself, which the
- * Python client now refuses to call at all without a working signature --
- * see brain_agents.client.BrainApiClient.propose).
+ * verified v2 X-Brain-Service-Auth HMAC (body + timestamp + write-tenant,
+ * within the bounded replay window) over the raw request body. Any missing
+ * configuration or signature/timestamp/tenant-binding mismatch falls back to
+ * the principal's tenant (RFC F2 back-compat for every caller except propose
+ * itself, which the Python client refuses to call at all without a working
+ * signature -- see brain_agents.client.BrainApiClient.propose).
  */
 function resolveProposeTenant(
   request: FastifyRequest,
@@ -72,17 +75,25 @@ function resolveProposeTenant(
   if (crossTenantServiceSecret === undefined || crossTenantServiceSecret.length === 0) {
     return principalTenantId;
   }
-  const providedAuth = request.headers["x-brain-service-auth"];
-  const providedAuthValue = Array.isArray(providedAuth) ? providedAuth[0] : providedAuth;
+  const signatureHeader = singleHeaderValue(request.headers["x-brain-service-auth"]);
+  const timestampHeader = singleHeaderValue(request.headers["x-brain-service-timestamp"]);
+  const targetTenantHeader = singleHeaderValue(request.headers["x-brain-write-tenant"]);
+  // The empty string is itself the signed value for "no redirect requested"
+  // -- see resolveWriteAuthorization in parsed.ts for the same reasoning.
+  const signedWriteTenant = targetTenantHeader ?? "";
   const rawBody = extractRawBody(request.body);
-  if (!verifyServiceAuthSignature(rawBody, providedAuthValue, crossTenantServiceSecret)) {
+  if (
+    !verifyServiceAuthSignatureV2(
+      rawBody,
+      signatureHeader,
+      timestampHeader,
+      signedWriteTenant,
+      crossTenantServiceSecret,
+    )
+  ) {
     return principalTenantId;
   }
-  const targetTenant = request.headers["x-brain-write-tenant"];
-  const targetTenantValue = Array.isArray(targetTenant) ? targetTenant[0] : targetTenant;
-  return typeof targetTenantValue === "string" && targetTenantValue.length > 0
-    ? targetTenantValue
-    : principalTenantId;
+  return signedWriteTenant.length > 0 ? signedWriteTenant : principalTenantId;
 }
 
 export async function registerExecutionRoutes(

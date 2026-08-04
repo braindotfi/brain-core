@@ -374,7 +374,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        "x-brain-service-auth": signCrossTenantServiceAuth(firstPayload),
+        ...signCrossTenantServiceAuth(firstPayload),
       },
       payload: firstPayload,
     });
@@ -402,7 +402,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        "x-brain-service-auth": signCrossTenantServiceAuth(secondPayload),
+        ...signCrossTenantServiceAuth(secondPayload),
       },
       payload: secondPayload,
     });
@@ -485,7 +485,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
         authorization: `Bearer ${tenantAAgentToken}`,
         "content-type": "application/json",
         "x-brain-write-tenant": tenantB,
-        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+        ...signCrossTenantServiceAuth(payload, tenantB),
       },
       payload,
     });
@@ -529,7 +529,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
         "x-brain-write-tenant": "not-a-tenant-id",
-        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+        ...signCrossTenantServiceAuth(payload, "not-a-tenant-id"),
       },
       payload,
     });
@@ -553,7 +553,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        "x-brain-service-auth": signCrossTenantServiceAuth(payload),
+        ...signCrossTenantServiceAuth(payload),
       },
       payload,
     });

@@ -10,7 +10,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import {
-  computeServiceAuthSignature,
+  computeServiceAuthSignatureV2,
   errorHandlerPlugin,
   newAgentId,
   newProposalId,
@@ -129,7 +129,13 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
     await registerExecutionRoutes(app, executionDeps(captured, SECRET));
 
     const body = JSON.stringify({ action: { kind: "reconciliation" }, agent_id: AGENT });
-    const signature = computeServiceAuthSignature(SECRET, Buffer.from(body, "utf8"));
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = computeServiceAuthSignatureV2(
+      SECRET,
+      timestamp,
+      WRITE_TENANT,
+      Buffer.from(body, "utf8"),
+    );
 
     const res = await app.inject({
       method: "POST",
@@ -137,6 +143,7 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
       headers: {
         "content-type": "application/json",
         "x-brain-write-tenant": WRITE_TENANT,
+        "x-brain-service-timestamp": timestamp,
         "x-brain-service-auth": signature,
       },
       payload: body,
@@ -155,6 +162,7 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
     await registerExecutionRoutes(app, executionDeps(captured, SECRET));
 
     const body = JSON.stringify({ action: { kind: "reconciliation" }, agent_id: AGENT });
+    const timestamp = String(Math.floor(Date.now() / 1000));
 
     const res = await app.inject({
       method: "POST",
@@ -162,7 +170,8 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
       headers: {
         "content-type": "application/json",
         "x-brain-write-tenant": WRITE_TENANT,
-        "x-brain-service-auth": "sha256=" + "0".repeat(64),
+        "x-brain-service-timestamp": timestamp,
+        "x-brain-service-auth": "sha256v2=" + "0".repeat(64),
       },
       payload: body,
     });
@@ -178,7 +187,13 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
     await registerExecutionRoutes(app, executionDeps(captured)); // no secret configured
 
     const body = JSON.stringify({ action: { kind: "reconciliation" }, agent_id: AGENT });
-    const signature = computeServiceAuthSignature("some-other-secret", Buffer.from(body, "utf8"));
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = computeServiceAuthSignatureV2(
+      "some-other-secret",
+      timestamp,
+      WRITE_TENANT,
+      Buffer.from(body, "utf8"),
+    );
 
     const res = await app.inject({
       method: "POST",
@@ -186,6 +201,7 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
       headers: {
         "content-type": "application/json",
         "x-brain-write-tenant": WRITE_TENANT,
+        "x-brain-service-timestamp": timestamp,
         "x-brain-service-auth": signature,
       },
       payload: body,
@@ -202,7 +218,13 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
     await registerExecutionRoutes(app, executionDeps(captured, SECRET));
 
     const body = JSON.stringify({ action: { kind: "reconciliation" } });
-    const signature = computeServiceAuthSignature(SECRET, Buffer.from(body, "utf8"));
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = computeServiceAuthSignatureV2(
+      SECRET,
+      timestamp,
+      WRITE_TENANT,
+      Buffer.from(body, "utf8"),
+    );
 
     const res = await app.inject({
       method: "POST",
@@ -210,6 +232,7 @@ describe("POST /execution/propose cross-tenant binding (RFC F2)", () => {
       headers: {
         "content-type": "application/json",
         "x-brain-write-tenant": WRITE_TENANT,
+        "x-brain-service-timestamp": timestamp,
         "x-brain-service-auth": signature,
       },
       payload: body,

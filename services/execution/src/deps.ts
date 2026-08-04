@@ -30,14 +30,14 @@ export interface ExecutionDeps {
   /**
    * Shared secret proving a POST /execution/propose caller is a trusted
    * first-party service (the Python reasoning agents), not just any
-   * execution:propose principal. Same trust model and HMAC scheme as Raw's
-   * crossTenantServiceSecret (services/raw/src/routes/parsed.ts,
+   * execution:propose principal. Same trust model and v2 HMAC scheme as
+   * Raw's crossTenantServiceSecret (services/raw/src/routes/parsed.ts,
    * shared/src/http/service-auth.ts): when set AND the request carries a
-   * valid X-Brain-Service-Auth HMAC over the raw request body AND a
-   * non-empty X-Brain-Write-Tenant header, the proposal (and its
-   * execution.propose audit event) is written into that header tenant
-   * instead of the JWT principal's tenant. Lets a static golden-tenant
-   * agent JWT propose into the caller's real tenant without widening the
+   * valid v2 X-Brain-Service-Auth HMAC (body + timestamp + write-tenant,
+   * within the bounded replay window) AND a non-empty X-Brain-Write-Tenant
+   * header, the proposal (and its execution.propose audit event) is written
+   * into that header tenant instead of the JWT principal's tenant. Lets a
+   * static golden-tenant agent JWT propose into the caller's real tenant without widening the
    * JWT's own authority (RFC F2). Absent secret or a mismatched/missing
    * signature leaves behavior unchanged (write to the JWT tenant).
    */
