@@ -28,14 +28,17 @@ interface IBrainReputationRegistry {
     /// @param  scoreRoot  Merkle root committing to the off-chain reputation dataset.
     /// @param  epoch      Strictly-increasing version for this agent (anti-replay / ordering).
     /// @param  updatedAt  Block timestamp of this publication (unix seconds).
-    event ReputationPublished(
-        bytes32 indexed agentId, bytes32 scoreRoot, uint64 epoch, uint64 updatedAt
-    );
+    event ReputationPublished(bytes32 indexed agentId, bytes32 scoreRoot, uint64 epoch, uint64 updatedAt);
 
     /// @notice The attestor (reputation oracle) was rotated.
     event AttestorChanged(address indexed oldAttestor, address indexed newAttestor);
 
+    /// @notice A two-step attestor rotation was proposed. It completes only when
+    ///         `pendingAttestor` calls {acceptAttestor}.
+    event AttestorTransferStarted(address indexed currentAttestor, address indexed pendingAttestor);
+
     error NotAttestor();
+    error NotPendingAttestor();
     error ZeroAddress();
     error ZeroRoot();
     /// @dev `epoch` must strictly exceed the agent's current epoch.
@@ -48,17 +51,24 @@ interface IBrainReputationRegistry {
     ///         higher epoch is the normal update path.
     function publishReputation(bytes32 agentId, bytes32 scoreRoot, uint64 epoch) external;
 
-    /// @notice Rotate the attestor (reputation oracle). Only the current attestor.
+    /// @notice Propose a new attestor (reputation oracle). Only the current
+    ///         attestor. Two-step: the rotation does NOT take effect until
+    ///         `next` calls {acceptAttestor}, matching the publisher, owner and
+    ///         arbiter rotations elsewhere in the contract set. A one-step set to
+    ///         a mistyped or uncontrolled address would permanently strand the
+    ///         only privileged role on this contract.
+    /// @param  next The proposed next attestor, or address(0) to cancel.
     function setAttestor(address next) external;
+
+    /// @notice Complete a two-step attestor rotation. Callable only by the
+    ///         address named in a prior {setAttestor}.
+    function acceptAttestor() external;
 
     /// @notice Read an agent's current reputation pointer.
     /// @return scoreRoot  The latest Merkle root (zero if never published).
     /// @return epoch      The latest epoch (zero if never published).
     /// @return updatedAt  Timestamp of the latest publication (zero if never published).
-    function reputationOf(bytes32 agentId)
-        external
-        view
-        returns (bytes32 scoreRoot, uint64 epoch, uint64 updatedAt);
+    function reputationOf(bytes32 agentId) external view returns (bytes32 scoreRoot, uint64 epoch, uint64 updatedAt);
 
     /// @notice Whether any reputation pointer has ever been published for `agentId`.
     function hasReputation(bytes32 agentId) external view returns (bool);

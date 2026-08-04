@@ -15,14 +15,22 @@ import {BrainSmartAccount} from "../src/BrainSmartAccount.sol";
 ///     --private-key $DEPLOYER_PRIVATE_KEY \
 ///     --broadcast
 ///
-/// NATIVE mode (capToken == address(0)):
+/// NATIVE cap mode:
 ///   - caps apply to msg.value in wei (not an ERC-20 token)
-///   - allowedTargets = [allowedRecipient]  (the ETH destination address)
-///   - allowedSelectors = []               (no calldata selector; value-only call)
+///   - allowedTargets  = [allowedRecipient]  (the ETH destination address)
+///   - allowedSelectors= []                  (MUST be empty: NATIVE mode rejects
+///                                            any call carrying calldata, which
+///                                            is what makes the wei-denominated
+///                                            cap sound)
+///   - allowedRecipients = []                (ERC20-mode only)
 ///   - maxPerTx         = 0.001 ether
 ///   - maxPerPeriod     = 0.01 ether / day
-///   - policyVersion    = bytes32(1)       (matches BRAIN_ONCHAIN_POLICY_VERSION=
-///                                          0x000...0001 in .env)
+///   - validAfter       = now                (windows anchor here, not at the
+///                                            unix epoch)
+///   - policyVersion    = bytes32(1)         (must already be registered for
+///                                            this tenant in BrainPolicyRegistry;
+///                                            matches BRAIN_ONCHAIN_POLICY_VERSION
+///                                            = 0x000...0001 in .env)
 ///
 /// The allowed_recipient must match the ETH alias stored on the counterparty
 /// in the Ledger (seeded via BRAIN_DEMO_ONCHAIN_RECIPIENT).
@@ -35,18 +43,24 @@ contract GrantSessionKeyNative is Script {
         address[] memory targets = new address[](1);
         targets[0] = allowedRecipient;
 
-        // Native ETH value transfer: data is empty (length < 4), so the contract
-        // extracts selector as bytes4(0). Allow exactly that sentinel value.
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = bytes4(0);
+        // NATIVE mode forbids calldata outright, so the selector allowlist must
+        // be empty. It previously carried the bytes4(0) sentinel, which is no
+        // longer meaningful: the contract checks data.length == 0 directly.
+        bytes4[] memory selectors = new bytes4[](0);
+        address[] memory recipients = new address[](0);
 
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
-            validAfter: 0,
+            validAfter: block.timestamp,
             validUntil: block.timestamp + 30 days,
             allowedTargets: targets,
             allowedSelectors: selectors,
+            capMode: BrainSmartAccount.CapMode.NATIVE,
             capToken: address(0), // NATIVE mode — caps denominated in wei
+            allowedRecipients: recipients,
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 0.001 ether,
             maxPerPeriod: 0.01 ether,
             periodSeconds: 86_400,

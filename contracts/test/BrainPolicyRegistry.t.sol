@@ -25,20 +25,55 @@ contract BrainPolicyRegistryTest is Test {
         _addSigner(signerPk1, signer1, signer2);
     }
 
+    function _thresholdDigest(uint256 threshold, uint256 nonce) internal view returns (bytes32) {
+        bytes32 typeHash = keccak256("TenantThresholdChange(bytes32 tenantId,uint256 threshold,uint256 nonce)");
+        bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, threshold, nonce));
+        return keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash));
+    }
+
+    /// @dev Sort (pk, address) pairs ascending by address, as the registry's
+    ///      strict-ordering uniqueness rule requires, then sign `digest`.
+    function _quorum(uint256[] memory pks, address[] memory addrs, bytes32 digest)
+        internal
+        pure
+        returns (address[] memory signers, bytes[] memory signatures)
+    {
+        for (uint256 i = 1; i < addrs.length; ++i) {
+            for (uint256 j = i; j > 0 && addrs[j] < addrs[j - 1]; --j) {
+                (addrs[j], addrs[j - 1]) = (addrs[j - 1], addrs[j]);
+                (pks[j], pks[j - 1]) = (pks[j - 1], pks[j]);
+            }
+        }
+        signatures = new bytes[](addrs.length);
+        for (uint256 i = 0; i < addrs.length; ++i) {
+            signatures[i] = _sign(pks[i], digest);
+        }
+        signers = addrs;
+    }
+
+    /// @dev Seat signer3 and move the tenant to a genuine 3-of-3 posture.
+    function _make3of3() internal returns (address signer3, uint256 signerPk3) {
+        signerPk3 = 0xC0FFEE;
+        signer3 = vm.addr(signerPk3);
+        _addSigner(signerPk1, signer1, signer3);
+        // Threshold is still the default 1 here, so one signature may raise it.
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        registry.setTenantThreshold(TENANT, 3, signer1, _sign(signerPk1, _thresholdDigest(3, n)));
+        assertEq(registry.thresholdOf(TENANT), 3);
+    }
+
     // --- Helpers ---------------------------------------------------------
 
     function _signerChangeDigest(address s, bool allowed, uint256 nonce) internal view returns (bytes32) {
-        bytes32 typeHash =
-            keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
+        bytes32 typeHash = keccak256("TenantSignerChange(bytes32 tenantId,address signer,bool allowed,uint256 nonce)");
         bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, s, allowed, nonce));
-        return keccak256(abi.encodePacked(hex"19_01", registry.domainSeparator(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash));
     }
 
     function _digest(bytes32 policyHash, uint256 version) internal view returns (bytes32) {
-        bytes32 typeHash =
-            keccak256("PolicyRegistration(bytes32 tenantId,uint256 version,bytes32 policyHash)");
+        bytes32 typeHash = keccak256("PolicyRegistration(bytes32 tenantId,uint256 version,bytes32 policyHash)");
         bytes32 structHash = keccak256(abi.encode(typeHash, TENANT, version, policyHash));
-        return keccak256(abi.encodePacked(hex"19_01", registry.domainSeparator(), structHash));
+        return keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash));
     }
 
     function _sign(uint256 pk, bytes32 digest) internal pure returns (bytes memory) {
@@ -107,7 +142,7 @@ contract BrainPolicyRegistryTest is Test {
 
         registry.registerPolicy(TENANT, 1, hash, signers, sigs);
 
-        (bytes32 storedHash, address[] memory storedSigners, uint256 activatedAt) = registry.getPolicy(TENANT, 1);
+        (bytes32 storedHash, address[] memory storedSigners, uint256 activatedAt,) = registry.getPolicy(TENANT, 1);
         assertEq(storedHash, hash);
         assertEq(storedSigners.length, 1);
         assertEq(storedSigners[0], signer1);
@@ -235,9 +270,138 @@ contract BrainPolicyRegistryTest is Test {
         sigs[1] = _sign(pk1, _digest(hash, 1));
         registry.registerPolicy(TENANT, 1, hash, signers, sigs);
 
-        (, address[] memory stored,) = registry.getPolicy(TENANT, 1);
+        (, address[] memory stored,,) = registry.getPolicy(TENANT, 1);
         assertEq(stored.length, 2);
         assertEq(stored[0], s0);
         assertEq(stored[1], s1);
+    }
+
+    // --- M-of-N quorum on signer-set and threshold changes ----------------
+
+    function test_thresholdOf_unsetReadsAsOne() public view {
+        assertEq(registry.thresholdOf(keccak256("never_configured")), 1);
+    }
+
+    /// @notice The whole attack in one test: one compromised key of a 3-of-3
+    ///         tenant must not be able to lower the threshold, seat a signer, or
+    ///         register a policy.
+    function test_quorum_singleCompromisedKeyCannotForgePolicy() public {
+        _make3of3();
+
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        address rogue = vm.addr(0xDEAD2);
+        bytes32 hash = keccak256("forged-policy");
+        bytes memory lowerSig = _sign(signerPk1, _thresholdDigest(1, n));
+        bytes memory seatSig = _sign(signerPk1, _signerChangeDigest(rogue, true, n));
+        address[] memory signers = new address[](1);
+        signers[0] = signer1;
+        bytes[] memory sigs = new bytes[](1);
+        sigs[0] = _sign(signerPk1, _digest(hash, 1));
+
+        // 1. Cannot drop the threshold to 1 alone.
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.BelowThreshold.selector, TENANT, 1, 3));
+        registry.setTenantThreshold(TENANT, 1, signer1, lowerSig);
+
+        // 2. Cannot seat attacker-controlled co-signers alone.
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.BelowThreshold.selector, TENANT, 1, 3));
+        registry.setTenantSigner(TENANT, rogue, true, signer1, seatSig);
+
+        // 3. Cannot register a policy alone.
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.BelowThreshold.selector, TENANT, 1, 3));
+        registry.registerPolicy(TENANT, 1, hash, signers, sigs);
+
+        // And the forged hash never became bindable by a session key.
+        assertFalse(registry.isRegisteredHash(TENANT, hash));
+    }
+
+    function test_setTenantThreshold_lowersWithFullQuorum() public {
+        (address signer3, uint256 signerPk3) = _make3of3();
+
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        uint256[] memory pks = new uint256[](3);
+        address[] memory addrs = new address[](3);
+        (pks[0], addrs[0]) = (signerPk1, signer1);
+        (pks[1], addrs[1]) = (signerPk2, signer2);
+        (pks[2], addrs[2]) = (signerPk3, signer3);
+        (address[] memory qs, bytes[] memory qsig) = _quorum(pks, addrs, _thresholdDigest(1, n));
+
+        registry.setTenantThreshold(TENANT, 1, qs, qsig);
+        assertEq(registry.thresholdOf(TENANT), 1);
+    }
+
+    function test_setTenantSigner_addsWithFullQuorum() public {
+        (address signer3, uint256 signerPk3) = _make3of3();
+        address extra = vm.addr(0x4444);
+
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        uint256[] memory pks = new uint256[](3);
+        address[] memory addrs = new address[](3);
+        (pks[0], addrs[0]) = (signerPk1, signer1);
+        (pks[1], addrs[1]) = (signerPk2, signer2);
+        (pks[2], addrs[2]) = (signerPk3, signer3);
+        (address[] memory qs, bytes[] memory qsig) = _quorum(pks, addrs, _signerChangeDigest(extra, true, n));
+
+        registry.setTenantSigner(TENANT, extra, true, qs, qsig);
+        assertTrue(registry.isTenantSigner(TENANT, extra));
+        assertEq(registry.tenantSignerCount(TENANT), 4);
+    }
+
+    /// @notice A quorum-authorized removal still cannot strand the tenant below
+    ///         its own threshold.
+    function test_setTenantSigner_quorumCannotStrandBelowThreshold() public {
+        (address signer3, uint256 signerPk3) = _make3of3();
+
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        uint256[] memory pks = new uint256[](3);
+        address[] memory addrs = new address[](3);
+        (pks[0], addrs[0]) = (signerPk1, signer1);
+        (pks[1], addrs[1]) = (signerPk2, signer2);
+        (pks[2], addrs[2]) = (signerPk3, signer3);
+        (address[] memory qs, bytes[] memory qsig) = _quorum(pks, addrs, _signerChangeDigest(signer3, false, n));
+
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.ThresholdWouldExceedSigners.selector, 2, 3));
+        registry.setTenantSigner(TENANT, signer3, false, qs, qsig);
+    }
+
+    function test_setTenantThreshold_rejectsZeroAndAboveSignerCount() public {
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        bytes memory zeroSig = _sign(signerPk1, _thresholdDigest(0, n));
+        bytes memory tooHighSig = _sign(signerPk1, _thresholdDigest(3, n));
+
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.InvalidThreshold.selector, 0, 2));
+        registry.setTenantThreshold(TENANT, 0, signer1, zeroSig);
+
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.InvalidThreshold.selector, 3, 2));
+        registry.setTenantThreshold(TENANT, 3, signer1, tooHighSig);
+    }
+
+    function test_setTenantThreshold_rejectsNonSigner() public {
+        address rogue = vm.addr(0xDEAD3);
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        bytes memory sig = _sign(0xDEAD3, _thresholdDigest(2, n));
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.NotTenantSigner.selector, rogue));
+        registry.setTenantThreshold(TENANT, 2, rogue, sig);
+    }
+
+    function test_setTenantThreshold_rejectsInvalidSignature() public {
+        uint256 n = registry.tenantSignerNonce(TENANT);
+        bytes memory wrongSig = _sign(signerPk2, _thresholdDigest(2, n));
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.InvalidSignature.selector, signer1));
+        registry.setTenantThreshold(TENANT, 2, signer1, wrongSig);
+    }
+
+    /// @notice The bootstrap exception is the only single-key authorization path
+    ///         and it cannot reach registerPolicy: `initialAdmin` is not a signer.
+    function test_bootstrapAdminCannotRegisterPolicy() public {
+        bytes32 fresh = keccak256("tnt_no_signers");
+        bytes32 hash = keccak256("admin-policy");
+        address[] memory signers = new address[](1);
+        signers[0] = admin;
+        bytes[] memory sigs = new bytes[](1);
+        bytes32 typeHash = keccak256("PolicyRegistration(bytes32 tenantId,uint256 version,bytes32 policyHash)");
+        bytes32 structHash = keccak256(abi.encode(typeHash, fresh, uint256(1), hash));
+        sigs[0] = _sign(adminPk, keccak256(abi.encodePacked(hex"1901", registry.domainSeparator(), structHash)));
+        vm.expectRevert(abi.encodeWithSelector(BrainPolicyRegistry.NotTenantSigner.selector, admin));
+        registry.registerPolicy(fresh, 1, hash, signers, sigs);
     }
 }

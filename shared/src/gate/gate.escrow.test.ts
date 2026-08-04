@@ -74,6 +74,7 @@ function lockedEscrow(overrides: Partial<ResolvedEscrowState> = {}): ResolvedEsc
     payer: "0x" + "cd".repeat(20),
     payee: PAYEE,
     token: "0x" + "ef".repeat(20),
+    assetMatchesSettlement: true,
     amount: "10.00",
     released: "0",
     refunded: "0",
@@ -197,6 +198,47 @@ describe("§6 — check 6.6: escrow-state binding (RFC 0001 §7.6)", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.checks.some((c) => c.name === "escrow_state_bound")).toBe(false);
+    }
+  });
+
+  // --- C2: asset binding -------------------------------------------------
+
+  it("HARD-fails when the escrow token is not the settlement asset", async () => {
+    const { deps } = makeDeps({
+      resolveEscrowState: async () => lockedEscrow({ assetMatchesSettlement: false }),
+    });
+    const result = await run(deps, escrowIntent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(6.6);
+      expect(JSON.stringify(result.failedCheck.detail)).toContain("settlement asset");
+    }
+  });
+
+  /**
+   * The escrow accepts any ERC-20 and the resolver scales every amount with the
+   * settlement asset's decimals. An 18-decimal token read as 6-decimal reports
+   * `remaining` inflated by 10^12, which used to satisfy an arbitrarily large
+   * release. The amount comparison must never be reached for a wrong asset.
+   */
+  it("does not let a wrong-asset escrow satisfy the amount check via inflated remaining", async () => {
+    const { deps } = makeDeps({
+      resolveEscrowState: async () =>
+        lockedEscrow({
+          assetMatchesSettlement: false,
+          // 1e18 base units of an 18dp token, mis-scaled as 6dp.
+          amount: "1000000000000",
+          remaining: "1000000000000",
+        }),
+    });
+    const result = await run(deps, escrowIntent({ amount: "999999999.00" }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(6.6);
+      const detail = JSON.stringify(result.failedCheck.detail);
+      expect(detail).toContain("settlement asset");
+      // The magnitude check must not be what saved us here.
+      expect(detail).not.toContain("exceeds escrow remaining");
     }
   });
 });

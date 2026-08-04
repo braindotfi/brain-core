@@ -26,6 +26,13 @@ export interface RailsProdFenceInput {
 export interface EscrowRailLoaderFenceInput {
   escrowRailLive: boolean;
   hasResolveEscrowState: boolean;
+  /**
+   * Which of resolveEscrowState's OWN required env vars are actually unset,
+   * from the caller that has `cfg` in scope. Without this the thrown message
+   * could only say "resolveEscrowState is not wired," never which variable an
+   * operator following the rails matrix needs to add.
+   */
+  missingEnv: readonly string[];
 }
 
 /**
@@ -54,9 +61,13 @@ export function assertAtLeastOneLiveRailInProduction(input: RailsProdFenceInput)
 export function assertEscrowRailHasStateLoader(input: EscrowRailLoaderFenceInput): void {
   if (!input.escrowRailLive) return;
   if (input.hasResolveEscrowState) return;
+  const missing =
+    input.missingEnv.length > 0
+      ? ` Missing: ${input.missingEnv.join(", ")}.`
+      : " (all of resolveEscrowState's required env appears set -- check for a construction-time error, not a missing var.)";
   throw new Error(
     "escrow_base rail is registered but resolveEscrowState is not wired. " +
       "The §6 gate must bind escrow_release intents to on-chain escrow state " +
-      "before any escrow rail can dispatch.",
+      `before any escrow rail can dispatch.${missing}`,
   );
 }

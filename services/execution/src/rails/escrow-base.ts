@@ -18,10 +18,31 @@ import type { Rail, RailDispatchInput, RailDispatchResult } from "./types.js";
 import type { OnchainExecutor } from "./onchain-base.js";
 
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
-const DECIMAL = /^\d+(\.\d+)?$/;
+/**
+ * `amount_units` is a base-unit integer. It is deliberately NOT `\d+(\.\d+)?`:
+ * that admitted "1.5", which `BigInt()` then threw a bare SyntaxError on,
+ * escaping as an uncaught TypeError instead of a `validation_failed`.
+ */
+const BASE_UNITS = /^\d+$/;
 
-/** ABI-encoded calldata for BrainEscrow.release(bytes32, uint256). */
-const RELEASE_SELECTOR = "0x84f97fba"; // keccak256("release(bytes32,uint256)")[:4]
+/**
+ * Selector for `BrainEscrow.release(bytes32,uint256)`.
+ *
+ * Pinned by escrow-base.selector.test.ts, which recomputes it from the
+ * signature. It was previously hand-written as 0x84f97fba, which is not a
+ * selector BrainEscrow dispatches at all: since the contract has no fallback,
+ * every release reverted. `scripts/check-contract-abi-drift.mjs` could not see
+ * it because the guard only inspected `parseAbi([...])` blocks; it now also
+ * registers and checks hand-rolled selectors.
+ *
+ * This module stays SDK-free on purpose (no viem import) so the rail is unit
+ * testable without viem/KMS/anvil, which is why the constant is not derived at
+ * runtime. The test is what keeps it honest.
+ */
+const RELEASE_SELECTOR = "0x66afd8ef";
+
+/** uint256 ceiling, so a malformed amount cannot overflow the 32-byte word. */
+const UINT256_MAX = (1n << 256n) - 1n;
 
 interface EscrowReleaseAction {
   escrow_id: string;
@@ -34,8 +55,14 @@ function parseEscrowAction(action: Record<string, unknown>): EscrowReleaseAction
   if (typeof escrowId !== "string" || !BYTES32.test(escrowId)) {
     throw brainError("validation_failed", "escrow_release action requires a 0x 32-byte escrow_id");
   }
-  if (typeof amountUnits !== "string" || !DECIMAL.test(amountUnits)) {
-    throw brainError("validation_failed", "escrow_release action requires a decimal amount_units");
+  if (typeof amountUnits !== "string" || !BASE_UNITS.test(amountUnits)) {
+    throw brainError(
+      "validation_failed",
+      "escrow_release action requires an integer amount_units in base units",
+    );
+  }
+  if (BigInt(amountUnits) > UINT256_MAX) {
+    throw brainError("validation_failed", "escrow_release amount_units exceeds uint256");
   }
   return { escrow_id: escrowId, amount_units: amountUnits };
 }
@@ -43,10 +70,10 @@ function parseEscrowAction(action: Record<string, unknown>): EscrowReleaseAction
 /** ABI-encode BrainEscrow.release(bytes32 escrowId, uint256 amount). */
 function encodeRelease(escrowId: string, amountUnits: string): string {
   // bytes32 escrowId — already 32 bytes (0x-prefixed), no padding needed.
-  // uint256 amount   — left-pad BigInt to 32 bytes.
+  // uint256 amount   — left-pad BigInt to 32 bytes. parseEscrowAction has
+  //                    already proved this parses and fits.
   const escrowHex = escrowId.slice(2); // strip 0x
-  const amountBig = BigInt(amountUnits);
-  const amountHex = amountBig.toString(16).padStart(64, "0");
+  const amountHex = BigInt(amountUnits).toString(16).padStart(64, "0");
   return `${RELEASE_SELECTOR}${escrowHex}${amountHex}`;
 }
 
@@ -61,7 +88,22 @@ export interface EscrowBaseRailDeps {
   escrowAddress: string;
   /** 0x 20-byte holder (session-key) address — used for nonce-reading. */
   holderAddress: string;
-  /** 0x 20-byte BrainSmartAccount address — the tx is sent via the session key, NOT through BrainSmartAccount.executeViaSessionKey. The escrow is called directly by the session-key EOA (the same EOA is the arbiter). */
+  /**
+   * 0x 20-byte BrainSmartAccount address.
+   *
+   * The release IS routed through `BrainSmartAccount.executeViaSessionKey`, so
+   * `msg.sender` at BrainEscrow is the SMART ACCOUNT, not the session-key EOA.
+   * The smart account must therefore be the escrow's `payer` or its `arbiter`,
+   * or `release` reverts with NotAuthorized. (This comment previously claimed
+   * the opposite of what the code does, which is a live misconfiguration trap
+   * at deploy time.)
+   *
+   * The session key must be granted in CALL mode with
+   * `capAmountOffset = 36` — the offset of the uint256 `amount` word in
+   * `release(bytes32,uint256)` calldata — so the release is metered by the
+   * key's caps. In NATIVE mode it would be metered against msg.value, which is
+   * always zero here.
+   */
   smartAccount: string;
 }
 

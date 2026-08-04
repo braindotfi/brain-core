@@ -39,18 +39,21 @@ interface IBrainEscrow {
     /// @param  releasedBy    The actor that authorized this release (payer or arbiter).
     /// @param  amount        Amount transferred to the payee in this call.
     /// @param  fullySettled  True iff this release brought `released + refunded` to `amount`.
-    event EscrowReleased(
-        bytes32 indexed escrowId, address indexed releasedBy, uint256 amount, bool fullySettled
-    );
+    event EscrowReleased(bytes32 indexed escrowId, address indexed releasedBy, uint256 amount, bool fullySettled);
 
     /// @notice A (partial) refund to the payer.
     /// @param  escrowId      The escrow.
     /// @param  refundedBy    The actor that authorized this refund (payer-after-deadline or arbiter).
     /// @param  amount        Amount returned to the payer in this call.
     /// @param  fullySettled  True iff this refund brought `released + refunded` to `amount`.
-    event EscrowRefunded(
-        bytes32 indexed escrowId, address indexed refundedBy, uint256 amount, bool fullySettled
-    );
+    event EscrowRefunded(bytes32 indexed escrowId, address indexed refundedBy, uint256 amount, bool fullySettled);
+
+    /// @notice The dispute arbiter was rotated.
+    event ArbiterChanged(address indexed oldArbiter, address indexed newArbiter);
+
+    /// @notice A two-step arbiter rotation was proposed. It completes only when
+    ///         `pendingArbiter` calls {acceptArbiter}.
+    event ArbiterTransferStarted(address indexed currentArbiter, address indexed pendingArbiter);
 
     error EscrowExists(bytes32 escrowId);
     error EscrowNotLocked(bytes32 escrowId);
@@ -58,21 +61,26 @@ interface IBrainEscrow {
     error ZeroAmount();
     error AmountExceedsRemaining(bytes32 escrowId, uint256 requested, uint256 remaining);
     error NotAuthorized();
+    error NotPendingArbiter();
     error DeadlineNotReached(uint64 deadline);
+    error DeadlineInPast(uint64 deadline);
     error Reentrancy();
     error TransferFailed();
+
+    /// @notice Propose a new dispute arbiter. Only the current arbiter. Two-step:
+    ///         the rotation takes effect only when `next` calls {acceptArbiter}.
+    /// @param  next The proposed next arbiter, or address(0) to cancel.
+    function setArbiter(address next) external;
+
+    /// @notice Complete a two-step arbiter rotation. Callable only by the
+    ///         address named in a prior {setArbiter}.
+    function acceptArbiter() external;
 
     /// @notice Lock `amount` of `token` from `msg.sender` (the payer) for `payee`.
     /// @dev    Requires a prior ERC-20 approval of this contract for `amount`.
     ///         Reverts if `escrowId` is already used (no re-lock / overwrite).
-    function lock(
-        bytes32 escrowId,
-        address payee,
-        address token,
-        uint256 amount,
-        bytes32 jobTermsHash,
-        uint64 deadline
-    ) external;
+    function lock(bytes32 escrowId, address payee, address token, uint256 amount, bytes32 jobTermsHash, uint64 deadline)
+        external;
 
     /// @notice Release `amount` (≤ remaining) of a Locked escrow to its payee.
     ///         Callable multiple times (milestones). Authorized: the payer

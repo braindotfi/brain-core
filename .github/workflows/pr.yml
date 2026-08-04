@@ -338,11 +338,22 @@ jobs:
         run: forge install foundry-rs/forge-std
 
       - name: forge fmt check
+        # Hard gate. The continue-on-error placeholder here predated stage-5
+        # (its comment still claimed there were no contracts), so formatting was
+        # never actually enforced on six live contracts.
         run: forge fmt --check
-        continue-on-error: true # no contracts yet — placeholder until stage-5
 
       - name: forge build
         run: forge build --sizes
+
+      - name: check contract ABI drift (TS parseAbi/selectors vs forge artifacts)
+        # This guard's sole other caller is `pnpm run lint` (typescript job),
+        # which has no Foundry toolchain and so never has contracts/out/ --
+        # it always printed "skip" there and exited 0. This is the one job
+        # with a real `forge build` output, so this is where it must run for
+        # real. Runs from the repo root (the job default is contracts/).
+        working-directory: ${{ github.workspace }}
+        run: node scripts/check-contract-abi-drift.mjs --quiet
 
       - name: verify audited-build evidence
         # Binds contracts/audit-status.json to the real build (P1). While the

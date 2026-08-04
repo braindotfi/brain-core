@@ -19,11 +19,13 @@
  *
  * Encodings (pinned — must be identical to the on-chain consumers):
  *   - agentId  → keccak256(toBytes(AGENT_ID))   (matches viemScopeChecker.ts:50)
- *   - tenantId → keccak256(toBytes(TENANT_ID))  (no on-chain reader compares the
- *                tenantId field — auth.ts checks only scopeHash, and
- *                agent-attestation.ts checks only registeredAt/revokedAt — so the
- *                only requirement is that BOTH phases here use the same bytes32;
- *                keccak avoids the 32-byte overflow a right-padded UTF-8 ULID hits)
+ *   - tenantId → keccak256(toBytes(TENANT_ID))  (the encoding is now load-bearing:
+ *                agent-attestation.ts calls isAuthorized(agentId, tenantId) and
+ *                derives the same keccak256, so a mismatch here makes gate check
+ *                5.5 reject the agent. It previously read only
+ *                registeredAt/revokedAt and discarded the tenant, which made the
+ *                check cross-tenant. keccak also avoids the 32-byte overflow a
+ *                right-padded UTF-8 ULID hits)
  *   - scopeHash → computeAgentScopeHash(PAYMENT_AGENT_SCOPES) (shared helper; the
  *                SAME value the demo seed writes into agents.scope_hash)
  *   - behaviorHash → 0x0 (auth ignores it; no canonical runtime compute exists.
@@ -67,7 +69,7 @@ const REGISTRY_ABI = parseAbi([
   "function signerNonce(bytes32 tenantId) view returns (uint256)",
   "function isTenantSigner(bytes32 tenantId, address a) view returns (bool)",
   "function setTenantSigner(bytes32 tenantId, address signer, bool allowed, address authSigner, bytes signature)",
-  "function registerAgent(bytes32 agentId, address agentAddress, bytes32 tenantId, bytes32 scopeHash, bytes32 behaviorHash, bytes tenantSignature)",
+  "function registerAgent(bytes32 agentId, address agentAddress, bytes32 tenantId, bytes32 scopeHash, bytes32 behaviorHash, address authSigner, bytes tenantSignature)",
   "function getAgent(bytes32 agentId) view returns ((bytes32 agentId, address agentAddress, bytes32 tenantId, bytes32 scopeHash, bytes32 behaviorHash, uint256 registeredAt, uint256 revokedAt))",
 ]);
 
@@ -226,7 +228,15 @@ async function main(): Promise<void> {
       address: registry,
       abi: REGISTRY_ABI,
       functionName: "registerAgent",
-      args: [agentIdB32, agentAddress, tenantIdB32, scopeHash, behaviorHash, registrationSig],
+      args: [
+        agentIdB32,
+        agentAddress,
+        tenantIdB32,
+        scopeHash,
+        behaviorHash,
+        signerAddress,
+        registrationSig,
+      ],
     });
     out(`phase 2: registerAgent tx=${tx2}`);
     const r2 = await publicClient.waitForTransactionReceipt({ hash: tx2 });

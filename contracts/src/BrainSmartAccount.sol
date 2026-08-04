@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.24;
 
+/// @dev Minimal view surface of BrainPolicyRegistry used at grant time. Declared
+///      inline so the account stays dependency-free (matches the other Brain
+///      contracts).
+interface IBrainPolicyRegistryView {
+    function isRegisteredHash(bytes32 tenantId, bytes32 policyHash) external view returns (bool);
+}
+
 /// @title BrainSmartAccount
 /// @notice Smart account with directly-called session keys for the
 ///         payment-agent's on-chain rail. The tenant's root key owns the
@@ -11,49 +18,114 @@ pragma solidity 0.8.24;
 ///         account enforces scope on every call.
 ///
 ///         Session keys are per-holder with policy-version binding, target
-///         + selector allowlists, per-tx amount cap, and per-period
-///         cumulative cap. Scope is enforced in executeViaSessionKey;
+///         + selector allowlists, recipient binding, a per-tx amount cap, and a
+///         per-period cumulative cap. Scope is enforced in executeViaSessionKey;
 ///         the holder cannot call anything outside it.
 ///
-///         Two cap modes:
-///           NATIVE  (capToken == address(0)). Caps denominated in wei;
-///                   they apply to msg.value. Non-value calls (value=0)
-///                   pass caps un-metered. Use for ETH transfers and
-///                   for non-ERC20 contract calls the operator wants
-///                   to scope by target+selector allowlist but does NOT
-///                   need to amount-cap.
-///           ERC20   (capToken != address(0)). Caps denominated in the
-///                   token's raw units (USDC=6dp, DAI=18dp). All calls
-///                   MUST target capToken with a decodable selector
-///                   (transfer / approve / transferFrom); value MUST be 0.
-///                   grantSessionKey enforces these constraints at grant
-///                   time so caps are always meterable.
+///         Three cap modes, declared explicitly at grant time. There is NO
+///         un-metered call path: every mode either forbids calldata outright or
+///         names exactly where the capped amount lives.
+///
+///           NATIVE  Pure value transfer. `data` MUST be empty and caps meter
+///                   msg.value in wei. Because calldata is forbidden, a NATIVE
+///                   key can never move ERC20 units, so there is no selector
+///                   denylist to keep complete.
+///           ERC20   Caps denominated in capToken's raw units (USDC=6dp).
+///                   `target` MUST equal capToken, `value` MUST be 0, and the
+///                   selector MUST be transfer or transferFrom. The RECIPIENT is
+///                   decoded from calldata and must appear in allowedRecipients,
+///                   so the key is bound to a counterparty and not merely to the
+///                   token contract. `approve` is deliberately NOT permitted:
+///                   an allowance outlives the accounting window and would let a
+///                   holder accumulate claimable value past the cumulative cap.
+///           CALL    Arbitrary allowlisted contract call (e.g. BrainEscrow
+///                   release). `value` MUST be 0 and the capped amount is read
+///                   from the uint256 word at `capAmountOffset`, declared and
+///                   bounds-checked at grant time. This is what makes a contract
+///                   call meterable instead of silently passing caps at zero.
+///                   CALL cannot decode a recipient, so it must not reach the
+///                   standard ERC-20 movement surface: `approve`,
+///                   `increaseAllowance`, `transfer` and `transferFrom` are
+///                   denied at grant time. Without that denylist CALL was a
+///                   superset of ERC20 mode — `[USDC] x [approve]` at offset 36
+///                   handed out an allowance that outlives the accounting window,
+///                   and `[USDC] x [transfer]` moved tokens to any address at
+///                   all. Token movement must be granted in ERC20 mode, which
+///                   binds the recipient.
+///                   CALL binds the AMOUNT but nothing about which object the
+///                   call acts on, so `pinOffset`/`pinValue` optionally pin one
+///                   further 32-byte argument word to a fixed value. Without it a
+///                   key scoped to `[BrainEscrow] x [refund(bytes32,uint256)]`
+///                   meters the amount while leaving `escrowId` free, and the
+///                   smart account is the arbiter of EVERY escrow naming it — so
+///                   one tenant's key could force-refund another's escrow.
+///                   A CALL grant carries exactly ONE selector. The account
+///                   cannot read an ABI, so whether the word at `capAmountOffset`
+///                   is really an amount is the GRANTOR's responsibility; the
+///                   single-selector rule at least makes that offset name one
+///                   argument of one known function. A key may otherwise carry 32
+///                   targets and 32 selectors sharing one offset, where the same
+///                   word is `amount` in `release(bytes32,uint256)` and a
+///                   timestamp in `setDeadline(bytes32,uint256)`. Note the
+///                   remaining grantor duty: if that argument is a DYNAMIC type
+///                   the word is an ABI head offset, not a value, so
+///                   `multicall(bytes[])` at offset 4 meters the constant 32
+///                   forever. Grant CALL keys only over static-uint256 arguments.
 contract BrainSmartAccount {
+    /// @notice How a session key's caps are measured. See the contract docs.
+    enum CapMode {
+        NATIVE,
+        ERC20,
+        CALL
+    }
+
     struct SessionKey {
         address holder;
         uint256 validAfter;
         uint256 validUntil;
         address[] allowedTargets;
         bytes4[] allowedSelectors;
-        /// @dev When non-zero, ERC20-mode: caps denominated in capToken's raw
-        ///      units, calls must target capToken with transfer/approve/
-        ///      transferFrom and value=0. When zero, NATIVE-mode: caps apply
-        ///      to msg.value in wei; non-value calls pass un-metered.
+        /// @dev Which cap rule applies. Validated exhaustively in grantSessionKey.
+        CapMode capMode;
+        /// @dev ERC20 mode only: the token whose raw units denominate the caps.
+        ///      MUST be zero in NATIVE and CALL mode.
         address capToken;
+        /// @dev ERC20 mode only: the permitted `to` addresses. MUST be empty in
+        ///      NATIVE and CALL mode.
+        address[] allowedRecipients;
+        /// @dev CALL mode only: byte offset of the uint256 amount word within
+        ///      calldata. MUST be zero in NATIVE and ERC20 mode.
+        uint256 capAmountOffset;
+        /// @dev CALL mode only: byte offset of ONE further 32-byte calldata word
+        ///      that is pinned to `pinValue`, binding the key to a specific
+        ///      object (an escrowId, an invoice id) and not merely to a function.
+        ///      Zero disables the pin. MUST be zero in NATIVE and ERC20 mode,
+        ///      which bind their counterparty through `allowedRecipients`.
+        uint256 pinOffset;
+        /// @dev The value the word at `pinOffset` must equal. Meaningful only
+        ///      when `pinOffset` is non-zero.
+        bytes32 pinValue;
         uint256 maxPerTx; // per-call cap in capToken units (or wei in NATIVE mode)
         uint256 maxPerPeriod; // cumulative cap per periodSeconds window (same units)
         uint256 periodSeconds; // e.g. 86400 for daily; 0 disables period accounting
-        bytes32 policyVersion; // must equal the expected policy digest at exec
+        bytes32 policyVersion; // must be registered in BrainPolicyRegistry for this tenant
     }
 
     /// @dev ERC20 selector constants for cap-decode and grant-time validation.
-    ///      Centralised so adding a new decodable selector requires updating
-    ///      both grantSessionKey and executeViaSessionKey together.
     bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
     bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3; // approve(address,uint256)
     bytes4 private constant _SELECTOR_TRANSFER_FROM = 0x23b872dd; // transferFrom(address,address,uint256)
+    /// @dev Non-standard but present on USDC (FiatTokenV2) and OZ v4 tokens. It
+    ///      accumulates allowance across accounting windows, so it is denied
+    ///      wherever `approve` is.
+    bytes4 private constant _SELECTOR_INCREASE_ALLOWANCE = 0x39509351; // increaseAllowance(address,uint256)
 
-    event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil);
+    /// @notice Upper bound on each allowlist. Keeps the linear scan in
+    ///         executeViaSessionKey bounded, so a key can never be granted with
+    ///         an allowlist too large to execute against.
+    uint256 public constant MAX_ALLOWLIST = 32;
+
+    event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil, CapMode capMode);
     event SessionKeyRevoked(address indexed holder);
     /// @dev Kill-switch: execution disabled but the key record is preserved.
     event SessionKeyPaused(address indexed holder);
@@ -66,9 +138,12 @@ contract BrainSmartAccount {
     ///      then accepted by the pending owner before it takes effect.
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @dev `holder` is the session-key EOA that authorized the call. It was
+    ///      previously emitted as a bytes32-packed address under the name
+    ///      `agentId`, which decoded to a mangled value in indexers.
     event AgentActionExecuted(
         bytes32 indexed tenantId,
-        bytes32 indexed agentId,
+        address indexed holder,
         bytes32 policyVersion,
         address target,
         bytes4 selector,
@@ -83,18 +158,31 @@ contract BrainSmartAccount {
     address public pendingOwner;
     /// @dev Immutable tenant id hash anchoring this account.
     bytes32 public immutable tenantId;
-    /// @dev BrainPolicyRegistry this account trusts; policyVersion in a
-    ///      session key must match the hash a verifier looks up there.
+    /// @dev BrainPolicyRegistry this account trusts. A session key's
+    ///      policyVersion must be a hash this registry has registered for
+    ///      `tenantId`, checked in grantSessionKey.
     address public immutable policyRegistry;
 
     mapping(address => SessionKey) private _keys;
-    /// @dev holder => window_start_timestamp => spent_in_window
+    /// @dev holder => window_start_timestamp => spent_in_window. Windows are
+    ///      anchored to _windowAnchor[holder], not to the unix epoch.
     mapping(address => mapping(uint256 => uint256)) private _windowSpent;
+    /// @dev holder => timestamp of the holder's FIRST grant. Set once and never
+    ///      moved, including across re-grants and revocations. Period windows
+    ///      derive from it rather than from the current key's validAfter: every
+    ///      grant script sets validAfter = block.timestamp, so re-anchoring made a
+    ///      routine key refresh open a fresh maxPerPeriod window immediately —
+    ///      the same double-spend the epoch-aligned window used to allow, reached
+    ///      through the ordinary operational path instead of a rare boundary.
+    mapping(address => uint256) private _windowAnchor;
     /// @dev Kill-switch flag. Paused keys cannot execute but keep their record,
     ///      window spend, limits, and metadata so resume needs no re-grant.
     mapping(address => bool) private _paused;
     /// @dev H-03: per-holder replay nonce. Each execute must supply the current
-    ///      value; it increments by 1 on every accepted execute.
+    ///      value; it increments by 1 on every accepted execute. The holder is
+    ///      already authenticated by msg.sender, so this is not signature-replay
+    ///      protection: it exists so the execution outbox gets an on-chain
+    ///      exactly-once guarantee, a racing re-dispatch reverting with BadNonce.
     mapping(address => uint256) private _nonces;
     /// @dev H-03: per-holder re-entrancy guard for the external call.
     mapping(address => bool) private _locked;
@@ -122,12 +210,31 @@ contract BrainSmartAccount {
     // Two-step ownership + account-wide pause hardening.
     error NotPendingOwner();
     error AccountIsPaused();
-    // R-06 / R-07: per-token cap mode (F-3 + F-4 from Opus 4.8 review).
+    // Cap-mode enforcement.
     error CapTokenAllowlistMismatch();
     error NonDecodableSelectorInErc20Mode(bytes4 selector);
     error ValueNotAllowedInErc20Mode();
     error TargetMustEqualCapTokenInErc20Mode();
-    error Erc20SelectorRequiresTokenCap(bytes4 selector);
+    error ApproveNotPermittedInErc20Mode();
+    error Erc20SelectorNotPermittedInCallMode(bytes4 selector);
+    error CapTokenNotAllowedInThisMode();
+    error RecipientsRequired();
+    error RecipientsNotAllowedInThisMode();
+    error RecipientNotAllowed(address recipient);
+    error SelectorsNotAllowedInNativeMode();
+    error CalldataNotAllowedInNativeMode();
+    error ValueNotAllowedInCallMode();
+    error CapAmountOffsetNotAllowedInThisMode();
+    error InvalidCapAmountOffset(uint256 offset);
+    error CallModeRequiresOneSelector();
+    error PinNotAllowedInThisMode();
+    error InvalidPinOffset(uint256 offset);
+    error PinnedArgumentMismatch(bytes32 expected, bytes32 actual);
+    error MalformedErc20Calldata(uint256 length);
+    error CalldataTooShortForCapOffset(uint256 length, uint256 required);
+    error AllowlistTooLarge(uint256 maxAllowed);
+    error InvalidValidityWindow(uint256 validAfter, uint256 validUntil);
+    error PolicyVersionNotRegistered(bytes32 policyVersion);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -135,6 +242,10 @@ contract BrainSmartAccount {
     }
 
     constructor(address _owner, bytes32 _tenantId, address _policyRegistry) {
+        // A zero owner permanently bricks an account that can still receive
+        // funds through receive(); a zero registry makes the policy binding
+        // unverifiable. Both are fatal at construction.
+        if (_owner == address(0) || _policyRegistry == address(0)) revert ZeroAddress();
         owner = _owner;
         tenantId = _tenantId;
         policyRegistry = _policyRegistry;
@@ -163,49 +274,108 @@ contract BrainSmartAccount {
     }
 
     /// @notice Grant a session key. Overwrites any existing key for the holder.
-    /// @dev H-03: an empty target/selector allowlist is a footgun ("any" was
-    ///      previously allowed), so require both non-empty, and require a real
-    ///      policyVersion at grant time (moved here from executeViaSessionKey).
-    ///
-    ///      R-06 / R-07 (F-3 + F-4 from Opus 4.8 review): when capToken is
-    ///      non-zero (ERC20 mode), enforce that the target/selector allowlists
-    ///      are consistent with that token, so caps are always meterable in
-    ///      the token's native units. This prevents unit-blind ERC20 caps and
-    ///      blocks the "non-decodable selector silently bypasses caps" hole.
+    /// @dev Validation is exhaustive per cap mode so executeViaSessionKey can be
+    ///      straight-line and every accepted key is guaranteed meterable. The
+    ///      policyVersion must be a hash BrainPolicyRegistry has registered for
+    ///      this account's tenant, so the binding is real rather than an unread
+    ///      field.
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
+        // validAfter == 0 is rejected rather than read as "no lower bound": it is
+        // indistinguishable from an unset struct field, and a zero start bound
+        // makes the key active for all of history before validUntil.
+        if (key.validAfter == 0 || key.validAfter >= key.validUntil) {
+            revert InvalidValidityWindow(key.validAfter, key.validUntil);
+        }
         if (key.allowedTargets.length == 0) revert TargetsRequired();
-        if (key.allowedSelectors.length == 0) revert SelectorsRequired();
         if (key.policyVersion == bytes32(0)) revert PolicyVersionMismatch();
+        if (
+            key.allowedTargets.length > MAX_ALLOWLIST || key.allowedSelectors.length > MAX_ALLOWLIST
+                || key.allowedRecipients.length > MAX_ALLOWLIST
+        ) {
+            revert AllowlistTooLarge(MAX_ALLOWLIST);
+        }
+        if (!IBrainPolicyRegistryView(policyRegistry).isRegisteredHash(tenantId, key.policyVersion)) {
+            revert PolicyVersionNotRegistered(key.policyVersion);
+        }
 
-        if (key.capToken != address(0)) {
-            // ERC20 mode: target allowlist must be exactly [capToken] so caps
-            // always apply to a known token. Selector allowlist must be a
-            // subset of the decodable set so capAmount is always meterable.
+        if (key.capMode == CapMode.NATIVE) {
+            // Pure value transfer. Forbidding calldata outright is what removes
+            // the need for a selector denylist: no calldata means no token
+            // movement, so there is nothing left to under-meter.
+            if (key.allowedSelectors.length != 0) revert SelectorsNotAllowedInNativeMode();
+            if (key.allowedRecipients.length != 0) revert RecipientsNotAllowedInThisMode();
+            if (key.capToken != address(0)) revert CapTokenNotAllowedInThisMode();
+            if (key.capAmountOffset != 0) revert CapAmountOffsetNotAllowedInThisMode();
+            if (key.pinOffset != 0 || key.pinValue != bytes32(0)) revert PinNotAllowedInThisMode();
+        } else if (key.capMode == CapMode.ERC20) {
+            if (key.capToken == address(0)) revert ZeroAddress();
             if (key.allowedTargets.length != 1 || key.allowedTargets[0] != key.capToken) {
                 revert CapTokenAllowlistMismatch();
             }
+            if (key.allowedSelectors.length == 0) revert SelectorsRequired();
+            if (key.allowedRecipients.length == 0) revert RecipientsRequired();
+            if (key.capAmountOffset != 0) revert CapAmountOffsetNotAllowedInThisMode();
+            if (key.pinOffset != 0 || key.pinValue != bytes32(0)) revert PinNotAllowedInThisMode();
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
                 bytes4 s = key.allowedSelectors[i];
-                if (s != _SELECTOR_TRANSFER && s != _SELECTOR_APPROVE && s != _SELECTOR_TRANSFER_FROM) {
+                if (s == _SELECTOR_APPROVE) revert ApproveNotPermittedInErc20Mode();
+                if (s != _SELECTOR_TRANSFER && s != _SELECTOR_TRANSFER_FROM) {
                     revert NonDecodableSelectorInErc20Mode(s);
                 }
             }
+            for (uint256 i = 0; i < key.allowedRecipients.length; ++i) {
+                if (key.allowedRecipients[i] == address(0)) revert ZeroAddress();
+            }
         } else {
-            // NATIVE mode meters msg.value only. Decodable ERC20 selectors
-            // would move token units with value == 0, so force such keys into
-            // ERC20 mode where capToken identifies the token being metered.
+            // CapMode.CALL
+            if (key.allowedSelectors.length == 0) revert SelectorsRequired();
+            // One offset can only honestly describe one function signature.
+            if (key.allowedSelectors.length != 1) revert CallModeRequiresOneSelector();
+            if (key.allowedRecipients.length != 0) revert RecipientsNotAllowedInThisMode();
+            if (key.capToken != address(0)) revert CapTokenNotAllowedInThisMode();
+            // CALL mode has no recipient binding and no allowance accounting, so
+            // the ERC-20 movement surface is off limits here. This is what makes
+            // the two structural claims in the contract header true rather than
+            // ERC20-mode-local: `approve`/`increaseAllowance` would hand out
+            // claimable value that outlives the cumulative-cap window, and
+            // `transfer`/`transferFrom` would move tokens to an unchecked payee.
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
-                bytes4 s = key.allowedSelectors[i];
-                if (s == _SELECTOR_TRANSFER || s == _SELECTOR_APPROVE || s == _SELECTOR_TRANSFER_FROM) {
-                    revert Erc20SelectorRequiresTokenCap(s);
+                bytes4 sel = key.allowedSelectors[i];
+                if (
+                    sel == _SELECTOR_APPROVE || sel == _SELECTOR_INCREASE_ALLOWANCE || sel == _SELECTOR_TRANSFER
+                        || sel == _SELECTOR_TRANSFER_FROM
+                ) {
+                    revert Erc20SelectorNotPermittedInCallMode(sel);
                 }
+            }
+            // The amount word must sit after the 4-byte selector and be
+            // word-aligned, so it names a real ABI argument slot.
+            if (key.capAmountOffset < 4 || (key.capAmountOffset - 4) % 32 != 0) {
+                revert InvalidCapAmountOffset(key.capAmountOffset);
+            }
+            // The pin is optional, but a pinned word must name a real argument
+            // slot and must not be the metered amount itself (pinning the amount
+            // would be a fixed-value key, not an object binding).
+            if (key.pinOffset != 0) {
+                if (key.pinOffset < 4 || (key.pinOffset - 4) % 32 != 0 || key.pinOffset == key.capAmountOffset) {
+                    revert InvalidPinOffset(key.pinOffset);
+                }
+            } else if (key.pinValue != bytes32(0)) {
+                // A pinValue with no offset would read as "bound" but enforce
+                // nothing, which is the failure mode this field exists to close.
+                revert InvalidPinOffset(0);
             }
         }
 
+        // First grant fixes the accounting anchor for this holder forever. A
+        // re-grant deliberately does NOT move it and does NOT clear
+        // _windowSpent, so refreshing a key cannot reset the period budget.
+        if (_windowAnchor[key.holder] == 0) _windowAnchor[key.holder] = block.timestamp;
+
         _keys[key.holder] = key;
-        emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil);
+        emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil, key.capMode);
     }
 
     /// @notice H-03: the next expected execute nonce for `holder`.
@@ -216,6 +386,9 @@ contract BrainSmartAccount {
     /// @notice Revoke a session key. Owner-only. Takes effect immediately.
     /// @dev    Final removal: deletes the key record entirely. Distinct from
     ///         pauseSessionKey, which preserves it. Also clears any pause flag.
+    ///         The holder's window anchor and accumulated window spend are
+    ///         deliberately NOT cleared: revoke-then-regrant would otherwise be a
+    ///         one-owner-transaction reset of the period cap.
     function revokeSessionKey(address holder) external onlyOwner {
         delete _keys[holder];
         delete _paused[holder];
@@ -289,81 +462,49 @@ contract BrainSmartAccount {
 
         _locked[msg.sender] = true;
 
-        // Target allowlist. H-03 guarantees a granted key always has a
-        // non-empty list, so the length guard is defense-in-depth only.
-        if (key.allowedTargets.length != 0) {
-            bool ok;
-            for (uint256 i = 0; i < key.allowedTargets.length; ++i) {
-                if (key.allowedTargets[i] == target) {
-                    ok = true;
-                    break;
-                }
+        // Target allowlist. grantSessionKey guarantees a non-empty list.
+        bool targetOk;
+        for (uint256 i = 0; i < key.allowedTargets.length; ++i) {
+            if (key.allowedTargets[i] == target) {
+                targetOk = true;
+                break;
             }
-            if (!ok) revert TargetNotAllowed(target);
         }
+        if (!targetOk) revert TargetNotAllowed(target);
 
         bytes4 selector = data.length >= 4 ? bytes4(data[:4]) : bytes4(0);
 
-        // Selector allowlist. As with targets, H-03 guarantees non-empty at
-        // grant, so the length guard is defense-in-depth only.
+        // Selector allowlist. Empty only in NATIVE mode, where calldata is
+        // forbidden outright and the check in _capAmount is the stronger one.
         if (key.allowedSelectors.length != 0) {
-            bool ok;
+            bool selectorOk;
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
                 if (key.allowedSelectors[i] == selector) {
-                    ok = true;
+                    selectorOk = true;
                     break;
                 }
             }
-            if (!ok) revert SelectorNotAllowed(selector);
+            if (!selectorOk) revert SelectorNotAllowed(selector);
         }
 
-        // Determine the effective amount subject to caps.
-        // Two modes (validated at grant time so the dispatch is straight-line):
-        //   NATIVE (capToken == 0): caps apply to msg.value. value==0 calls
-        //     to non-token targets pass un-metered. Operator is responsible
-        //     for keeping the target/selector allowlist tight in this mode.
-        //   ERC20 (capToken != 0): target MUST equal capToken, value MUST be
-        //     0, and the selector MUST be decodable. Caps apply to the
-        //     decoded token amount in capToken's raw units.
-        uint256 capAmount;
-        if (key.capToken == address(0)) {
-            capAmount = value;
-        } else {
-            if (value != 0) revert ValueNotAllowedInErc20Mode();
-            if (target != key.capToken) revert TargetMustEqualCapTokenInErc20Mode();
-            // Selector decodability guaranteed by grantSessionKey; one of these
-            // branches MUST hit. Lengths still checked defensively.
-            if ((selector == _SELECTOR_TRANSFER || selector == _SELECTOR_APPROVE) && data.length >= 68) {
-                // transfer(address,uint256) / approve(address,uint256): amount at [36,68)
-                capAmount = uint256(bytes32(data[36:68]));
-            } else if (selector == _SELECTOR_TRANSFER_FROM && data.length >= 100) {
-                // transferFrom(address,address,uint256): amount at [68,100)
-                capAmount = uint256(bytes32(data[68:100]));
-            } else {
-                // Grant validation already rejected non-decodable selectors,
-                // so this branch is unreachable in practice; revert defensively.
-                revert NonDecodableSelectorInErc20Mode(selector);
-            }
-        }
+        uint256 capAmount = _capAmount(key, target, value, data);
 
         // Per-tx cap.
         if (capAmount > key.maxPerTx) revert ExceedsPerTxCap();
 
-        // Per-period cumulative cap.
+        // Per-period cumulative cap. The window is anchored to this holder's
+        // FIRST grant, NOT to the unix epoch and NOT to the current key's
+        // validAfter. An epoch-aligned window let a key whose lifetime straddled a
+        // boundary spend its full cumulative cap twice; re-anchoring per grant let
+        // any key refresh do the same on demand.
         if (key.periodSeconds > 0) {
-            uint256 window = (block.timestamp / key.periodSeconds) * key.periodSeconds;
+            uint256 anchor = _windowAnchor[msg.sender];
+            uint256 elapsed = block.timestamp - anchor;
+            uint256 window = anchor + (elapsed - (elapsed % key.periodSeconds));
             uint256 spent = _windowSpent[msg.sender][window] + capAmount;
             if (spent > key.maxPerPeriod) revert ExceedsPerPeriodCap();
             _windowSpent[msg.sender][window] = spent;
         }
-
-        // H-03: the policyVersion zero-check now lives in grantSessionKey
-        // (a key can never be stored with a zero policyVersion), so it is
-        // not re-checked here. The caller is still responsible for granting
-        // a key whose policyVersion matches what BrainPolicyRegistry returned
-        // for the relevant (tenantId, version); the account does not re-verify
-        // the on-chain registry state during execution (gas) — the off-chain
-        // decision already did.
 
         // Interaction. The nonce was already incremented and _locked set
         // above (checks-effects-interactions), so a malicious target cannot
@@ -372,10 +513,68 @@ contract BrainSmartAccount {
         _locked[msg.sender] = false;
         if (!success) revert CallFailed(ret);
 
-        emit AgentActionExecuted(
-            tenantId, bytes32(bytes20(msg.sender)), key.policyVersion, target, selector, capAmount, keccak256(data)
-        );
+        emit AgentActionExecuted(tenantId, msg.sender, key.policyVersion, target, selector, capAmount, keccak256(data));
         return ret;
+    }
+
+    /// @dev Resolve the amount subject to caps for this call, enforcing the
+    ///      per-mode calldata rules. Every mode yields a real number: there is
+    ///      no path that returns zero for a value-moving call.
+    function _capAmount(SessionKey storage key, address target, uint256 value, bytes calldata data)
+        private
+        view
+        returns (uint256)
+    {
+        if (key.capMode == CapMode.NATIVE) {
+            // Forbidding calldata is what makes the wei-denominated cap sound:
+            // a call carrying data could move token units while value is zero.
+            if (data.length != 0) revert CalldataNotAllowedInNativeMode();
+            return value;
+        }
+
+        if (key.capMode == CapMode.ERC20) {
+            if (value != 0) revert ValueNotAllowedInErc20Mode();
+            if (target != key.capToken) revert TargetMustEqualCapTokenInErc20Mode();
+            bytes4 selector = bytes4(data[:4]);
+            address recipient;
+            uint256 amount;
+            if (selector == _SELECTOR_TRANSFER) {
+                // transfer(address to, uint256 amount)
+                if (data.length != 68) revert MalformedErc20Calldata(data.length);
+                recipient = address(uint160(uint256(bytes32(data[4:36]))));
+                amount = uint256(bytes32(data[36:68]));
+            } else {
+                // transferFrom(address from, address to, uint256 amount).
+                // grantSessionKey admits no other selector in this mode.
+                if (data.length != 100) revert MalformedErc20Calldata(data.length);
+                recipient = address(uint160(uint256(bytes32(data[36:68]))));
+                amount = uint256(bytes32(data[68:100]));
+            }
+            // Recipient binding. Without this the target allowlist is worthless
+            // in ERC20 mode: the only allowed target IS the token contract, so
+            // the payee lives in calldata and would otherwise be unchecked.
+            bool recipientOk;
+            for (uint256 i = 0; i < key.allowedRecipients.length; ++i) {
+                if (key.allowedRecipients[i] == recipient) {
+                    recipientOk = true;
+                    break;
+                }
+            }
+            if (!recipientOk) revert RecipientNotAllowed(recipient);
+            return amount;
+        }
+
+        // CapMode.CALL
+        if (value != 0) revert ValueNotAllowedInCallMode();
+        if (key.pinOffset != 0) {
+            uint256 pinEnd = key.pinOffset + 32;
+            if (data.length < pinEnd) revert CalldataTooShortForCapOffset(data.length, pinEnd);
+            bytes32 actual = bytes32(data[key.pinOffset:pinEnd]);
+            if (actual != key.pinValue) revert PinnedArgumentMismatch(key.pinValue, actual);
+        }
+        uint256 required = key.capAmountOffset + 32;
+        if (data.length < required) revert CalldataTooShortForCapOffset(data.length, required);
+        return uint256(bytes32(data[key.capAmountOffset:required]));
     }
 
     /// @notice Read a holder's session key.
@@ -387,10 +586,21 @@ contract BrainSmartAccount {
     function spentInCurrentWindow(address holder) external view returns (uint256) {
         SessionKey storage key = _keys[holder];
         if (key.periodSeconds == 0) return 0;
-        uint256 window = (block.timestamp / key.periodSeconds) * key.periodSeconds;
+        uint256 anchor = _windowAnchor[holder];
+        if (anchor == 0 || block.timestamp < anchor) return 0;
+        uint256 elapsed = block.timestamp - anchor;
+        uint256 window = anchor + (elapsed - (elapsed % key.periodSeconds));
         return _windowSpent[holder][window];
     }
 
+    /// @notice The timestamp every period window for `holder` is measured from.
+    ///         Fixed at the holder's first grant; zero if never granted.
+    function windowAnchor(address holder) external view returns (uint256) {
+        return _windowAnchor[holder];
+    }
+
+    /// @dev Plain value receipts only. There is deliberately no payable
+    ///      fallback: an unknown selector must revert rather than silently
+    ///      succeed, so a mistyped or removed function surfaces as a failure.
     receive() external payable {}
-    fallback() external payable {}
 }

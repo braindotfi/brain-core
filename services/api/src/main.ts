@@ -299,6 +299,10 @@ import {
 } from "./composition/escrow-audit-gate.js";
 import { makeBaseGetChainId, makeBaseGetCode } from "./composition/eth-getcode.js";
 import {
+  assertSettlementTokenIsSixDecimals,
+  makeBaseGetErc20Decimals,
+} from "./composition/settlement-decimals-gate.js";
+import {
   assertAtLeastOneLiveRailInProduction,
   assertEscrowRailHasStateLoader,
 } from "./composition/rails-prod-fence.js";
@@ -860,12 +864,28 @@ async function main(): Promise<void> {
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
   });
   const sumAgentWindowSpend = makeSumAgentWindowSpend(pool);
+  // Check 6.6 needs the settlement asset to bind the escrow token against, so
+  // the escrow resolver is wired only when BOTH the escrow address and the USDC
+  // address are configured. Without the asset binding an escrow funded with an
+  // arbitrary ERC-20 would satisfy a release intent, so a half-configured
+  // escrow leaves the check dormant rather than running it unbound.
+  //
+  // escrow-resolver.ts and PaymentIntentService.ts both hardcode 6 decimals
+  // for BRAIN_X402_USDC_ADDRESS; neither reads decimals() off the actual
+  // token. Verify it here, once, and fail closed rather than boot with a
+  // silent power-of-ten mismatch between check 6.6's approval and the rail's
+  // release amount.
+  await assertSettlementTokenIsSixDecimals({
+    tokenAddress: cfg.BRAIN_X402_USDC_ADDRESS,
+    getDecimals: makeBaseGetErc20Decimals(cfg.BASE_RPC_URL ?? cfg.RPC_URL, cfg.BRAIN_BASE_CHAIN_ID),
+  });
   const resolveEscrowState =
-    cfg.BRAIN_ESCROW_ADDRESS !== undefined
+    cfg.BRAIN_ESCROW_ADDRESS !== undefined && cfg.BRAIN_X402_USDC_ADDRESS !== undefined
       ? makeResolveEscrowState({
           escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
           rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
           chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          settlementToken: cfg.BRAIN_X402_USDC_ADDRESS,
         })
       : undefined;
 
@@ -1051,6 +1071,13 @@ async function main(): Promise<void> {
   assertEscrowRailHasStateLoader({
     escrowRailLive: railsBuild.entries.some((entry) => entry.name === "escrow_base" && entry.live),
     hasResolveEscrowState: resolveEscrowState !== undefined,
+    // resolveEscrowState's own two required vars (see its construction
+    // above) -- named here so the thrown error tells an operator which one
+    // to set, rather than only that the loader is unwired.
+    missingEnv: [
+      cfg.BRAIN_ESCROW_ADDRESS === undefined ? "BRAIN_ESCROW_ADDRESS" : null,
+      cfg.BRAIN_X402_USDC_ADDRESS === undefined ? "BRAIN_X402_USDC_ADDRESS" : null,
+    ].filter((name): name is string => name !== null),
   });
   const rails: RailRegistry = railsBuild.rails;
 
@@ -3336,11 +3363,17 @@ async function main(): Promise<void> {
       rails: railPostures,
       gateLoaders: {
         // attestCounterpartyAgent + sumAgentWindowSpend are unconditionally wired
-        // above; resolveEscrowState is opt-in by BRAIN_ESCROW_ADDRESS. Mirror that.
+        // above; resolveEscrowState is opt-in by BOTH BRAIN_ESCROW_ADDRESS and
+        // BRAIN_X402_USDC_ADDRESS (see its construction above). Report the
+        // actual resolver binding, not a stand-in for one of its two
+        // preconditions -- with BRAIN_ESCROW_ADDRESS set but
+        // BRAIN_X402_USDC_ADDRESS unset, `cfg.BRAIN_ESCROW_ADDRESS !==
+        // undefined` printed true while check 6.6 was dormant, and ops reads
+        // this exact line to answer "is 6.6 enforcing?".
         resolveTenantFlags: resolveTenantFlags !== undefined,
         attestCounterpartyAgent: true,
         sumAgentWindowSpend: true,
-        resolveEscrowState: cfg.BRAIN_ESCROW_ADDRESS !== undefined,
+        resolveEscrowState: resolveEscrowState !== undefined,
         // P1 set: §6 checks 8 / 11 / 11.5 — unconditionally wired (see line 581).
         sumActiveReservations: true,
         resolveEvidence: true,

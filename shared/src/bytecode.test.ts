@@ -9,13 +9,22 @@ import {
   maskedRuntimeSha256,
 } from "./bytecode.js";
 
-// A COMMITTED snapshot of the real BrainEscrow Foundry artifact's
-// deployedBytecode (has the `arbiter` immutable at 3 byte offsets). We read the
-// snapshot, not contracts/out/BrainEscrow.sol/BrainEscrow.json, so the masking
-// logic is exercised against REAL bytecode without a forge build dependency: the
+// A COMMITTED snapshot of a real BrainEscrow Foundry artifact's
+// deployedBytecode, taken from the revision where `arbiter` was `immutable`
+// (3 byte offsets). We read the snapshot, not
+// contracts/out/BrainEscrow.sol/BrainEscrow.json, so the masking logic is
+// exercised against REAL bytecode without a forge build dependency: the
 // `typescript` CI job (lint + unit) does not run `forge build`, so the artifact
-// is absent there. Regenerate __fixtures__/brain-escrow-deployed.json from the
-// artifact if the contract changes.
+// is absent there.
+//
+// This is deliberately a PINNED HISTORICAL artifact, not a mirror of the current
+// build. `arbiter` is now a storage variable (it needs two-step rotation so a
+// lost or compromised arbiter key can be replaced), so the current BrainEscrow
+// has NO immutables and its deployed code equals its artifact byte for byte.
+// Masking still has to work -- any future immutable in any Brain contract
+// depends on it, and the mainnet boot fence calls it unconditionally -- so this
+// fixture stays as the testbed. Do NOT regenerate it from a build with no
+// immutables: that would silently reduce these cases to a no-op.
 const artifact = JSON.parse(
   readFileSync(
     fileURLToPath(new URL("./__fixtures__/brain-escrow-deployed.json", import.meta.url)),
