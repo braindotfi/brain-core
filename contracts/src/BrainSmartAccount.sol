@@ -43,6 +43,15 @@ interface IBrainPolicyRegistryView {
 ///                   from the uint256 word at `capAmountOffset`, declared and
 ///                   bounds-checked at grant time. This is what makes a contract
 ///                   call meterable instead of silently passing caps at zero.
+///                   CALL cannot decode a recipient, so it must not reach the
+///                   standard ERC-20 movement surface: `approve`,
+///                   `increaseAllowance`, `transfer` and `transferFrom` are
+///                   denied at grant time. Without that denylist CALL was a
+///                   superset of ERC20 mode — `[USDC] x [approve]` at offset 36
+///                   handed out an allowance that outlives the accounting window,
+///                   and `[USDC] x [transfer]` moved tokens to any address at
+///                   all. Token movement must be granted in ERC20 mode, which
+///                   binds the recipient.
 contract BrainSmartAccount {
     /// @notice How a session key's caps are measured. See the contract docs.
     enum CapMode {
@@ -78,6 +87,10 @@ contract BrainSmartAccount {
     bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
     bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3; // approve(address,uint256)
     bytes4 private constant _SELECTOR_TRANSFER_FROM = 0x23b872dd; // transferFrom(address,address,uint256)
+    /// @dev Non-standard but present on USDC (FiatTokenV2) and OZ v4 tokens. It
+    ///      accumulates allowance across accounting windows, so it is denied
+    ///      wherever `approve` is.
+    bytes4 private constant _SELECTOR_INCREASE_ALLOWANCE = 0x39509351; // increaseAllowance(address,uint256)
 
     /// @notice Upper bound on each allowlist. Keeps the linear scan in
     ///         executeViaSessionKey bounded, so a key can never be granted with
@@ -175,6 +188,7 @@ contract BrainSmartAccount {
     error ValueNotAllowedInErc20Mode();
     error TargetMustEqualCapTokenInErc20Mode();
     error ApproveNotPermittedInErc20Mode();
+    error Erc20SelectorNotPermittedInCallMode(bytes4 selector);
     error CapTokenNotAllowedInThisMode();
     error RecipientsRequired();
     error RecipientsNotAllowedInThisMode();
@@ -285,6 +299,21 @@ contract BrainSmartAccount {
             if (key.allowedSelectors.length == 0) revert SelectorsRequired();
             if (key.allowedRecipients.length != 0) revert RecipientsNotAllowedInThisMode();
             if (key.capToken != address(0)) revert CapTokenNotAllowedInThisMode();
+            // CALL mode has no recipient binding and no allowance accounting, so
+            // the ERC-20 movement surface is off limits here. This is what makes
+            // the two structural claims in the contract header true rather than
+            // ERC20-mode-local: `approve`/`increaseAllowance` would hand out
+            // claimable value that outlives the cumulative-cap window, and
+            // `transfer`/`transferFrom` would move tokens to an unchecked payee.
+            for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
+                bytes4 sel = key.allowedSelectors[i];
+                if (
+                    sel == _SELECTOR_APPROVE || sel == _SELECTOR_INCREASE_ALLOWANCE || sel == _SELECTOR_TRANSFER
+                        || sel == _SELECTOR_TRANSFER_FROM
+                ) {
+                    revert Erc20SelectorNotPermittedInCallMode(sel);
+                }
+            }
             // The amount word must sit after the 4-byte selector and be
             // word-aligned, so it names a real ABI argument slot.
             if (key.capAmountOffset < 4 || (key.capAmountOffset - 4) % 32 != 0) {

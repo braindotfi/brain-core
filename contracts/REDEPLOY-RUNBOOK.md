@@ -125,13 +125,18 @@ Granting the wrong mode is the easiest way to ship an unmetered key.
 | `BrainEscrow.release`   | `CALL`   | **36**                       | the `amount` word of `release(bytes32,uint256)`                                                  |
 | Any other contract call | `CALL`   | offset of its uint256 amount | must be `>= 4` and word-aligned                                                                  |
 
-A `CALL`-mode key can only target functions that carry a uint256 amount, by
-design: there is no un-metered call path any more.
+A `CALL`-mode key can only target functions that carry a uint256 amount at a
+declared offset. `CALL` is NOT a superset of `ERC20`: `approve`,
+`increaseAllowance`, `transfer` and `transferFrom` are rejected at grant time,
+because `CALL` has neither allowance accounting nor a recipient binding. Grant
+token movement in `ERC20` mode.
 
-Spend windows now anchor to the key's `validAfter` rather than the unix epoch.
-A per-task key whose lifetime equals one period therefore has exactly ONE
-accounting window. Under the old scheme a boundary almost always fell inside the
-lifetime, letting such a key spend its full cumulative cap twice.
+Spend windows anchor to the holder's FIRST grant rather than to the unix epoch
+or to the current key's `validAfter`. A per-task key whose lifetime equals one
+period therefore has exactly ONE accounting window, and re-granting or
+revoke-then-regranting a key does not reopen the period budget. Under the epoch
+scheme a boundary almost always fell inside the lifetime, letting such a key
+spend its full cumulative cap twice.
 
 ## Escrow arbiter must be the smart account
 

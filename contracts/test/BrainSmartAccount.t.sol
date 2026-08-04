@@ -1339,4 +1339,75 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.InvalidValidityWindow.selector, 0, key.validUntil));
         acct.grantSessionKey(key);
     }
+
+    // --- CALL mode is not a superset of ERC20 mode ------------------------
+
+    /// `capMode: CALL, allowedTargets: [USDC], allowedSelectors: [approve],
+    /// capAmountOffset: 36` used to be a VALID grant. It handed the holder an
+    /// allowance that outlives the accounting window — exactly what
+    /// ApproveNotPermittedInErc20Mode exists to prevent — and CALL mode forbids
+    /// allowedRecipients, so nothing bound the spender either.
+    address internal constant FAKE_TOKEN = address(0xDEfa17);
+
+    function _callKeyOverToken(bytes4 sel) internal pure returns (bytes4[] memory out) {
+        out = new bytes4[](1);
+        out[0] = sel;
+    }
+
+    function _grantCallKeyWithSelector(bytes4 sel) internal {
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: _addrs(FAKE_TOKEN),
+            allowedSelectors: _callKeyOverToken(sel),
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: 36,
+            maxPerTx: 1_000_000,
+            maxPerPeriod: 1_000_000,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+    }
+
+    function test_callMode_rejectsApprove() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.Erc20SelectorNotPermittedInCallMode.selector, bytes4(0x095ea7b3))
+        );
+        _grantCallKeyWithSelector(0x095ea7b3);
+    }
+
+    function test_callMode_rejectsIncreaseAllowance() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.Erc20SelectorNotPermittedInCallMode.selector, bytes4(0x39509351))
+        );
+        _grantCallKeyWithSelector(0x39509351);
+    }
+
+    /// CALL mode cannot decode a recipient, so a plain transfer here would defeat
+    /// the counterparty binding ERC20 mode enforces.
+    function test_callMode_rejectsTransfer() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.Erc20SelectorNotPermittedInCallMode.selector, bytes4(0xa9059cbb))
+        );
+        _grantCallKeyWithSelector(0xa9059cbb);
+    }
+
+    function test_callMode_rejectsTransferFrom() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.Erc20SelectorNotPermittedInCallMode.selector, bytes4(0x23b872dd))
+        );
+        _grantCallKeyWithSelector(0x23b872dd);
+    }
+
+    /// The denylist is ERC-20-specific: ordinary contract calls still grant.
+    function test_callMode_stillAllowsOrdinaryContractCalls() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(1));
+    }
 }
