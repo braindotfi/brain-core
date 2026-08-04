@@ -56,6 +56,10 @@ contract BrainAuditAnchor {
     error BatchLengthMismatch();
     error BatchTooLarge(uint256 length);
 
+    /// @dev Domain tag of the synthetic count leaf. Mirrored byte-for-byte by
+    ///      services/audit/src/merkle.ts.
+    bytes32 private constant _COUNT_LEAF_DOMAIN = keccak256("brain.audit.leaf-count.v1");
+
     modifier onlyPublisher() {
         if (msg.sender != publisher) revert NotPublisher();
         _;
@@ -160,6 +164,16 @@ contract BrainAuditAnchor {
         emit PublisherChanged(prev, publisher);
     }
 
+    /// @notice The synthetic leaf every anchored tree carries at index 0, which
+    ///         is what binds a root to its leaf COUNT.
+    /// @dev    Reconstructible by anyone from the `eventCount` this contract
+    ///         stores, so `verifyInclusion(root, countLeaf(eventCount), proof)`
+    ///         proves the published root commits to the count published beside
+    ///         it. Mirrored byte-for-byte by services/audit/src/merkle.ts.
+    function countLeaf(uint256 eventCount) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_COUNT_LEAF_DOMAIN, eventCount));
+    }
+
     /// @notice Verify that a leaf is included in a root by a Merkle proof.
     /// @dev    Domain separation prevents second pre-image attacks:
     ///         leaf nodes   → keccak256(0x00 ++ leaf_data)
@@ -169,13 +183,14 @@ contract BrainAuditAnchor {
     ///         node hashes at each level (leaf hashes for bottom-level siblings,
     ///         internal node hashes for higher levels).
     ///
-    ///         Known and accepted: the tree duplicates a trailing odd node, so
-    ///         the root does not commit to the leaf COUNT and [A,B,C] hashes to
-    ///         the same root as [A,B,C,C]. Binding the count would invalidate
-    ///         every anchor already published and force a dual-scheme verifier,
-    ///         so it is recorded as accepted risk rather than changed. The
-    ///         domain separation above already blocks the exploitable case
-    ///         (presenting an internal node as a leaf).
+    ///         The tree still duplicates a trailing odd node, so [A,B,C] and
+    ///         [A,B,C,C] produce the same FOLD. That no longer collides the root:
+    ///         every tree carries {countLeaf} at index 0, so a root over 3 events
+    ///         commits to 3 and can never be presented as a genuine 4-leaf
+    ///         window. Membership was always provable; completeness now is too.
+    ///         The 0x00/0x01 domain separation is unchanged and still blocks the
+    ///         separate second-preimage case (presenting an internal node as a
+    ///         leaf).
     function verifyInclusion(bytes32 root, bytes32 leaf, bytes32[] calldata proof) external pure returns (bool) {
         bytes32 computed = keccak256(abi.encodePacked(bytes1(0x00), leaf));
         uint256 len = proof.length;
