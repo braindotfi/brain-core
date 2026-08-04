@@ -11,11 +11,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { keccak256, toHex } from "viem";
+import type * as Viem from "viem";
 
 const readContract = vi.fn();
 
 vi.mock("viem", async () => {
-  const actual = await vi.importActual<typeof import("viem")>("viem");
+  const actual = await vi.importActual<typeof Viem>("viem");
   return {
     ...actual,
     createPublicClient: () => ({ readContract }),
