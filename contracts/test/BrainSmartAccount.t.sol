@@ -1534,4 +1534,26 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(BrainSmartAccount.PinNotAllowedInThisMode.selector);
         acct.grantSessionKey(key);
     }
+
+    /// One capAmountOffset cannot honestly describe two function signatures: the
+    /// same word is `amount` in release(bytes32,uint256) and a deadline in
+    /// setDeadline(bytes32,uint256). A CALL grant carries exactly one selector.
+    function test_callMode_rejectsMultipleSelectors() public {
+        bytes4[] memory sels = new bytes4[](2);
+        sels[0] = Target.ping.selector;
+        sels[1] = Target.noArgs.selector;
+        BrainSmartAccount.SessionKey memory key;
+        key.holder = holder;
+        key.validAfter = block.timestamp;
+        key.validUntil = block.timestamp + 3600;
+        key.allowedTargets = _addrs(address(target));
+        key.allowedSelectors = sels;
+        key.capMode = BrainSmartAccount.CapMode.CALL;
+        key.capAmountOffset = PING_AMOUNT_OFFSET;
+        key.policyVersion = POLICY_VER;
+
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.CallModeRequiresOneSelector.selector);
+        acct.grantSessionKey(key);
+    }
 }

@@ -59,6 +59,18 @@ interface IBrainPolicyRegistryView {
 ///                   meters the amount while leaving `escrowId` free, and the
 ///                   smart account is the arbiter of EVERY escrow naming it — so
 ///                   one tenant's key could force-refund another's escrow.
+///                   A CALL grant carries exactly ONE selector. The account
+///                   cannot read an ABI, so whether the word at `capAmountOffset`
+///                   is really an amount is the GRANTOR's responsibility; the
+///                   single-selector rule at least makes that offset name one
+///                   argument of one known function. A key may otherwise carry 32
+///                   targets and 32 selectors sharing one offset, where the same
+///                   word is `amount` in `release(bytes32,uint256)` and a
+///                   timestamp in `setDeadline(bytes32,uint256)`. Note the
+///                   remaining grantor duty: if that argument is a DYNAMIC type
+///                   the word is an ABI head offset, not a value, so
+///                   `multicall(bytes[])` at offset 4 meters the constant 32
+///                   forever. Grant CALL keys only over static-uint256 arguments.
 contract BrainSmartAccount {
     /// @notice How a session key's caps are measured. See the contract docs.
     enum CapMode {
@@ -214,6 +226,7 @@ contract BrainSmartAccount {
     error ValueNotAllowedInCallMode();
     error CapAmountOffsetNotAllowedInThisMode();
     error InvalidCapAmountOffset(uint256 offset);
+    error CallModeRequiresOneSelector();
     error PinNotAllowedInThisMode();
     error InvalidPinOffset(uint256 offset);
     error PinnedArgumentMismatch(bytes32 expected, bytes32 actual);
@@ -318,6 +331,8 @@ contract BrainSmartAccount {
         } else {
             // CapMode.CALL
             if (key.allowedSelectors.length == 0) revert SelectorsRequired();
+            // One offset can only honestly describe one function signature.
+            if (key.allowedSelectors.length != 1) revert CallModeRequiresOneSelector();
             if (key.allowedRecipients.length != 0) revert RecipientsNotAllowedInThisMode();
             if (key.capToken != address(0)) revert CapTokenNotAllowedInThisMode();
             // CALL mode has no recipient binding and no allowance accounting, so

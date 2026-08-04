@@ -131,6 +131,16 @@ declared offset. `CALL` is NOT a superset of `ERC20`: `approve`,
 because `CALL` has neither allowance accounting nor a recipient binding. Grant
 token movement in `ERC20` mode.
 
+Whether the word at `capAmountOffset` is really an amount is the GRANTOR's
+responsibility — the account cannot read an ABI. A `CALL` grant therefore
+carries exactly ONE selector, so the offset names one argument of one known
+function rather than being shared across up to 32 selectors where it may be
+`amount` in one and a timestamp in another. The remaining duty is yours: if that
+argument is a DYNAMIC type (`bytes`, `bytes[]`, `string`, a dynamic array) the
+word is an ABI head offset, not a value, and the key meters a constant —
+`multicall(bytes[])` at offset 4 meters `32` no matter how much it moves. Grant
+`CALL` keys only over static `uint256` arguments.
+
 `CALL` meters the amount but binds nothing about WHICH object the call acts on.
 Use the optional `pinOffset` / `pinValue` pair to pin one further 32-byte
 argument word. **Escrow keys MUST pin `escrowId` at offset 4.** The smart
