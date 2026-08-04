@@ -278,8 +278,15 @@ function main() {
     selectorLiterals.push(...extractSelectorLiterals(file));
   }
 
-  // Selector-literal findings are collected before the early exits below, so a
-  // repo with no parseAbi blocks still cannot smuggle in a raw selector.
+  // Selector-literal findings are collected before the "no parseAbi blocks"
+  // early exit below, so a repo with no parseAbi blocks still cannot smuggle
+  // in a raw selector -- PROVIDED contracts/out/ exists. It does not follow
+  // that these checks are artifact-independent: the CONTRACTS_OUT guard
+  // above is a full early exit (process.exit(0) before this file walk even
+  // runs), so with no `forge build` output this whole function -- including
+  // the "unregistered selector" finding, which needs no ABI at all -- never
+  // runs. This guard is only load-bearing in a job that ran `forge build`
+  // first (see .github/workflows/pr.yml, `contracts` job).
   const selectorFindings = [];
   for (const lit of selectorLiterals) {
     if (THIRD_PARTY_SELECTORS.has(lit.literal)) continue;

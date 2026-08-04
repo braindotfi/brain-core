@@ -346,6 +346,15 @@ jobs:
       - name: forge build
         run: forge build --sizes
 
+      - name: check contract ABI drift (TS parseAbi/selectors vs forge artifacts)
+        # This guard's sole other caller is `pnpm run lint` (typescript job),
+        # which has no Foundry toolchain and so never has contracts/out/ --
+        # it always printed "skip" there and exited 0. This is the one job
+        # with a real `forge build` output, so this is where it must run for
+        # real. Runs from the repo root (the job default is contracts/).
+        working-directory: ${{ github.workspace }}
+        run: node scripts/check-contract-abi-drift.mjs --quiet
+
       - name: verify audited-build evidence
         # Binds contracts/audit-status.json to the real build (P1). While the
         # audit is pending this prints the current source-tree + bytecode +
