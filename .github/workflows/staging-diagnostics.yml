@@ -127,7 +127,7 @@ jobs:
             # The worker owns the scoped ledger-projector URL assembled by Compose.
             remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
             if [[ -n "$tenant_id" ]]; then
-              remote_command+=" -- --tenant-id '$tenant_id'"
+              remote_command+=" --tenant-id '$tenant_id'"
             fi
             cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" "$remote_command"
