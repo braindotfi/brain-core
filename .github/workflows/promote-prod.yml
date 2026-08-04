@@ -35,6 +35,7 @@ jobs:
       VM_ENV_FILE: .env.prod
       COMPOSE_PROJECT: brain-prod
       HEALTH_URL: https://api.brain.fi/health
+      SHA: ${{ inputs.sha }}
     steps:
       # Resolve which commit to promote before checking anything out. An
       # explicit input always wins; otherwise ask staging what it's
@@ -43,7 +44,7 @@ jobs:
       - name: Resolve SHA
         id: resolve
         run: |
-          sha="${{ inputs.sha }}"
+          sha="$SHA"
           if [ -n "$sha" ] && ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "inputs.sha must be a 40-character lowercase hex commit SHA, got: $sha"
             exit 1
