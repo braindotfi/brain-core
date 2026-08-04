@@ -8,6 +8,11 @@ import {
 
 const NOW = new Date("2026-05-24T00:00:00Z");
 
+// Real production action_type (services/execution/src/payment-intents/action-types.ts)
+// and real evidence-kind vocabulary (shared/src/gate/evidence-validator.ts):
+// "pay_invoice"/"pay_obligation" are pre-mapping route names, never a stored
+// action_type; extracted.id is the ledger_invoices PK (an inv_<ulid> BrainId),
+// distinct from the human-readable invoice_number business label.
 function invoiceEvidence(overrides: Partial<ResolvedEvidence> = {}): ResolvedEvidence {
   return {
     id: "prs_inv1",
@@ -16,9 +21,11 @@ function invoiceEvidence(overrides: Partial<ResolvedEvidence> = {}): ResolvedEvi
     capturedAt: new Date("2026-05-01T00:00:00Z"),
     trustLevel: "high",
     extracted: {
+      id: "inv_1",
       invoice_number: "INV-100",
       counterparty_id: "cp_acme",
       amount_due: "5000.00",
+      amount_paid: "0.00",
       currency: "USD",
     },
     ...overrides,
@@ -29,12 +36,12 @@ function payInvoiceInput(
   overrides: Partial<EvidenceValidationInput> = {},
 ): EvidenceValidationInput {
   return {
-    actionType: "pay_invoice",
+    actionType: "ach_outbound",
     paymentIntent: {
       counterpartyId: "cp_acme",
       amount: "5000.00",
       currency: "USD",
-      invoiceId: "INV-100",
+      invoiceId: "inv_1",
     },
     evidence: [invoiceEvidence()],
     maxRiskLevel: "high",
@@ -152,7 +159,7 @@ describe("validateEvidence — pay_invoice", () => {
           counterpartyId: "cp_acme",
           amount: "50000.00",
           currency: "USD",
-          invoiceId: "INV-100",
+          invoiceId: "inv_1",
         },
         evidence: [
           invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "500.00" } }),
@@ -162,12 +169,52 @@ describe("validateEvidence — pay_invoice", () => {
     expect(r.passed).toBe(false);
     expect(r.failures.map((f) => f.rule)).toContain("amount_match");
   });
+
+  it("adversarial: a $500 invoice from a DIFFERENT counterparty fails counterparty_match", () => {
+    const r = validateEvidence(
+      payInvoiceInput({
+        paymentIntent: {
+          counterpartyId: "cp_acme",
+          amount: "500.00",
+          currency: "USD",
+          invoiceId: "inv_1",
+        },
+        evidence: [
+          invoiceEvidence({
+            extracted: { ...invoiceEvidence().extracted, counterparty_id: "cp_other" },
+          }),
+        ],
+      }),
+    );
+    expect(r.passed).toBe(false);
+    expect(r.failures.map((f) => f.rule)).toContain("counterparty_match");
+  });
+
+  it("is not_applicable for a non-money-out action type even with mismatched evidence", () => {
+    const r = validateEvidence(
+      payInvoiceInput({
+        actionType: "erp_writeback",
+        evidence: [invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } })],
+      }),
+    );
+    expect(r).toEqual({ passed: true, failures: [] });
+  });
+
+  it("is not_applicable for a money-out action with neither invoiceId nor obligationId", () => {
+    const r = validateEvidence(
+      payInvoiceInput({
+        paymentIntent: { counterpartyId: "cp_acme", amount: "5000.00", currency: "USD" },
+        evidence: [invoiceEvidence({ extracted: { ...invoiceEvidence().extracted, amount_due: "1.00" } })],
+      }),
+    );
+    expect(r).toEqual({ passed: true, failures: [] });
+  });
 });
 
 describe("validateEvidence — pay_obligation", () => {
   function obligationInput(over: Partial<EvidenceValidationInput> = {}): EvidenceValidationInput {
     return {
-      actionType: "pay_obligation",
+      actionType: "ach_outbound",
       paymentIntent: {
         counterpartyId: "cp_rent",
         amount: "1200.00",
@@ -181,7 +228,9 @@ describe("validateEvidence — pay_obligation", () => {
           sourceArtifactId: "raw_2",
           capturedAt: NOW,
           trustLevel: "high",
-          extracted: { counterparty_id: "cp_rent", amount_due: "1200.00", status: "due_soon" },
+          // Real ledger_obligations.status values (services/ledger/migrations/0007):
+          // "due" -- 'open'/'due_soon' never existed in production.
+          extracted: { counterparty_id: "cp_rent", amount_due: "1200.00", status: "due" },
         },
       ],
       maxRiskLevel: "medium",
@@ -189,7 +238,7 @@ describe("validateEvidence — pay_obligation", () => {
       ...over,
     };
   }
-  it("passes for a matching, open obligation reference", () => {
+  it("passes for a matching, still-payable obligation reference", () => {
     expect(validateEvidence(obligationInput()).passed).toBe(true);
   });
   it("fails when the obligation is already paid", () => {
@@ -208,6 +257,23 @@ describe("validateEvidence — pay_obligation", () => {
       }),
     );
     expect(r.failures.map((f) => f.rule)).toContain("obligation_status");
+  });
+  it("passes for an overdue-but-still-payable obligation", () => {
+    const r = validateEvidence(
+      obligationInput({
+        evidence: [
+          {
+            id: "prs_obl",
+            kind: "obligation_reference",
+            sourceArtifactId: "raw_2",
+            capturedAt: NOW,
+            trustLevel: "high",
+            extracted: { counterparty_id: "cp_rent", amount_due: "1200.00", status: "overdue" },
+          },
+        ],
+      }),
+    );
+    expect(r.passed).toBe(true);
   });
 });
 

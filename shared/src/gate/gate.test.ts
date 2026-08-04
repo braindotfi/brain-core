@@ -194,6 +194,10 @@ describe("§6 gate metrics", () => {
 });
 
 describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
+  // Real action_type + real evidence-kind vocabulary: a stored PaymentIntent's
+  // action_type is a rail (ach_outbound/wire/...), never "pay_invoice", and
+  // the resolveEvidence loader's extracted.id is the ledger_invoices PK, not
+  // the human-readable invoice_number -- see shared/src/gate/evidence-validator.ts.
   function invoiceEv(amountDue: string) {
     return [
       {
@@ -203,16 +207,18 @@ describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
         capturedAt: new Date(),
         trustLevel: "high" as const,
         extracted: {
+          id: "inv_1",
           invoice_number: "INV-1",
           counterparty_id: "cp_AWS",
           amount_due: amountDue,
+          amount_paid: "0.00",
           currency: "USD",
         },
       },
     ];
   }
   const payInvoiceIntent = () =>
-    defaultIntent({ action_type: "pay_invoice", invoice_id: "INV-1", amount: "50.00" });
+    defaultIntent({ action_type: "ach_outbound", invoice_id: "inv_1", amount: "50.00" });
 
   it("passes 9.5 when the loaded evidence supports the action", async () => {
     const { deps } = makeDeps({ resolveEvidence: async () => invoiceEv("50.00") });
@@ -242,6 +248,111 @@ describe("§6 — check 9.5: evidence semantic validation (H-21)", () => {
       expect(result.failedCheck.name).toBe("evidence_supports_action");
       // 10/11/12/13 never ran.
       expect(result.checks.some((c) => c.index === 10)).toBe(false);
+    }
+  });
+
+  it("H-21 CRITICAL regression: a $500 invoice from a different counterparty cannot back a $50,000 payment", async () => {
+    // The exact attack the module exists to stop: attach a small, unrelated
+    // invoice as evidence for a large payment to a different counterparty.
+    const { deps } = makeDeps({
+      // Large enough balance that check 8 (available balance) does not fire
+      // first and mask the check 9.5 failure this test targets.
+      resolveAccount: async () => ({ ...ACTIVE_ACCOUNT, available_balance: "1000000.00" }),
+      resolveEvidence: async () => [
+        {
+          id: "prs_inv",
+          kind: "invoice",
+          sourceArtifactId: "raw_1",
+          capturedAt: new Date(),
+          trustLevel: "high" as const,
+          extracted: {
+            id: "inv_1",
+            invoice_number: "INV-1",
+            counterparty_id: "cp_OTHER",
+            amount_due: "500.00",
+            amount_paid: "0.00",
+            currency: "USD",
+          },
+        },
+      ],
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({
+        action_type: "ach_outbound",
+        invoice_id: "inv_1",
+        amount: "50000.00",
+        destination_counterparty_id: "cp_AWS",
+      }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(9.5);
+      const failures = (result.failedCheck.detail as { failures: Array<{ rule: string }> })
+        .failures;
+      expect(failures.map((f) => f.rule)).toEqual(
+        expect.arrayContaining(["counterparty_match", "amount_match"]),
+      );
+    }
+  });
+
+  it("is not_applicable for a non-money-out action type (ach_inbound)", async () => {
+    const { deps } = makeDeps({
+      resolveEvidence: async () => invoiceEv("999999.00"), // would fail if evaluated
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ action_type: "ach_inbound", invoice_id: "inv_1" }),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const check = result.checks.find((c) => c.index === 9.5);
+      expect(check?.passed).toBe(true);
+    }
+  });
+
+  it("is not_applicable for a money-out payment with neither invoice_id nor obligation_id", async () => {
+    const { deps } = makeDeps({
+      resolveEvidence: async () => invoiceEv("999999.00"), // would fail if evaluated
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ action_type: "ach_outbound" }),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const check = result.checks.find((c) => c.index === 9.5);
+      expect(check?.passed).toBe(true);
+    }
+  });
+
+  it("dispatches to the obligation validator when obligation_id is set (real production vocabulary)", async () => {
+    const { deps } = makeDeps({
+      resolveEvidence: async () => [
+        {
+          id: "prs_obl",
+          kind: "obligation_reference",
+          sourceArtifactId: "raw_obl",
+          capturedAt: new Date(),
+          trustLevel: "high" as const,
+          extracted: { counterparty_id: "cp_AWS", amount_due: "50.00", status: "paid" },
+        },
+      ],
+    });
+    const result = await runPreExecutionGate(deps, {
+      ctx,
+      principal: defaultPrincipal(),
+      intent: defaultIntent({ action_type: "wire", obligation_id: "obl_1", amount: "50.00" }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failedCheck.index).toBe(9.5);
+      const failures = (result.failedCheck.detail as { failures: Array<{ rule: string }> })
+        .failures;
+      expect(failures.map((f) => f.rule)).toContain("obligation_status");
     }
   });
 });

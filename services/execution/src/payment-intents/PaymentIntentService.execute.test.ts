@@ -344,6 +344,59 @@ describe("PaymentIntentService.execute — durable hand-off (approved → dispat
     expect(seen?.confidence).toBe(0.4);
   });
 
+  it("H-21/H-22 regression: threads obligation_id and invoice_id from the row into the execute-time gate intent", async () => {
+    // intentToGate previously dropped these two columns even though the row
+    // carries them, silently disabling gate check 6.7 (obligation direction)
+    // and duplicate-detector rules 1/2/7 at execute/resume time.
+    const audit = new InMemoryAuditEmitter();
+    const linkedRow: PaymentIntentRow = {
+      ...APPROVED_INTENT_ROW,
+      obligation_id: "obl_01LINKED000000000000000000",
+      invoice_id: "inv_01LINKED000000000000000000",
+    };
+    const dispatchingRow: PaymentIntentRow = { ...linkedRow, status: "dispatching" };
+
+    const pool = makeFakePool((sql, values) => {
+      if (sql.includes("FROM ledger_payment_intents WHERE id")) {
+        return { rows: [linkedRow], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents")) {
+        return { rows: [dispatchingRow], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO ledger_reservations")) {
+        return { rows: [{ id: values[0] }], rowCount: 1 };
+      }
+      if (sql.includes("INSERT INTO execution_outbox")) {
+        return { rows: [{ id: "exo_test" }], rowCount: 1 };
+      }
+      if (sql.includes("approval_ids")) {
+        return { rows: [linkedRow], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    let seen: GatePaymentIntent | undefined;
+    const approvals = new ApprovalService({ pool, audit, resolveRole: async () => null });
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals,
+      resolveAgent: async (_ctx, _id) => GATE_AGENT,
+      resolveAccount: async (_ctx, _id) => GATE_ACCOUNT,
+      resolveCounterparty: async (_ctx, _id) => GATE_CP,
+      evaluatePolicy: async (_ctx, intent) => {
+        seen = intent;
+        return POLICY_DECISION;
+      },
+      resolvePrincipal: async (_ctx) => GATE_PRINCIPAL,
+    });
+
+    await service.execute(ctx, PI_ID);
+    expect(seen?.obligation_id).toBe("obl_01LINKED000000000000000000");
+    expect(seen?.invoice_id).toBe("inv_01LINKED000000000000000000");
+  });
+
   it("aborts without enqueuing when the intent was paused between gate and hand-off", async () => {
     const audit = new InMemoryAuditEmitter();
     const reservationInsert = vi.fn();

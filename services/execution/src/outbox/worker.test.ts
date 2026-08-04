@@ -221,6 +221,49 @@ describe("processClaimedRow", () => {
     expect(outbox.markSettled).not.toHaveBeenCalled();
   });
 
+  it("F4: resumes settlement from a persisted rail_receipt instead of re-dispatching", async () => {
+    // Reproduces the exact reported path without a crash: a row already has a
+    // durable rail_receipt (a prior attempt's markDispatched succeeded) and
+    // gets re-claimed (via reclaimStale or a markFailed re-queue). The rail
+    // must NOT be called again -- a second onchain/escrow dispatch would move
+    // funds twice.
+    const { deps, outbox, executor } = makeDeps({});
+    const row = makeRow({
+      status: "pending",
+      rail_receipt: { rail: "ach", ach_trace: "prior-trace", stub: true },
+      execution_id: "exec_prior",
+    });
+
+    const outcome = await processClaimedRow(deps, row);
+
+    expect(outcome).toBe("settled");
+    expect(deps.rails.get("bank_ach").dispatch).not.toHaveBeenCalled();
+    expect(outbox.markDispatched).not.toHaveBeenCalled();
+    expect(executor.completeExecution).toHaveBeenCalledTimes(1);
+    expect(executor.completeExecution.mock.calls[0]?.[1]).toMatchObject({
+      executionId: "exec_prior",
+      railReceipt: { rail: "ach", ach_trace: "prior-trace", stub: true },
+    });
+    expect(outbox.markSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("F4: a resumed settlement that fails again still routes to retry, never re-dispatching", async () => {
+    const { deps, outbox, executor } = makeDeps({ completeThrows: true, markFailedReturns: 1 });
+    const row = makeRow({
+      status: "reconciling",
+      rail_receipt: { rail: "ach", ach_trace: "prior-trace", stub: true },
+      execution_id: "exec_prior",
+    });
+
+    const outcome = await processClaimedRow(deps, row);
+
+    expect(outcome).toBe("retrying");
+    expect(deps.rails.get("bank_ach").dispatch).not.toHaveBeenCalled();
+    expect(executor.completeExecution).toHaveBeenCalledTimes(1);
+    expect(outbox.markFailed).toHaveBeenCalledTimes(1);
+    expect(outbox.markSettled).not.toHaveBeenCalled();
+  });
+
   it("terminally fails a PERMANENT dispatch failure: failExecution + status=failed, no retry", async () => {
     // The incident shape: ExceedsPerTxCap reverts deterministically; retrying
     // can never succeed, so the worker must not burn the retry budget.
@@ -357,7 +400,9 @@ describe("runOutboxCycle", () => {
     const { deps, outbox } = makeDeps({
       rows: [makeRow({ id: "exo_a" }), makeRow({ id: "exo_b" })],
     });
-    outbox.reclaimStale.mockResolvedValueOnce([makeRow({ id: "exo_stale" })]);
+    outbox.reclaimStale.mockResolvedValueOnce([
+      { ...makeRow({ id: "exo_stale" }), prior_status: "dispatching" },
+    ]);
 
     const result = await runOutboxCycle(deps, { limit: 5, staleSeconds: 120 });
 
@@ -366,6 +411,30 @@ describe("runOutboxCycle", () => {
     expect(result.reclaimed).toBe(1);
     expect(result.claimed).toBe(2);
     expect(result.settled).toBe(2);
+  });
+
+  it("F4: emits an execution.outbox.reclaimed audit event per reclaimed row, noting rail_receipt presence", async () => {
+    // Re-arming a money dispatch is the single most forensically important
+    // outbox transition; it must never be silent.
+    const { deps, audit } = makeDeps({ rows: [] });
+    audit.events.length = 0;
+    (deps.outbox.reclaimStale as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      {
+        ...makeRow({
+          id: "exo_stale",
+          rail_receipt: { rail: "ach", ach_trace: "t1", stub: true },
+        }),
+        prior_status: "dispatched",
+      },
+    ]);
+
+    await runOutboxCycle(deps, { limit: 5, staleSeconds: 120 });
+
+    const reclaimedEvents = audit.events.filter((e) => e.action === "execution.outbox.reclaimed");
+    expect(reclaimedEvents).toHaveLength(1);
+    expect(reclaimedEvents[0]?.inputs.outbox_id).toBe("exo_stale");
+    expect(reclaimedEvents[0]?.outputs.prior_status).toBe("dispatched");
+    expect(reclaimedEvents[0]?.outputs.had_rail_receipt).toBe(true);
   });
 
   it("does nothing when the queue is empty", async () => {
