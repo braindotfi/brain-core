@@ -1,0 +1,49 @@
+name: ops-delete-orphan-demo-tenants
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DELETE_33_ORPHAN_DEMO_TENANTS to run the fixed production cleanup."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    name: delete the fixed orphan demo-tenant set
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: production-tenant-deletion
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Check out the fixed cleanup script
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate explicit confirmation
+        shell: bash
+        run: |
+          if [[ "$CONFIRMATION" != "DELETE_33_ORPHAN_DEMO_TENANTS" ]]; then
+            echo "confirmation must equal DELETE_33_ORPHAN_DEMO_TENANTS"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Preflight and delete the fixed orphan tenant set
+        shell: bash
+        run: scripts/ops/delete-orphan-demo-tenants.sh
