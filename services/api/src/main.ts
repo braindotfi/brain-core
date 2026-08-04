@@ -3347,11 +3347,17 @@ async function main(): Promise<void> {
       rails: railPostures,
       gateLoaders: {
         // attestCounterpartyAgent + sumAgentWindowSpend are unconditionally wired
-        // above; resolveEscrowState is opt-in by BRAIN_ESCROW_ADDRESS. Mirror that.
+        // above; resolveEscrowState is opt-in by BOTH BRAIN_ESCROW_ADDRESS and
+        // BRAIN_X402_USDC_ADDRESS (see its construction above). Report the
+        // actual resolver binding, not a stand-in for one of its two
+        // preconditions -- with BRAIN_ESCROW_ADDRESS set but
+        // BRAIN_X402_USDC_ADDRESS unset, `cfg.BRAIN_ESCROW_ADDRESS !==
+        // undefined` printed true while check 6.6 was dormant, and ops reads
+        // this exact line to answer "is 6.6 enforcing?".
         resolveTenantFlags: resolveTenantFlags !== undefined,
         attestCounterpartyAgent: true,
         sumAgentWindowSpend: true,
-        resolveEscrowState: cfg.BRAIN_ESCROW_ADDRESS !== undefined,
+        resolveEscrowState: resolveEscrowState !== undefined,
         // P1 set: §6 checks 8 / 11 / 11.5 — unconditionally wired (see line 581).
         sumActiveReservations: true,
         resolveEvidence: true,
