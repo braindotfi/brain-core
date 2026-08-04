@@ -438,7 +438,7 @@ describe("ingestOne", () => {
     expect(result.deduplicated).toBe(true);
     expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
     expect(client.parsedChecks).toEqual([
-      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.1"]],
+      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.2"]],
     ]);
     expect(client.jobs).toHaveLength(1);
     expect(client.jobs[0]![2]).toBe("raw_EXISTING");
@@ -478,7 +478,7 @@ describe("ingestOne", () => {
     expect(result.deduplicated).toBe(true);
     expect(audit.events[0]!.action).toBe("raw.ingest.deduplicated");
     expect(client.parsedChecks).toEqual([
-      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.1"]],
+      ["raw_EXISTING", ["bank_statement_upload_v1"], ["1.0.2"]],
     ]);
     expect(client.jobs).toHaveLength(0);
     expect(result.extractionJob).toBeNull();

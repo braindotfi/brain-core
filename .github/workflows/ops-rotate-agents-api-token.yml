@@ -1,0 +1,123 @@
+name: ops-rotate-agents-api-token
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target whose extraction-agent credential will be rotated."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  rotate:
+    name: rotate ${{ inputs.target }} extraction-agent API token
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || 'staging' }}
+    env:
+      VM_HOST: ${{ inputs.target == 'production' && secrets.VM_HOST || secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ inputs.target == 'production' && secrets.VM_SSH_KEY || secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: ${{ inputs.target == 'production' && '.env.prod' || '.env.staging' }}
+      COMPOSE_PROJECT: ${{ inputs.target == 'production' && 'brain-prod' || 'brain-staging' }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Rotate raw-write agent token and wait for agents health
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          if [[ ! -f "$VM_ENV_FILE" ]]; then
+            echo "env_file_status=missing"
+            exit 1
+          fi
+          if ! docker inspect -f '{{.State.Running}}' brain-prod-api 2>/dev/null | grep -qx true; then
+            echo "api_container_status=not_running"
+            exit 1
+          fi
+
+          token="$(docker exec brain-prod-api node --input-type=module - <<'NODE'
+          import { importJWK, SignJWT } from "jose";
+
+          const rawKey = process.env.AUTH_SIGN_KEY;
+          if (rawKey === undefined || rawKey === "") {
+            throw new Error("AUTH_SIGN_KEY unavailable in api container");
+          }
+          const jwk = JSON.parse(rawKey);
+          const alg = jwk.alg ?? "RS256";
+          const signer = await importJWK(jwk, alg);
+          const now = Math.floor(Date.now() / 1000);
+          const token = await new SignJWT({
+            tenant_id: "tnt_00000000010000000000000000",
+            principal_type: "agent",
+            scopes: ["raw:write"],
+          })
+            .setProtectedHeader(jwk.kid === undefined ? { alg } : { alg, kid: jwk.kid })
+            .setIssuer(process.env.AUTH_ISSUER ?? "https://auth.brain.fi")
+            .setAudience(process.env.AUTH_AUDIENCE ?? "brain-api")
+            .setSubject("agent_00000000020000000000000001")
+            .setIssuedAt(now)
+            .setExpirationTime(now + 365 * 24 * 60 * 60)
+            .sign(signer);
+          process.stdout.write(token);
+          NODE
+          )"
+          if [[ "$token" != *.*.* ]]; then
+            echo "agents_api_token_status=mint_failed"
+            exit 1
+          fi
+
+          tmp="$(mktemp)"
+          chmod --reference="$VM_ENV_FILE" "$tmp"
+          awk -v token="$token" '
+            BEGIN { replaced = 0 }
+            /^BRAIN_API_TOKEN=/ {
+              if (replaced == 0) {
+                print "BRAIN_API_TOKEN=" token
+                replaced = 1
+              }
+              next
+            }
+            { print }
+            END {
+              if (replaced == 0) print "BRAIN_API_TOKEN=" token
+            }
+          ' "$VM_ENV_FILE" > "$tmp"
+          mv "$tmp" "$VM_ENV_FILE"
+
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          compose="docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE $compose_files --profile agents"
+          $compose up -d --no-deps --force-recreate agents
+
+          for _ in $(seq 1 18); do
+            status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' brain-prod-agents 2>/dev/null || true)"
+            if [[ "$status" == "healthy" ]]; then
+              echo "agents_api_token_status=rotated"
+              echo "agents_container_health=healthy"
+              echo "agents_api_token_ttl_days=365"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "agents_api_token_status=rotated_but_agents_unhealthy"
+          docker logs --tail=100 brain-prod-agents >&2 || true
+          exit 1
+          REMOTE

@@ -557,6 +557,22 @@ jobs:
              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents surface-gateway || \
               (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents surface-gateway && false))"
 
+      - name: Wait for agents healthy on VM
+        # Compose success only proves the container started. The extraction
+        # runtime must be healthy before this deploy can accept uploads.
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -euo pipefail
+            for _ in $(seq 1 18); do
+              status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" brain-prod-agents 2>/dev/null || true)"
+              [ "$status" = "healthy" ] && exit 0
+              sleep 5
+            done
+            echo "brain-prod-agents did not become healthy"
+            docker logs --tail=200 brain-prod-agents >&2 || true
+            exit 1
+          '
+
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so
         # a deploy that silently failed to recreate the container would still

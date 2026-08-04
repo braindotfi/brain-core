@@ -614,6 +614,10 @@ Pending Dmitriy sign-off
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
+  The agents container must be healthy before staging or production deploys
+  complete. Its `BRAIN_API_TOKEN` is a golden-tenant, agent-principal JWT with
+  only `raw:write`; rotate it without logging the value through
+  `ops-rotate-agents-api-token.yml` before its one-year expiry.
   Known upload PDFs are classified before parser selection: bank statement PDFs
   must clear the bank-statement confidence floor, while AR aging and payroll
   PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
