@@ -13,13 +13,16 @@ const SCRIPT = join(process.cwd(), "scripts/check-contract-abi-drift.mjs");
  *   - <some-ts-file>                                (a TS parseAbi caller)
  * Run the script with that dir as cwd, return { code, stdout, stderr }.
  */
-function runGuard({ tsSrc, contractName = "BrainEscrow", abi }) {
+function runGuard({ tsSrc, contractName = "BrainEscrow", abi, methodIdentifiers }) {
   const root = mkdtempSync(join(tmpdir(), "abi-drift-"));
   try {
     if (abi !== "MISSING") {
       const dir = join(root, "contracts/out", `${contractName}.sol`);
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${contractName}.json`), JSON.stringify({ abi }));
+      writeFileSync(
+        join(dir, `${contractName}.json`),
+        JSON.stringify({ abi, ...(methodIdentifiers !== undefined ? { methodIdentifiers } : {}) }),
+      );
     } else {
       // Force the "contracts/out exists but artifact missing" branch.
       mkdirSync(join(root, "contracts/out"), { recursive: true });
@@ -131,6 +134,67 @@ test("missing forge artifact for a known variable is flagged", () => {
   const r = runGuard({ tsSrc: ALIGNED_TS, abi: "MISSING" });
   assert.equal(r.code, 1);
   assert.match(r.stderr, /ABI MISSING/);
+});
+
+// --- PINNED_SELECTORS literal-vs-methodIdentifiers checks (T4) -----------
+//
+// A signature that still resolves to a real function on the contract proves
+// the NAME wasn't retired -- it says nothing about whether the registered
+// hex LITERAL actually encodes that signature. This is the exact shape the
+// original C1 bug shipped in: RELEASE_SELECTOR = "0x84f97fba" registered
+// against the correct signature "function release(bytes32,uint256)", but
+// BrainEscrow's real selector for that signature is 0x66afd8ef.
+
+const RELEASE_ABI = [
+  {
+    type: "function",
+    name: "release",
+    inputs: [
+      { name: "escrowId", type: "bytes32", internalType: "bytes32" },
+      { name: "amount", type: "uint256", internalType: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+];
+const RELEASE_METHOD_IDENTIFIERS = { "release(bytes32,uint256)": "66afd8ef" };
+const releaseSelectorTs = (hex) => `
+const RELEASE_SELECTOR = "${hex}";
+export { RELEASE_SELECTOR };
+`;
+
+test("PINNED_SELECTORS: the correct literal passes", () => {
+  const r = runGuard({
+    tsSrc: releaseSelectorTs("0x66afd8ef"),
+    contractName: "BrainEscrow",
+    abi: RELEASE_ABI,
+    methodIdentifiers: RELEASE_METHOD_IDENTIFIERS,
+  });
+  assert.equal(r.code, 0, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
+});
+
+test("PINNED_SELECTORS: a transposed literal is flagged even though the signature still resolves (C1 negative control)", () => {
+  const r = runGuard({
+    tsSrc: releaseSelectorTs("0x84f97fba"),
+    contractName: "BrainEscrow",
+    abi: RELEASE_ABI,
+    methodIdentifiers: RELEASE_METHOD_IDENTIFIERS,
+  });
+  assert.equal(r.code, 1, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  assert.match(r.stderr, /\[SELECTOR\]/);
+  assert.match(r.stderr, /does not encode it/);
+  assert.match(r.stderr, /0x66afd8ef/);
+});
+
+test("PINNED_SELECTORS: a missing methodIdentifiers entry is flagged, not silently passed", () => {
+  const r = runGuard({
+    tsSrc: releaseSelectorTs("0x66afd8ef"),
+    contractName: "BrainEscrow",
+    abi: RELEASE_ABI,
+    methodIdentifiers: {}, // artifact predates methodIdentifiers, or the key is absent
+  });
+  assert.equal(r.code, 1, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  assert.match(r.stderr, /methodIdentifiers/);
 });
 
 test("no contracts/out at all (fresh clone without forge) skips, does not fail", () => {

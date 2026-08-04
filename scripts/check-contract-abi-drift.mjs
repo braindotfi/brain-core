@@ -73,9 +73,14 @@ const KNOWN_VARS = {
  * this guard reported OK the whole time.
  *
  * Every selector constant must therefore be registered here with the signature
- * it claims to encode. The guard verifies that signature still exists on the
- * named contract; the KECCAK correctness of the literal itself is pinned by the
- * companion unit test named in `pinnedBy`, which recomputes it with viem.
+ * it claims to encode. The guard verifies BOTH that the signature still
+ * exists on the named contract AND that the literal is the exact selector
+ * forge's own `methodIdentifiers` computed for that signature -- retyping
+ * RELEASE_SELECTOR with a transposed hex digit while keeping the correct
+ * signature registered (the original C1 shape) now fails here, not only in
+ * the companion unit test named in `pinnedBy` (which independently recomputes
+ * it with viem, as defense in depth). `pinnedBy` is not itself validated by
+ * this script -- it is a pointer for humans, not a machine-checked contract.
  *
  * Prefer `parseAbi` + `encodeFunctionData` over a literal. Register one here
  * only when the module must stay SDK-free.
@@ -229,16 +234,26 @@ function extractSelectorLiterals(file) {
   return out;
 }
 
-function loadAbi(contract) {
+/**
+ * Loads the full forge artifact, not just its `abi`. `methodIdentifiers` is
+ * the ground truth for what a signature actually hashes to on this build --
+ * that is what PINNED_SELECTORS literals must be checked against, not just
+ * "does a function with this name+shape still exist" (see `main`).
+ */
+function loadArtifact(contract) {
   const path = join(CONTRACTS_OUT, `${contract}.sol`, `${contract}.json`);
   if (!existsSync(path)) return null;
   try {
     const j = JSON.parse(readFileSync(path, "utf8"));
     if (!Array.isArray(j.abi)) return null;
-    return j.abi;
+    return { abi: j.abi, methodIdentifiers: j.methodIdentifiers ?? null };
   } catch {
     return null;
   }
+}
+
+function loadAbi(contract) {
+  return loadArtifact(contract)?.abi ?? null;
 }
 
 function findMatchingFunction(abi, name, inputTypes) {
@@ -325,6 +340,43 @@ function main() {
         msg:
           `registered signature "${pinned.signature}" has no exact-match function in ` +
           `${pinned.contract}.json. The selector encodes a call the contract no longer has.`,
+      });
+      continue;
+    }
+
+    // The signature still resolves to a real function -- that only proves the
+    // NAME wasn't retired. It says nothing about whether `lit.literal` is
+    // actually the keccak of that signature: retyping RELEASE_SELECTOR with a
+    // transposed hex digit (the original C1 bug) leaves this far above still
+    // green. `methodIdentifiers` in the same artifact is forge's own
+    // pre-computed selector for the canonical signature, so compare the
+    // literal against that ground truth instead of trusting the constant.
+    const methodIdentifiers = loadArtifact(pinned.contract)?.methodIdentifiers ?? null;
+    const canonicalSignature = `${parsed.name}(${parsed.inputTypes.join(",")})`;
+    const trueSelector = methodIdentifiers?.[canonicalSignature];
+    if (typeof trueSelector !== "string") {
+      selectorFindings.push({
+        kind: "selector-methodid-missing",
+        file: lit.file,
+        line: lit.line,
+        variable: lit.variable,
+        msg:
+          `${pinned.contract}.json has no methodIdentifiers entry for "${canonicalSignature}". ` +
+          "Re-run `forge build` (older artifacts may predate methodIdentifiers).",
+      });
+      continue;
+    }
+    const trueLiteral = `0x${trueSelector.toLowerCase()}`;
+    if (trueLiteral !== lit.literal) {
+      selectorFindings.push({
+        kind: "selector-literal-mismatch",
+        file: lit.file,
+        line: lit.line,
+        variable: lit.variable,
+        msg:
+          `${lit.variable} = ${lit.literal}, but keccak256("${canonicalSignature}") is ` +
+          `${trueLiteral} per ${pinned.contract}.json. The registered signature is genuine but ` +
+          "the literal constant does not encode it -- this is the exact C1 shape.",
       });
     }
   }
