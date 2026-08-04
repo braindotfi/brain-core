@@ -384,7 +384,7 @@ describe("TenantDeletionService", () => {
     const svc = new TenantDeletionService({ privilegedPool: pool, audit });
 
     await expect(svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT)).rejects.toMatchObject(
-      { code: "payment_intent_approval_invalid" },
+      { code: "tenant_access_denied" },
     );
   });
 

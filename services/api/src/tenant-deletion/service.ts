@@ -292,8 +292,7 @@ export class TenantDeletionService {
       ]);
       const member = memberRes.rows[0];
       if (member === undefined || !member.active || member.status !== "active") {
-        throw brainError("payment_intent_approval_invalid", "actor_unresolved", {
-          statusOverride: 403,
+        throw brainError("tenant_access_denied", "actor_unresolved", {
           details: { reason: "actor_unresolved" },
         });
       }
