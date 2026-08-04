@@ -1,5 +1,6 @@
+import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import type { TenantScopedClient } from "@brain/shared";
+import { newTenantId, type MetricsEmitter, type TenantScopedClient } from "@brain/shared";
 import { projectCanonicalObligation, runLedgerAparProjectionCycle } from "./obligations.js";
 
 function clientWithCounterparty(): {
@@ -66,6 +67,26 @@ describe("projectCanonicalObligation", () => {
     await expect(
       projectCanonicalObligation(client, "tnt_1", { ...BASE_OBLIGATION, currency: "usd" }),
     ).rejects.toThrow(/currency must be a 3-letter ISO 4217 code/);
+
+    expect(calls.some((c) => c.text.includes("INSERT INTO ledger_obligations"))).toBe(false);
+  });
+
+  // F5 regression: canonical's amount is NUMERIC(38,8); ledger_obligations.
+  // amount_due is the narrower NUMERIC(28,8) (20 integer digits). Before the
+  // fix this reached the INSERT verbatim and would have thrown an opaque
+  // 22003 numeric field overflow from Postgres; it must instead be rejected
+  // here with a clear message before the query ever runs.
+  it("rejects an amount that overflows Ledger's narrower NUMERIC(28,8) column", async () => {
+    const { client, calls } = clientWithCounterparty();
+    const oversized = "1".repeat(21); // 21 integer digits > the 20-digit bound
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", {
+        ...BASE_OBLIGATION,
+        currency: "USD",
+        amount: oversized,
+      }),
+    ).rejects.toThrow(/NUMERIC\(28,8\)/);
 
     expect(calls.some((c) => c.text.includes("INSERT INTO ledger_obligations"))).toBe(false);
   });
@@ -148,6 +169,32 @@ describe("projectCanonicalObligation", () => {
     expect(invoice?.values[4]).toBe("500.00");
     expect(invoice?.values[14]).toBe("co_1");
   });
+
+  // F3 regression: without a non-null external_key, two distinct canonical
+  // obligations that collapse to the same (counterparty, type, amount,
+  // currency, due_date) tuple -- e.g. two dateless AR-aging invoices -- both
+  // land inside uq_ledger_obligations_legacy_dedup's WHERE external_key IS
+  // NULL scope and the second INSERT throws an unhandled 23505, since the
+  // declared ON CONFLICT arbiter (canonical_obligation_id) never matches
+  // across two different canonical rows. Asserting external_key is always
+  // set, and set from canonical's own unique natural key, keeps every
+  // projected row out of that partial index's scope.
+  it("sets a namespaced external_key from the canonical natural key so distinct rows never collide on the legacy dedup tuple", async () => {
+    const { client, calls } = clientWithCounterparty();
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", {
+        ...BASE_OBLIGATION,
+        currency: "USD",
+        due_date: null,
+        issue_date: null,
+      }),
+    ).resolves.toBe(true);
+
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.text).toContain("external_key");
+    expect(insert.values).toContain("document_upload:inv_1");
+  });
 });
 
 describe("runLedgerAparProjectionCycle", () => {
@@ -164,5 +211,136 @@ describe("runLedgerAparProjectionCycle", () => {
 
     const obligationQuery = queries.find((q) => q.includes("FROM canonical_obligation co"));
     expect(obligationQuery).toContain("co.source_natural_key");
+  });
+
+  // F1 regression: a single poison obligation row (e.g. a type ledger_obligations'
+  // CHECK constraint rejects) must not throw out of the whole batch loop and
+  // wedge every other tenant's projection behind it. Before the fix, the
+  // second row's INSERT was never attempted because the first row's throw
+  // propagated out of the `for` loop into the cycle's outer catch.
+  it("quarantines a poison obligation row without blocking its siblings", async () => {
+    const tenantBad = newTenantId();
+    const tenantGood = newTenantId();
+    const badObl = {
+      ...BASE_OBLIGATION,
+      id: "co_bad",
+      tenant_id: tenantBad,
+      type: "dispute",
+      currency: "USD",
+    };
+    const goodObl = {
+      ...BASE_OBLIGATION,
+      id: "co_good",
+      tenant_id: tenantGood,
+      type: "bill",
+      currency: "USD",
+    };
+
+    const insertedTypes: string[] = [];
+    const quarantineWrites: unknown[][] = [];
+    const client = {
+      query: vi.fn(async (text: string, values: unknown[] = []) => {
+        if (text.includes("SELECT id FROM canonical_counterparty")) {
+          return { rows: [{ id: "cc_1" }], rowCount: 1 };
+        }
+        if (text.includes("SELECT id FROM ledger_counterparties")) {
+          return { rows: [{ id: "cp_1" }], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_obligations")) {
+          const type = values[2] as string;
+          insertedTypes.push(type);
+          if (type === "dispute") {
+            throw new Error(
+              'new row for relation "ledger_obligations" violates check constraint "ledger_obligations_type_check"',
+            );
+          }
+          return { rows: [], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_projection_quarantine")) {
+          quarantineWrites.push(values);
+          return { rows: [{ attempts: 1, quarantined: false }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      connect: async () => client,
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM canonical_obligation co")) {
+          return { rows: [badObl, goodObl], rowCount: 2 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Pool;
+
+    await runLedgerAparProjectionCycle({ pool });
+
+    // Both rows were attempted: the poison row's throw did not abort the batch.
+    expect(insertedTypes).toEqual(["dispute", "bill"]);
+    // The poison row's failure was recorded, not silently dropped.
+    expect(quarantineWrites.some((v) => v[0] === "canonical_obligation" && v[1] === "co_bad")).toBe(
+      true,
+    );
+  });
+
+  it("emits a quarantine metric once the retry budget for a poison row is exhausted", async () => {
+    const tenantBad = newTenantId();
+    const badObl = {
+      ...BASE_OBLIGATION,
+      id: "co_bad",
+      tenant_id: tenantBad,
+      type: "dispute",
+      currency: "USD",
+    };
+    const metricsCalls: Array<{ name: string; tags?: Record<string, unknown> }> = [];
+    const metrics = {
+      increment: (name: string, tags?: Record<string, unknown>) => {
+        metricsCalls.push({ name, tags: tags ?? {} });
+      },
+      gauge: vi.fn(),
+      histogram: vi.fn(),
+      duration: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies MetricsEmitter;
+    const client = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("SELECT id FROM canonical_counterparty")) {
+          return { rows: [{ id: "cc_1" }], rowCount: 1 };
+        }
+        if (text.includes("SELECT id FROM ledger_counterparties")) {
+          return { rows: [{ id: "cp_1" }], rowCount: 1 };
+        }
+        if (text.includes("INSERT INTO ledger_obligations")) {
+          throw new Error("check constraint violation");
+        }
+        if (text.includes("INSERT INTO ledger_projection_quarantine")) {
+          return { rows: [{ attempts: 5, quarantined: true }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      connect: async () => client,
+      query: vi.fn(async (text: string) => {
+        if (text.includes("FROM canonical_obligation co")) {
+          return { rows: [badObl], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Pool;
+
+    await runLedgerAparProjectionCycle({ pool, metrics });
+
+    expect(metricsCalls).toContainEqual(
+      expect.objectContaining({
+        name: "brain.ledger.apar_projection.quarantined.count",
+        tags: expect.objectContaining({
+          source_table: "canonical_obligation",
+          tenant_id: tenantBad,
+        }),
+      }),
+    );
   });
 });

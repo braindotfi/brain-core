@@ -26,6 +26,9 @@ export interface TransactionListFilters {
   status?: string;
   since?: Date;
   until?: Date;
+  /** ISO 4217 code. Pushed into the query (not a post-fetch filter) so a
+   *  currency-scoped read doesn't have to over-fetch the whole window. */
+  currency?: string;
   limit: number;
   cursor?: KeysetCursor;
 }
@@ -59,6 +62,7 @@ export async function listTransactions(
   if (filters.status !== undefined) push("status = $?", filters.status);
   if (filters.since !== undefined) push("transaction_date >= $?", filters.since);
   if (filters.until !== undefined) push("transaction_date <= $?", filters.until);
+  if (filters.currency !== undefined) push("currency = $?", filters.currency);
   if (filters.cursor !== undefined) {
     values.push(filters.cursor.sort, filters.cursor.id);
     const sortIdx = values.length - 1;

@@ -36,6 +36,13 @@ interface Query {
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
 
+// Safety ceiling on the number of transactions one cash-flow request will
+// page through (20 pages of 1000). A normal tenant's 30-365 day window never
+// approaches this; it exists so a pathological-volume tenant gets an
+// explicit truncation signal (see the truncated response header below)
+// instead of an unbounded request.
+const MAX_TRANSACTIONS = 20_000;
+
 export async function registerCashFlowRoutes(
   app: FastifyInstance,
   service: LedgerService,
@@ -60,25 +67,44 @@ export async function registerCashFlowRoutes(
     const until = new Date();
     const since = new Date(until.getTime() - days * 24 * 3600 * 1000);
 
-    // Pull transactions in the window via LedgerService. The existing
-    // listTransactions clamps to 1000; for v0.3 cash-flow this covers
-    // typical ranges. Very high-volume tenants will need cursor-based
-    // pagination here — follow-up commit.
-    const txns = await service.listTransactions(ctx, {
-      since: since.toISOString(),
-      until: until.toISOString(),
-      limit: 1000,
-    });
+    // Page through the full window via the cursor instead of a single
+    // 1000-row fetch: a single page silently under-reported totals for any
+    // tenant with more than 1000 transactions in the window (F6). The
+    // currency filter is pushed into the query (not applied post-fetch)
+    // so a currency-scoped read doesn't have to over-fetch the whole window
+    // only to discard most of it in memory.
+    const flat: CashFlowTransaction[] = [];
+    let cursor: string | undefined;
+    let truncated = false;
+    do {
+      const page = await service.listTransactions(ctx, {
+        since: since.toISOString(),
+        until: until.toISOString(),
+        ...(request.query.currency !== undefined ? { currency: request.query.currency } : {}),
+        limit: 1000,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      for (const t of page.items) {
+        flat.push({
+          transaction_date:
+            typeof t.transaction_date === "string"
+              ? t.transaction_date
+              : new Date(t.transaction_date as unknown as number).toISOString(),
+          amount: t.amount,
+          currency: t.currency,
+          direction: t.direction as CashFlowTransaction["direction"],
+        });
+      }
+      cursor = page.next_cursor ?? undefined;
+      if (cursor !== undefined && flat.length >= MAX_TRANSACTIONS) {
+        truncated = true;
+        break;
+      }
+    } while (cursor !== undefined);
 
-    const flat: CashFlowTransaction[] = txns.items.map((t) => ({
-      transaction_date:
-        typeof t.transaction_date === "string"
-          ? t.transaction_date
-          : new Date(t.transaction_date as unknown as number).toISOString(),
-      amount: t.amount,
-      currency: t.currency,
-      direction: t.direction as CashFlowTransaction["direction"],
-    }));
+    if (truncated) {
+      reply.header("x-cash-flow-truncated", "true");
+    }
 
     const summary = aggregateCashFlow({
       tenantId: ctx.tenantId,

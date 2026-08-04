@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import {
+  isPlausibleLedgerAmount,
   leasedCycle,
   newAccountId,
   newTransactionId,
@@ -9,6 +10,7 @@ import {
   type MetricsEmitter,
   type TenantScopedClient,
 } from "@brain/shared";
+import { excludeQuarantined, projectRowWithQuarantine } from "./quarantine.js";
 
 const DEFAULT_CONFIDENCE: Readonly<Record<string, number>> = {
   extracted: 0.9,
@@ -16,6 +18,24 @@ const DEFAULT_CONFIDENCE: Readonly<Record<string, number>> = {
   agent_contributed: 0.5,
   customer_asserted: 0.5,
 };
+
+/**
+ * F5 backstop: canonical's amount/balance columns are NUMERIC(38,8); Ledger's
+ * are the narrower NUMERIC(28,8) (20 integer digits). Reject here with a
+ * clear message -- caught and quarantined per-row by projectRowWithQuarantine
+ * -- instead of letting an oversized value raise an unhandled 22003 numeric
+ * field overflow on the INSERT. See shared/src/ledger-amount.ts.
+ */
+function ledgerAmount(amount: string | null): string | null {
+  if (amount === null) return null;
+  // Account balances (unlike obligation/transaction amounts) may be signed;
+  // strip the sign before the digit-count check so it isn't miscounted.
+  const unsigned = amount.startsWith("-") ? amount.slice(1) : amount;
+  if (!isPlausibleLedgerAmount(unsigned)) {
+    throw new Error("amount exceeds Ledger's NUMERIC(28,8) capacity (20 integer digits)");
+  }
+  return amount;
+}
 
 interface CanonicalAccountRow {
   id: string;
@@ -101,8 +121,8 @@ export async function projectCanonicalAccount(
       row.account_type,
       row.name,
       row.currency,
-      row.current_balance,
-      row.available_balance,
+      ledgerAmount(row.current_balance),
+      ledgerAmount(row.available_balance),
       row.status,
       row.source_ids,
       row.evidence_ids,
@@ -177,7 +197,7 @@ export async function projectCanonicalTransaction(
       tenantId,
       accountId,
       row.source_natural_key,
-      row.amount,
+      ledgerAmount(row.amount),
       row.currency,
       row.direction,
       row.transaction_date,
@@ -259,14 +279,24 @@ export async function runLedgerAccountTransactionProjectionCycle(
          FROM canonical_account ca
          LEFT JOIN ledger_accounts la
            ON la.owner_id = ca.tenant_id AND la.canonical_account_id = ca.id
-        WHERE la.id IS NULL OR la.updated_at < ca.updated_at
+        WHERE (la.id IS NULL OR la.updated_at < ca.updated_at)
+          AND ${excludeQuarantined("canonical_account", "ca.id")}
         ORDER BY ca.updated_at ASC
         LIMIT $1`,
       [batchSize],
     );
+    // Per-row: a single poison account must not block its siblings or any
+    // other tenant (F1, mirrors the obligation projector's quarantine).
     for (const account of accounts) {
-      await withTenantScope(deps.pool, account.tenant_id, (c) =>
-        projectCanonicalAccount(c, account.tenant_id, account),
+      await projectRowWithQuarantine(
+        deps,
+        "canonical_account",
+        account,
+        "brain.ledger.account_transaction_projection.quarantined.count",
+        () =>
+          withTenantScope(deps.pool, account.tenant_id, (c) =>
+            projectCanonicalAccount(c, account.tenant_id, account),
+          ),
       );
     }
     if (accounts.length > 0) {
@@ -292,17 +322,27 @@ export async function runLedgerAccountTransactionProjectionCycle(
          FROM canonical_transaction ct
          LEFT JOIN ledger_transactions lt
            ON lt.owner_id = ct.tenant_id AND lt.canonical_transaction_id = ct.id
-        WHERE lt.id IS NULL OR lt.updated_at < ct.updated_at
+        WHERE (lt.id IS NULL OR lt.updated_at < ct.updated_at)
+          AND ${excludeQuarantined("canonical_transaction", "ct.id")}
         ORDER BY ct.updated_at ASC
         LIMIT $1`,
       [batchSize],
     );
     let projected = 0;
+    // Per-row: a single poison transaction must not block its siblings or any
+    // other tenant (F1).
     for (const transaction of transactions) {
-      const ok = await withTenantScope(deps.pool, transaction.tenant_id, (c) =>
-        projectCanonicalTransaction(c, transaction.tenant_id, transaction),
+      const ok = await projectRowWithQuarantine(
+        deps,
+        "canonical_transaction",
+        transaction,
+        "brain.ledger.account_transaction_projection.quarantined.count",
+        () =>
+          withTenantScope(deps.pool, transaction.tenant_id, (c) =>
+            projectCanonicalTransaction(c, transaction.tenant_id, transaction),
+          ),
       );
-      if (ok) projected += 1;
+      if (ok === true) projected += 1;
     }
     if (projected > 0) {
       deps.metrics?.increment(

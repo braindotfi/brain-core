@@ -113,6 +113,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "ledger_counterparties", column: "owner_id" },
   { table: "ledger_categories", column: "tenant_id" },
   { table: "normalization_log", column: "tenant_id" },
+  { table: "ledger_projection_quarantine", column: "tenant_id" },
 
   // ---- Layer 3: Wiki ----
   { table: "wiki_question_intent_usage", column: "tenant_id" },
