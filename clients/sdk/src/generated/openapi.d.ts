@@ -980,9 +980,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List obligations (bills, invoices, subscriptions)
-         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
-         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
+         * List payable obligations (bills, invoices, subscriptions)
+         * @description Requires `ledger:read`. Results default to payable obligations. Pass
+         *     `direction=receivable` to list obligations owed to the tenant. Cursor
+         *     pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
+         *     fetch the next page.
          */
         get: operations["listObligations"];
         put?: never;
@@ -7188,6 +7190,7 @@ export interface operations {
     listObligations: {
         parameters: {
             query?: {
+                direction?: "payable" | "receivable";
                 status?: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
                 type?: string;
                 due_before?: string;

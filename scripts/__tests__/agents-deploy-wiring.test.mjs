@@ -120,6 +120,10 @@ test("staging and production deploy recreates include the agents service", () =>
     promoteProductionJob,
     /\\?\$compose_agents up -d --no-deps --no-build \\?\$app_services/,
   );
+  assert.match(deployStagingJob, /Wait for agents healthy on VM/);
+  assert.match(promoteProductionJob, /Wait for agents healthy on VM/);
+  assert.match(deployStagingJob, /brain-prod-agents did not become healthy/);
+  assert.match(promoteProductionJob, /brain-prod-agents did not become healthy/);
 });
 
 test("staging deploy starts infra without pulling service dependencies", () => {

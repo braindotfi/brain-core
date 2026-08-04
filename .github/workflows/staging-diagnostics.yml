@@ -9,6 +9,9 @@ on:
         type: choice
         options:
           - counterparty-trust-gate-impact
+          - upload-pipeline-state
+          - upload-pipeline-worker-logs
+          - document-extractor-connectivity
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -37,8 +40,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, or document-extractor-connectivity"
             exit 1
           fi
 
@@ -71,10 +74,24 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Compile fixed report for stdin execution
+        if: inputs.diagnostic == 'counterparty-trust-gate-impact'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/staging-diagnostics"
+          report_source=""
+          case "$DIAGNOSTIC" in
+            counterparty-trust-gate-impact)
+              report_source="scripts/ops/report-counterparty-trust-gate-impact.ts"
+              ;;
+            upload-pipeline-state)
+              report_source="scripts/ops/report-upload-pipeline-state.ts"
+              ;;
+            *)
+              echo "unsupported diagnostic: $DIAGNOSTIC"
+              exit 1
+              ;;
+          esac
           pnpm exec tsc \
             --target es2022 \
             --module es2022 \
@@ -82,8 +99,8 @@ jobs:
             --skipLibCheck \
             --esModuleInterop \
             --outDir "$RUNNER_TEMP/staging-diagnostics" \
-            scripts/ops/report-counterparty-trust-gate-impact.ts
-          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/report-counterparty-trust-gate-impact.js" >> "$GITHUB_ENV"
+            "$report_source"
+          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         shell: bash
@@ -102,10 +119,70 @@ jobs:
             "docker exec brain-prod-worker printenv GIT_SHA")"
           echo "staging_git_sha=$worker_sha"
 
-      - name: Run counterparty trust gate impact report
+      - name: Run fixed staging diagnostic
         shell: bash
         run: |
           set -euo pipefail
+
+          run_upload_pipeline_report() {
+            local tenant_id="$1"
+            cat scripts/ops/report-upload-pipeline-state.sql | \
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -v tenant_id='$tenant_id'"
+          }
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-state" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-state requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              run_upload_pipeline_report "$tenant_id"
+            done
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "document-extractor-connectivity" ]]; then
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+              set -euo pipefail
+              echo "agents_container_state=$(docker inspect --format={{.State.Status}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_container_health=$(docker inspect --format={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_boot_diagnostics:"
+              docker logs --tail=100 brain-prod-agents 2>&1 | \
+                grep -E "RuntimeError|Traceback|missing|required|OPENAI|BRAIN_API_TOKEN|BRAIN_AGENTS_INBOUND_SECRET" || true
+              docker exec brain-prod-worker node -e '\''
+                const base = process.env.DOCUMENT_EXTRACT_AGENT_URL;
+                console.log(`document_extract_agent_url_set=${base ? "true" : "false"}`);
+                if (!base) process.exit(0);
+                fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) })
+                  .then(async (response) => {
+                    console.log(`document_extract_agent_health_status=${response.status}`);
+                    console.log(`document_extract_agent_health_ok=${response.ok}`);
+                  })
+                  .catch((error) => {
+                    console.log(`document_extract_agent_health_error=${error.name}`);
+                    process.exitCode = 1;
+                  });
+              '\''
+            '
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-worker-logs" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-worker-logs requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker logs --tail=3000 brain-prod-worker 2>&1 | grep -F '$tenant_id' | tail -200 || true"
+            done
+            exit 0
+          fi
 
           run_report() {
             local tenant_id="$1"
@@ -113,7 +190,7 @@ jobs:
             # The worker owns the scoped ledger-projector URL assembled by Compose.
             remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
             if [[ -n "$tenant_id" ]]; then
-              remote_command+=" -- --tenant-id '$tenant_id'"
+              remote_command+=" --tenant-id '$tenant_id'"
             fi
             cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" "$remote_command"

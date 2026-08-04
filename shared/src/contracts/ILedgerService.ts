@@ -207,6 +207,8 @@ export interface TransactionListFilters {
 }
 
 export interface ObligationListFilters {
+  /** Defaults to payable. Use receivable for obligations owed to the tenant. */
+  direction?: "payable" | "receivable";
   status?: Obligation["status"];
   type?: Obligation["type"];
   due_before?: string;

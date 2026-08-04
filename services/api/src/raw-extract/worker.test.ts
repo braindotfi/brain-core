@@ -271,7 +271,7 @@ describe("runDocumentExtractionCycle", () => {
     expect(client.extract).not.toHaveBeenCalled();
     const inserted = app.updates.find((u) => u.kind === "parsed");
     expect(inserted?.values?.[3]).toBe("bank_statement_upload_v1");
-    expect(inserted?.values?.[4]).toBe("1.0.1");
+    expect(inserted?.values?.[4]).toBe("1.0.2");
     const extracted = JSON.parse(String(inserted?.values?.[5])) as {
       object_type?: string;
       transactions?: unknown[];
@@ -293,7 +293,7 @@ describe("runDocumentExtractionCycle", () => {
       action: "raw.parsed.write",
       inputs: {
         parser: "bank_statement_upload_v1",
-        parser_version: "1.0.1",
+        parser_version: "1.0.2",
         source_schema: "brain.upload.document.v1",
       },
       outputs: { parsed_id: "prs_01LOCAL0000000000000000000", created: true },
