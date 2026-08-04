@@ -138,6 +138,54 @@ export const PAYMENT_AGENT_SCOPES: readonly Scope[] = [
   "execution:propose",
 ];
 
+/**
+ * Session scopes by `members.role`. Single source of truth for what a
+ * production member session token (POST /v1/sessions, /v1/invites/consume,
+ * /v1/sessions/refresh) is minted with -- callers must derive scopes from
+ * the member's role rather than handing every member the same flat set.
+ * `viewer` deliberately excludes `ledger:write`, `execution:admin`, and
+ * `payment_intent:approve`: those verbs let a member manage other members,
+ * mint/revoke tenant API keys, halt or restore agents, and approve payment
+ * intents, none of which a read-only role should ever hold, however briefly.
+ */
+export const MEMBER_ROLE_SCOPES = {
+  admin: [
+    "ledger:read",
+    "ledger:write",
+    "wiki:read",
+    "raw:read",
+    "policy:read",
+    "execution:read",
+    "execution:admin",
+    "payment_intent:approve",
+    "audit:read",
+  ],
+  approver: [
+    "ledger:read",
+    "ledger:write",
+    "wiki:read",
+    "raw:read",
+    "policy:read",
+    "execution:read",
+    "payment_intent:approve",
+    "audit:read",
+  ],
+  viewer: [
+    "ledger:read",
+    "wiki:read",
+    "raw:read",
+    "policy:read",
+    "execution:read",
+    "audit:read",
+  ],
+} as const satisfies Record<"admin" | "approver" | "viewer", readonly Scope[]>;
+
+export type MemberSessionRole = keyof typeof MEMBER_ROLE_SCOPES;
+
+export function scopesForMemberRole(role: MemberSessionRole): readonly Scope[] {
+  return MEMBER_ROLE_SCOPES[role];
+}
+
 export function hasScope(held: ReadonlyArray<string>, required: Scope): boolean {
   return held.includes(required) || held.includes(impliedAdmin(required));
 }

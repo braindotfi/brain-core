@@ -19,7 +19,7 @@ function userPrincipal(tenantId: string): Principal {
     id: USER,
     type: "user",
     tenantId,
-    scopes: [] as unknown as Principal["scopes"],
+    scopes: ["execution:admin"] as unknown as Principal["scopes"],
     tokenId: "tok_01TEST00000000000000000",
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
   };
@@ -36,8 +36,21 @@ function agentPrincipal(tenantId: string): Principal {
   };
 }
 
+function viewerPrincipal(tenantId: string): Principal {
+  return {
+    id: USER,
+    type: "user",
+    tenantId,
+    scopes: ["ledger:read"] as unknown as Principal["scopes"],
+    tokenId: "tok_01TEST00000000000000000",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  };
+}
+
 interface BuildOpts {
   principal: Principal | undefined;
+  /** F2: overrides the live members-row role requireAdminMember re-checks. */
+  memberRole?: "admin" | "approver" | "viewer";
 }
 
 async function buildApp(opts: BuildOpts) {
@@ -48,15 +61,28 @@ async function buildApp(opts: BuildOpts) {
       request.principal = opts.principal;
     }
   });
+  const memberRole = opts.memberRole ?? "admin";
   const pool = {
     connect: vi.fn(() =>
       Promise.resolve({
-        query: vi.fn((sql: string) =>
-          Promise.resolve({
+        query: vi.fn((sql: string, values?: unknown[]) => {
+          // F2: requireAdminMember's live re-check. Every USER fixture in
+          // this file represents an active member of its own tenant with
+          // `memberRole`, unless a test overrides it.
+          if (sql.includes("FROM members")) {
+            const [memberId, tenantId] = (values ?? []) as [string, string];
+            return Promise.resolve({
+              rows: [
+                { id: memberId, tenant_id: tenantId, role: memberRole, active: true, status: "active" },
+              ],
+              rowCount: 1,
+            });
+          }
+          return Promise.resolve({
             rows: [],
             rowCount: sql.startsWith("DELETE") ? 1 : 0,
-          }),
-        ),
+          });
+        }),
         release: vi.fn(),
       }),
     ),
@@ -74,7 +100,11 @@ describe("DELETE /v1/tenants/{id}", () => {
   it("permits a tenant user to delete their own tenant data", async () => {
     const { app, audit } = await buildApp({ principal: userPrincipal(TENANT_A) });
     try {
-      const r = await app.inject({ method: "DELETE", url: `/tenants/${TENANT_A}` });
+      const r = await app.inject({
+        method: "DELETE",
+        url: `/tenants/${TENANT_A}`,
+        payload: { confirm: TENANT_A },
+      });
       expect(r.statusCode).toBe(200);
       const body = r.json() as { tenantId: string; totalRows: number };
       expect(body.tenantId).toBe(TENANT_A);
@@ -117,6 +147,53 @@ describe("DELETE /v1/tenants/{id}", () => {
       expect(r.statusCode).toBe(401);
       const body = r.json() as { error: { code: string } };
       expect(body.error.code).toBe("auth_token_missing");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F2: a viewer-scoped token (no execution:admin) cannot delete a tenant", async () => {
+    const { app } = await buildApp({ principal: viewerPrincipal(TENANT_A) });
+    try {
+      const r = await app.inject({
+        method: "DELETE",
+        url: `/tenants/${TENANT_A}`,
+        payload: { confirm: TENANT_A },
+      });
+      expect(r.statusCode).toBe(403);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F2: a stale execution:admin token is rejected once the live member row is not admin", async () => {
+    const { app } = await buildApp({
+      principal: userPrincipal(TENANT_A),
+      memberRole: "viewer",
+    });
+    try {
+      const r = await app.inject({
+        method: "DELETE",
+        url: `/tenants/${TENANT_A}`,
+        payload: { confirm: TENANT_A },
+      });
+      expect(r.statusCode).toBe(403);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F2: rejects deletion without the tenant-id confirmation echo", async () => {
+    const { app } = await buildApp({ principal: userPrincipal(TENANT_A) });
+    try {
+      const r = await app.inject({ method: "DELETE", url: `/tenants/${TENANT_A}` });
+      expect(r.statusCode).toBe(400);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("request_body_invalid");
     } finally {
       await app.close();
     }

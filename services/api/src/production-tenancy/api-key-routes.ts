@@ -5,6 +5,7 @@ import {
   API_KEY_PERMITTED_SCOPES,
   brainError,
   newApiKeyId,
+  requireAdminMember,
   requireScope,
   withTenantScope,
   type AuditEmitter,
@@ -75,7 +76,7 @@ export async function registerApiKeyRoutes(
   app.post(
     "/tenants/:tenantId/keys",
     async (request: FastifyRequest<{ Params: { tenantId: string } }>, reply) => {
-      const principal = requireTenantAdmin(request, request.params.tenantId);
+      const principal = await requireTenantAdmin(request, deps.pool, request.params.tenantId);
       const body = request.body as
         | { name?: unknown; environment?: unknown; scopes?: unknown }
         | undefined;
@@ -108,7 +109,7 @@ export async function registerApiKeyRoutes(
   app.get(
     "/tenants/:tenantId/keys",
     async (request: FastifyRequest<{ Params: { tenantId: string } }>) => {
-      requireTenantAdmin(request, request.params.tenantId);
+      await requireTenantAdmin(request, deps.pool, request.params.tenantId);
       const { rows } = await withTenantScope(deps.pool, request.params.tenantId, (client) =>
         client.query<ApiKeyRow>(
           `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
@@ -130,7 +131,7 @@ export async function registerApiKeyRoutes(
       if (tenantId === null) {
         throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
       }
-      const principal = requireTenantAdmin(request, tenantId);
+      const principal = await requireTenantAdmin(request, deps.pool, tenantId);
 
       const issued = await withTenantScope(deps.pool, tenantId, async (client) => {
         const old = await lockActiveKey(client, request.params.id);
@@ -172,7 +173,7 @@ export async function registerApiKeyRoutes(
     if (tenantId === null) {
       throw brainError("api_key_not_found", "api key does not exist", { statusOverride: 404 });
     }
-    const principal = requireTenantAdmin(request, tenantId);
+    const principal = await requireTenantAdmin(request, deps.pool, tenantId);
     const revoked = await withTenantScope(deps.pool, tenantId, async (client) => {
       const { rows } = await client.query<{ id: string }>(
         `UPDATE api_keys
@@ -341,9 +342,29 @@ function hashesEqual(storedHex: string, computedHex: string): boolean {
   return timingSafeEqual(stored, computed);
 }
 
-function requireTenantAdmin(request: FastifyRequest, tenantId: string): Principal {
+/**
+ * F1: tenant API-key issuance and revocation used to trust the bearer
+ * token's `execution:admin` scope alone. That scope was, at the time,
+ * handed to every member session regardless of role, so a `viewer` could
+ * mint a `brain_sk_live_...` key with no `expires_at` or revoke another
+ * integration's key. Scopes are now derived from `members.role` at mint
+ * time (see production-tenancy/routes.ts), but a token already minted
+ * before a demotion could still carry the old scope until it expires, so
+ * this also re-checks the live `members` row, mirroring the DB-backed
+ * `requireAdmin` check `services/execution/src/members/routes.ts` already
+ * does for member mutation routes.
+ */
+async function requireTenantAdmin(
+  request: FastifyRequest,
+  pool: Pool,
+  tenantId: string,
+): Promise<Principal> {
   const principal = requireTenantRead(request, tenantId);
   requireScope(principal.scopes, "execution:admin");
+  if (principal.type !== "user") {
+    throw brainError("auth_scope_insufficient", "tenant key management requires principal_type=user");
+  }
+  await requireAdminMember(pool, tenantId, principal.id);
   return principal;
 }
 
