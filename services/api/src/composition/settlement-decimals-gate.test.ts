@@ -8,9 +8,8 @@ vi.mock("viem", async (importOriginal) => {
   return { ...actual, createPublicClient: () => ({ readContract: readContractMock }) };
 });
 
-const { makeBaseGetErc20Decimals, assertSettlementTokenIsSixDecimals } = await import(
-  "./settlement-decimals-gate.js"
-);
+const { makeBaseGetErc20Decimals, assertSettlementTokenIsSixDecimals } =
+  await import("./settlement-decimals-gate.js");
 
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
