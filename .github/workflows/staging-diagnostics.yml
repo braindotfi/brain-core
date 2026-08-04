@@ -222,8 +222,8 @@ jobs:
              ORDER BY ae.created_at ASC, ae.id ASC;
 
             COMMIT;
-            SQL
-            REMOTE
+          SQL
+          REMOTE
           }
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
