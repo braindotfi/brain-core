@@ -9,14 +9,16 @@
  * the Ledger normalize service job. The write never touches Ledger.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
+  extractRawBody,
   isBrainId,
   newRawParsedId,
   requireScope,
   sha256Hex,
+  singleHeaderValue,
+  verifyServiceAuthSignatureV2,
   withTenantScope,
   type Scope,
 } from "@brain/shared";
@@ -50,18 +52,22 @@ export interface RegisterParsedOptions {
    * tenant's Raw layer as a trusted-service row, including triggering a
    * repair (allowRepair) of an existing row. The signed material now binds
    * the timestamp and the write-tenant, not just the body, and a signature
-   * outside a bounded replay window is treated as unverified. See
-   * computeServiceAuthSignatureV2's header contract below -- the Python
-   * signing counterpart (services/agents/brain_agents/client.py) must be
-   * updated to match; it is NOT changed here (owned by another workstream).
+   * outside a bounded replay window is treated as unverified. See the v2
+   * header contract (@brain/shared's shared/src/http/service-auth.ts) below
+   * -- the Python signing counterpart (services/agents/brain_agents/
+   * client.py) speaks the same v2 scheme via
+   * services/agents/brain_agents/service_auth.py. The HMAC primitives live
+   * in @brain/shared so services/execution's /execution/propose route
+   * (RFC F2) verifies the identical scheme rather than a parallel
+   * reimplementation.
    */
   crossTenantServiceSecret?: string;
 }
 
 /**
  * v2 signed request contract (F4). The Python client
- * (services/agents/brain_agents/client.py) must send, on every trusted-
- * service POST /raw/{raw_id}/parsed:
+ * (services/agents/brain_agents/client.py) sends, on every trusted-service
+ * POST /raw/{raw_id}/parsed:
  *
  *   X-Brain-Service-Timestamp: <unix seconds, decimal string, generated
  *       fresh per request -- never cached or reused>
@@ -76,79 +82,12 @@ export interface RegisterParsedOptions {
  * timestamp, no tenant binding) will not verify against this computation --
  * it fails closed to an untrusted, own-tenant, no-repair write exactly like
  * a garbled signature would, it does not error. The server accepts a
- * signature only within SERVICE_AUTH_REPLAY_WINDOW_SECONDS of "now".
- */
-const SERVICE_AUTH_PREFIX_V2 = "sha256v2=";
-const SERVICE_AUTH_REPLAY_WINDOW_SECONDS = 300;
-
-function singleHeaderValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-/**
- * `${timestamp}.${writeTenant}.` (writeTenant = "" for "no redirect
- * requested") followed by the raw request body bytes, HMAC-SHA256'd with the
- * shared secret. Binding the timestamp and tenant into the signed material
- * (not just the body) is exactly what closes F4: a captured signature can no
- * longer be replayed with a different X-Brain-Write-Tenant, because changing
- * that value invalidates the signature.
- */
-export function computeServiceAuthSignatureV2(
-  secret: string,
-  timestamp: string,
-  writeTenant: string,
-  rawBody: Buffer,
-): string {
-  const hmac = createHmac("sha256", secret);
-  hmac.update(`${timestamp}.${writeTenant}.`, "utf8");
-  hmac.update(rawBody);
-  return SERVICE_AUTH_PREFIX_V2 + hmac.digest("hex");
-}
-
-/**
- * Constant-time compare of a request-supplied HMAC signature against the one
- * computed over the timestamp, write-tenant, and raw body. Length-checked
- * first so timingSafeEqual (which throws on mismatched buffer lengths) never
- * sees unequal-length input. Also enforces the bounded replay window. False
- * (never throws) whenever the raw body is unavailable, the signature or
- * timestamp header is missing/malformed, the timestamp is outside the
- * replay window, or the signature does not match -- the caller always falls
- * back to the untrusted JWT-tenant write on any doubt.
- */
-export function verifyServiceAuthSignatureV2(
-  rawBody: Buffer | undefined,
-  signatureHeader: string | undefined,
-  timestampHeader: string | undefined,
-  writeTenant: string,
-  secret: string,
-): boolean {
-  if (rawBody === undefined) return false;
-  if (signatureHeader === undefined || !signatureHeader.startsWith(SERVICE_AUTH_PREFIX_V2)) {
-    return false;
-  }
-  if (timestampHeader === undefined || !/^[0-9]{1,15}$/.test(timestampHeader)) return false;
-  const timestampSeconds = Number(timestampHeader);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (Math.abs(nowSeconds - timestampSeconds) > SERVICE_AUTH_REPLAY_WINDOW_SECONDS) return false;
-  const expected = computeServiceAuthSignatureV2(secret, timestampHeader, writeTenant, rawBody);
-  const expectedBuf = Buffer.from(expected, "utf8");
-  const providedBuf = Buffer.from(signatureHeader, "utf8");
-  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
-}
-
-/**
- * The raw JSON content-type parser (server.ts) stashes the exact request
- * bytes on the parsed body as `__rawBody` so signature verification can run
- * over the same bytes the caller signed. Returns undefined for any other
- * shape (never throws -- an absent raw body just fails the HMAC check).
- */
-function extractRawBody(body: unknown): Buffer | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const candidate = (body as Record<string, unknown>)["__rawBody"];
-  return Buffer.isBuffer(candidate) ? candidate : undefined;
-}
-
-/**
+ * signature only within SERVICE_AUTH_REPLAY_WINDOW_SECONDS of "now". The
+ * compute/verify primitives themselves live in @brain/shared
+ * (shared/src/http/service-auth.ts), not here -- see that module's header
+ * for the full contract doc and the single canonical implementation both
+ * this route and /execution/propose share.
+ *
  * Resolve which tenant a parsed write should land in, and whether the caller
  * proved it is the trusted first-party service (not just any raw:write
  * principal) via a verified v2 X-Brain-Service-Auth HMAC. Defaults to the

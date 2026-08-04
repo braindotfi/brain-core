@@ -12,7 +12,6 @@ from brain_agents.anomaly.agent import AnomalyAgent
 from brain_agents.client import BrainApiClient
 from brain_agents.deps import AppDeps
 from brain_agents.document_extractor.agent import DocumentExtractorAgent
-from brain_agents.payment.agent import PaymentAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
 from brain_agents.server import create_app
@@ -35,7 +34,6 @@ def _make_mock_deps() -> AppDeps:
     return AppDeps(
         brain_client=mock_brain,
         recon_agent=AsyncMock(spec=ReconciliationAgent),
-        payment_agent=AsyncMock(spec=PaymentAgent),
         anomaly_agent=AsyncMock(spec=AnomalyAgent),
         plaid_extractor_agent=PlaidExtractorAgent(),  # deterministic; no LLM
         document_extractor_agent=AsyncMock(spec=DocumentExtractorAgent),

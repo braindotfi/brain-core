@@ -6,8 +6,10 @@ import pytest
 from openpyxl import Workbook
 from pypdf import PdfReader, PdfWriter
 
+import brain_agents.document_extractor.extract_text as extract_text_module
 from brain_agents.document_extractor.extract_text import (
     DocumentTextUnavailableError,
+    DocumentTooLargeError,
     UnsupportedDocumentTypeError,
     extract_text,
 )
@@ -148,3 +150,31 @@ def test_extract_text_rejects_unsupported_type() -> None:
     with pytest.raises(UnsupportedDocumentTypeError) as exc:
         extract_text(b"\x89PNG\r\n", "image/png")
     assert exc.value.mime_type == "image/png"
+
+
+# ---------------------------------------------------------------------------
+# RFC F3: size / page bounds, checked before the expensive parse
+# ---------------------------------------------------------------------------
+
+
+def test_extract_text_rejects_oversized_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(extract_text_module, "_MAX_INPUT_BYTES", 10)
+    with pytest.raises(DocumentTooLargeError, match="exceeds"):
+        extract_text(b"x" * 11, "text/plain")
+
+
+def test_extract_text_rejects_pdf_over_page_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(extract_text_module, "_MAX_PDF_PAGES", 2)
+    with pytest.raises(DocumentTooLargeError, match="exceeds 2 page limit"):
+        extract_text(_pdf_bytes("a", "b", "c"), "application/pdf")
+
+
+def test_extract_text_rejects_xlsx_over_uncompressed_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extract_text_module, "_MAX_XLSX_UNCOMPRESSED_BYTES", 10)
+    with pytest.raises(DocumentTooLargeError, match="uncompressed content exceeds"):
+        extract_text(
+            _xlsx_bytes(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )

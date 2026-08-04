@@ -1,8 +1,5 @@
 """FastAPI application factory for brain-agents."""
 
-import base64
-import binascii
-import json
 import logging
 import os
 import time
@@ -21,8 +18,7 @@ from brain_agents.config import settings
 from brain_agents.deps import AppDeps
 from brain_agents.document_extractor.agent import DocumentExtractorAgent
 from brain_agents.document_extractor.routes import router as document_router
-from brain_agents.payment.agent import PaymentAgent
-from brain_agents.payment.routes import router as payment_router
+from brain_agents.jwt_util import jwt_expiry_epoch as _jwt_expiry_epoch
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.plaid_extractor.routes import router as plaid_router
 from brain_agents.reconciliation.agent import ReconciliationAgent
@@ -80,30 +76,8 @@ def _assert_runtime_credentials_configured() -> None:
 
 
 _TOKEN_EXPIRY_WARN_SECONDS = 30 * 24 * 60 * 60
-_JWT_SEGMENTS = 3
 
 _log = logging.getLogger(__name__)
-
-
-def _jwt_expiry_epoch(token: str) -> int | None:
-    """Read the `exp` claim out of a JWT without verifying its signature.
-
-    Verification is the API's job; the agents only need the claim in order to
-    say something useful before it lapses. Returns None when the token is not a
-    readable JWT, so an opaque or malformed credential degrades to "cannot
-    tell" rather than blocking boot on a parsing detail.
-    """
-    parts = token.split(".")
-    if len(parts) != _JWT_SEGMENTS:
-        return None
-    payload = parts[1]
-    try:
-        decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
-        claims = json.loads(decoded)
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        return None
-    exp = claims.get("exp") if isinstance(claims, dict) else None
-    return exp if isinstance(exp, int) else None
 
 
 def _assert_api_token_not_expired() -> None:
@@ -168,12 +142,12 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
                 settings.brain_api_base_url,
                 settings.brain_api_token,
                 settings.brain_agents_inbound_secret,
+                settings.brain_platform_service_secret,
             )
             anomaly_agent = AnomalyAgent(openai_client, settings.openai_model)
             app.state.deps = AppDeps(
                 brain_client=brain_client,
                 recon_agent=ReconciliationAgent(openai_client, settings.openai_model),
-                payment_agent=PaymentAgent(openai_client, settings.openai_model),
                 anomaly_agent=anomaly_agent,
                 plaid_extractor_agent=PlaidExtractorAgent(),
                 document_extractor_agent=DocumentExtractorAgent(
@@ -210,7 +184,6 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(recon_router)
-    application.include_router(payment_router)
     application.include_router(anomaly_router)
     application.include_router(plaid_router)
     application.include_router(document_router)

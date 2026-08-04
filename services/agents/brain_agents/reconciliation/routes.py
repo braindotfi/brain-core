@@ -34,5 +34,8 @@ async def run_reconciliation(
     deps: AppDeps = _get_deps,
 ) -> Any:
     enriched_action = await deps.recon_agent.analyze(req.action)
-    proposal = await deps.brain_client.propose(enriched_action, req.agent_id)
+    # Forward the request's own tenant_id (F2) so a static golden-tenant
+    # agent JWT still writes the proposal -- and its execution.propose audit
+    # event -- into the caller's real tenant, not the token's tenant.
+    proposal = await deps.brain_client.propose(enriched_action, req.agent_id, req.tenant_id)
     return proposal

@@ -8,6 +8,7 @@ These tests pin the real response shape so the bug cannot recur.
 
 import base64
 import json
+import time
 from typing import Any
 
 import httpx
@@ -15,11 +16,23 @@ import pytest
 import respx
 
 from brain_agents.auth import expected_signature
-from brain_agents.client import BrainApiClient
+from brain_agents.client import BrainApiClient, TenantBindingUnavailableError
 
 BASE = "http://localhost:3001"
 TOKEN = "test-token"
 TENANT = "tnt_01TESTAAAAAAAAAAAAAAAAAA"
+
+
+def _jwt(exp: int, tenant_id: str = TENANT) -> str:
+    """Build a structurally valid JWT carrying `exp` and `tenant_id` claims.
+    The signature is never verified by this code path (jwt_util.py reads
+    claims only), so a placeholder is enough."""
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": exp, "tenant_id": tenant_id}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    return f"header.{payload}.signature"
 
 
 async def test_list_recent_transactions_reads_the_ledger_response_shape() -> None:
@@ -87,11 +100,45 @@ async def test_propose_hits_execution_endpoint_with_expected_body() -> None:
 
     with respx.mock() as mock:
         mock.post(f"{BASE}/v1/execution/propose").mock(side_effect=handler)
-        client = BrainApiClient(BASE, TOKEN)
-        await client.propose({"kind": "payment", "amount": "5.00"}, "agent_01TEST")
+        client = BrainApiClient(BASE, TOKEN, service_secret="shared-secret")
+        await client.propose({"kind": "payment", "amount": "5.00"}, "agent_01TEST", TENANT)
 
     assert captured_body["agent_id"] == "agent_01TEST"
     assert captured_body["action"]["amount"] == "5.00"
+
+
+async def test_propose_forwards_signed_tenant_header_when_service_secret_configured() -> None:
+    """Same trust model as post_parsed: propose proves tenant_id via a
+    body-bound HMAC, never a raw secret over the wire."""
+    seen_headers: dict[str, str] = {}
+    seen_body: bytes = b""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(dict(request.headers))
+        nonlocal seen_body
+        seen_body = request.content
+        return httpx.Response(200, json={"id": "prop_01TEST", "status": "pending"})
+
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/execution/propose").mock(side_effect=handler)
+        client = BrainApiClient(BASE, TOKEN, service_secret="shared-secret")
+        await client.propose({"kind": "reconciliation"}, "agent_01TEST", "tnt_x")
+
+    assert seen_headers.get("x-brain-write-tenant") == "tnt_x"
+    assert seen_headers.get("x-brain-service-auth") != "shared-secret"
+    assert seen_headers.get("x-brain-service-auth") == expected_signature(
+        "shared-secret", seen_body
+    )
+
+
+async def test_propose_fails_closed_without_service_secret() -> None:
+    """RFC F2 regression: propose() must refuse to run rather than default to
+    the static token's own tenant when it cannot prove the tenant binding.
+    This must fail against pre-fix client.py (propose() had no tenant_id
+    parameter and never raised)."""
+    client = BrainApiClient(BASE, TOKEN)
+    with pytest.raises(TenantBindingUnavailableError):
+        await client.propose({"kind": "reconciliation"}, "agent_01TEST", TENANT)
 
 
 async def test_raw_ingest_encodes_bytes_body_as_base64() -> None:
@@ -278,6 +325,81 @@ async def test_post_parsed_omits_tenant_headers_when_no_service_secret_configure
 
     assert "x-brain-write-tenant" not in seen_headers
     assert "x-brain-service-auth" not in seen_headers
+
+
+# ---------------------------------------------------------------------------
+# RFC F4: BRAIN_API_TOKEN refresh
+# ---------------------------------------------------------------------------
+
+
+async def test_post_parsed_proactively_refreshes_a_near_expiry_token() -> None:
+    """A token inside the refresh margin of its exp claim is swapped for a
+    fresh one BEFORE the call is made, rather than waiting to fail with a
+    401 first."""
+    old_token = _jwt(int(time.time()) + 60)  # inside the 1h refresh margin
+    new_token = _jwt(int(time.time()) + 30 * 86400)
+    seen_auth: list[str] = []
+
+    def refresh_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token": new_token})
+
+    def parsed_handler(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("authorization", ""))
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTFFFFFFFFFFFFFFFFFF"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/tenants/{TENANT}/agent-token").mock(side_effect=refresh_handler)
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=parsed_handler)
+        client = BrainApiClient(BASE, old_token, platform_service_secret="platform-secret")
+        await client.post_parsed(
+            raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
+        )
+
+    assert seen_auth == [f"Bearer {new_token}"]
+
+
+async def test_post_parsed_retries_once_after_401_when_refresh_configured() -> None:
+    """A token that isn't near expiry yet but still 401's (already expired
+    server-side, or revoked) is retried exactly once after a refresh."""
+    live_token = _jwt(int(time.time()) + 30 * 86400)
+    new_token = _jwt(int(time.time()) + 31 * 86400)  # distinct exp so the two JWTs differ
+    attempts: list[str] = []
+
+    def refresh_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token": new_token})
+
+    def parsed_handler(request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("authorization", "")
+        attempts.append(auth)
+        if auth == f"Bearer {live_token}":
+            return httpx.Response(401, json={"error": "expired"})
+        return httpx.Response(201, json={"id": "prs_01TEST"})
+
+    raw_id = "raw_01TESTGGGGGGGGGGGGGGGGGG"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/tenants/{TENANT}/agent-token").mock(side_effect=refresh_handler)
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=parsed_handler)
+        client = BrainApiClient(BASE, live_token, platform_service_secret="platform-secret")
+        result = await client.post_parsed(
+            raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
+        )
+
+    assert attempts == [f"Bearer {live_token}", f"Bearer {new_token}"]
+    assert result["id"] == "prs_01TEST"
+
+
+async def test_post_parsed_401_propagates_when_refresh_not_configured() -> None:
+    """Back-compat: without platform_service_secret, a 401 behaves exactly as
+    before this change -- no refresh attempt, no retry."""
+    raw_id = "raw_01TESTHHHHHHHHHHHHHHHHHH"
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").respond(401, json={"error": "expired"})
+        client = BrainApiClient(BASE, TOKEN)
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.post_parsed(
+                raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
+            )
 
 
 @pytest.mark.parametrize("status", [400, 404, 500])

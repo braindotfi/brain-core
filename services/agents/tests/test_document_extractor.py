@@ -1,8 +1,11 @@
 """Unit tests for the document_extractor agent and its HTTP route."""
 
+import asyncio
 import base64
 import json
+import time
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -16,7 +19,7 @@ from brain_agents.document_extractor.agent import (
     DocumentOcrUnavailableError,
     OcrTextResult,
 )
-from brain_agents.payment.agent import PaymentAgent
+from brain_agents.document_extractor.extract_text import extract_text as real_extract_text
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
 from brain_agents.server import create_app
@@ -78,7 +81,6 @@ def _make_mock_deps() -> AppDeps:
     return AppDeps(
         brain_client=mock_brain,
         recon_agent=AsyncMock(spec=ReconciliationAgent),
-        payment_agent=AsyncMock(spec=PaymentAgent),
         anomaly_agent=AsyncMock(spec=AnomalyAgent),
         plaid_extractor_agent=MagicMock(spec=PlaidExtractorAgent),
         document_extractor_agent=mock_doc,
@@ -294,6 +296,93 @@ async def test_run_extracts_text_from_base64_csv_bytes(
     mock_deps.document_extractor_agent.extract.assert_awaited_once()  # type: ignore[union-attr]
     (text_arg,) = mock_deps.document_extractor_agent.extract.await_args.args  # type: ignore[union-attr]
     assert "Acme" in text_arg
+
+
+# ---------------------------------------------------------------------------
+# RFC F3: extract_text runs off the event loop, under a wall-clock timeout
+# ---------------------------------------------------------------------------
+
+
+async def test_run_offloads_extract_text_to_a_thread(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """extract_text is synchronous CPU work and must run via
+    asyncio.to_thread, not be called inline on the event loop. Must fail
+    against pre-fix routes.py, which never calls asyncio.to_thread."""
+    calls: list[Any] = []
+    real_to_thread = asyncio.to_thread
+
+    async def spying_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", spying_to_thread)
+
+    csv_b64 = base64.b64encode(b"vendor,amount\nAcme,120.50\n").decode("ascii")
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": csv_b64,
+            "mime_type": "text/csv",
+        },
+    )
+    assert resp.status_code == 200
+    assert real_extract_text in calls
+
+
+async def test_run_times_out_a_slow_extraction(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wall-clock timeout bounds extract_text even when the input itself
+    is small (e.g. pathological structure). Must fail against pre-fix
+    routes.py, which has no timeout at all around the call."""
+    monkeypatch.setattr(
+        "brain_agents.document_extractor.routes._EXTRACT_TEXT_TIMEOUT_SECONDS", 0.05
+    )
+
+    def hanging_extract_text(content: bytes, mime_type: str | None) -> str:
+        time.sleep(0.3)
+        return "too slow"
+
+    monkeypatch.setattr("brain_agents.document_extractor.routes.extract_text", hanging_extract_text)
+
+    csv_b64 = base64.b64encode(b"vendor,amount\nAcme,120.50\n").decode("ascii")
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": csv_b64,
+            "mime_type": "text/csv",
+        },
+    )
+    assert resp.status_code == 422
+    assert "timed out" in resp.json()["detail"]
+
+
+async def test_run_rejects_oversized_document_with_413(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("brain_agents.document_extractor.extract_text._MAX_INPUT_BYTES", 10)
+    csv_b64 = base64.b64encode(b"vendor,amount\nAcme,120.50\n").decode("ascii")
+    resp = await client.post(
+        "/run/document_extract",
+        json={
+            "agent_id": "agent_x",
+            "tenant_id": "tnt_x",
+            "raw_id": "raw_x",
+            "document_b64": csv_b64,
+            "mime_type": "text/csv",
+        },
+    )
+    assert resp.status_code == 413
 
 
 async def test_run_ocr_extracts_image_bytes(
