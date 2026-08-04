@@ -201,9 +201,9 @@ import {
   unsupportedEvidenceKinds,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
-import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
+import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
 
@@ -796,10 +796,21 @@ async function main(): Promise<void> {
   const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
 
   // Resolve on-chain dispatch params at execute time. Only wired when both the
-  // session key and the BrainSmartAccount address are configured.
+  // session key and the BrainSmartAccount address are configured. The actual
+  // recipient/currency/calldata logic (F3/F4 fixes) lives in
+  // resolveOnchainTransferParams so it is unit-testable independent of boot.
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
-  const ONCHAIN_TRANSFER_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+  // F3: token transfers need real ERC-20 calldata. USDC is the only token
+  // contract this deployment has an address for (BRAIN_X402_USDC_ADDRESS);
+  // any other currency has no known contract, so resolveOnchainTransferParams
+  // fails closed rather than guessing an address. Decimals are read live
+  // (not hardcoded) -- see settlement-decimals-gate.ts for why a hardcoded
+  // assumption is unsafe here.
+  const getOnchainTransferTokenDecimals =
+    cfg.BRAIN_X402_USDC_ADDRESS !== undefined
+      ? makeBaseGetErc20Decimals(cfg.BASE_RPC_URL ?? cfg.RPC_URL, cfg.BRAIN_BASE_CHAIN_ID)
+      : undefined;
   const resolveOnchainParams:
     | ((
         ctx: ServiceCallContext,
@@ -818,25 +829,13 @@ async function main(): Promise<void> {
             intent.destination_counterparty_id,
           );
           if (cp === null) return null;
-          // F4: bind the recipient to the counterparty's onchain_address --
-          // the SAME field the gate binds for x402_settle (6.5) and
-          // escrow_release (6.6) -- rather than scanning the agent-writable
-          // `aliases` array. `aliases` is a free-form identity field an agent
-          // principal can PATCH via /ledger/counterparties; onchain_address is
-          // not a PATCH-able field on that route at all. Refuse to dispatch
-          // rather than falling back to aliases.
-          const target = cp.onchain_address;
-          if (target === null || !ONCHAIN_TRANSFER_ADDRESS.test(target)) return null;
-          const valueWei =
-            intent.currency.toUpperCase() === "ETH" ? parseEther(intent.amount).toString() : "0";
-          return {
-            smart_account: smartAccount,
+          return resolveOnchainTransferParams(cp, intent, {
+            smartAccount,
             holder: getHolderAddress(sessionKey as `0x${string}`),
-            target,
-            data: "0x",
-            value: valueWei,
-            policy_version: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
-          };
+            policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
+            usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
+            getUsdcDecimals: getOnchainTransferTokenDecimals,
+          });
         }
       : undefined;
 
