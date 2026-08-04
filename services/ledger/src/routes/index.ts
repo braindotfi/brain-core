@@ -329,6 +329,7 @@ export async function registerLedgerRoutes(
     async (
       request: FastifyRequest<{
         Querystring: {
+          direction?: "payable" | "receivable";
           status?: string;
           type?: string;
           due_before?: string;
@@ -342,6 +343,7 @@ export async function registerLedgerRoutes(
       requireScope(request.principal!.scopes, READ);
       const limit = parseLimit(request.query.limit);
       const result = await service.listObligations(ctx, {
+        ...(request.query.direction !== undefined ? { direction: request.query.direction } : {}),
         ...(request.query.status !== undefined ? { status: request.query.status as never } : {}),
         ...(request.query.type !== undefined ? { type: request.query.type as never } : {}),
         ...(request.query.due_before !== undefined ? { due_before: request.query.due_before } : {}),

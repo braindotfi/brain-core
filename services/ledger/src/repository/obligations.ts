@@ -22,6 +22,7 @@ export interface ObligationRow extends LedgerRowCommon {
 }
 
 export interface ObligationListFilters {
+  direction?: "payable" | "receivable";
   status?: string;
   type?: string;
   due_before?: Date;
@@ -48,6 +49,10 @@ export async function listObligations(
 ): Promise<ObligationRow[]> {
   const where: string[] = [`owner_id = current_setting('app.tenant_id', true)`];
   const values: unknown[] = [];
+  if (filters.direction !== undefined) {
+    values.push(filters.direction);
+    where.push(`direction = $${values.length}`);
+  }
   if (filters.status !== undefined) {
     values.push(filters.status);
     where.push(`status = $${values.length}`);

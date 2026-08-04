@@ -135,6 +135,7 @@ describe("seedBrainSaasDemo", () => {
 
     // AP inbox (3) + AR receivables (4).
     expect(Object.keys(result.apInvoices)).toEqual(["cloudops", "datacenter", "quickpay"]);
+    expect(Object.keys(result.apObligations)).toEqual(["cloudops", "datacenter", "quickpay"]);
     expect(Object.keys(result.arInvoices)).toEqual([
       "bigco",
       "midmarket",
@@ -157,6 +158,22 @@ describe("seedBrainSaasDemo", () => {
       "alchemy_wallet",
       "tax_return",
     ]);
+  });
+
+  it("seeds AP bills as payable obligations separate from AR invoices", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const inserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO ledger_obligations"));
+    expect(inserts).toHaveLength(3);
+    expect(inserts.map((entry) => entry.values?.[3])).toEqual([
+      "19400.00",
+      "187000.00",
+      "4800.00",
+    ]);
+    for (const insert of inserts) {
+      expect(insert.sql).toContain("'payable'");
+    }
   });
 
   it("does not overwrite tenant kind when seeding an existing durable tenant", async () => {

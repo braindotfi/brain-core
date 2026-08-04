@@ -148,6 +148,9 @@ jobs:
               set -euo pipefail
               echo "agents_container_state=$(docker inspect --format={{.State.Status}} brain-prod-agents 2>/dev/null || echo absent)"
               echo "agents_container_health=$(docker inspect --format={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_boot_diagnostics:"
+              docker logs --tail=100 brain-prod-agents 2>&1 | \
+                grep -E "RuntimeError|Traceback|missing|required|OPENAI|BRAIN_API_TOKEN|BRAIN_AGENTS_INBOUND_SECRET" || true
               docker exec brain-prod-worker node -e '\''
                 const base = process.env.DOCUMENT_EXTRACT_AGENT_URL;
                 console.log(`document_extract_agent_url_set=${base ? "true" : "false"}`);

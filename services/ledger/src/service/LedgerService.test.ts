@@ -111,6 +111,23 @@ describe("LedgerService — limit clamping and reads", () => {
     expect(list.values).toEqual(["unverified", 51]);
   });
 
+  it("lists payable obligations by default", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await service.listObligations(ctx, { limit: 10 });
+    const list = calls.find((c) => c.text.includes("FROM ledger_obligations"))!;
+    expect(list.text).toContain("direction = $1");
+    expect(list.values).toEqual(["payable", 11]);
+  });
+
+  it("allows callers to request receivable obligations explicitly", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await service.listObligations(ctx, { direction: "receivable", limit: 10 });
+    const list = calls.find((c) => c.text.includes("FROM ledger_obligations"))!;
+    expect(list.values).toEqual(["receivable", 11]);
+  });
+
   it("serializes counterparty payment rollups", async () => {
     const { pool } = fakePool({
       "FROM ledger_counterparties cp": [

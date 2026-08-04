@@ -2712,12 +2712,17 @@ paths:
   /ledger/obligations:
     get:
       tags: [Ledger]
-      summary: List obligations (bills, invoices, subscriptions)
+      summary: List payable obligations (bills, invoices, subscriptions)
       description: |
-        Requires `ledger:read`. Cursor pagination is keyset-based and
-        opaque. Pass `next_cursor` unchanged to fetch the next page.
+        Requires `ledger:read`. Results default to payable obligations. Pass
+        `direction=receivable` to list obligations owed to the tenant. Cursor
+        pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
+        fetch the next page.
       operationId: listObligations
       parameters:
+        - name: direction
+          in: query
+          schema: { type: string, enum: [payable, receivable], default: payable }
         - name: status
           in: query
           schema: { type: string, enum: [upcoming, due, paid, overdue, cancelled, disputed] }
