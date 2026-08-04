@@ -46,7 +46,7 @@
  */
 
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 // Anchored to process.cwd() so tests can redirect the guard at a fixture
 // tree, and so the script always runs against the operator's checkout root.
@@ -103,6 +103,22 @@ const THIRD_PARTY_SELECTORS = new Set([
   "0x23b872dd", // transferFrom(address,address,uint256)
   "0x095ea7b3", // approve(address,uint256)
   "0x70a08231", // balanceOf(address)
+]);
+
+/**
+ * Files where an 8-hex quoted literal is a REVERT-DECODE selector -- read off
+ * an on-chain revert to CLASSIFY it -- never calldata this code constructs
+ * and sends. That is a materially different risk than PINNED_SELECTORS: a
+ * wrong value here degrades to a missed classification (safer failure mode),
+ * not a call to the wrong function. Extend this list only for that same
+ * shape (a decode-side lookup table, not a call site), with a reason.
+ */
+const SELECTOR_LITERAL_ALLOWLIST_FILES = new Map([
+  [
+    "services/execution/src/rails/permanent-failure.ts",
+    "DETERMINISTIC_SMART_ACCOUNT_REVERTS decodes BrainSmartAccount custom-error " +
+      "selectors off an observed revert; it is never used to construct calldata.",
+  ],
 ]);
 
 const SKIP_DIRS = new Set([
@@ -208,29 +224,75 @@ function parseSignature(sig) {
 }
 
 /**
- * Extract `const <NAME> = "0x<8 hex>"` occurrences -- hand-rolled 4-byte
- * selectors. Returns { file, variable, literal, line }.
+ * Best-effort "what identifier does this literal belong to" lookback. Used
+ * only to key PINNED_SELECTORS and to label a finding -- never to decide
+ * WHETHER something is a selector, since that decision must not depend on a
+ * name. Handles `const NAME = `, an object/class field `NAME: ` or `NAME = `;
+ * falls back to "<anonymous>" for a bare expression (e.g.
+ * `return "0x66afd8ef" + x;`). An anonymous literal can never match a
+ * PINNED_SELECTORS entry, so it always reports as unregistered -- the
+ * correct fail-closed outcome for that shape.
+ */
+function nearestIdentifier(src, index) {
+  const before = src.slice(Math.max(0, index - 200), index);
+  const m = /(\w+)\s*(?::\s*[^=:]+)?=\s*$/.exec(before) ?? /(\w+)\s*:\s*$/.exec(before);
+  return m ? m[1] : "<anonymous>";
+}
+
+/**
+ * Extract hand-rolled 4-byte selector literals -- ANYWHERE the shape appears
+ * in production code, not only a `const|let|var NAME = "0x........"`
+ * assignment. Anchoring to that one shape is trivially bypassed: an object
+ * property (`{ release: "0x66afd8ef" }`), a class field
+ * (`private readonly SEL = "0x66afd8ef"`), a bare `return` expression, an
+ * uppercase `0X` prefix, or splitting the literal across a string
+ * concatenation (`"0x" + "66afd8ef"`) all escape a `const NAME =` anchor
+ * while being the exact same risk: a hand-rolled selector nothing here
+ * re-derives from a signature. Case-insensitive on both the `0x` prefix and
+ * the hex digits, so `0X66AFD8EF` is not a free pass either.
  *
- * Deliberately matches ANY 8-hex-digit string constant, not just names ending
- * in _SELECTOR, so a selector cannot hide behind a different name.
+ * Returns { file, variable, literal, line }[]; `literal` is always
+ * normalized to lowercase `0x`-prefixed form.
  */
 function extractSelectorLiterals(file) {
   // Tests legitimately hand-build calldata and bytecode fixtures (a contract's
   // 0x60806040 creation prefix matches the same shape). The guard is about
   // production call sites.
   if (/\.(test|spec)\.tsx?$/.test(file)) return [];
+  const rel = relative(ROOT, file).split(sep).join("/");
+  if (SELECTOR_LITERAL_ALLOWLIST_FILES.has(rel)) return [];
+
   const src = readFileSync(file, "utf8");
   const out = [];
-  const re = /(?:^|\s)(?:const|let|var|export\s+const)\s+(\w+)\s*(?::\s*[^=]+)?=\s*["'`](0x[0-9a-fA-F]{8})["'`]/gm;
-  let m;
-  while ((m = re.exec(src)) !== null) {
+  const seen = new Set(); // a literal can match both scans below at the same offset
+
+  function record(index, literal) {
+    const key = `${index}:${literal}`;
+    if (seen.has(key)) return;
+    seen.add(key);
     out.push({
       file,
-      variable: m[1],
-      literal: m[2].toLowerCase(),
-      line: src.slice(0, m.index).split("\n").length,
+      variable: nearestIdentifier(src, index),
+      literal: literal.toLowerCase(),
+      line: src.slice(0, index).split("\n").length,
     });
   }
+
+  // Shape 1: a single quoted 0x-prefixed 8-hex literal, in any position.
+  const directRe = /["'`](0[xX][0-9a-fA-F]{8})["'`]/g;
+  let m;
+  while ((m = directRe.exec(src)) !== null) {
+    record(m.index, m[1]);
+  }
+
+  // Shape 2: the "0x" prefix and the 8-hex body split across a
+  // concatenation, in either order.
+  const splitRe =
+    /["'`]0[xX]["'`]\s*\+\s*["'`]([0-9a-fA-F]{8})["'`]|["'`]([0-9a-fA-F]{8})["'`]\s*\+\s*["'`]0[xX]["'`]/g;
+  while ((m = splitRe.exec(src)) !== null) {
+    record(m.index, `0x${m[1] ?? m[2]}`);
+  }
+
   return out;
 }
 
