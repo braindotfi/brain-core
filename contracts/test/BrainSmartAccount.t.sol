@@ -22,6 +22,19 @@ contract Target {
     }
 }
 
+/// @dev Escrow shape: the object acted on (`escrowId`) sits at calldata offset
+///      4 and the metered amount at 36, exactly like BrainEscrow.release/refund.
+contract MockEscrow {
+    event Refunded(bytes32 escrowId, uint256 amount);
+
+    mapping(bytes32 => uint256) public refunded;
+
+    function refund(bytes32 escrowId, uint256 amount) external {
+        refunded[escrowId] += amount;
+        emit Refunded(escrowId, amount);
+    }
+}
+
 /// @dev Minimal ERC20 stub — only the transfer-family selectors matter.
 contract MockERC20 {
     mapping(address => mapping(address => uint256)) public allowance;
@@ -170,6 +183,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: perTx,
             maxPerPeriod: perPeriod,
             periodSeconds: period,
@@ -191,6 +206,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: perTx,
             maxPerPeriod: perPeriod,
             periodSeconds: 86_400,
@@ -212,6 +229,8 @@ contract BrainSmartAccountTest is Test {
             capToken: token,
             allowedRecipients: _addrs(payee),
             capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: perTx,
             maxPerPeriod: perPeriod,
             periodSeconds: 86_400,
@@ -256,6 +275,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 1 ether,
             periodSeconds: 0,
@@ -433,6 +454,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -583,6 +606,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -958,6 +983,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1 ether,
             maxPerPeriod: 5 ether,
             periodSeconds: 86_400,
@@ -1365,6 +1392,8 @@ contract BrainSmartAccountTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: 36,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1_000_000,
             maxPerPeriod: 1_000_000,
             periodSeconds: 86_400,
@@ -1409,5 +1438,100 @@ contract BrainSmartAccountTest is Test {
         _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
         vm.prank(holder);
         acct.executeViaSessionKey(0, address(target), 0, _ping(1));
+    }
+
+    // --- CALL mode object binding (pinOffset / pinValue) ------------------
+
+    bytes32 internal constant ESCROW_A = keccak256("escrow-tenant-a");
+    bytes32 internal constant ESCROW_B = keccak256("escrow-tenant-b");
+
+    function _grantEscrowKey(address escrow, uint256 pinOffset, bytes32 pinValue) internal {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = MockEscrow.refund.selector;
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: _addrs(escrow),
+            allowedSelectors: sels,
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: 36,
+            pinOffset: pinOffset,
+            pinValue: pinValue,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 5 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+    }
+
+    /// CALL mode meters `amount` but left `escrowId` free, and the smart account
+    /// is the arbiter of EVERY escrow naming it — `refund` accepts the arbiter at
+    /// any time. So a key scoped to one escrow could drain another tenant's.
+    function test_callMode_pinBindsTheObjectTheCallActsOn() public {
+        MockEscrow escrow = new MockEscrow();
+        _grantEscrowKey(address(escrow), 4, ESCROW_A);
+
+        // The pinned escrow still works.
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(escrow), 0, abi.encodeCall(MockEscrow.refund, (ESCROW_A, 1 ether)));
+        assertEq(escrow.refunded(ESCROW_A), 1 ether);
+
+        // Another tenant's escrow, same target and same selector, is refused.
+        bytes memory foreign = abi.encodeCall(MockEscrow.refund, (ESCROW_B, 1 ether));
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.PinnedArgumentMismatch.selector, ESCROW_A, ESCROW_B));
+        acct.executeViaSessionKey(1, address(escrow), 0, foreign);
+        assertEq(escrow.refunded(ESCROW_B), 0);
+    }
+
+    function test_callMode_pinOffsetMustBeWordAligned() public {
+        MockEscrow escrow = new MockEscrow();
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.InvalidPinOffset.selector, uint256(5)));
+        _grantEscrowKey(address(escrow), 5, ESCROW_A);
+    }
+
+    /// Pinning the metered amount itself would be a fixed-value key, not an
+    /// object binding, and would leave the object free.
+    function test_callMode_pinOffsetCannotBeTheAmountWord() public {
+        MockEscrow escrow = new MockEscrow();
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.InvalidPinOffset.selector, uint256(36)));
+        _grantEscrowKey(address(escrow), 36, ESCROW_A);
+    }
+
+    /// A pinValue with no offset would read as "bound" while enforcing nothing.
+    function test_callMode_pinValueWithoutOffsetRejected() public {
+        MockEscrow escrow = new MockEscrow();
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.InvalidPinOffset.selector, uint256(0)));
+        _grantEscrowKey(address(escrow), 0, ESCROW_A);
+    }
+
+    /// The pin is CALL-mode only: ERC20 and NATIVE bind through allowedRecipients.
+    function test_pinNotAllowedInErc20Mode() public {
+        MockERC20 token = new MockERC20();
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + 3600,
+            allowedTargets: _addrs(address(token)),
+            allowedSelectors: _transferSels(),
+            capMode: BrainSmartAccount.CapMode.ERC20,
+            capToken: address(token),
+            allowedRecipients: _addrs(payee),
+            capAmountOffset: 0,
+            pinOffset: 4,
+            pinValue: ESCROW_A,
+            maxPerTx: 1 ether,
+            maxPerPeriod: 1 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        vm.expectRevert(BrainSmartAccount.PinNotAllowedInThisMode.selector);
+        acct.grantSessionKey(key);
     }
 }

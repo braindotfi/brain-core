@@ -59,6 +59,8 @@ contract GrantSessionKeyNative is Script {
             capToken: address(0), // NATIVE mode — caps denominated in wei
             allowedRecipients: recipients,
             capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 0.001 ether,
             maxPerPeriod: 0.01 ether,
             periodSeconds: 86_400,

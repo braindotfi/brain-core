@@ -85,6 +85,8 @@ contract DeployOnchainDemo is Script {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 0.05 ether,
             maxPerPeriod: 0.5 ether,
             periodSeconds: 86_400,

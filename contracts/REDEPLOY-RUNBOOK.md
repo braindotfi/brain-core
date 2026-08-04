@@ -122,7 +122,7 @@ Granting the wrong mode is the easiest way to ship an unmetered key.
 | ----------------------- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
 | Native ETH transfer     | `NATIVE` | 0                            | `data` MUST be empty; selector and recipient lists MUST be empty                                 |
 | USDC / ERC-20 payment   | `ERC20`  | 0                            | target MUST be the token; `allowedRecipients` is the counterparty binding; `approve` is rejected |
-| `BrainEscrow.release`   | `CALL`   | **36**                       | the `amount` word of `release(bytes32,uint256)`                                                  |
+| `BrainEscrow.release`   | `CALL`   | **36**                       | the `amount` word of `release(bytes32,uint256)`; pin `escrowId` at `pinOffset` 4                |
 | Any other contract call | `CALL`   | offset of its uint256 amount | must be `>= 4` and word-aligned                                                                  |
 
 A `CALL`-mode key can only target functions that carry a uint256 amount at a
@@ -130,6 +130,14 @@ declared offset. `CALL` is NOT a superset of `ERC20`: `approve`,
 `increaseAllowance`, `transfer` and `transferFrom` are rejected at grant time,
 because `CALL` has neither allowance accounting nor a recipient binding. Grant
 token movement in `ERC20` mode.
+
+`CALL` meters the amount but binds nothing about WHICH object the call acts on.
+Use the optional `pinOffset` / `pinValue` pair to pin one further 32-byte
+argument word. **Escrow keys MUST pin `escrowId` at offset 4.** The smart
+account is the arbiter of every escrow naming it, and `BrainEscrow.refund`
+accepts the arbiter at any time with no deadline, so an unpinned
+`[BrainEscrow] x [refund(bytes32,uint256)]` key can force-refund any other
+tenant's escrow and charge it against its own cap.
 
 Spend windows anchor to the holder's FIRST grant rather than to the unix epoch
 or to the current key's `validAfter`. A per-task key whose lifetime equals one

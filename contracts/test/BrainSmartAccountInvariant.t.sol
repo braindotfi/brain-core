@@ -101,6 +101,8 @@ contract BrainSmartAccountInvariantTest is Test {
             capToken: address(0),
             allowedRecipients: new address[](0),
             capAmountOffset: 4,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: MAX_PER_TX,
             maxPerPeriod: MAX_PER_PERIOD,
             periodSeconds: PERIOD,

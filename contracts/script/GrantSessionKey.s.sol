@@ -68,6 +68,8 @@ contract GrantSessionKey is Script {
             capToken: allowedToken,
             allowedRecipients: recipients,
             capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
             maxPerTx: 1000e6,
             maxPerPeriod: 10_000e6,
             periodSeconds: 86_400,

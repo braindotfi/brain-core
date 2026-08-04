@@ -52,6 +52,13 @@ interface IBrainPolicyRegistryView {
 ///                   and `[USDC] x [transfer]` moved tokens to any address at
 ///                   all. Token movement must be granted in ERC20 mode, which
 ///                   binds the recipient.
+///                   CALL binds the AMOUNT but nothing about which object the
+///                   call acts on, so `pinOffset`/`pinValue` optionally pin one
+///                   further 32-byte argument word to a fixed value. Without it a
+///                   key scoped to `[BrainEscrow] x [refund(bytes32,uint256)]`
+///                   meters the amount while leaving `escrowId` free, and the
+///                   smart account is the arbiter of EVERY escrow naming it — so
+///                   one tenant's key could force-refund another's escrow.
 contract BrainSmartAccount {
     /// @notice How a session key's caps are measured. See the contract docs.
     enum CapMode {
@@ -77,6 +84,15 @@ contract BrainSmartAccount {
         /// @dev CALL mode only: byte offset of the uint256 amount word within
         ///      calldata. MUST be zero in NATIVE and ERC20 mode.
         uint256 capAmountOffset;
+        /// @dev CALL mode only: byte offset of ONE further 32-byte calldata word
+        ///      that is pinned to `pinValue`, binding the key to a specific
+        ///      object (an escrowId, an invoice id) and not merely to a function.
+        ///      Zero disables the pin. MUST be zero in NATIVE and ERC20 mode,
+        ///      which bind their counterparty through `allowedRecipients`.
+        uint256 pinOffset;
+        /// @dev The value the word at `pinOffset` must equal. Meaningful only
+        ///      when `pinOffset` is non-zero.
+        bytes32 pinValue;
         uint256 maxPerTx; // per-call cap in capToken units (or wei in NATIVE mode)
         uint256 maxPerPeriod; // cumulative cap per periodSeconds window (same units)
         uint256 periodSeconds; // e.g. 86400 for daily; 0 disables period accounting
@@ -198,6 +214,9 @@ contract BrainSmartAccount {
     error ValueNotAllowedInCallMode();
     error CapAmountOffsetNotAllowedInThisMode();
     error InvalidCapAmountOffset(uint256 offset);
+    error PinNotAllowedInThisMode();
+    error InvalidPinOffset(uint256 offset);
+    error PinnedArgumentMismatch(bytes32 expected, bytes32 actual);
     error MalformedErc20Calldata(uint256 length);
     error CalldataTooShortForCapOffset(uint256 length, uint256 required);
     error AllowlistTooLarge(uint256 maxAllowed);
@@ -276,6 +295,7 @@ contract BrainSmartAccount {
             if (key.allowedRecipients.length != 0) revert RecipientsNotAllowedInThisMode();
             if (key.capToken != address(0)) revert CapTokenNotAllowedInThisMode();
             if (key.capAmountOffset != 0) revert CapAmountOffsetNotAllowedInThisMode();
+            if (key.pinOffset != 0 || key.pinValue != bytes32(0)) revert PinNotAllowedInThisMode();
         } else if (key.capMode == CapMode.ERC20) {
             if (key.capToken == address(0)) revert ZeroAddress();
             if (key.allowedTargets.length != 1 || key.allowedTargets[0] != key.capToken) {
@@ -284,6 +304,7 @@ contract BrainSmartAccount {
             if (key.allowedSelectors.length == 0) revert SelectorsRequired();
             if (key.allowedRecipients.length == 0) revert RecipientsRequired();
             if (key.capAmountOffset != 0) revert CapAmountOffsetNotAllowedInThisMode();
+            if (key.pinOffset != 0 || key.pinValue != bytes32(0)) revert PinNotAllowedInThisMode();
             for (uint256 i = 0; i < key.allowedSelectors.length; ++i) {
                 bytes4 s = key.allowedSelectors[i];
                 if (s == _SELECTOR_APPROVE) revert ApproveNotPermittedInErc20Mode();
@@ -318,6 +339,18 @@ contract BrainSmartAccount {
             // word-aligned, so it names a real ABI argument slot.
             if (key.capAmountOffset < 4 || (key.capAmountOffset - 4) % 32 != 0) {
                 revert InvalidCapAmountOffset(key.capAmountOffset);
+            }
+            // The pin is optional, but a pinned word must name a real argument
+            // slot and must not be the metered amount itself (pinning the amount
+            // would be a fixed-value key, not an object binding).
+            if (key.pinOffset != 0) {
+                if (key.pinOffset < 4 || (key.pinOffset - 4) % 32 != 0 || key.pinOffset == key.capAmountOffset) {
+                    revert InvalidPinOffset(key.pinOffset);
+                }
+            } else if (key.pinValue != bytes32(0)) {
+                // A pinValue with no offset would read as "bound" but enforce
+                // nothing, which is the failure mode this field exists to close.
+                revert InvalidPinOffset(0);
             }
         }
 
@@ -518,6 +551,12 @@ contract BrainSmartAccount {
 
         // CapMode.CALL
         if (value != 0) revert ValueNotAllowedInCallMode();
+        if (key.pinOffset != 0) {
+            uint256 pinEnd = key.pinOffset + 32;
+            if (data.length < pinEnd) revert CalldataTooShortForCapOffset(data.length, pinEnd);
+            bytes32 actual = bytes32(data[key.pinOffset:pinEnd]);
+            if (actual != key.pinValue) revert PinnedArgumentMismatch(key.pinValue, actual);
+        }
         uint256 required = key.capAmountOffset + 32;
         if (data.length < required) revert CalldataTooShortForCapOffset(data.length, required);
         return uint256(bytes32(data[key.capAmountOffset:required]));
