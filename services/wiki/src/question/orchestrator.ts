@@ -117,7 +117,8 @@ export type DeterministicIntentId =
   | "monthly_net_cash_flow"
   | "trailing_monthly_net_cash_flow"
   | "largest_payable"
-  | "new_vendor_listing";
+  | "new_vendor_listing"
+  | "vendor_trust_status_listing";
 
 interface TransactionAggregateIntent {
   operation: AggregateOperation;
@@ -219,7 +220,10 @@ interface CounterpartyResolutionRow {
   id: string;
   name: string;
   type: string;
+  trust_status?: string | null;
 }
+
+type CounterpartyTrustStatus = "unreviewed" | "trusted" | "paused" | "acknowledged";
 
 interface PayableByCounterpartyIntent {
   counterpartyName: string;
@@ -240,6 +244,10 @@ interface TrailingCashFlowIntent {
 
 interface NewVendorListingIntent {
   asOf: Date | null;
+}
+
+interface VendorTrustStatusListingIntent {
+  trustStatus: CounterpartyTrustStatus;
 }
 
 interface OverdueCustomerInvoicesIntent {
@@ -689,7 +697,7 @@ async function answerPayableByCounterparty(
   }
 
   const { rows: counterparties } = await client.query<CounterpartyResolutionRow>(
-    `SELECT id, name
+    `SELECT id, name, type, trust_status
        FROM ledger_counterparties
       WHERE normalized_name = $1
          OR normalized_name LIKE $2 ESCAPE '\\'
@@ -783,7 +791,7 @@ async function answerReceivableByCounterparty(
   }
 
   const { rows: counterparties } = await client.query<CounterpartyResolutionRow>(
-    `SELECT id, name, type
+    `SELECT id, name, type, trust_status
        FROM ledger_counterparties
       WHERE normalized_name = $1
          OR normalized_name LIKE $2 ESCAPE '\\'
@@ -1082,6 +1090,30 @@ async function answerNewVendorListing(
   return structuredListingResult(`Yes. New vendors: ${names}.`, rows.map(toCounterpartyEvidence));
 }
 
+async function answerVendorTrustStatusListing(
+  client: TenantScopedClient,
+  intent: VendorTrustStatusListingIntent,
+): Promise<AskResult> {
+  const { rows } = await client.query<CounterpartyResolutionRow>(
+    `SELECT id, name, type, trust_status
+       FROM ledger_counterparties
+      WHERE type = 'vendor'
+        AND trust_status = $1
+      ORDER BY name ASC, id ASC
+      LIMIT $2`,
+    [intent.trustStatus, MAX_LISTING_RECORDS],
+  );
+  const label = intent.trustStatus === "trusted" ? "trusted" : intent.trustStatus;
+  if (rows.length === 0) {
+    return structuredListingResult(`No vendors are currently marked as ${label}.`, []);
+  }
+  const names = rows.map((row) => row.name).join(", ");
+  return structuredListingResult(
+    `${label[0]!.toUpperCase()}${label.slice(1)} vendors: ${names}.`,
+    rows.map(toCounterpartyEvidence),
+  );
+}
+
 async function answerOverdueCustomerInvoices(
   client: TenantScopedClient,
   intent: OverdueCustomerInvoicesIntent,
@@ -1195,10 +1227,14 @@ async function answerPayrollObligationTotal(
 }
 
 function toCounterpartyEvidence(row: CounterpartyResolutionRow): AskEvidenceItem {
+  const trust =
+    row.trust_status === null || row.trust_status === undefined
+      ? ""
+      : ` trust_status=${row.trust_status}`;
   return {
     entityType: "counterparty",
     entityId: row.id,
-    excerpt: `counterparty "${row.name}"`,
+    excerpt: `counterparty "${row.name}"${trust}`,
   };
 }
 
@@ -1292,8 +1328,9 @@ async function retrieveLedgerCandidates(
     name: string;
     type: string;
     risk_level: string | null;
+    trust_status: string | null;
   }>(
-    `SELECT id, name, type, risk_level
+    `SELECT id, name, type, risk_level, trust_status
        FROM ledger_counterparties
       ORDER BY updated_at DESC
       LIMIT $1`,
@@ -1322,10 +1359,14 @@ async function retrieveLedgerCandidates(
   }
   for (const r of cpRes.rows) {
     const risk = r.risk_level !== null ? ` risk=${r.risk_level}` : "";
+    const trust =
+      r.trust_status === null || r.trust_status === undefined
+        ? ""
+        : ` trust_status=${r.trust_status}`;
     out.push({
       type: "counterparty",
       id: r.id,
-      excerpt: `${r.type} "${r.name}"${risk}`,
+      excerpt: `${r.type} "${r.name}"${risk}${trust}`,
     });
   }
   return out;
@@ -1362,14 +1403,23 @@ async function retrieveAccountsReceivableCandidates(
   const counterpartyIds = [...new Set(oblRes.rows.map((r) => r.counterparty_id))];
   const cpRes =
     counterpartyIds.length === 0
-      ? { rows: [] as Array<{ id: string; name: string; type: string; risk_level: string | null }> }
+      ? {
+          rows: [] as Array<{
+            id: string;
+            name: string;
+            type: string;
+            risk_level: string | null;
+            trust_status: string | null;
+          }>,
+        }
       : await client.query<{
           id: string;
           name: string;
           type: string;
           risk_level: string | null;
+          trust_status: string | null;
         }>(
-          `SELECT id, name, type, risk_level
+          `SELECT id, name, type, risk_level, trust_status
              FROM ledger_counterparties
             WHERE id = ANY($1::text[])
             ORDER BY updated_at DESC
@@ -1385,7 +1435,15 @@ async function retrieveAccountsReceivableCandidates(
     })),
     ...cpRes.rows.map((r) => {
       const risk = r.risk_level !== null ? ` risk=${r.risk_level}` : "";
-      return { type: "counterparty" as const, id: r.id, excerpt: `${r.type} "${r.name}"${risk}` };
+      const trust =
+        r.trust_status === null || r.trust_status === undefined
+          ? ""
+          : ` trust_status=${r.trust_status}`;
+      return {
+        type: "counterparty" as const,
+        id: r.id,
+        excerpt: `${r.type} "${r.name}"${risk}${trust}`,
+      };
     }),
   ];
 }
@@ -1676,6 +1734,16 @@ function parseNewVendorListingIntent(
   return /\bvendors?\b.*\b(?:marked\s+as\s+)?new\b/i.test(question) ? { asOf } : null;
 }
 
+function parseVendorTrustStatusListingIntent(
+  question: string,
+): VendorTrustStatusListingIntent | null {
+  if (!/\b(?:vendor|vendors|counterparty|counterparties)\b/i.test(question)) return null;
+  const match = /\b(trusted|paused|acknowledged|unreviewed)\b/i.exec(question);
+  if (match === null) return null;
+  if (!/\b(?:who|which|list|show|display|are|my)\b/i.test(question)) return null;
+  return { trustStatus: match[1]!.toLowerCase() as CounterpartyTrustStatus };
+}
+
 function parseOverdueCustomerInvoicesIntent(
   question: string,
   asOf: Date | null,
@@ -1798,6 +1866,18 @@ async function hasEligiblePayrollObligations(
   return rows[0]?.eligible === true;
 }
 
+async function hasEligibleTrustedVendors(client: TenantScopedClient): Promise<boolean> {
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_counterparties
+        WHERE type = 'vendor'
+          AND trust_status = 'trusted'
+     ) AS eligible`,
+  );
+  return rows[0]?.eligible === true;
+}
+
 function currentMonthRange(asOf: Date): DateRange {
   const start = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1));
   const end = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() + 1, 1));
@@ -1914,6 +1994,14 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     parse: parseNewVendorListingIntent,
     answer: (client, intent) => answerNewVendorListing(client, intent as NewVendorListingIntent),
     isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "vendor_trust_status_listing",
+    displayText: "Who are my trusted vendors?",
+    parse: (question) => parseVendorTrustStatusListingIntent(question),
+    answer: (client, intent) =>
+      answerVendorTrustStatusListing(client, intent as VendorTrustStatusListingIntent),
+    isEligible: hasEligibleTrustedVendors,
   },
 ];
 
