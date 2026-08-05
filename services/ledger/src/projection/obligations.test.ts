@@ -188,7 +188,6 @@ describe("projectCanonicalObligation", () => {
       document_upload: { invoice_ref: "NL-2417" },
     });
   });
-
 });
 
 describe("runLedgerAparProjectionCycle", () => {
