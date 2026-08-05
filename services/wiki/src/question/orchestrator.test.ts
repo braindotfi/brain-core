@@ -75,6 +75,7 @@ interface FakeRows {
     risk_level: string | null;
     normalized_name?: string;
     aliases?: string[];
+    created_at?: Date;
   }>;
   invoices?: Array<{
     id: string;
@@ -127,6 +128,32 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         };
       }
       if (text.includes("FROM ledger_transactions")) {
+        if (text.includes("matching_average_net")) {
+          const transactions = rows.transactions.filter(
+            (transaction) =>
+              transaction.direction === "inflow" || transaction.direction === "outflow",
+          );
+          const monthly = new Map<string, number>();
+          for (const transaction of transactions) {
+            const month = transaction.transaction_date.toISOString().slice(0, 7);
+            const signed =
+              transaction.direction === "inflow"
+                ? Number(transaction.amount)
+                : -Number(transaction.amount);
+            monthly.set(month, (monthly.get(month) ?? 0) + signed);
+          }
+          const average =
+            [...monthly.values()].reduce((sum, value) => sum + value, 0) /
+            Math.max(1, monthly.size);
+          const aggregate = {
+            matching_months: String(monthly.size),
+            matching_average_net: average.toFixed(2),
+          };
+          return {
+            rows: transactions.map((transaction) => ({ ...transaction, ...aggregate })) as never[],
+            rowCount: transactions.length,
+          };
+        }
         if (text.includes("SELECT EXISTS")) {
           const parameters = values ?? [];
           let parameterIndex = 0;
@@ -340,6 +367,18 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             rowCount: obligations.length,
           };
         }
+        if (text.includes("counterparty_name")) {
+          return {
+            rows: obligations.map((obligation) => ({
+              ...obligation,
+              counterparty_name:
+                rows.counterparties.find(
+                  (counterparty) => counterparty.id === obligation.counterparty_id,
+                )?.name ?? "unknown",
+            })) as never[],
+            rowCount: obligations.length,
+          };
+        }
         return { rows: obligations as never[], rowCount: obligations.length };
       }
       if (text.includes("FROM ledger_counterparties")) {
@@ -356,6 +395,19 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             );
           });
           return { rows: matches.slice(0, 2) as never[], rowCount: Math.min(matches.length, 2) };
+        }
+        if (text.includes("created_at >= $1")) {
+          const [since, until, limit] = values as [Date, Date, number];
+          const vendors = rows.counterparties
+            .filter(
+              (counterparty) =>
+                counterparty.type === "vendor" &&
+                counterparty.created_at !== undefined &&
+                counterparty.created_at >= since &&
+                counterparty.created_at <= until,
+            )
+            .slice(0, limit);
+          return { rows: vendors as never[], rowCount: vendors.length };
         }
         return { rows: rows.counterparties as never[], rowCount: rows.counterparties.length };
       }
@@ -1203,6 +1255,180 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(llm.seen).toEqual([]);
   });
 
+  it("does not treat a compound payable question as a counterparty lookup", async () => {
+    const llm = new InspectingLlmAdapter(() =>
+      JSON.stringify({ answer: "No grounded answer.", evidence_ids: [] }),
+    );
+    const result = await askWiki(
+      {
+        client: fakeClient({ transactions: [], obligations: [], counterparties: [] }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What do we owe in total, and what's overdue on the receivables side?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-compound",
+      },
+    );
+    expect(llm.seen).toHaveLength(1);
+    expect(result).toMatchObject({ model: "m-compound" });
+  });
+
+  it("averages net cash flow over months with posted activity", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_JUNE_IN",
+          amount: "150000.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-06-10T00:00:00Z"),
+          description_normalized: null,
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JUNE_OUT",
+          amount: "6000.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-06-20T00:00:00Z"),
+          description_normalized: null,
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JULY_IN",
+          amount: "144000.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-07-10T00:00:00Z"),
+          description_normalized: null,
+          description_raw: null,
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("trailing cash-flow questions must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What's our trailing monthly cash flow?",
+        asOf: new Date("2026-08-06T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-trailing-cash-flow",
+      },
+    );
+    expect(result).toMatchObject({
+      answered: true,
+      answer:
+        "Trailing monthly cash flow is positive by $144,000.00 across 2 months with posted activity.",
+    });
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("names the counterparty for the largest payable", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_DATACENTER",
+              type: "bill",
+              direction: "payable",
+              amount_due: "187000.00",
+              currency: "USD",
+              due_date: new Date("2026-08-12T00:00:00Z"),
+              status: "upcoming",
+              counterparty_id: "cp_DATACENTER",
+            },
+          ],
+          counterparties: [
+            {
+              id: "cp_DATACENTER",
+              name: "Datacenter Hosting Ltd",
+              type: "vendor",
+              risk_level: null,
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("largest payable must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What's our largest single payable?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-largest",
+      },
+    );
+    expect(result.answer).toContain("Datacenter Hosting Ltd");
+  });
+
+  it("enumerates vendors marked as new", async () => {
+    const now = new Date("2026-08-06T00:00:00Z");
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            {
+              id: "cp_NEW",
+              name: "Quick Pay Solutions",
+              type: "vendor",
+              risk_level: "high",
+              created_at: new Date("2026-08-03T00:00:00Z"),
+            },
+            {
+              id: "cp_OLD",
+              name: "CloudOps",
+              type: "vendor",
+              risk_level: null,
+              created_at: new Date("2026-07-01T00:00:00Z"),
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("new-vendor questions must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Do we have any vendors marked as new?",
+        asOf: now,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-new-vendors",
+      },
+    );
+    expect(result.answer).toBe("Yes. New vendors: Quick Pay Solutions.");
+  });
+
   it("lists only overdue AR invoices for customer-invoice questions", async () => {
     const rows: FakeRows = {
       transactions: [],
@@ -1431,6 +1657,11 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       {
         intentId: "transaction_sum",
         displayText: "What is my total transaction volume this month?",
+        usageRankScore: 0,
+      },
+      {
+        intentId: "trailing_monthly_net_cash_flow",
+        displayText: "What's our trailing monthly cash flow?",
         usageRankScore: 0,
       },
     ]);
