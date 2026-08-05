@@ -113,18 +113,78 @@ TOKEN=$(curl -sf "$V1/demo/token" | jq -r .token)
 [[ -n "$TOKEN" && "$TOKEN" != "null" ]] || { fail "no demo token"; record "token" fail ""; exit 1; }
 ok "token ${TOKEN:0:24}…"; record "token" ok ""
 
-# ── 3. Ingest a raw invoice artifact ─────────────────────────────────────────
-header "3. Ingest raw invoice"
+# ── 3. Ingest a raw invoice + write its structured evidence ─────────────────
+# The real /raw/ingest route (services/raw/src/routes/ingest.ts) is
+# multipart/form-data (source_type, file) or application/json with a
+# fetchable `url` -- it has no inline `body` field, so the old
+# { source_type, body: {...} } shape here never matched and this step
+# silently no-op'd. source_type "other" lands the artifact through the
+# universal fallback adapter without tripping the pdf/csv upload interpreters
+# (bank-statement / AR-aging heuristics); the next call supplies real
+# structured evidence directly via the same route a document-extraction agent
+# uses (POST /raw/{id}/parsed).
+header "3. Ingest raw invoice + write parsed evidence"
 start_step
-INGEST_BODY=$(jq -n '{
-  source_type: "manual_upload", source_ref: "golden-path-invoice",
-  mime_type: "application/json",
-  body: { invoice_number: "INV-GP-001", vendor: "AWS", amount_due: "800.00", currency: "USD" }
+GP_UPLOAD_FILE="/tmp/gp_invoice_upload.txt"
+echo "golden-path invoice placeholder" > "$GP_UPLOAD_FILE"
+RAW=$(curl -sf -X POST "$V1/raw/ingest" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "source_type=other" \
+  -F "file=@${GP_UPLOAD_FILE};type=text/plain" || true)
+RAW_ID=$(echo "${RAW:-}" | jq -r '.raw_id // empty')
+if [[ -z "$RAW_ID" ]]; then
+  fail "raw ingest failed: $RAW"; record "ingest" fail ""; exit 1
+fi
+
+# parser doc_obligation_v1 is the document -> obligation extractor (RFC 0004);
+# post-canonical-cutover (RFC 0005) it projects Raw -> canonical -> Ledger as a
+# low-trust (agent_contributed, confidence<=0.5) payable obligation whose
+# evidence_ids traces back to this raw_parsed row -- exactly what the §6 gate
+# check 9.5 loader (makeResolveEvidence) joins against to resolve
+# kind: "obligation_reference".
+GP_DUE_DATE=$(date -u -d '+14 days' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+14d +%Y-%m-%dT00:00:00Z)
+PARSED_BODY=$(jq -n --arg due "$GP_DUE_DATE" '{
+  parser: "doc_obligation_v1", parser_version: "1.0.0",
+  extracted: {
+    counterparty_name: "Golden Path Vendor",
+    direction: "payable", type: "bill",
+    amount: "1250.00", currency: "USD",
+    due_date: $due, status: "due"
+  },
+  confidence: 0.45
 }')
-RAW=$(req POST /raw/ingest "$INGEST_BODY" || true)
-RAW_ID=$(echo "${RAW:-}" | jq -r '.rawId // .raw_id // empty')
-if [[ -n "$RAW_ID" ]]; then ok "raw artifact $RAW_ID"; record "ingest" ok "$RAW_ID"
-else note "ingest endpoint shape may differ — adjust if needed"; record "ingest" warn ""; fi
+PARSED=$(req POST "/raw/$RAW_ID/parsed" "$PARSED_BODY" || true)
+EVIDENCE_ID=$(echo "${PARSED:-}" | jq -r '.id // empty')
+if [[ -z "$EVIDENCE_ID" ]]; then
+  fail "parsed-evidence write failed: $PARSED"; record "ingest" fail ""; exit 1
+fi
+ok "raw artifact $RAW_ID, evidence $EVIDENCE_ID"; record "ingest" ok "$EVIDENCE_ID"
+
+# ── 3.5 Wait for the obligation to project into Ledger ──────────────────────
+# The canonical + ledger AP/AR projection workers (BRAIN_WORKERS defaults to
+# "all" in the boot binary) poll on an interval (15s default each) -- there is
+# no synchronous HTTP trigger for this, so poll until the obligation appears.
+header "3.5 Wait for the obligation to project into Ledger"
+start_step
+GP_OBLIGATION="null"
+for _ in $(seq 1 40); do
+  OBLS=$(req GET "/ledger/obligations?direction=payable&limit=100" || true)
+  GP_OBLIGATION=$(echo "${OBLS:-}" | jq -c --arg ev "$EVIDENCE_ID" \
+    '[.obligations[]? | select((.evidence_ids // []) | index($ev))][0] // empty')
+  [[ -n "$GP_OBLIGATION" && "$GP_OBLIGATION" != "null" ]] && break
+  sleep 2
+done
+if [[ -z "$GP_OBLIGATION" || "$GP_OBLIGATION" == "null" ]]; then
+  fail "obligation for evidence $EVIDENCE_ID did not project into Ledger within the timeout (are the canonical/ledger background workers running? BRAIN_WORKERS defaults to \"all\")"
+  record "ingest_projection" fail ""
+  exit 1
+fi
+GP_OBLIGATION_ID=$(echo "$GP_OBLIGATION" | jq -r '.id')
+GP_CP_ID=$(echo "$GP_OBLIGATION" | jq -r '.counterparty_id')
+GP_AMOUNT=$(echo "$GP_OBLIGATION" | jq -r '.amount_due')
+GP_CURRENCY=$(echo "$GP_OBLIGATION" | jq -r '.currency')
+ok "obligation $GP_OBLIGATION_ID projected (counterparty $GP_CP_ID, $GP_AMOUNT $GP_CURRENCY)"
+record "ingest_projection" ok "$GP_OBLIGATION_ID"
 
 # ── 4. Normalize → assert ledger rows ────────────────────────────────────────
 header "4. Normalize → Ledger invoices + counterparties"
@@ -203,9 +263,25 @@ if [[ "$RAIL" == "onchain_base_sepolia" ]]; then
       currency: "ETH"
     }')")
 else
+  # Not the pay_invoice shortcut: resolveInvoiceShortcut (P0.5) always
+  # overwrites evidence_ids with the invoice's linked_document_ids (a
+  # ledger_documents "doc_..." id), which can never resolve against
+  # raw_parsed ("prs_...") -- it structurally cannot carry the real evidence
+  # check 9.5 needs. Propose the obligation directly instead, with the
+  # evidence ingested (and its Ledger projection resolved) in steps 3 / 3.5.
   PI=$(curl -s -X POST "$V1/payment-intents" \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+    -d "$(jq -n --arg src "$CHECKING_ACCOUNT_ID" --arg cp "$GP_CP_ID" \
+      --arg amt "$GP_AMOUNT" --arg cur "$GP_CURRENCY" \
+      --arg obl "$GP_OBLIGATION_ID" --arg ev "$EVIDENCE_ID" '{
+      action_type: "ach_outbound",
+      source_account_id: $src,
+      destination_counterparty_id: $cp,
+      amount: $amt,
+      currency: $cur,
+      obligation_id: $obl,
+      evidence_ids: [$ev]
+    }')")
 fi
 PI_ID=$(echo "$PI" | jq -r '.id // empty')
 # The propose response carries the policy result as the intent `status`
@@ -412,13 +488,26 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
   ok "§6 check 8 present + passed"
   record "gate_coverage" ok ""
 
-  # (b) Duplicate-payment NEGATIVE: a second payment for the SAME invoice must be
-  # blocked — at propose (no PI id returned) or at execute (§6 check 11.5). Uses
-  # curl -s so a 4xx envelope is captured, not fatal.
+  # (b) Duplicate-payment NEGATIVE: a second payment for the SAME obligation
+  # must be blocked — at propose (no PI id returned) or at execute (§6 check
+  # 11.5, rule obligation_already_settled). Mirrors step 7's direct creation
+  # (not the pay_invoice shortcut — see the note there) so this exercises the
+  # same evidence-backed path the happy path just executed. Uses curl -s so a
+  # 4xx envelope is captured, not fatal.
   start_step
   DUP=$(curl -s -X POST "$V1/payment-intents" \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    -d "$(jq -n --arg id "$INVOICE_ID" '{type:"pay_invoice", invoice_id:$id}')")
+    -d "$(jq -n --arg src "$CHECKING_ACCOUNT_ID" --arg cp "$GP_CP_ID" \
+      --arg amt "$GP_AMOUNT" --arg cur "$GP_CURRENCY" \
+      --arg obl "$GP_OBLIGATION_ID" --arg ev "$EVIDENCE_ID" '{
+      action_type: "ach_outbound",
+      source_account_id: $src,
+      destination_counterparty_id: $cp,
+      amount: $amt,
+      currency: $cur,
+      obligation_id: $obl,
+      evidence_ids: [$ev]
+    }')")
   DUP_ID=$(echo "$DUP" | jq -r '.id // empty')
   if [[ -z "$DUP_ID" || "$DUP_ID" == "null" ]]; then
     ok "duplicate blocked at propose: $(echo "$DUP" | jq -r '.error.code // "?"')"
@@ -431,7 +520,7 @@ if [[ "${BRAIN_DEMO_E2E_FULL:-false}" == "true" ]]; then
       ok "duplicate blocked at execute: $DUP_CODE (check $(echo "$DUP_EXEC" | jq -r '.error.details.check_index // "?"'))"
       record "dup_negative" ok ""
     else
-      fail "DUPLICATE PAYMENT NOT BLOCKED: a 2nd payment for invoice $INVOICE_ID executed: $DUP_EXEC"
+      fail "DUPLICATE PAYMENT NOT BLOCKED: a 2nd payment for obligation $GP_OBLIGATION_ID executed: $DUP_EXEC"
       record "dup_negative" fail ""
       exit 1
     fi
