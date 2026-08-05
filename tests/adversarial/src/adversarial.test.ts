@@ -155,9 +155,11 @@ describe("P1.1 adversarial — fail closed", () => {
           capturedAt: new Date(),
           trustLevel: "high" as const,
           extracted: {
+            id: "inv_1",
             invoice_number: "INV-1",
             counterparty_id: "cp_x",
             amount_due: "9999.00", // intent is 50.00
+            amount_paid: "0.00",
             currency: "USD",
           },
         },
@@ -166,7 +168,8 @@ describe("P1.1 adversarial — fail closed", () => {
     const r = await runPreExecutionGate(deps, {
       ctx,
       principal: principal(),
-      intent: intent({ action_type: "pay_invoice", invoice_id: "INV-1" }),
+      // Stored intents use a payment rail and ledger invoice primary key.
+      intent: intent({ invoice_id: "inv_1" }),
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.failedCheck.index).toBe(9.5);
