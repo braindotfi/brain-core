@@ -181,6 +181,9 @@ Done
   deterministic tenant-scoped Ledger queries. Named-counterparty questions
   fail safely without generative fallback when the counterparty is missing,
   ambiguous, has the wrong direction, or is part of a compound question.
+  Counterparty evidence includes the persisted `trust_status`; trusted,
+  paused, acknowledged, and unreviewed vendor-list questions use a
+  deterministic tenant-scoped route rather than generative retrieval.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as

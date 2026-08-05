@@ -73,6 +73,7 @@ interface FakeRows {
     name: string;
     type: string;
     risk_level: string | null;
+    trust_status?: "unreviewed" | "trusted" | "paused" | "acknowledged";
     normalized_name?: string;
     aliases?: string[];
     created_at?: Date;
@@ -409,6 +410,29 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             .slice(0, limit);
           return { rows: vendors as never[], rowCount: vendors.length };
         }
+        if (text.includes("trust_status = $1")) {
+          const [trustStatus, limit] = values as [string, number];
+          const vendors = rows.counterparties
+            .filter(
+              (counterparty) =>
+                counterparty.type === "vendor" && counterparty.trust_status === trustStatus,
+            )
+            .slice(0, limit);
+          return { rows: vendors as never[], rowCount: vendors.length };
+        }
+        if (text.includes("SELECT EXISTS") && text.includes("trust_status = 'trusted'")) {
+          return {
+            rows: [
+              {
+                eligible: rows.counterparties.some(
+                  (counterparty) =>
+                    counterparty.type === "vendor" && counterparty.trust_status === "trusted",
+                ),
+              },
+            ] as never[],
+            rowCount: 1,
+          };
+        }
         return { rows: rows.counterparties as never[], rowCount: rows.counterparties.length };
       }
       return { rows: [], rowCount: 0 };
@@ -442,7 +466,8 @@ function buildEvidenceContext(rows: FakeRows): string {
   }
   for (const r of rows.counterparties) {
     const risk = r.risk_level !== null ? ` risk=${r.risk_level}` : "";
-    lines.push(`[${r.id}] (counterparty) ${r.type} "${r.name}"${risk}`);
+    const trust = r.trust_status === undefined ? "" : ` trust_status=${r.trust_status}`;
+    lines.push(`[${r.id}] (counterparty) ${r.type} "${r.name}"${risk}${trust}`);
   }
   return wrapEvidenceRows(lines);
 }
@@ -1429,6 +1454,75 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.answer).toBe("Yes. New vendors: Quick Pay Solutions.");
   });
 
+  it.each([
+    ["Who are my trusted vendors?", "Trusted vendors: CloudOps Inc.", "cp_CLOUDOPS"],
+    ["Which vendors are paused?", "Paused vendors: Datacenter Hosting Ltd.", "cp_DATACENTER"],
+  ])(
+    "answers vendor trust-status listings without calling the LLM: %s",
+    async (question, expectedAnswer, expectedEvidenceId) => {
+      const result = await askWiki(
+        {
+          client: fakeClient({
+            transactions: [],
+            obligations: [],
+            counterparties: [
+              {
+                id: "cp_CLOUDOPS",
+                name: "CloudOps Inc",
+                type: "vendor",
+                risk_level: "low",
+                trust_status: "trusted",
+              },
+              {
+                id: "cp_DATACENTER",
+                name: "Datacenter Hosting Ltd",
+                type: "vendor",
+                risk_level: null,
+                trust_status: "paused",
+              },
+              {
+                id: "cp_CUSTOMER",
+                name: "BigCo Industries",
+                type: "customer",
+                risk_level: null,
+                trust_status: "trusted",
+              },
+            ],
+          }),
+          llm: new InspectingLlmAdapter(() => {
+            throw new Error("vendor trust-status listings must not call the LLM");
+          }),
+          embed: new DeterministicEmbeddingAdapter(16),
+          redis: fakeRedis() as unknown as Redis,
+          metrics: new MockMetrics(),
+        },
+        {
+          question,
+          asOf: null,
+          maxEvidenceDepth: 3,
+          tenantId: "tnt_test",
+          model: "m-vendor-trust",
+        },
+      );
+
+      expect(result).toMatchObject({
+        answered: true,
+        answer: expectedAnswer,
+        deterministicIntentId: "vendor_trust_status_listing",
+      });
+      expect(result.evidence).toEqual([
+        expect.objectContaining({
+          entityId: expectedEvidenceId,
+          excerpt: expect.stringContaining(
+            question.toLowerCase().includes("trusted")
+              ? "trust_status=trusted"
+              : "trust_status=paused",
+          ),
+        }),
+      ]);
+    },
+  );
+
   it("lists only overdue AR invoices for customer-invoice questions", async () => {
     const rows: FakeRows = {
       transactions: [],
@@ -2034,11 +2128,19 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(metrics.calls.some((c) => c.name === "brain.wiki.question.cache_hit")).toBe(true);
   });
 
-  it("includes risk_level in counterparty excerpt when non-null", async () => {
+  it("includes risk_level and trust_status in counterparty evidence when present", async () => {
     const rows: FakeRows = {
       transactions: [],
       obligations: [],
-      counterparties: [{ id: "cp_RISK", name: "Risky Corp", type: "vendor", risk_level: "high" }],
+      counterparties: [
+        {
+          id: "cp_RISK",
+          name: "Risky Corp",
+          type: "vendor",
+          risk_level: "high",
+          trust_status: "paused",
+        },
+      ],
     };
     const evidenceContext = buildEvidenceContext(rows);
     const prompt = {
@@ -2085,6 +2187,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.answer).toContain("Risky Corp");
     expect(result.answered).toBe(true);
     expect(result.evidence[0]!.entityId).toBe("cp_RISK");
+    expect(result.evidence[0]!.excerpt).toContain("trust_status=paused");
   });
 
   it("grounds in obligation rows (covers the obligation candidate path)", async () => {
