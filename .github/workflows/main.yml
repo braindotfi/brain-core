@@ -69,9 +69,15 @@ jobs:
       - name: gitleaks (push diff)
         # gitleaks detect against the push's commit range. `before..after` covers
         # everything new on this push, including amended merge commits.
+        # github.event.before and github.sha are GitHub-generated SHAs, not
+        # attacker-controllable, but route them through env: like every
+        # other workflow input in this repo for consistency.
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.sha }}"
+          BEFORE="$BEFORE_SHA"
+          AFTER="$AFTER_SHA"
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             # First push to the ref. Scan the full tree to baseline.
             gitleaks detect --source . --redact --exit-code 1
@@ -223,7 +229,7 @@ jobs:
   build_image:
     name: build production image
     runs-on: ubuntu-latest
-    needs: [unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac]
+    needs: [unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac, secrets]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
