@@ -13,21 +13,21 @@
  * §3.2 ceiling caps their confidence at 0.5.
  */
 
-import { brainError, type AuditEmitter, type ServiceCallContext } from "@brain/shared";
+import {
+  brainError,
+  LEDGER_DECIMAL_AMOUNT_RE,
+  LEDGER_OBLIGATION_TYPES,
+  type AuditEmitter,
+  type LedgerObligationType,
+  type ServiceCallContext,
+} from "@brain/shared";
 import type { Pool } from "pg";
 
-const OBLIGATION_TYPES = [
-  "bill",
-  "invoice",
-  "subscription",
-  "loan",
-  "rent",
-  "payroll",
-  "tax",
-  "card_statement",
-  "other",
-] as const;
-type ObligationType = (typeof OBLIGATION_TYPES)[number];
+// Reuse the single source of truth (@brain/shared) so this extractor's
+// validation and the canonical-side doc-obligation projector's validation
+// (services/canonical/src/projectors/doc-obligation.ts) cannot drift apart.
+const OBLIGATION_TYPES = LEDGER_OBLIGATION_TYPES;
+type ObligationType = LedgerObligationType;
 
 const OBLIGATION_STATUSES = [
   "upcoming",
@@ -101,7 +101,7 @@ export function parseDocObligationPayload(raw: Record<string, unknown>): DocObli
   }
 
   const amount = asNonEmptyString(raw["amount"], "amount");
-  if (!/^\d+(\.\d+)?$/.test(amount)) {
+  if (!LEDGER_DECIMAL_AMOUNT_RE.test(amount)) {
     throw brainError(
       "ledger_row_invalid",
       "doc_obligation_v1: amount must be a non-negative decimal string",
@@ -137,7 +137,7 @@ export function parseDocObligationPayload(raw: Record<string, unknown>): DocObli
   const minimumDue = raw["minimum_due"];
   if (
     minimumDue !== undefined &&
-    (typeof minimumDue !== "string" || !/^\d+(\.\d+)?$/.test(minimumDue))
+    (typeof minimumDue !== "string" || !LEDGER_DECIMAL_AMOUNT_RE.test(minimumDue))
   ) {
     throw brainError(
       "ledger_row_invalid",

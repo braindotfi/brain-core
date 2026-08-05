@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LEDGER_OBLIGATION_TYPES } from "@brain/shared";
 import {
   projectBankStatementUploadLedger,
   projectDocumentRecordsUploadLedger,
@@ -491,6 +492,78 @@ describe("connector ledger canonical projectors", () => {
         },
       },
     });
+  });
+
+  // F2 vocabulary guard: every obligation `type` this file's projectors emit
+  // must be a Ledger-recognized type (LEDGER_OBLIGATION_TYPES,
+  // @brain/shared), because services/ledger/src/projection/obligations.ts
+  // writes it verbatim into ledger_obligations.type, which is CHECK-
+  // constrained. If a future projector introduces a new literal type without
+  // widening the shared vocabulary + the ledger_obligations migration, this
+  // test fails in CI instead of the projection worker hitting a 23514
+  // check_violation in production.
+  it("emits only Ledger-recognized obligation types", () => {
+    const stripeDispute = projectStripeLedger(
+      {
+        object_type: "dispute",
+        stripe_account_id: "acct_S1",
+        objects: [{ id: "dp_1", amount: 125000, currency: "usd", status: "needs_response" }],
+      },
+      common,
+    );
+    const finchPayroll = projectFinchLedger(
+      {
+        object_type: "pay_run",
+        objects: [{ id: "pay_1", pay_date: "2999-07-20", company_debit: { amount: 500000 } }],
+      },
+      common,
+    );
+    const arAging = projectDocumentRecordsUploadLedger(
+      {
+        object_type: "ar_aging",
+        receivables: [
+          {
+            counterparty_name: "Acme Co",
+            invoice_ref: "INV-100",
+            amount: "1200.50",
+            currency: "USD",
+            aging_bucket: "31-60",
+            due_date: "2026-07-15",
+          },
+        ],
+      },
+      common,
+    );
+    const payrollRegister = projectDocumentRecordsUploadLedger(
+      {
+        object_type: "payroll_register",
+        obligations: [
+          {
+            counterparty_name: "Payroll",
+            run_ref: "RUN-2026-06-15",
+            amount: "9000",
+            net_amount: "9000",
+            tax_amount: "2100",
+            currency: "USD",
+            due_date: "2026-06-15",
+            cadence: "biweekly",
+          },
+        ],
+      },
+      common,
+    );
+
+    const obligationTypes = [...stripeDispute, ...finchPayroll, ...arAging, ...payrollRegister]
+      .map((p) => (p.kind === "obligation" ? p.input.type : null))
+      .filter((t): t is string => t !== null);
+
+    expect(obligationTypes.length).toBeGreaterThan(0);
+    for (const type of obligationTypes) {
+      expect(LEDGER_OBLIGATION_TYPES as readonly string[]).toContain(type);
+    }
+    // The specific F2 regression: Stripe disputes are a genuine 'dispute'
+    // type, not silently flattened to 'other'.
+    expect(obligationTypes).toContain("dispute");
   });
 
   it("skips payroll upload rows without a pay date", () => {

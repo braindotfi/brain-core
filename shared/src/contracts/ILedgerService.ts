@@ -217,6 +217,8 @@ export interface TransactionListFilters {
   status?: Transaction["status"];
   since?: string;
   until?: string;
+  /** ISO 4217 code. Pushed into the query, not applied post-fetch. */
+  currency?: string;
   limit?: number;
   cursor?: string;
 }

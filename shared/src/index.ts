@@ -17,6 +17,8 @@ export * from "./ids.js";
 export * from "./config.js";
 export * from "./audit-status.js";
 export * from "./bytecode.js";
+export * from "./ledger-vocab.js";
+export * from "./ledger-amount.js";
 
 // Observability (§6)
 export { createLogger, childFromContext } from "./logger.js";

@@ -165,6 +165,7 @@ export class LedgerService implements ILedgerService {
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.since !== undefined ? { since: new Date(f.since) } : {}),
         ...(f.until !== undefined ? { until: new Date(f.until) } : {}),
+        ...(f.currency !== undefined ? { currency: f.currency } : {}),
         limit: limit + 1,
         ...(cursor !== undefined ? { cursor } : {}),
       }),

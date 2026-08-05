@@ -234,7 +234,7 @@ END $$;
 GRANT UPDATE (canonical_counterparty_id, updated_at) ON canonical_obligation
   TO brain_ledger_projector;
 GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,
-  ledger_accounts, ledger_transactions, ledger_invoices
+  ledger_accounts, ledger_transactions, ledger_invoices, ledger_projection_quarantine
   TO brain_ledger_projector;
 -- The Collections, Reconciliation, Cash Forecast, Vendor Risk, Fraud Anomaly,
 -- and Compliance scanners share the ledger worker pool for cross-tenant enumeration only.

@@ -85,7 +85,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       "GRANT UPDATE (canonical_counterparty_id, updated_at) ON canonical_obligation\n  TO brain_ledger_projector",
     );
     expect(SQL).toMatch(
-      /GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,\s+ledger_accounts, ledger_transactions, ledger_invoices\s+TO brain_ledger_projector/,
+      /GRANT SELECT, INSERT, UPDATE ON ledger_gl_accounts, ledger_obligations, ledger_counterparties,\s+ledger_accounts, ledger_transactions, ledger_invoices, ledger_projection_quarantine\s+TO brain_ledger_projector/,
     );
     // execution worker: outbox only.
     expect(SQL).toContain(

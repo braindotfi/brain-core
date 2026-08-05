@@ -16,6 +16,11 @@
  * Phase-4 resolution -- link, don't merge).
  */
 
+import {
+  isLedgerObligationType,
+  isPlausibleLedgerAmount,
+  LEDGER_DECIMAL_AMOUNT_RE,
+} from "@brain/shared";
 import type { ProjectionCommon } from "./merge-accounting.js";
 import {
   normalizeName,
@@ -45,7 +50,18 @@ export interface DocProjection {
 
 /**
  * Map a doc_obligation_v1 payload to a canonical counterparty + obligation.
- * Returns null on a payload missing the essentials (the worker quarantines it).
+ * Returns null on a payload missing the essentials, an unrecognized `type`,
+ * or a malformed `amount` (the worker records it as a skipped row rather
+ * than projecting it -- see runDocObligationPass in worker.ts).
+ *
+ * F4: `type` and `amount` come straight from the RFC-0004 LLM/OCR document
+ * extractor with no upstream vocabulary or numeric-format check (the
+ * equivalent check in services/ledger/src/extractors/doc-obligation.ts
+ * validates a different, now-inert path -- see that file's header comment).
+ * This is the one unvalidated ingress every other obligation-producing
+ * projector avoids by hard-coding an allowed literal, so it reuses the same
+ * LEDGER_OBLIGATION_TYPES / LEDGER_DECIMAL_AMOUNT_RE (@brain/shared) that
+ * extractor validates against, instead of duplicating the rule.
  */
 export function projectDocObligation(
   payload: Record<string, unknown>,
@@ -58,6 +74,8 @@ export function projectDocObligation(
   const amount = str(payload["amount"]);
   if (name === null || amount === null || type === null) return null;
   if (direction !== "payable" && direction !== "receivable") return null;
+  if (!isLedgerObligationType(type)) return null;
+  if (!LEDGER_DECIMAL_AMOUNT_RE.test(amount) || !isPlausibleLedgerAmount(amount)) return null;
 
   const counterpartyKey = normalizeName(name) || name;
   const counterparty: CounterpartyUpsert = {

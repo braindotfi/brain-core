@@ -46,4 +46,24 @@ describe("projectDocObligation", () => {
     expect(projectDocObligation({ ...PAYLOAD, direction: "sideways" }, "r", COMMON)).toBeNull();
     expect(projectDocObligation({ ...PAYLOAD, amount: undefined }, "r", COMMON)).toBeNull();
   });
+
+  // F4 regression: the LLM/OCR document extractor is untrusted input. A
+  // `type` outside ledger_obligations' CHECK vocabulary, or an `amount` that
+  // isn't a plain non-negative decimal string, must be rejected here rather
+  // than reaching canonical_obligation (unconstrained TEXT) and later
+  // exploding as an unhandled 23514/22003 deep in the Ledger projection.
+  it("rejects an obligation type outside the Ledger's recognized vocabulary", () => {
+    expect(projectDocObligation({ ...PAYLOAD, type: "chargeback" }, "r", COMMON)).toBeNull();
+  });
+
+  it("rejects a malformed amount (not a plain non-negative decimal string)", () => {
+    expect(projectDocObligation({ ...PAYLOAD, amount: "1.2e10" }, "r", COMMON)).toBeNull();
+    expect(projectDocObligation({ ...PAYLOAD, amount: "-50.00" }, "r", COMMON)).toBeNull();
+    expect(projectDocObligation({ ...PAYLOAD, amount: "not_a_number" }, "r", COMMON)).toBeNull();
+  });
+
+  it("still accepts a genuinely valid dispute type now that the vocabulary is widened", () => {
+    const out = projectDocObligation({ ...PAYLOAD, type: "dispute" }, "r", COMMON)!;
+    expect(out.obligation.type).toBe("dispute");
+  });
 });

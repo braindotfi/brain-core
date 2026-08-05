@@ -28,6 +28,7 @@
  */
 
 import {
+  isPlausibleLedgerAmount,
   newCounterpartyId,
   newInvoiceId,
   newObligationId,
@@ -42,6 +43,7 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import { normalizeName } from "../service/writes.js";
+import { excludeQuarantined, projectRowWithQuarantine } from "./quarantine.js";
 
 const EPOCH_ISO = new Date(0).toISOString();
 
@@ -119,6 +121,20 @@ function ledgerCurrency(canonicalCurrency: string | null): string {
     throw new Error("currency must be a 3-letter ISO 4217 code");
   }
   return canonicalCurrency;
+}
+
+/**
+ * F5 backstop: canonical's amount columns are NUMERIC(38,8); Ledger's are
+ * the narrower NUMERIC(28,8) (20 integer digits). Reject here with a clear
+ * message -- caught and quarantined per-row by projectRowWithQuarantine --
+ * instead of letting an oversized amount raise an unhandled 22003 numeric
+ * field overflow on the INSERT. See shared/src/ledger-amount.ts.
+ */
+function ledgerAmount(amount: string): string {
+  if (!isPlausibleLedgerAmount(amount)) {
+    throw new Error("amount exceeds Ledger's NUMERIC(28,8) capacity (20 integer digits)");
+  }
+  return amount;
 }
 
 function record(v: unknown): Record<string, unknown> | null {
@@ -237,6 +253,7 @@ export async function projectCanonicalObligation(
         source_ids = EXCLUDED.source_ids,
         evidence_ids = EXCLUDED.evidence_ids,
         metadata = EXCLUDED.metadata,
+        external_key = EXCLUDED.external_key,
         -- Monotonic trust: a corroboration lift (agent_contributed -> extracted)
         -- or human confirmation survives a rebuild; never demote to the
         -- provider-projected provenance. Confidence rises only.
@@ -249,7 +266,7 @@ export async function projectCanonicalObligation(
       tenantId,
       row.type,
       counterpartyId,
-      row.amount,
+      ledgerAmount(row.amount),
       ledgerCurrency(row.currency),
       dueDate,
       ledgerStatus(row.status, row.due_date),
@@ -401,7 +418,7 @@ async function projectCanonicalInvoice(
       tenantId,
       invoiceNumber(row),
       counterpartyId,
-      row.amount,
+      ledgerAmount(row.amount),
       ledgerCurrency(row.currency),
       issueDate,
       row.due_date,
@@ -500,14 +517,24 @@ export async function runLedgerAparProjectionCycle(
          FROM canonical_counterparty cc
          LEFT JOIN ledger_counterparties lc
            ON lc.owner_id = cc.tenant_id AND lc.canonical_counterparty_id = cc.id
-        WHERE lc.id IS NULL OR lc.updated_at < cc.updated_at
+        WHERE (lc.id IS NULL OR lc.updated_at < cc.updated_at)
+          AND ${excludeQuarantined("canonical_counterparty", "cc.id")}
         ORDER BY cc.updated_at ASC
         LIMIT $1`,
       [batchSize],
     );
+    // Per-row: a single poison counterparty must not block its siblings or any
+    // other tenant (see ledger_projection_quarantine, projection/quarantine.ts).
     for (const cp of cps) {
-      await withTenantScope(deps.pool, cp.tenant_id, (c) =>
-        projectCanonicalCounterparty(c, cp.tenant_id, cp),
+      await projectRowWithQuarantine(
+        deps,
+        "canonical_counterparty",
+        cp,
+        "brain.ledger.apar_projection.quarantined.count",
+        () =>
+          withTenantScope(deps.pool, cp.tenant_id, (c) =>
+            projectCanonicalCounterparty(c, cp.tenant_id, cp),
+          ),
       );
     }
   } catch (err) {
@@ -524,17 +551,27 @@ export async function runLedgerAparProjectionCycle(
          FROM canonical_obligation co
          LEFT JOIN ledger_obligations lo
            ON lo.owner_id = co.tenant_id AND lo.canonical_obligation_id = co.id
-        WHERE lo.id IS NULL OR lo.updated_at < co.updated_at
+        WHERE (lo.id IS NULL OR lo.updated_at < co.updated_at)
+          AND ${excludeQuarantined("canonical_obligation", "co.id")}
         ORDER BY co.updated_at ASC
         LIMIT $1`,
       [batchSize],
     );
     let projected = 0;
+    // Per-row: a single poison obligation (bad type, overflowing amount, etc.)
+    // must not wedge every other tenant's AP/AR projection forever (F1).
     for (const obl of obls) {
-      const ok = await withTenantScope(deps.pool, obl.tenant_id, (c) =>
-        projectCanonicalObligation(c, obl.tenant_id, obl),
+      const ok = await projectRowWithQuarantine(
+        deps,
+        "canonical_obligation",
+        obl,
+        "brain.ledger.apar_projection.quarantined.count",
+        () =>
+          withTenantScope(deps.pool, obl.tenant_id, (c) =>
+            projectCanonicalObligation(c, obl.tenant_id, obl),
+          ),
       );
-      if (ok) projected += 1;
+      if (ok === true) projected += 1;
     }
     if (projected > 0) {
       deps.metrics?.increment("brain.ledger.apar_projection.records.count", undefined, projected);
@@ -554,13 +591,15 @@ export async function runLedgerAparProjectionCycle(
                FROM canonical_counterparty cc
                LEFT JOIN ledger_counterparties lc
                  ON lc.owner_id = cc.tenant_id AND lc.canonical_counterparty_id = cc.id
-              WHERE lc.id IS NULL OR lc.updated_at < cc.updated_at
+              WHERE (lc.id IS NULL OR lc.updated_at < cc.updated_at)
+                AND ${excludeQuarantined("canonical_counterparty", "cc.id")}
              UNION ALL
              SELECT co.updated_at
                FROM canonical_obligation co
                LEFT JOIN ledger_obligations lo
                  ON lo.owner_id = co.tenant_id AND lo.canonical_obligation_id = co.id
-              WHERE lo.id IS NULL OR lo.updated_at < co.updated_at
+              WHERE (lo.id IS NULL OR lo.updated_at < co.updated_at)
+                AND ${excludeQuarantined("canonical_obligation", "co.id")}
            ) t`,
       );
       deps.metrics.gauge("brain.ledger.apar_projection.lag_seconds", rows[0]?.lag ?? 0);
