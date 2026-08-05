@@ -270,7 +270,7 @@ jobs:
               | grep -Ei 'error|exception|fatal|unhandled|ECONNREFUSED|timeout|postgres|redis|internal_server_error' \
               | tail -200 \
               | redact_logs || true
-            REMOTE
+          REMOTE
             exit 0
           fi
 
