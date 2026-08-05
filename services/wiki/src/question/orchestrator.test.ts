@@ -73,6 +73,8 @@ interface FakeRows {
     name: string;
     type: string;
     risk_level: string | null;
+    normalized_name?: string;
+    aliases?: string[];
   }>;
   invoices?: Array<{
     id: string;
@@ -84,6 +86,7 @@ interface FakeRows {
     due_date: Date | null;
     status: string;
     counterparty_id: string;
+    scenario?: "ap" | "ar";
   }>;
   intentUsage?: Array<{ intent_id: string; invocation_count: string }>;
 }
@@ -214,6 +217,26 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         const parameters = values ?? [];
         let parameterIndex = 0;
         let invoices = rows.invoices ?? [];
+        if (text.includes("inv.status = 'overdue'")) {
+          invoices = invoices.filter((invoice) => invoice.status === "overdue");
+        }
+        if (text.includes("inv.metadata->>'scenario' = 'ar'")) {
+          invoices = invoices.filter((invoice) => invoice.scenario === "ar");
+        }
+        if (text.includes("cp.type = 'customer'")) {
+          invoices = invoices.filter(
+            (invoice) =>
+              rows.counterparties.find(
+                (counterparty) => counterparty.id === invoice.counterparty_id,
+              )?.type === "customer",
+          );
+        }
+        if (text.includes("inv.due_date <= $") || text.includes("due_date <= $")) {
+          const asOf = parameters[parameterIndex++] as Date;
+          invoices = invoices.filter(
+            (invoice) => invoice.due_date !== null && invoice.due_date <= asOf,
+          );
+        }
         if (text.includes("issue_date >= $")) {
           const start = parameters[parameterIndex++] as Date;
           const end = parameters[parameterIndex++] as Date;
@@ -233,17 +256,69 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         return { rows: invoices as never[], rowCount: invoices.length };
       }
       if (text.includes("FROM ledger_obligations")) {
-        const obligations = text.includes("direction = 'receivable'")
+        const parameters = values ?? [];
+        let obligations = text.includes("direction = 'receivable'")
           ? rows.obligations.filter((r) => r.direction === "receivable" && r.type === "invoice")
           : rows.obligations;
+        if (text.includes("direction = 'payable'")) {
+          obligations = obligations.filter((obligation) => obligation.direction === "payable");
+        }
+        if (text.includes("type = 'payroll'")) {
+          obligations = obligations.filter((obligation) => obligation.type === "payroll");
+        }
+        if (text.includes("counterparty_id = $1")) {
+          obligations = obligations.filter(
+            (obligation) => obligation.counterparty_id === parameters[0],
+          );
+        }
+        if (text.includes("due_date <= $")) {
+          const asOf = parameters[0] as Date;
+          obligations = obligations.filter((obligation) => obligation.due_date <= asOf);
+        }
+        if (text.includes("COUNT(*) OVER ()")) {
+          const total = obligations.reduce(
+            (sum, obligation) => sum + Number(obligation.amount_due),
+            0,
+          );
+          const aggregate = {
+            matching_count: String(obligations.length),
+            matching_sum: total.toFixed(2),
+          };
+          return {
+            rows: obligations.map((obligation) => ({ ...obligation, ...aggregate })) as never[],
+            rowCount: obligations.length,
+          };
+        }
         return { rows: obligations as never[], rowCount: obligations.length };
       }
       if (text.includes("FROM ledger_counterparties")) {
+        if (text.includes("normalized_name = $1")) {
+          const [normalized, _prefix, rawName] = values ?? [];
+          const matches = rows.counterparties.filter((counterparty) => {
+            const candidate = counterparty.normalized_name ?? normalizeFakeName(counterparty.name);
+            return (
+              candidate === normalized ||
+              candidate.startsWith(`${normalized}_`) ||
+              counterparty.aliases?.some(
+                (alias) => alias.toLowerCase() === String(rawName).toLowerCase(),
+              )
+            );
+          });
+          return { rows: matches.slice(0, 2) as never[], rowCount: Math.min(matches.length, 2) };
+        }
         return { rows: rows.counterparties as never[], rowCount: rows.counterparties.length };
       }
       return { rows: [], rowCount: 0 };
     },
   };
+}
+
+function normalizeFakeName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 const TEST_BOUNDARY = "brain_evidence_TEST";
@@ -736,6 +811,289 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.evidence).toEqual([
       expect.objectContaining({ entityType: "invoice", entityId: "inv_JULY" }),
     ]);
+  });
+
+  it("answers a named counterparty payable total without mixing unrelated obligations", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_CLOUDOPS",
+          type: "bill",
+          direction: "payable",
+          amount_due: "19400.00",
+          currency: "USD",
+          due_date: new Date("2026-08-12T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_CLOUDOPS",
+        },
+        {
+          id: "obl_AR",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "485000.00",
+          currency: "USD",
+          due_date: new Date("2026-08-01T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_CUSTOMER",
+        },
+        {
+          id: "obl_PAYROLL",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "33564.38",
+          currency: "USD",
+          due_date: new Date("2026-08-04T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_PAYROLL",
+        },
+        {
+          id: "obl_TAX",
+          type: "tax",
+          direction: "payable",
+          amount_due: "2500.00",
+          currency: "USD",
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_TAX",
+        },
+      ],
+      counterparties: [
+        {
+          id: "cp_CLOUDOPS",
+          name: "CloudOps Inc",
+          normalized_name: "cloudops_inc",
+          type: "vendor",
+          risk_level: null,
+        },
+        { id: "cp_CUSTOMER", name: "BigCo", type: "customer", risk_level: null },
+        { id: "cp_PAYROLL", name: "Gusto", type: "vendor", risk_level: null },
+        { id: "cp_TAX", name: "IRS", type: "vendor", risk_level: null },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("counterparty payable totals must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What do we owe CloudOps?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-payable",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "You owe CloudOps Inc $19,400.00 across 1 open payable obligation.",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "cp_CLOUDOPS",
+      "obl_CLOUDOPS",
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it.each([
+    [
+      "What do we owe Unknown Vendor?",
+      'I couldn\'t identify a counterparty matching "Unknown Vendor".',
+    ],
+    [
+      "What do we owe Acme?",
+      'I found multiple counterparties matching "Acme", so I can\'t calculate a reliable payable total.',
+    ],
+  ])("does not fall back to generic evidence for %s", async (question, expectedAnswer) => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [
+        { id: "cp_ACME_A", name: "Acme Inc", type: "vendor", risk_level: null },
+        { id: "cp_ACME_B", name: "Acme Services", type: "vendor", risk_level: null },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("unresolved counterparty questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      { question, asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m-payable" },
+    );
+
+    expect(result).toMatchObject({ answered: false, answer: expectedAnswer, evidence: [] });
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("lists only overdue AR invoices for customer-invoice questions", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [
+        { id: "cp_LATE", name: "Late Customer", type: "customer", risk_level: null },
+        { id: "cp_VENDOR", name: "Vendor", type: "vendor", risk_level: null },
+      ],
+      invoices: [
+        {
+          id: "inv_AR_OVERDUE",
+          invoice_number: "AR-100",
+          amount_due: "11250.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-07-15T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_LATE",
+          scenario: "ar",
+        },
+        {
+          id: "inv_AP_OVERDUE",
+          invoice_number: "AP-200",
+          amount_due: "19400.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-07-15T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_VENDOR",
+          scenario: "ap",
+        },
+        {
+          id: "inv_AR_CURRENT",
+          invoice_number: "AR-300",
+          amount_due: "5000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-20T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_LATE",
+          scenario: "ar",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("overdue customer invoice listings must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Which customer invoices are overdue?",
+        asOf: new Date("2026-08-01T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-overdue-invoices",
+      },
+    );
+
+    expect(result).toMatchObject({ answered: true, model: "structured-ledger-query" });
+    expect(result.answer).toContain("AR-100");
+    expect(result.answer).not.toContain("AP-200");
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual(["inv_AR_OVERDUE"]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("sums only open payable payroll obligations", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_PAYROLL_A",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "33564.38",
+          currency: "USD",
+          due_date: new Date("2026-07-20T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_GUSTO",
+        },
+        {
+          id: "obl_PAYROLL_B",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "33564.38",
+          currency: "USD",
+          due_date: new Date("2026-08-04T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_GUSTO",
+        },
+        {
+          id: "obl_TAX",
+          type: "tax",
+          direction: "payable",
+          amount_due: "2500.00",
+          currency: "USD",
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          status: "upcoming",
+          counterparty_id: "cp_TAX",
+        },
+        {
+          id: "obl_AR",
+          type: "invoice",
+          direction: "receivable",
+          amount_due: "485000.00",
+          currency: "USD",
+          due_date: new Date("2026-08-01T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_CUSTOMER",
+        },
+      ],
+      counterparties: [],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("payroll totals must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What's our total payroll obligation?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-payroll-total",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "The total open payroll obligation is $67,128.76 across 2 pay runs.",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "obl_PAYROLL_A",
+      "obl_PAYROLL_B",
+    ]);
+    expect(llm.seen).toEqual([]);
   });
 
   it("derives eligible suggested questions only from registered deterministic intents", async () => {
