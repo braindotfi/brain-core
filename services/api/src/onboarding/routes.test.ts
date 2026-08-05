@@ -151,9 +151,11 @@ describe("POST /auth/verify-email — RFC 0002 Phase B", () => {
   it("activates the owner when the token matches an unconsumed row", async () => {
     const pool = makeFakePool({
       handler: (sql) =>
-        /SELECT user_id FROM email_verifications/.test(sql)
+        /UPDATE email_verifications/.test(sql)
           ? { rows: [{ user_id: "user_01J0000000000000000000000A" }], rowCount: 1 }
-          : { rows: [], rowCount: 0 },
+          : /SELECT status FROM users/.test(sql)
+            ? { rows: [{ status: "active" }], rowCount: 1 }
+            : { rows: [], rowCount: 0 },
     });
     const { app, audit } = await buildApp(pool);
     const res = await app.inject({
@@ -164,6 +166,53 @@ describe("POST /auth/verify-email — RFC 0002 Phase B", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ verified: true, status: "active" });
     expect(audit.events.map((e) => e.action)).toContain("user.email_verified");
+    await app.close();
+  });
+
+  it("F5: refuses to reactivate a disabled user, burns the token, and reports the same generic invalid error", async () => {
+    const client = {
+      query: vi.fn((sql: string) => {
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        if (/UPDATE email_verifications/.test(sql)) {
+          return Promise.resolve({
+            rows: [{ user_id: "user_01J0000000000000000000000D" }],
+            rowCount: 1,
+          });
+        }
+        if (/SELECT status FROM users/.test(sql)) {
+          return Promise.resolve({ rows: [{ status: "disabled" }], rowCount: 1 });
+        }
+        // The disabled-user branch must never reach the users UPDATE.
+        if (/UPDATE users SET status = 'active'/.test(sql)) {
+          throw new Error("must not reactivate a disabled user");
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
+    const { app, audit } = await buildApp(pool);
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/verify-email",
+      payload: { tenant_id: TENANT, token: "a-forgot-password-token" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("signup_token_invalid");
+    // The single-use claim (UPDATE ... RETURNING) still ran -- the token is
+    // burned either way, so this creates no new oracle for "disabled" vs.
+    // "never existed".
+    expect(
+      client.query.mock.calls.some(([sql]) => /UPDATE email_verifications/.test(String(sql))),
+    ).toBe(true);
+    expect(audit.events.map((e) => e.action)).not.toContain("user.email_verified");
     await app.close();
   });
 

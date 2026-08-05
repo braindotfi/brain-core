@@ -9,6 +9,7 @@ import {
   requireScope,
   withTenantScope,
   type AuditEmitter,
+  type RevocationStore,
   type Scope,
   type ServiceCallContext,
   type TenantScopedClient,
@@ -28,10 +29,26 @@ import type { ApprovalDomain, MemberAuthority, MemberIdentitySurface } from "./t
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
 const INVITE_TTL_HOURS = 72;
+// F3: matches production-tenancy/routes.ts's ACCESS_TOKEN_TTL_SECONDS. Kept
+// as a local constant (different service, same DB) rather than a shared
+// import -- it only needs to be an upper bound on how long a just-revoked
+// access token's jti stays in the revocation cache, and a session's actual
+// access-token TTL never exceeds this value.
+const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 
 export interface MemberRoutesDeps {
   pool: Pool;
   audit: AuditEmitter;
+  /**
+   * F3: deactivating a member used to update the `members` row and emit an
+   * audit event but never touch `session_refresh_tokens` or the outstanding
+   * access token's `jti`, so an offboarded member kept working access until
+   * their 15-minute access token expired and could keep refreshing for up to
+   * REFRESH_TOKEN_TTL_DAYS (30 days). Optional because a deployment without
+   * Redis wiring still gets the `session_refresh_tokens` revocation (the
+   * refresh backstop); only the immediate-jti cache is skipped.
+   */
+  revocation?: RevocationStore;
 }
 
 interface MemberBody {
@@ -170,8 +187,9 @@ export async function registerMemberRoutes(
       if (wouldRemoveAdmin(before, body)) {
         await assertNotLastAdmin(deps.pool, ctx);
       }
-      const after = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-        updateMember(c, {
+      let revoked: RevokedSession[] = [];
+      const after = await withTenantScope(deps.pool, ctx.tenantId, async (c) => {
+        const updated = await updateMember(c, {
           id: request.params.id,
           ...(body.email !== undefined ? { email: requireString(body.email, "email") } : {}),
           ...(body.display_name !== undefined
@@ -196,9 +214,17 @@ export async function registerMemberRoutes(
                 ),
               }
             : {}),
-        }),
-      );
+        });
+        // F3: revoke in the SAME transaction as the deactivation, not as a
+        // separate best-effort follow-up call that could be skipped by a
+        // crash or a bug in a caller.
+        if (updated !== null && becomesInactive(updated)) {
+          revoked = await revokeMemberSessions(c, updated.id);
+        }
+        return updated;
+      });
       if (after === null) throw brainError("agent_not_found", "member not found");
+      await revokeAccessTokenJtis(deps.revocation, revoked);
       const audit = await emitMemberChanged(deps.audit, ctx, "updated", before, after);
       return { member: serializeMember(after), audit_id: audit.id };
     },
@@ -213,10 +239,18 @@ export async function registerMemberRoutes(
     );
     if (before === null) throw brainError("agent_not_found", "member not found");
     if (before.role === "admin" && before.active) await assertNotLastAdmin(deps.pool, ctx);
-    const after = await withTenantScope(deps.pool, ctx.tenantId, (c) =>
-      updateMember(c, { id: request.params.id, status: "deactivated" }),
-    );
+    let revoked: RevokedSession[] = [];
+    const after = await withTenantScope(deps.pool, ctx.tenantId, async (c) => {
+      const updated = await updateMember(c, { id: request.params.id, status: "deactivated" });
+      // F3: same transaction as the deactivation -- see the PATCH handler
+      // above for why this must not be a separate follow-up call.
+      if (updated !== null) {
+        revoked = await revokeMemberSessions(c, updated.id);
+      }
+      return updated;
+    });
     if (after === null) throw brainError("agent_not_found", "member not found");
+    await revokeAccessTokenJtis(deps.revocation, revoked);
     const audit = await emitMemberChanged(deps.audit, ctx, "deactivated", before, after);
     return { member: serializeMember(after), audit_id: audit.id };
   });
@@ -362,6 +396,60 @@ async function requireAdmin(pool: Pool, ctx: ServiceCallContext): Promise<Member
     throw brainError("auth_scope_insufficient", "admin member required");
   }
   return member;
+}
+
+interface RevokedSession {
+  tokenId: string;
+}
+
+/** F3: true once `active=false` or `status='deactivated'`, whichever the update landed on. */
+function becomesInactive(member: MemberAuthority): boolean {
+  return !member.active || member.status === "deactivated";
+}
+
+/**
+ * F3: revokes every outstanding `session_refresh_tokens` row for a member,
+ * in the caller's transaction, and returns the access-token `jti` (`token_id`)
+ * each row carried -- production-tenancy/routes.ts stores the access token's
+ * jti alongside its refresh token row at mint time, so this is how a
+ * deactivation reaches the still-live access token, not just future refreshes.
+ */
+async function revokeMemberSessions(
+  client: TenantScopedClient,
+  memberId: string,
+): Promise<RevokedSession[]> {
+  const { rows } = await client.query<{ token_id: string }>(
+    `UPDATE session_refresh_tokens
+        SET revoked_at = COALESCE(revoked_at, now())
+      WHERE member_id = $1
+        AND revoked_at IS NULL
+      RETURNING token_id`,
+    [memberId],
+  );
+  return rows.map((row) => ({ tokenId: row.token_id }));
+}
+
+/**
+ * F3: caches each revoked session's access-token jti so a request bearing it
+ * fails closed immediately instead of waiting out its remaining TTL. Runs
+ * after the DB transaction commits (Redis is not part of that transaction);
+ * a Redis failure here must not undo an already-committed deactivation, so
+ * failures are swallowed -- the `session_refresh_tokens` revocation above
+ * already blocks every future refresh regardless.
+ */
+async function revokeAccessTokenJtis(
+  revocation: RevocationStore | undefined,
+  revoked: readonly RevokedSession[],
+): Promise<void> {
+  if (revocation === undefined || revoked.length === 0) return;
+  const expiresAt = Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS;
+  await Promise.all(
+    revoked.map((session) =>
+      revocation.revoke(session.tokenId, expiresAt).catch((err: unknown) => {
+        console.warn("[members] access-token revocation cache write failed", err);
+      }),
+    ),
+  );
 }
 
 async function assertNotLastAdmin(pool: Pool, ctx: ServiceCallContext): Promise<void> {

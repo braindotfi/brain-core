@@ -27,6 +27,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import type { AuditEmitter } from "../audit/emitter.js";
 import type { AuditEvent, AuditEventInput } from "../audit/types.js";
+import { withTenantScope } from "../db/tenant-scoped.js";
 import { isPublicUrl } from "../net/ssrf.js";
 import { clearDeadLetter, recordDeliveryFailure, recordDeliverySuccess } from "./dead-letters.js";
 
@@ -122,19 +123,24 @@ export class WebhookDispatcher {
 
     let endpoints: EndpointRow[];
     try {
-      const client = await this.pool.connect();
-      try {
-        await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
+      // F6: this used to run `SELECT set_config('app.tenant_id', $1, true)`
+      // on a bare client with no BEGIN. `is_local=true` scopes the value to
+      // the CURRENT transaction, which outside an explicit transaction is
+      // the set_config statement itself -- so the SELECT below always ran
+      // with no tenant scope set, the RLS predicate was NULL, and this
+      // "latency optimized fast path" always returned zero endpoints.
+      // withTenantScope wraps both statements in one real transaction, the
+      // same fix the sibling call sites (db/tenant-scoped.ts's own callers,
+      // audit/emitter.ts) already use.
+      endpoints = await withTenantScope(this.pool, event.tenantId, async (client) => {
         const result = await client.query<EndpointRow>(
           `SELECT id, url, secret, enabled_events
              FROM webhook_endpoints
             WHERE tenant_id = $1 AND enabled = true`,
           [event.tenantId],
         );
-        endpoints = result.rows;
-      } finally {
-        client.release();
-      }
+        return result.rows;
+      });
     } catch {
       console.warn("[webhooks] failed to query endpoints for tenant", event.tenantId);
       return;
@@ -158,14 +164,13 @@ export class WebhookDispatcher {
     // failure must not surface to the audit-emit caller.
     if (outcomes.length > 0) {
       try {
-        const client = await this.pool.connect();
-        try {
-          await client.query("SELECT set_config('app.tenant_id', $1, true)", [event.tenantId]);
-          const scoped = client as unknown as TenantScopedLike;
+        // F6: same bare-set_config bug as the endpoint query above -- fixed
+        // the same way.
+        await withTenantScope(this.pool, event.tenantId, async (client) => {
           for (const { ep, result } of outcomes) {
             if (result.ok) {
-              await clearDeadLetter(scoped, ep.id, event.id);
-              await recordDeliverySuccess(scoped, {
+              await clearDeadLetter(client, ep.id, event.id);
+              await recordDeliverySuccess(client, {
                 tenantId: event.tenantId,
                 endpointId: ep.id,
                 eventId: event.id,
@@ -173,7 +178,7 @@ export class WebhookDispatcher {
               });
             } else {
               console.warn(`[webhooks] delivery failed to endpoint ${ep.id}: ${result.error}`);
-              await recordDeliveryFailure(scoped, {
+              await recordDeliveryFailure(client, {
                 tenantId: event.tenantId,
                 endpointId: ep.id,
                 eventId: event.id,
@@ -183,22 +188,12 @@ export class WebhookDispatcher {
               });
             }
           }
-        } finally {
-          client.release();
-        }
+        });
       } catch (err) {
         console.warn("[webhooks] failed to record dead-letters", err);
       }
     }
   }
-}
-
-/** Minimal query surface the dead-letter repo needs from a raw pg client. */
-interface TenantScopedLike {
-  query<T = Record<string, unknown>>(
-    text: string,
-    values?: ReadonlyArray<unknown>,
-  ): Promise<{ rows: T[]; rowCount: number | null }>;
 }
 
 /**

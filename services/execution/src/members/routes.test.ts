@@ -42,6 +42,12 @@ async function buildApp(opts: {
   principal: Principal;
   members: Record<string, ReturnType<typeof row>>;
   activeAdmins: number;
+  /** F3: pre-existing outstanding session token ids per member, returned by the
+   *  UPDATE session_refresh_tokens ... RETURNING token_id mock. */
+  sessionTokens?: Record<string, string[]>;
+  /** F3: member ids the mock observed a session-revocation UPDATE for. */
+  sessionRevocations?: string[];
+  revocation?: { revoke: ReturnType<typeof vi.fn> };
 }) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
@@ -97,7 +103,29 @@ async function buildApp(opts: {
       if (sql.startsWith("UPDATE members")) {
         const id = String(values?.[values.length - 1]);
         const found = opts.members[id];
-        return Promise.resolve({ rows: found === undefined ? [] : [found], rowCount: 1 });
+        if (found === undefined) return Promise.resolve({ rows: [], rowCount: 1 });
+        // Apply every `column = $N` assignment in the SET clause so a
+        // deactivation is visible to the handler's own post-update check
+        // (F3's becomesInactive), not just to the response body.
+        const setClause = sql.slice(sql.indexOf("SET") + 3, sql.indexOf("WHERE"));
+        for (const assignment of setClause.split(",")) {
+          const match = /(\w+)\s*=\s*\$(\d+)/.exec(assignment);
+          if (match === null) continue;
+          const column = match[1] as string;
+          const idx = Number(match[2]);
+          if (column === "updated_at") continue;
+          (found as unknown as Record<string, unknown>)[column] = values?.[idx - 1];
+        }
+        return Promise.resolve({ rows: [found], rowCount: 1 });
+      }
+      if (sql.startsWith("UPDATE session_refresh_tokens")) {
+        const memberId = String(values?.[0]);
+        opts.sessionRevocations?.push(memberId);
+        const tokenIds = opts.sessionTokens?.[memberId] ?? [];
+        return Promise.resolve({
+          rows: tokenIds.map((tokenId) => ({ token_id: tokenId })),
+          rowCount: tokenIds.length,
+        });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     }),
@@ -105,7 +133,11 @@ async function buildApp(opts: {
   };
   const pool = { connect: vi.fn(() => Promise.resolve(client)) };
   const audit = new InMemoryAuditEmitter();
-  await registerMemberRoutes(app, { pool: pool as never, audit });
+  await registerMemberRoutes(app, {
+    pool: pool as never,
+    audit,
+    ...(opts.revocation !== undefined ? { revocation: opts.revocation as never } : {}),
+  });
   return { app, audit, client };
 }
 
@@ -234,6 +266,83 @@ describe("member routes", () => {
       const res = await app.inject({ method: "DELETE", url: "/members/usr_admin" });
       expect(res.statusCode).toBe(403);
       expect(res.json().error.details.reason).toBe("last_admin_protected");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F3: revokes outstanding sessions and the cached access-token jti when deactivating a member", async () => {
+    const admin = row("usr_admin", "admin");
+    const target = row("usr_target", "approver");
+    const revoke = vi.fn(async () => undefined);
+    const sessionRevocations: string[] = [];
+    const { app, audit } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: admin, usr_target: target },
+      activeAdmins: 2,
+      sessionTokens: { usr_target: ["tok_target_session"] },
+      sessionRevocations,
+      revocation: { revoke },
+    });
+    try {
+      const res = await app.inject({ method: "DELETE", url: "/members/usr_target" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().member.status).toBe("deactivated");
+      expect(sessionRevocations).toContain("usr_target");
+      expect(revoke).toHaveBeenCalledWith("tok_target_session", expect.any(Number));
+      expect(audit.events.some((e) => e.action === "member.changed")).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F3: PATCH active:false also revokes outstanding sessions", async () => {
+    const admin = row("usr_admin", "admin");
+    const target = row("usr_target", "approver");
+    const revoke = vi.fn(async () => undefined);
+    const sessionRevocations: string[] = [];
+    const { app } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: admin, usr_target: target },
+      activeAdmins: 2,
+      sessionTokens: { usr_target: ["tok_target_session"] },
+      sessionRevocations,
+      revocation: { revoke },
+    });
+    try {
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/members/usr_target",
+        payload: { active: false },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(sessionRevocations).toContain("usr_target");
+      expect(revoke).toHaveBeenCalledWith("tok_target_session", expect.any(Number));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F3: a routine profile PATCH that stays active never touches sessions", async () => {
+    const admin = row("usr_admin", "admin");
+    const revoke = vi.fn(async () => undefined);
+    const sessionRevocations: string[] = [];
+    const { app } = await buildApp({
+      principal: principal("usr_admin"),
+      members: { usr_admin: admin },
+      activeAdmins: 1,
+      sessionRevocations,
+      revocation: { revoke },
+    });
+    try {
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/members/usr_admin",
+        payload: { display_name: "Founder" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(sessionRevocations).toEqual([]);
+      expect(revoke).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
