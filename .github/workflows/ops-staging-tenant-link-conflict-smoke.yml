@@ -1,0 +1,127 @@
+name: ops-staging-tenant-link-conflict-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: verify tenant identity link conflict handling on staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      API_BASE: https://staging-api.brain.fi
+    steps:
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Create then repeat a platform identity link
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          set -a
+          . "./$VM_ENV_FILE"
+          set +a
+          if [[ -z "${BRAIN_PLATFORM_SERVICE_SECRET:-}" ]]; then
+            echo "BRAIN_PLATFORM_SERVICE_SECRET is not configured on staging" >&2
+            exit 1
+          fi
+
+          worker_sha="$(docker exec brain-prod-worker printenv GIT_SHA)"
+          api_commit="$(curl -fsS "$API_BASE/health" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => { process.stdout.write(JSON.parse(body).commit ?? ""); });
+          ')"
+          echo "staging_api_commit=$api_commit"
+          echo "staging_worker_git_sha=$worker_sha"
+
+          create_payload="$(
+            docker exec brain-prod-api node -e '
+              const { randomUUID } = require("node:crypto");
+              const suffix = randomUUID().replace(/-/g, "");
+              process.stdout.write(JSON.stringify({
+                company_name: "Tenant identity-link staging smoke",
+                founder: {
+                  email: `demo-fresh-${suffix}@brain.invalid`,
+                  display_name: "Tenant Identity Link Smoke",
+                },
+                founder_external_ref: `tenant-link-smoke:${suffix}`,
+                demo_seed: true,
+              }));
+            '
+          )"
+          first_body="$(mktemp)"
+          second_body="$(mktemp)"
+          trap 'rm -f "$first_body" "$second_body"' EXIT
+
+          first_status="$(
+            printf '%s' "$create_payload" | curl -sS --retry 2 --connect-timeout 10 --max-time 120 \
+              -o "$first_body" -w '%{http_code}' \
+              -X POST "$API_BASE/v1/tenants" \
+              -H "Content-Type: application/json" \
+              -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+              --data-binary @-
+          )"
+          if [[ "$first_status" != "201" ]]; then
+            echo "first_create_status=$first_status" >&2
+            exit 1
+          fi
+          tenant_id="$(cat "$first_body" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => {
+              const tenantId = JSON.parse(body).tenant_id;
+              if (typeof tenantId !== "string" || !/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/.test(tenantId)) process.exit(1);
+              process.stdout.write(tenantId);
+            });
+          ')"
+
+          second_status="$(
+            printf '%s' "$create_payload" | curl -sS --retry 2 --connect-timeout 10 --max-time 120 \
+              -o "$second_body" -w '%{http_code}' \
+              -X POST "$API_BASE/v1/tenants" \
+              -H "Content-Type: application/json" \
+              -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+              --data-binary @-
+          )"
+          if [[ "$second_status" != "409" ]]; then
+            echo "second_create_status=$second_status" >&2
+            exit 1
+          fi
+          second_result="$(cat "$second_body" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => {
+              const parsed = JSON.parse(body);
+              const code = parsed?.error?.code;
+              const linkedTenantId = parsed?.error?.details?.tenant_id;
+              if (code !== "tenant_identity_already_linked" || linkedTenantId !== process.argv[1]) process.exit(1);
+              process.stdout.write(`${code}:${linkedTenantId}`);
+            });
+          ' "$tenant_id")"
+
+          echo "first_create_status=$first_status"
+          echo "created_tenant_id=$tenant_id"
+          echo "second_create_status=$second_status"
+          echo "second_create_result=$second_result"
+          REMOTE
