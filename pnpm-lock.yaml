@@ -34,6 +34,9 @@ importers:
       '@eslint/js':
         specifier: ^9.39.4
         version: 9.39.4
+      '@redocly/cli':
+        specifier: 2.43.3
+        version: 2.43.3
       '@types/node':
         specifier: ^22.7.0
         version: 22.19.19
@@ -1810,6 +1813,11 @@ packages:
 
   '@redocly/ajv@8.11.2':
     resolution: {integrity: sha512-io1JpnwtIcvojV7QKDUSIuMN/ikdOUd1ReEnUnMKGfDVridQZ31J0MmIuqwuRjWDZfmvr+Q0MqCcfHM2gTivOg==}
+
+  '@redocly/cli@2.43.3':
+    resolution: {integrity: sha512-c6qQnH7N29FkpBAFDw+7cAsR+F5LXWWuS66BzHuC7zUsqqeZeUVxONRAAZHzwWG/N1zuqXMQZigVIh+ZC4OIFg==}
+    engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
+    hasBin: true
 
   '@redocly/config@0.22.0':
     resolution: {integrity: sha512-gAy93Ddo01Z3bHuVdPWfCwzgfaYgMdaZPcfL7JZ7hWJoK9V0lXDbigTWkhiPFAaLWzbOJ+kbUQG1+XwIm0KRGQ==}
@@ -4704,6 +4712,8 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
       uri-js-replace: 1.0.1
+
+  '@redocly/cli@2.43.3': {}
 
   '@redocly/config@0.22.0': {}
 

@@ -1,5 +1,10 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { isBrainError } from "@brain/shared";
+import {
+  computeServiceAuthSignatureV2,
+  isBrainError,
+  verifyServiceAuthSignatureV2,
+} from "@brain/shared";
 import { parseRawParsedWriteBody } from "./parsed.js";
 
 // Pure-function coverage for the POST /raw/{id}/parsed body validator.
@@ -56,5 +61,64 @@ describe("parseRawParsedWriteBody", () => {
         expect(err.statusCode).toBe(400);
       }
     }
+  });
+});
+
+// F4: the trusted-service HMAC used to sign only the request body, so a
+// captured signature could be replayed with a different (unsigned)
+// X-Brain-Write-Tenant header and land attacker-chosen content in a victim
+// tenant. The signed material now binds the timestamp and write-tenant.
+describe("computeServiceAuthSignatureV2 / verifyServiceAuthSignatureV2", () => {
+  const secret = "test-secret";
+  const body = Buffer.from(JSON.stringify({ parser: "p", parser_version: "1", extracted: {} }));
+
+  function nowSeconds(): string {
+    return String(Math.floor(Date.now() / 1000));
+  }
+
+  it("verifies a freshly signed request", () => {
+    const ts = nowSeconds();
+    const sig = computeServiceAuthSignatureV2(secret, ts, "tnt_victim", body);
+    expect(verifyServiceAuthSignatureV2(body, sig, ts, "tnt_victim", secret)).toBe(true);
+  });
+
+  it("F4 core fix: a signature captured for one tenant does not verify for a different tenant", () => {
+    const ts = nowSeconds();
+    // Legitimately signed for the caller's own tenant (or no redirect: "").
+    const sig = computeServiceAuthSignatureV2(secret, ts, "", body);
+    // Replaying it with a victim tenant in X-Brain-Write-Tenant must fail --
+    // this is exactly the exploit F4 describes.
+    expect(verifyServiceAuthSignatureV2(body, sig, ts, "tnt_victim", secret)).toBe(false);
+  });
+
+  it("rejects a signature outside the bounded replay window", () => {
+    const staleTs = String(Math.floor(Date.now() / 1000) - 301);
+    const sig = computeServiceAuthSignatureV2(secret, staleTs, "tnt_a", body);
+    expect(verifyServiceAuthSignatureV2(body, sig, staleTs, "tnt_a", secret)).toBe(false);
+  });
+
+  it("accepts a signature at the edge of the replay window", () => {
+    const edgeTs = String(Math.floor(Date.now() / 1000) - 300);
+    const sig = computeServiceAuthSignatureV2(secret, edgeTs, "tnt_a", body);
+    expect(verifyServiceAuthSignatureV2(body, sig, edgeTs, "tnt_a", secret)).toBe(true);
+  });
+
+  it("rejects a legacy v1-style signature (body-only, no version prefix)", () => {
+    const ts = nowSeconds();
+    const legacySig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+    expect(verifyServiceAuthSignatureV2(body, legacySig, ts, "", secret)).toBe(false);
+  });
+
+  it("rejects a missing timestamp header even with an otherwise-correct signature shape", () => {
+    const ts = nowSeconds();
+    const sig = computeServiceAuthSignatureV2(secret, ts, "tnt_a", body);
+    expect(verifyServiceAuthSignatureV2(body, sig, undefined, "tnt_a", secret)).toBe(false);
+  });
+
+  it("rejects when the body is tampered with", () => {
+    const ts = nowSeconds();
+    const sig = computeServiceAuthSignatureV2(secret, ts, "tnt_a", body);
+    const tampered = Buffer.from(body.toString() + "x");
+    expect(verifyServiceAuthSignatureV2(tampered, sig, ts, "tnt_a", secret)).toBe(false);
   });
 });

@@ -59,7 +59,15 @@ function makeStore(seedTenantId: string): FakeStore {
   return { tenants: new Set([seedTenantId]), apiKeys: new Map(), auditEvents: [] };
 }
 
-function makeAppPool(store: FakeStore) {
+function makeAppPool(
+  store: FakeStore,
+  // requireAdminMember's live re-check (F1). Every token minted by this
+  // file's adminToken() represents an admin member of its tenant by default;
+  // tests that need to simulate a stale token (scope says admin, live row
+  // does not) override this.
+  memberRole: (memberId: string, tenantId: string) => "admin" | "approver" | "viewer" = () =>
+    "admin",
+) {
   const client = {
     query: async (sql: string, values: unknown[] = []) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
@@ -71,6 +79,23 @@ function makeAppPool(store: FakeStore) {
       if (sql.includes("SELECT id FROM tenants WHERE id = $1")) {
         const [id] = values as [string];
         return store.tenants.has(id) ? { rows: [{ id }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM members")) {
+        const [memberId, tenantId] = values as [string, string];
+        return store.tenants.has(tenantId)
+          ? {
+              rows: [
+                {
+                  id: memberId,
+                  tenant_id: tenantId,
+                  role: memberRole(memberId, tenantId),
+                  active: true,
+                  status: "active",
+                },
+              ],
+              rowCount: 1,
+            }
+          : { rows: [], rowCount: 0 };
       }
       if (sql.includes("INSERT INTO api_keys")) {
         const [
@@ -203,7 +228,7 @@ class StoreAuditEmitter implements AuditEmitter {
   }
 }
 
-async function adminToken(tenantId: string): Promise<string> {
+async function sessionToken(tenantId: string, scopes: Scope[]): Promise<string> {
   const signer = new JwtSigner({
     issuer: ISSUER,
     audience: AUDIENCE,
@@ -216,15 +241,20 @@ async function adminToken(tenantId: string): Promise<string> {
     tenantId,
     tokenId: "token_test",
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
-    scopes: ["execution:admin", "audit:read", "ledger:read"],
+    scopes,
   });
+}
+
+async function adminToken(tenantId: string): Promise<string> {
+  return sessionToken(tenantId, ["execution:admin", "audit:read", "ledger:read"]);
 }
 
 async function buildApp(
   store: FakeStore,
+  memberRole?: (memberId: string, tenantId: string) => "admin" | "approver" | "viewer",
 ): Promise<{ app: FastifyInstance; audit: StoreAuditEmitter }> {
   const app = Fastify({ logger: false });
-  const pool = makeAppPool(store) as never;
+  const pool = makeAppPool(store, memberRole) as never;
   const resolverPool = makeResolverPool(store) as never;
   const innerAudit = new StoreAuditEmitter(store);
   const audit = new CorrelatingAuditEmitter(innerAudit);
@@ -513,6 +543,46 @@ describe("per-customer API keys", () => {
       });
       expect(response.statusCode).toBe(403);
       expect(response.json().error.code).toBe("auth_tenant_mismatch");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F1: a viewer-scoped session (no execution:admin) cannot mint a tenant key", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const { app } = await buildApp(store);
+    const viewerToken = await sessionToken(tenantId, ["ledger:read", "audit:read"]);
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${viewerToken}` },
+        payload: { name: "should not mint", environment: "sandbox", scopes: ["ledger:read"] },
+      });
+      expect(r.statusCode).toBe(403);
+      expect(r.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F1: a stale execution:admin token is rejected once the live member row is not admin", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    // Scope still says admin (token minted before a demotion), but the live
+    // members row -- what requireAdminMember re-checks -- says viewer.
+    const { app } = await buildApp(store, () => "viewer");
+    const staleToken = await adminToken(tenantId);
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${staleToken}` },
+        payload: { name: "should not mint", environment: "sandbox", scopes: ["ledger:read"] },
+      });
+      expect(r.statusCode).toBe(403);
+      expect(r.json().error.code).toBe("auth_scope_insufficient");
     } finally {
       await app.close();
     }

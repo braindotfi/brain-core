@@ -9,14 +9,16 @@
  * the Ledger normalize service job. The write never touches Ledger.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
+  extractRawBody,
   isBrainId,
   newRawParsedId,
   requireScope,
   sha256Hex,
+  singleHeaderValue,
+  verifyServiceAuthSignatureV2,
   withTenantScope,
   type Scope,
 } from "@brain/shared";
@@ -31,72 +33,67 @@ export interface RegisterParsedOptions {
   /**
    * Shared secret proving the caller is a trusted first-party service (a
    * Python extraction agent), not just any raw:write principal. When set AND
-   * the request carries a valid X-Brain-Service-Auth HMAC over the raw
-   * request body AND a non-empty X-Brain-Write-Tenant header, the write
-   * lands in that header tenant instead of the JWT request.principal.
-   * tenantId. An absent secret or a mismatched/missing signature leaves
-   * behavior unchanged (write to the JWT tenant). This lets a static
-   * golden-tenant agent JWT write parsed rows into the caller real tenant
-   * without widening the JWT own authority. Mirrors the existing api-to-
-   * agents X-Brain-Auth scheme (services/api/src/agents/sign-agent-
-   * request.ts / services/agents/brain_agents/auth.py) so the raw secret
-   * itself never travels on the wire, only a body-bound signature.
+   * the request carries a valid X-Brain-Service-Auth v2 HMAC (see below) the
+   * write lands in the signed X-Brain-Write-Tenant tenant instead of the JWT
+   * request.principal.tenantId. An absent secret or a mismatched/missing/
+   * expired signature leaves behavior unchanged (write to the JWT tenant,
+   * untrusted). This lets a static golden-tenant agent JWT write parsed rows
+   * into the caller real tenant without widening the JWT own authority.
+   * Mirrors the existing api-to-agents X-Brain-Auth scheme (services/api/src/
+   * agents/sign-agent-request.ts / services/agents/brain_agents/auth.py) so
+   * the raw secret itself never travels on the wire, only a body-bound
+   * signature.
+   *
+   * F4 (security fix): the write-tenant redirect used to be an UNSIGNED
+   * header -- the HMAC covered only the request body, so anyone who obtained
+   * one legitimately-signed body (a captured extraction callback, a proxy
+   * log, a compromised agents container) could replay it with a different
+   * X-Brain-Write-Tenant and land attacker-chosen content in a victim
+   * tenant's Raw layer as a trusted-service row, including triggering a
+   * repair (allowRepair) of an existing row. The signed material now binds
+   * the timestamp and the write-tenant, not just the body, and a signature
+   * outside a bounded replay window is treated as unverified. See the v2
+   * header contract (@brain/shared's shared/src/http/service-auth.ts) below
+   * -- the Python signing counterpart (services/agents/brain_agents/
+   * client.py) speaks the same v2 scheme via
+   * services/agents/brain_agents/service_auth.py. The HMAC primitives live
+   * in @brain/shared so services/execution's /execution/propose route
+   * (RFC F2) verifies the identical scheme rather than a parallel
+   * reimplementation.
    */
   crossTenantServiceSecret?: string;
 }
 
-const SERVICE_AUTH_PREFIX = "sha256=";
-
 /**
- * Same construction as brain_agents.auth.expected_signature /
- * services/api/src/agents/sign-agent-request.ts: sha256=hex(hmac(secret,
- * body)). Computed over the RAW request body bytes -- the caller must sign
- * and send the exact same bytes for this to verify.
- */
-function computeServiceAuthSignature(secret: string, rawBody: Buffer): string {
-  return SERVICE_AUTH_PREFIX + createHmac("sha256", secret).update(rawBody).digest("hex");
-}
-
-/**
- * Constant-time compare of a request-supplied HMAC signature against the
- * one computed over the raw body. Length-checked first so timingSafeEqual
- * (which throws on mismatched buffer lengths) never sees unequal-length
- * input. False whenever the raw body is unavailable or the header is
- * missing/malformed -- never throws, the caller falls back to the JWT
- * tenant on any doubt.
- */
-function verifyServiceAuthSignature(
-  rawBody: Buffer | undefined,
-  headerValue: string | undefined,
-  secret: string,
-): boolean {
-  if (rawBody === undefined) return false;
-  if (headerValue === undefined || !headerValue.startsWith(SERVICE_AUTH_PREFIX)) return false;
-  const expected = computeServiceAuthSignature(secret, rawBody);
-  const expectedBuf = Buffer.from(expected, "utf8");
-  const providedBuf = Buffer.from(headerValue, "utf8");
-  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
-}
-
-/**
- * The raw JSON content-type parser (server.ts) stashes the exact request
- * bytes on the parsed body as `__rawBody` so signature verification can run
- * over the same bytes the caller signed. Returns undefined for any other
- * shape (never throws -- an absent raw body just fails the HMAC check).
- */
-function extractRawBody(body: unknown): Buffer | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const candidate = (body as Record<string, unknown>)["__rawBody"];
-  return Buffer.isBuffer(candidate) ? candidate : undefined;
-}
-
-/**
+ * v2 signed request contract (F4). The Python client
+ * (services/agents/brain_agents/client.py) sends, on every trusted-service
+ * POST /raw/{raw_id}/parsed:
+ *
+ *   X-Brain-Service-Timestamp: <unix seconds, decimal string, generated
+ *       fresh per request -- never cached or reused>
+ *   X-Brain-Write-Tenant: <target tenant id, or omit the header entirely to
+ *       write into the caller's own JWT tenant>
+ *   X-Brain-Service-Auth: sha256v2=<hex HMAC-SHA256 of
+ *       `${timestamp}.${writeTenant}.` (writeTenant = "" when the header is
+ *       omitted) followed by the raw, exact request body bytes, keyed by the
+ *       shared secret>
+ *
+ * A request signed under the OLD `sha256=hmac(secret, body)` scheme (no
+ * timestamp, no tenant binding) will not verify against this computation --
+ * it fails closed to an untrusted, own-tenant, no-repair write exactly like
+ * a garbled signature would, it does not error. The server accepts a
+ * signature only within SERVICE_AUTH_REPLAY_WINDOW_SECONDS of "now". The
+ * compute/verify primitives themselves live in @brain/shared
+ * (shared/src/http/service-auth.ts), not here -- see that module's header
+ * for the full contract doc and the single canonical implementation both
+ * this route and /execution/propose share.
+ *
  * Resolve which tenant a parsed write should land in, and whether the caller
  * proved it is the trusted first-party service (not just any raw:write
- * principal) via a verified X-Brain-Service-Auth HMAC over the raw request
- * body. Defaults to the JWT principal's own tenant / untrusted. Fails
- * closed: no configured secret, or any signature mismatch, means both the
- * tenant-redirect header and the trust signal are ignored.
+ * principal) via a verified v2 X-Brain-Service-Auth HMAC. Defaults to the
+ * JWT principal's own tenant / untrusted. Fails closed: no configured
+ * secret, or any signature/timestamp/tenant-binding mismatch, means the
+ * tenant-redirect header and the trust signal are both ignored.
  *
  * `serviceAuthVerified` is also `insertParsed`'s `allowRepair` gate (H4):
  * only a caller that proved this HMAC -- i.e. the deterministic
@@ -111,18 +108,26 @@ function resolveWriteAuthorization(
   if (crossTenantServiceSecret === undefined || crossTenantServiceSecret.length === 0) {
     return { tenantId: principalTenantId, serviceAuthVerified: false };
   }
-  const providedAuth = request.headers["x-brain-service-auth"];
-  const providedAuthValue = Array.isArray(providedAuth) ? providedAuth[0] : providedAuth;
+  const signatureHeader = singleHeaderValue(request.headers["x-brain-service-auth"]);
+  const timestampHeader = singleHeaderValue(request.headers["x-brain-service-timestamp"]);
+  const targetTenantHeader = singleHeaderValue(request.headers["x-brain-write-tenant"]);
+  // The empty string is itself the signed value for "no redirect requested"
+  // -- an attacker cannot turn an untargeted signature into a targeted one
+  // by simply adding the header, since "" would no longer match.
+  const signedWriteTenant = targetTenantHeader ?? "";
   const rawBody = extractRawBody(request.body);
-  if (!verifyServiceAuthSignature(rawBody, providedAuthValue, crossTenantServiceSecret)) {
+  if (
+    !verifyServiceAuthSignatureV2(
+      rawBody,
+      signatureHeader,
+      timestampHeader,
+      signedWriteTenant,
+      crossTenantServiceSecret,
+    )
+  ) {
     return { tenantId: principalTenantId, serviceAuthVerified: false };
   }
-  const targetTenant = request.headers["x-brain-write-tenant"];
-  const targetTenantValue = Array.isArray(targetTenant) ? targetTenant[0] : targetTenant;
-  const tenantId =
-    typeof targetTenantValue === "string" && targetTenantValue.length > 0
-      ? targetTenantValue
-      : principalTenantId;
+  const tenantId = signedWriteTenant.length > 0 ? signedWriteTenant : principalTenantId;
   return { tenantId, serviceAuthVerified: true };
 }
 

@@ -28,6 +28,18 @@
  * `executed`. It also catches the facade form `LedgerPaymentIntents.transition(
  * …, "executed")`, which the previous regex missed.
  *
+ * The `executed`-transition check matches against each candidate file whole
+ * text, not per line: Prettier wraps the sanctioned multi-line call
+ * (`LedgerPaymentIntents.transition(` then `c,`, the id, `"dispatching",`,
+ * `"executed",` and `)` each on their own line) across several lines, and a
+ * per-line regex never sees the closing `"executed"` on the same line as
+ * `transition(`, so it matched nothing and the allowlist below was vacuous.
+ *
+ * The `writeContract()` sink check scans a wider set of directories than the
+ * rail-dispatch / executed-transition checks: signing sinks can show up
+ * anywhere a service talks to chain (anchoring, policy registration), not
+ * only in services/execution or the rail clients.
+ *
  * Run: pnpm run check-gate-bypass
  */
 
@@ -36,6 +48,13 @@ import { join } from "node:path";
 
 const SCAN_DIRS = ["services/execution/src", "services/api/src/rails"];
 const API_SCAN_DIR = "services/api/src";
+const CHAIN_WRITE_SCAN_DIRS = [
+  "services/api/src",
+  "packages/core",
+  "packages/surfaces",
+  "services/surface-gateway",
+  "services/mcp",
+];
 
 // Rail dispatch (moving money) — only the outbox worker may do this.
 const RAIL_DISPATCH = /\.dispatch\s*\(/;
@@ -45,6 +64,13 @@ const CHAIN_WRITE = /\.writeContract\s*\(/;
 const CHAIN_WRITE_ALLOWED = [
   "services/api/src/rails/onchainExecutor.ts",
   "services/api/src/rails/x402Client.ts",
+  // Known-good signing sites outside services/execution and rails/: the
+  // audit anchor publisher and the policy on-chain registrar. Neither is a
+  // money-movement rail; both are allowlisted explicitly rather than
+  // excluded from the scan, so a future unrelated writeContract() in these
+  // directories still fails CI.
+  "services/api/src/anchorBroadcaster.ts",
+  "services/api/src/policyRegistrar.ts",
 ];
 
 const MONEY_CLIENT_IMPORT =
@@ -54,15 +80,20 @@ const MONEY_CLIENT_IMPORT_ALLOWED = ["services/api/src/main.ts"];
 // The terminal `executed` transition — only the gated executor may do this.
 // Matches both the direct repo helpers (transitionPaymentIntent/Proposal/
 // Execution(..., "executed")) and the facade form (.transition(..., "executed")).
+// Matched against whole-file text (see header comment), so it can span the
+// multi-line calls Prettier produces.
 const EXECUTED_TRANSITION =
-  /transition(?:PaymentIntent|Proposal|Execution)?\s*\([^;]*["']executed["']/;
+  /transition(?:PaymentIntent|Proposal|Execution)?\s*\([^;]*["']executed["']/g;
 const EXECUTED_TRANSITION_ALLOWED = [
   "services/execution/src/payment-intents/PaymentIntentService.ts",
 ];
 
+const SKIP_DIR_NAMES = new Set(["node_modules", "dist", ".git"]);
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
+    if (SKIP_DIR_NAMES.has(entry)) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...walk(full));
     else if (full.endsWith(".ts") && !full.endsWith(".test.ts")) out.push(full);
@@ -70,19 +101,36 @@ function walk(dir) {
   return out;
 }
 
+// Line number of a match found against the whole file text, for reporting.
+function lineOf(text, index) {
+  return text.slice(0, index).split("\n").length;
+}
+
 const violations = [];
 for (const dir of SCAN_DIRS) {
   for (const file of walk(dir)) {
-    const lines = readFileSync(file, "utf8").split("\n");
-    lines.forEach((line, i) => {
+    const text = readFileSync(file, "utf8");
+    text.split("\n").forEach((line, i) => {
       if (RAIL_DISPATCH.test(line) && !RAIL_DISPATCH_ALLOWED.includes(file)) {
         violations.push(`${file}:${i + 1}: rail .dispatch() outside the outbox worker`);
       }
+    });
+    if (!EXECUTED_TRANSITION_ALLOWED.includes(file)) {
+      for (const match of text.matchAll(EXECUTED_TRANSITION)) {
+        violations.push(
+          `${file}:${lineOf(text, match.index)}: transition to 'executed' outside the §6-gated executor`,
+        );
+      }
+    }
+  }
+}
+
+for (const dir of CHAIN_WRITE_SCAN_DIRS) {
+  for (const file of walk(dir)) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
       if (CHAIN_WRITE.test(line) && !CHAIN_WRITE_ALLOWED.includes(file)) {
         violations.push(`${file}:${i + 1}: writeContract() outside sanctioned API rail clients`);
-      }
-      if (EXECUTED_TRANSITION.test(line) && !EXECUTED_TRANSITION_ALLOWED.includes(file)) {
-        violations.push(`${file}:${i + 1}: transition to 'executed' outside the §6-gated executor`);
       }
     });
   }

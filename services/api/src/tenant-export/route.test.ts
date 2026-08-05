@@ -22,7 +22,18 @@ function userPrincipal(tenantId: string): Principal {
     id: USER,
     type: "user",
     tenantId,
-    scopes: [] as unknown as Principal["scopes"],
+    scopes: ["execution:admin"] as unknown as Principal["scopes"],
+    tokenId: "tok_01TEST00000000000000000",
+    expiresAt: Math.floor(Date.now() / 1000) + 3600,
+  };
+}
+
+function viewerPrincipal(tenantId: string): Principal {
+  return {
+    id: USER,
+    type: "user",
+    tenantId,
+    scopes: ["ledger:read"] as unknown as Principal["scopes"],
     tokenId: "tok_01TEST00000000000000000",
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
   };
@@ -44,6 +55,7 @@ async function buildApp(opts: {
   jobs?: TenantExportJobRow[];
   exportTtlMs?: number;
   omitExportTtlMs?: boolean;
+  memberRole?: "admin" | "approver" | "viewer";
 }) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
@@ -51,7 +63,7 @@ async function buildApp(opts: {
     if (opts.principal !== undefined) request.principal = opts.principal;
   });
   const state = new Map((opts.jobs ?? []).map((job) => [job.id, job]));
-  const pool = fakePool(state);
+  const pool = fakePool(state, opts.memberRole ?? "admin");
   const blob: BlobAdapter = {
     put: vi.fn(),
     get: vi.fn(async () => Readable.from([Buffer.from("archive\n")])),
@@ -163,14 +175,54 @@ describe("tenant export routes", () => {
     }
   });
 
-  it("rejects malformed export job ids before querying", async () => {
+  it("rejects malformed export job ids before loading a job", async () => {
     const { app, pool } = await buildApp({ principal: userPrincipal(TENANT_A) });
     try {
       const r = await app.inject({ method: "GET", url: `/tenants/${TENANT_A}/export/not-a-job` });
       expect(r.statusCode).toBe(400);
       expect(r.json()).toMatchObject({ error: { code: "request_params_invalid" } });
+      // F2's admin-member re-check (requireAdminMember) now runs a query
+      // before the job id shape is even checked, so connect IS called.
       const connect = pool.connect as unknown as ReturnType<typeof vi.fn>;
-      expect(connect).not.toHaveBeenCalled();
+      expect(connect).toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F2: a viewer-scoped token (no execution:admin) cannot enqueue, check, or download an export", async () => {
+    const job = jobRow({ status: "succeeded", outputBlobUri: `${TENANT_A}/exports/x.ndjson` });
+    const { app } = await buildApp({ principal: viewerPrincipal(TENANT_A), jobs: [job] });
+    try {
+      const enqueue = await app.inject({ method: "POST", url: `/tenants/${TENANT_A}/export` });
+      expect(enqueue.statusCode).toBe(403);
+      expect(enqueue.json()).toMatchObject({ error: { code: "auth_scope_insufficient" } });
+
+      const status = await app.inject({
+        method: "GET",
+        url: `/tenants/${TENANT_A}/export/${job.id}`,
+      });
+      expect(status.statusCode).toBe(403);
+
+      const download = await app.inject({
+        method: "GET",
+        url: `/tenants/${TENANT_A}/export/${job.id}/download`,
+      });
+      expect(download.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F2: a stale execution:admin token is rejected once the live member row is not admin", async () => {
+    const { app } = await buildApp({
+      principal: userPrincipal(TENANT_A),
+      memberRole: "viewer",
+    });
+    try {
+      const r = await app.inject({ method: "POST", url: `/tenants/${TENANT_A}/export` });
+      expect(r.statusCode).toBe(403);
+      expect(r.json()).toMatchObject({ error: { code: "auth_scope_insufficient" } });
     } finally {
       await app.close();
     }
@@ -229,7 +281,10 @@ describe("tenant export routes", () => {
   });
 });
 
-function fakePool(state: Map<string, TenantExportJobRow>): Pool {
+function fakePool(
+  state: Map<string, TenantExportJobRow>,
+  memberRole: "admin" | "approver" | "viewer" = "admin",
+): Pool {
   const client = {
     query: vi.fn(async (sql: string, values?: unknown[]) => {
       if (
@@ -239,6 +294,16 @@ function fakePool(state: Map<string, TenantExportJobRow>): Pool {
         sql.startsWith("SELECT set_config")
       ) {
         return { rows: [], rowCount: 0 };
+      }
+      // F2: requireAdminMember's live re-check.
+      if (sql.includes("FROM members")) {
+        const [memberId, tenantId] = (values ?? []) as [string, string];
+        return {
+          rows: [
+            { id: memberId, tenant_id: tenantId, role: memberRole, active: true, status: "active" },
+          ],
+          rowCount: 1,
+        };
       }
       if (sql.startsWith("INSERT INTO tenant_export_jobs")) {
         const existing = [...state.values()].find((job) =>

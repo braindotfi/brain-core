@@ -253,8 +253,8 @@ services:
   # AUTH_SIGN_KEY on :8085; `auth` is now the single JWKS source, and
   # api/worker/surface-gateway's AUTH_JWKS_URL above points at it directly.
   #
-  # Deliberately NOT env_file: `${BRAIN_ENV_FILE:-.env.prod}` (unlike
-  # surface-gateway) and NOT `<<: *brain-common-env`. This process needs
+  # Deliberately NOT env_file: ${BRAIN_ENV_FILE:-.env.prod} and NOT
+  # `<<: *brain-common-env`. This process needs
   # AUTH_SIGN_KEY, AUTH_COOKIE_SECRET, a valid AUTH_ISSUER, the three
   # BRAIN_*_DB_URL role URLs below, and the EMAIL_ENDPOINT/EMAIL_API_KEY pair
   # (all boot-fenced with process.exit(1) in services/auth/src/main.ts -- see
@@ -458,9 +458,13 @@ services:
     command: ["node", "services/surface-gateway/dist/main.js"]
     ports:
       - "127.0.0.1:3002:3000"
-    env_file:
-      - path: ${BRAIN_ENV_FILE:-.env.prod}
-        required: false
+    # Deliberately NOT env_file: this is a public inbound-webhook origin
+    # (Slack, Teams, and email approval webhooks), matching the rationale
+    # documented on the auth service block above. The explicit list below
+    # already carries every Slack/Teams/email secret this service uses; it
+    # has no legitimate use for AUDIT_PUBLISHER_KEY, BRAIN_SESSION_KEY, any
+    # unrelated *_DB_PASSWORD, POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, or
+    # OPENAI_API_KEY, and previously received all of them anyway.
     environment:
       <<: *brain-common-env
       SERVICE_NAME: brain-surface-gateway
@@ -512,22 +516,36 @@ services:
       retries: 12
 
   # Python reasoning agents. Off by default — enable with `--profile agents`.
-  # Requires OPENAI_API_KEY, BRAIN_API_TOKEN, and BRAIN_AGENTS_INBOUND_SECRET
-  # in .env.prod (the image now fails fast at boot if these are unset, see
-  # services/agents/brain_agents/server.py).
+  # This process parses untrusted tenant-uploaded PDFs, XLSX, and images and
+  # shells them through OCR, so it deliberately does NOT get env_file: the
+  # whole .env.prod, matching the rationale documented on the auth service
+  # block above. It has no legitimate use for AUDIT_PUBLISHER_KEY,
+  # BRAIN_SESSION_KEY, any *_DB_PASSWORD, POSTGRES_PASSWORD,
+  # MINIO_ROOT_PASSWORD, or chat credentials, and previously received all of
+  # them anyway. The env var list below is read off
+  # services/agents/brain_agents/config.py (pydantic Settings) and the
+  # auth.py / server.py os.environ.get() calls. OPENAI_API_KEY,
+  # BRAIN_API_TOKEN, and BRAIN_AGENTS_INBOUND_SECRET are compose-required as
+  # well as boot-fenced in server.py, matching the pattern used for every
+  # other compose-required secret in this file.
   agents:
     profiles: ["agents"]
     image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}
     container_name: brain-prod-agents
     restart: unless-stopped
-    env_file:
-      - path: ${BRAIN_ENV_FILE:-.env.prod}
-        required: false
     environment:
       BRAIN_ENV: production
       NODE_ENV: production
       BRAIN_API_BASE_URL: http://api:3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required in production}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_OCR_MODEL: ${OPENAI_OCR_MODEL:-gpt-4o}
+      BRAIN_API_TOKEN: ${BRAIN_API_TOKEN:?BRAIN_API_TOKEN is required in production}
+      BRAIN_AGENTS_INBOUND_SECRET: ${BRAIN_AGENTS_INBOUND_SECRET:?BRAIN_AGENTS_INBOUND_SECRET is required in production}
+      # Anomaly autopilot scheduler: off unless BRAIN_ANOMALY_SCAN_TENANTS is set.
+      BRAIN_ANOMALY_SCAN_INTERVAL_SECONDS: ${BRAIN_ANOMALY_SCAN_INTERVAL_SECONDS:-3600}
+      BRAIN_ANOMALY_SCAN_TENANTS: ${BRAIN_ANOMALY_SCAN_TENANTS:-}
+      BRAIN_ANOMALY_SCAN_BATCH_SIZE: ${BRAIN_ANOMALY_SCAN_BATCH_SIZE:-100}
     depends_on:
       api:
         condition: service_healthy

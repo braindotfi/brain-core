@@ -183,12 +183,23 @@ suite("tenant deletion — surface-gateway tables (requires DATABASE_URL)", () =
     const bystander = newTenantId();
     await seedSurfaceRows(pool, tenant, "target");
     await seedSurfaceRows(pool, bystander, "bystander");
+    // F2: deleteTenant now requires the actor to be a live, active admin
+    // members row (requireAdminMember). Every real caller has one by the
+    // time it reaches this service; seed it here too.
+    const actor = newUserId();
+    await pool.query(
+      `INSERT INTO members (tenant_id, id, email, display_name, role, active, status,
+                             approval_domains, per_item_limit_cents)
+       VALUES ($1, $2, 'admin@example.invalid', 'Admin', 'admin', true, 'active',
+               ARRAY['ap','ar','treasury','payroll','reconciliation']::TEXT[], 9223372036854775807)`,
+      [tenant, actor],
+    );
 
     const svc = new TenantDeletionService({
       privilegedPool: pool,
       audit: new InMemoryAuditEmitter(),
     });
-    const result = await svc.deleteTenant({ tenantId: tenant, actor: newUserId() }, tenant);
+    const result = await svc.deleteTenant({ tenantId: tenant, actor }, tenant);
 
     // Every surface table reported exactly the one seeded row ...
     for (const { table } of surfaceEntries) {

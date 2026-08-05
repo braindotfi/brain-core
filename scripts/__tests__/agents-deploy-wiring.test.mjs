@@ -29,7 +29,7 @@ test("main workflow runs Python agents checks before VM image build", () => {
   assert.match(workflow, /uv run pytest/);
   assert.match(
     buildImageJob,
-    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac\]/,
+    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac, secrets\]/,
   );
 });
 

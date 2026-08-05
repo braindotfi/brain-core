@@ -782,6 +782,112 @@ describe("production tenancy routes", () => {
     }
   });
 
+  it("F1: a viewer member session never carries execution:admin, ledger:write, or payment_intent:approve", async () => {
+    const member = memberRow({ tenant_id: newTenantId(), id: newUserId(), role: "viewer" });
+    const { app, signer } = await build({ resolverRows: [member] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { external_ref: "platform-user-1" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().scopes).not.toContain("execution:admin");
+      expect(res.json().scopes).not.toContain("payment_intent:approve");
+      expect(res.json().scopes).not.toContain("ledger:write");
+      expect(res.json().scopes).toContain("ledger:read");
+      expect(signer.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          scopes: expect.not.arrayContaining(["execution:admin", "payment_intent:approve"]),
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F1: a viewer cannot request execution:admin -- it is no longer among their entitlements", async () => {
+    const member = memberRow({ tenant_id: newTenantId(), id: newUserId(), role: "viewer" });
+    const { app } = await build({ resolverRows: [member] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { external_ref: "platform-user-1", scopes: ["execution:admin"] },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F1: an invited viewer's consumed session never carries execution:admin or payment_intent:approve", async () => {
+    const tenantId = newTenantId();
+    const inviteRow = {
+      tenant_id: tenantId,
+      member_id: "user_invited_viewer",
+      token_hash: "hash-of-invite-token",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      consumed_at: null,
+      revoked_at: null,
+      member_status: "invited",
+      email: "viewer@example.com",
+      display_name: "Viewer",
+      role: "viewer",
+      approval_domains: ["ap"],
+      per_item_limit_cents: "0",
+      requires_second_approver_above_cents: null,
+    };
+    const { app, signer } = await build({ resolverRows: [inviteRow], inviteRow });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/invites/consume",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { invite_token: "good-token", external_ref: "platform-user-2" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(signer.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "user",
+          scopes: expect.not.arrayContaining(["execution:admin", "payment_intent:approve"]),
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("F1: refresh fails closed to the narrowest scopes when the stored refresh row predates scopes", async () => {
+    const tenantId = newTenantId();
+    const refresh = {
+      tenant_id: tenantId,
+      member_id: "user_1",
+      token_hash: "unused",
+      family_id: "token_family",
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      rotated_at: null,
+      revoked_at: null,
+      // No `scopes` column value at all -- the pre-scopes-column shape.
+    };
+    const { app } = await build({ resolverRows: [refresh] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/sessions/refresh",
+        payload: { refresh_token: "any-token", scopes: ["execution:admin"] },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe("auth_scope_insufficient");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects a scoped session request for a scope the member session does not hold", async () => {
     const member = memberRow({ tenant_id: newTenantId(), id: newUserId() });
     const { app } = await build({ resolverRows: [member] });

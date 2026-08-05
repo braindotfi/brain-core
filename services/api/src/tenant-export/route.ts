@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
-import { brainError, isBrainId, withTenantScope, type BlobAdapter } from "@brain/shared";
+import {
+  brainError,
+  isBrainId,
+  requireAdminMember,
+  requireScope,
+  withTenantScope,
+  type BlobAdapter,
+} from "@brain/shared";
 import {
   enqueueTenantExportJob,
   findTenantExportJob,
@@ -21,7 +28,12 @@ export async function registerTenantExportRoute(
   deps: TenantExportRouteDeps,
 ): Promise<void> {
   app.post<{ Params: { id: string } }>("/tenants/:id/export", async (request, reply) => {
-    const principal = requireOwnTenantUser(request, request.params.id, "tenant export");
+    const principal = await requireTenantAdminUser(
+      request,
+      deps.pool,
+      request.params.id,
+      "tenant export",
+    );
     const expiresAt = new Date(Date.now() + (deps.exportTtlMs ?? DEFAULT_EXPORT_TTL_MS));
     const enqueued = await withTenantScope(deps.pool, request.params.id, (client) =>
       enqueueTenantExportJob(client, {
@@ -37,7 +49,7 @@ export async function registerTenantExportRoute(
   app.get<{ Params: { id: string; job_id: string } }>(
     "/tenants/:id/export/:job_id",
     async (request) => {
-      requireOwnTenantUser(request, request.params.id, "tenant export status");
+      await requireTenantAdminUser(request, deps.pool, request.params.id, "tenant export status");
       const job = await loadJob(deps.pool, request.params.id, request.params.job_id);
       return tenantExportJobToWire(job);
     },
@@ -46,7 +58,7 @@ export async function registerTenantExportRoute(
   app.get<{ Params: { id: string; job_id: string } }>(
     "/tenants/:id/export/:job_id/download",
     async (request, reply) => {
-      requireOwnTenantUser(request, request.params.id, "tenant export download");
+      await requireTenantAdminUser(request, deps.pool, request.params.id, "tenant export download");
       const job = await loadJob(deps.pool, request.params.id, request.params.job_id);
       assertExportDownloadable(job, new Date());
       const stream = await deps.blob.get(job.output_blob_uri!);
@@ -57,11 +69,21 @@ export async function registerTenantExportRoute(
   );
 }
 
-function requireOwnTenantUser(
+/**
+ * F2: export, status, and download used to require only principal_type=user
+ * and a self-tenant match -- no scope check, no members-row check -- so any
+ * active member, including a viewer, could exfiltrate the full tenant
+ * dataset as NDJSON. Now requires execution:admin scope AND a live, active
+ * admin members row (requireAdminMember re-checks the DB rather than
+ * trusting a token's scope alone, since scope can be stale relative to a
+ * demotion).
+ */
+async function requireTenantAdminUser(
   request: FastifyRequest,
+  pool: Pool,
   targetTenantId: string,
   purpose: string,
-): NonNullable<FastifyRequest["principal"]> {
+): Promise<NonNullable<FastifyRequest["principal"]>> {
   if (request.principal === undefined) {
     throw brainError("auth_token_missing", "principal required");
   }
@@ -73,6 +95,8 @@ function requireOwnTenantUser(
       details: { principal_tenant: request.principal.tenantId, target_tenant: targetTenantId },
     });
   }
+  requireScope(request.principal.scopes, "execution:admin");
+  await requireAdminMember(pool, targetTenantId, request.principal.id);
   return request.principal;
 }
 

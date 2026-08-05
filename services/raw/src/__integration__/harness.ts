@@ -13,10 +13,11 @@
  *   - Constructs an app with in-memory blob + in-memory audit emitter.
  */
 
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { Client, Pool } from "pg";
 import Fastify from "fastify";
 import {
+  computeServiceAuthSignatureV2,
   InMemoryAuditEmitter,
   InMemoryIdempotencyStore,
   MemoryBlobAdapter,
@@ -39,15 +40,29 @@ import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/inde
 export const CROSS_TENANT_SERVICE_SECRET = "test-cross-tenant-service-secret";
 
 /**
- * Sign a raw request body with the same HMAC construction the api uses to
- * verify X-Brain-Service-Auth (see services/raw/src/routes/parsed.ts and
- * services/agents/brain_agents/auth.py's expected_signature). Tests must
- * sign the EXACT bytes they POST as the body.
+ * Build the v2 service-auth headers for a raw request body. Delegates to the
+ * shared computeServiceAuthSignatureV2 rather than re-deriving the
+ * construction here: a test that reimplements the signature can silently
+ * drift from the server and assert the wrong tenant, which is exactly what
+ * happened while this harness still signed the v1 body-only scheme against a
+ * v2 verifier. Tests must sign the EXACT bytes they POST as the body, and
+ * the EXACT X-Brain-Write-Tenant they send ("" when the header is omitted),
+ * because both are bound into the signature.
  */
-export function signCrossTenantServiceAuth(rawBody: string): string {
-  return (
-    "sha256=" + createHmac("sha256", CROSS_TENANT_SERVICE_SECRET).update(rawBody).digest("hex")
-  );
+export function crossTenantServiceAuthHeaders(
+  rawBody: string,
+  writeTenant = "",
+): Record<string, string> {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  return {
+    "x-brain-service-timestamp": timestamp,
+    "x-brain-service-auth": computeServiceAuthSignatureV2(
+      CROSS_TENANT_SERVICE_SECRET,
+      timestamp,
+      writeTenant,
+      Buffer.from(rawBody, "utf8"),
+    ),
+  };
 }
 
 export interface Harness {

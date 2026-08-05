@@ -10,6 +10,7 @@ import {
   newTokenId,
   newUserId,
   requireScope,
+  scopesForMemberRole,
   withTenantScope,
   type AuditEmitter,
   type JwtSigner,
@@ -37,19 +38,16 @@ const REFRESH_TOKEN_TTL_DAYS = 30;
 const SET_PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 /** A founder email that resolves to bootstrapPlaceholderEmail's undeliverable pattern. */
 const BOOTSTRAP_PLACEHOLDER_EMAIL_SUFFIX = "@brain.invalid";
+/**
+ * Narrowest scope set (F1): what a session token falls back to when the
+ * caller's actual role scopes cannot be determined -- e.g. a stored refresh
+ * token from before `scopes` was recorded. Failing closed to `viewer` rather
+ * than `admin` matters: a member who was never granted more than read access
+ * must never gain it back through a refresh.
+ */
+const FAIL_CLOSED_SESSION_SCOPES: readonly Scope[] = scopesForMemberRole("viewer");
 const PLATFORM_IDENTITY_LINK_UNIQUE_INDEX =
   "idx_member_identity_links_platform_external_ref_unique";
-const MEMBER_SESSION_SCOPES = [
-  "ledger:read",
-  "ledger:write",
-  "wiki:read",
-  "raw:read",
-  "policy:read",
-  "execution:read",
-  "execution:admin",
-  "payment_intent:approve",
-  "audit:read",
-] as const satisfies readonly Scope[];
 
 export interface ProductionTenancyRoutesDeps {
   pool: Pool;
@@ -186,7 +184,9 @@ export async function registerProductionTenancyRoutes(
     if (linkedMember !== null) throw platformIdentityAlreadyLinked(linkedMember.tenant_id);
     const tenantId = newTenantId();
     const memberId = newUserId();
-    const sessionSeed = newSessionSeed(tenantId, memberId);
+    // The bootstrap member insertBootstrapAdminMember creates below is always
+    // role=admin, so the founder's own session is minted with admin scopes.
+    const sessionSeed = newSessionSeed(tenantId, memberId, undefined, scopesForMemberRole("admin"));
     const smartAccount =
       deps.smartAccount ?? process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ?? zeroAddress();
 
@@ -452,7 +452,7 @@ export async function registerProductionTenancyRoutes(
         reply.status(403);
         return { reason: "session_identity_unlinked" };
       }
-      const scopes = resolveRequestedScopes(body?.scopes, MEMBER_SESSION_SCOPES);
+      const scopes = resolveRequestedScopes(body?.scopes, scopesForMemberRole(member.role));
       const sessionSeed = newSessionSeed(member.tenant_id, member.id, undefined, scopes);
       await withTenantScope(deps.pool, member.tenant_id, (client) =>
         insertRefreshToken(client, sessionSeed),
@@ -485,7 +485,29 @@ export async function registerProductionTenancyRoutes(
         throw brainError("auth_token_invalid", "refresh token reuse detected");
       }
 
-      const scopes = resolveRequestedScopes(body?.scopes, normalizeStoredScopes(refresh.scopes));
+      // F3 backstop: re-check the live members row on every refresh rather
+      // than trusting the refresh-token row alone. This is what catches a
+      // deactivation whose session-revocation write was somehow missed (a
+      // bug, a crash mid-transaction elsewhere) -- refresh is the one place
+      // every long-lived session must pass through, so failing closed here
+      // bounds the exposure to at most one access-token TTL even if the
+      // primary revocation path failed. It also re-derives the scope
+      // ceiling from the member's CURRENT role: a stored refresh-token
+      // `scopes` value can otherwise keep re-minting a since-demoted
+      // member's old, wider scopes for the rest of the 30-day refresh
+      // window.
+      const member = await findMemberInTenant(deps.pool, refresh.tenant_id, refresh.member_id);
+      if (member === null || member.status !== "active" || !member.active) {
+        await withTenantScope(deps.pool, refresh.tenant_id, (client) =>
+          revokeRefreshFamily(client, refresh.family_id),
+        );
+        throw brainError("auth_token_invalid", "refresh token invalid");
+      }
+      const currentEntitlements = scopesForMemberRole(member.role);
+      const storedScopes = normalizeStoredScopes(refresh.scopes).filter((scope) =>
+        currentEntitlements.includes(scope),
+      );
+      const scopes = resolveRequestedScopes(body?.scopes, storedScopes);
       const sessionSeed = newSessionSeed(
         refresh.tenant_id,
         refresh.member_id,
@@ -551,7 +573,12 @@ export async function registerProductionTenancyRoutes(
         return { reason: blockedReason };
       }
 
-      const sessionSeed = newSessionSeed(invite.tenant_id, invite.member_id);
+      const sessionSeed = newSessionSeed(
+        invite.tenant_id,
+        invite.member_id,
+        undefined,
+        scopesForMemberRole(invite.role),
+      );
       const member = await withTenantScope(deps.pool, invite.tenant_id, async (client) => {
         const locked = await lockInvite(client, invite.token_hash);
         if (locked === null) throw brainError("internal_server_error", "invite disappeared");
@@ -688,15 +715,17 @@ interface SessionSeed {
 function newSessionSeed(
   tenantId: string,
   memberId: string,
-  familyId = newTokenId(),
-  scopes: readonly Scope[] = MEMBER_SESSION_SCOPES,
+  familyId: string | undefined,
+  // No default: every caller must derive scopes from the member's role
+  // (F1) rather than falling back to a flat, always-admin-equivalent set.
+  scopes: readonly Scope[],
 ): SessionSeed {
   const refreshToken = newSecretToken();
   return {
     tenantId,
     memberId,
     tokenId: newTokenId(),
-    familyId,
+    familyId: familyId ?? newTokenId(),
     refreshToken,
     refreshTokenHash: hashToken(refreshToken),
     expiresAt: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
@@ -988,7 +1017,12 @@ function resolveRequestedScopes(raw: unknown, entitlements: readonly Scope[]): r
 }
 
 function normalizeStoredScopes(scopes: readonly Scope[] | undefined): readonly Scope[] {
-  if (scopes === undefined) return MEMBER_SESSION_SCOPES;
+  // F1: a NULL `session_refresh_tokens.scopes` value used to fall back to the
+  // full admin-equivalent scope set, silently re-widening a session that was
+  // deliberately narrowed (or minted before this column existed). Fail closed
+  // to the narrowest role's scopes instead -- a refresh can only ever shrink
+  // an under-specified session, never grow one.
+  if (scopes === undefined) return FAIL_CLOSED_SESSION_SCOPES;
   return scopes.filter((scope): scope is Scope => isValidScope(scope));
 }
 

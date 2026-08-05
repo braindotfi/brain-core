@@ -6,7 +6,8 @@ import time
 
 import pytest
 
-from brain_agents.server import _assert_api_token_not_expired, _jwt_expiry_epoch
+from brain_agents.jwt_util import jwt_expiry_epoch as _jwt_expiry_epoch
+from brain_agents.server import _assert_api_token_not_expired
 
 
 def _jwt(exp: object) -> str:
