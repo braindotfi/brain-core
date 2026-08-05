@@ -54,19 +54,41 @@ type Failure = { rule: string; detail: string };
 
 const DEFAULT_FRESHNESS_DAYS = 90;
 
+// Real production action_type values that move funds to a counterparty
+// (services/execution/src/payment-intents/action-types.ts). pay_invoice and
+// pay_obligation are pre-mapping action ROUTE names
+// (services/execution/src/actions/routes.ts) that get translated to one of
+// these rail types before a PaymentIntent is ever stored -- a stored intent's
+// action_type is never pay_invoice/pay_obligation, so dispatching on those
+// values here never matched a real intent (H-21 CI-miss). ach_inbound (money
+// coming in) and erp_writeback (no money movement) are intentionally excluded.
+const EVIDENCE_VALIDATED_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "ach_outbound",
+  "wire",
+  "onchain_transfer",
+  "card_payment",
+]);
+
 export function validateEvidence(input: EvidenceValidationInput): EvidenceValidationResult {
-  const validator = VALIDATORS[input.actionType];
-  // No registered validator for this action type ⇒ not applicable (additive;
-  // semantic validators are registered per money-mover action type over time).
-  if (validator === undefined) return { passed: true, failures: [] };
-  const failures = validator(input);
+  // Not a money-out rail ⇒ not applicable (additive; this check only governs
+  // payments that could be sent to the wrong party / wrong amount).
+  if (!EVIDENCE_VALIDATED_ACTION_TYPES.has(input.actionType)) {
+    return { passed: true, failures: [] };
+  }
+  // The rail type alone can no longer tell us whether this is "paying an
+  // invoice" or "settling an obligation" -- that distinction now lives on
+  // which link field the intent carries. Neither carried ⇒ nothing to validate
+  // evidence against (an ad-hoc payment with no invoice/obligation claim).
+  let failures: Failure[];
+  if (input.paymentIntent.invoiceId !== undefined) {
+    failures = validatePayInvoice(input);
+  } else if (input.paymentIntent.obligationId !== undefined) {
+    failures = validatePayObligation(input);
+  } else {
+    return { passed: true, failures: [] };
+  }
   return { passed: failures.length === 0, failures };
 }
-
-const VALIDATORS: Readonly<Record<string, (i: EvidenceValidationInput) => Failure[]>> = {
-  pay_invoice: validatePayInvoice,
-  pay_obligation: validatePayObligation,
-};
 
 function validatePayInvoice(i: EvidenceValidationInput): Failure[] {
   const failures: Failure[] = [];
@@ -77,14 +99,18 @@ function validatePayInvoice(i: EvidenceValidationInput): Failure[] {
   }
   const x = invoice.extracted;
 
+  // paymentIntent.invoiceId is the ledger_invoices PRIMARY KEY (inv_<ulid>,
+  // see isBrainId(invoiceId, "inv") at the P0.5 shortcut), not the
+  // human-readable invoice_number business label -- the loader must resolve
+  // and attach that PK as extracted.id for this comparison to be meaningful.
   if (
     i.paymentIntent.invoiceId !== undefined &&
-    str(x.invoice_number) !== undefined &&
-    str(x.invoice_number) !== i.paymentIntent.invoiceId
+    str(x.id) !== undefined &&
+    str(x.id) !== i.paymentIntent.invoiceId
   ) {
     failures.push({
-      rule: "invoice_number_match",
-      detail: `invoice_number ${str(x.invoice_number)} != intent invoiceId ${i.paymentIntent.invoiceId}`,
+      rule: "invoice_id_match",
+      detail: `evidence invoice id ${str(x.id)} != intent invoiceId ${i.paymentIntent.invoiceId}`,
     });
   }
   if (str(x.counterparty_id) !== i.paymentIntent.counterpartyId) {
@@ -142,11 +168,17 @@ function validatePayObligation(i: EvidenceValidationInput): Failure[] {
       detail: `obligation amount_due ${amountDue ?? "(missing)"} != intent amount ${i.paymentIntent.amount}`,
     });
   }
+  // Real ledger_obligations.status values (services/ledger/migrations/0007):
+  // upcoming|due|paid|overdue|cancelled|disputed. 'open'/'due_soon' never
+  // existed anywhere in this codebase, so this check was unsatisfiable by any
+  // real row before this fix. upcoming/due/overdue are still payable; paid,
+  // cancelled, and disputed are not (blocks paying an already-settled,
+  // cancelled, or disputed obligation again).
   const status = str(x.status);
-  if (status !== "open" && status !== "due_soon") {
+  if (status !== "upcoming" && status !== "due" && status !== "overdue") {
     failures.push({
       rule: "obligation_status",
-      detail: `obligation status is '${status ?? "(missing)"}', expected open|due_soon`,
+      detail: `obligation status is '${status ?? "(missing)"}', expected upcoming|due|overdue`,
     });
   }
   pushTrust(failures, ref, i);

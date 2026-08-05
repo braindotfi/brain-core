@@ -154,6 +154,44 @@ describe("LedgerService — limit clamping and reads", () => {
     expect(result.items[0]?.metadata).toEqual({ scenario: "ar" });
   });
 
+  /**
+   * Regression: serializeObligation used to drop the direction column, so
+   * main.ts's resolveObligationDirection loader read undefined for every
+   * obligation. That silently disarmed the section 6 gate's check 6.7 (a NULL
+   * direction reads as "unknown" and passes, so paying out a receivable was
+   * never blocked) and made PaymentIntentService reject EVERY new
+   * obligation-linked intent with obligation_direction_invalid, because that
+   * creation-time gate requires a known payable. Both loaders read the DTO,
+   * not the row, so the field has to survive serialization.
+   */
+  it("serializes obligation direction so the money-path loaders can read it", async () => {
+    const { pool } = fakePool({
+      "FROM ledger_obligations": [
+        {
+          ...rowCommon(),
+          id: "obl_payable",
+          type: "bill",
+          counterparty_id: "cp_vendor",
+          amount_due: "1250.00",
+          minimum_due: null,
+          currency: "USD",
+          due_date: new Date("2026-08-19T00:00:00Z"),
+          recurrence: null,
+          status: "due",
+          linked_transaction_ids: [],
+          direction: "payable",
+          metadata: {},
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+
+    expect((await service.findObligationById(ctx, "obl_payable"))?.direction).toBe("payable");
+    expect((await service.getObligation(ctx, "obl_payable"))?.direction).toBe("payable");
+    const listed = await service.listObligations(ctx, { direction: "payable", limit: 10 });
+    expect(listed.items[0]?.direction).toBe("payable");
+  });
+
   it("serializes counterparty payment rollups", async () => {
     const { pool } = fakePool({
       "FROM ledger_counterparties cp": [

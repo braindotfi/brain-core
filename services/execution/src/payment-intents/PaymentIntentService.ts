@@ -405,6 +405,22 @@ export class PaymentIntentService implements IPaymentIntentService {
     // confidence (document-extracted) obligation gates the payment via policy.
     const effectiveConfidence = await this.resolveEffectiveConfidence(ctx, input);
 
+    // F3/H-16: ledger_payment_intents.confidence is NOT NULL DEFAULT 1.0
+    // (services/ledger/migrations/0010), unlike evidence_score/risk_level,
+    // which are nullable and already fail closed for agent.confidence.gte
+    // when unset (services/ledger/migrations/0047). Relying on that DB
+    // default silently handed the maximally-trusting confidence to an intent
+    // with no real signal (no obligation link, no explicit input.confidence)
+    // -- an agent could bypass a confidence floor simply by omitting
+    // obligation_id. Changing the column default needs an append-only
+    // migration in services/ledger; until then, this service must never rely
+    // on it: an unresolved confidence is always persisted and evaluated as
+    // the explicit fail-closed sentinel 0, which cannot satisfy any
+    // realistic agent.confidence.gte threshold, matching how a null/absent
+    // value already fails the VM's typeof === "number" check
+    // (services/policy/src/vm.ts) for evidence_score/risk_level.
+    const persistedConfidence = effectiveConfidence ?? 0;
+
     // Codex P2: a new obligation-linked intent must target a known payable
     // obligation (rejects null/receivable at creation; see the method doc).
     await this.assertObligationDirectionPayable(ctx, input);
@@ -415,8 +431,7 @@ export class PaymentIntentService implements IPaymentIntentService {
     const stub = stubGateIntent({
       id: "pi_PENDING",
       ownerId: ctx.tenantId,
-      input:
-        effectiveConfidence !== undefined ? { ...input, confidence: effectiveConfidence } : input,
+      input: { ...input, confidence: persistedConfidence },
     });
     const decision = await this.deps.evaluatePolicy(ctx, stub);
 
@@ -447,7 +462,7 @@ export class PaymentIntentService implements IPaymentIntentService {
         status,
         policyDecisionId: decision.id,
         evidenceIds: input.evidence_ids ?? [],
-        ...(effectiveConfidence !== undefined ? { confidence: effectiveConfidence } : {}),
+        confidence: persistedConfidence,
         ...(input.evidence_score !== undefined ? { evidenceScore: input.evidence_score } : {}),
         ...(input.risk_level !== undefined ? { riskLevel: input.risk_level } : {}),
         // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
@@ -1489,6 +1504,13 @@ function intentToGate(row: PaymentIntentRow): GatePaymentIntent {
     confidence: row.confidence,
     evidence_score: row.evidence_score,
     risk_level: row.risk_level,
+    // H-21/H-22 fix: without these, gate check 6.7 (obligation direction) and
+    // duplicate-detector rules 1/2/7 (invoice_already_paid,
+    // obligation_already_settled, reconciliation_obligation_duplicate_paid) are
+    // all gated on these fields and silently add no row when they are absent,
+    // even though the row itself carries them (see toRecord below).
+    obligation_id: row.obligation_id,
+    invoice_id: row.invoice_id,
     ...gateSettlement(row.action_type, row.currency, row.amount, row.settlement_pay_to),
     ...gateEscrow(row.action_type, row.escrow_id, row.job_terms_hash),
   };
@@ -1511,6 +1533,10 @@ function stubGateIntent(args: {
     status: "proposed",
     policy_decision_id: null,
     evidence_ids: args.input.evidence_ids ?? [],
+    // H-21/H-22 fix: match intentToGate so the CREATE-time gate run sees the
+    // same obligation_id/invoice_id linkage the EXECUTE-time run sees.
+    ...(args.input.obligation_id !== undefined ? { obligation_id: args.input.obligation_id } : {}),
+    ...(args.input.invoice_id !== undefined ? { invoice_id: args.input.invoice_id } : {}),
     ...(args.input.confidence !== undefined ? { confidence: args.input.confidence } : {}),
     ...(args.input.evidence_score !== undefined
       ? { evidence_score: args.input.evidence_score }

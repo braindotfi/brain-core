@@ -58,7 +58,7 @@ function docEvidence(trustLevel: ResolvedEvidence["trustLevel"]): ResolvedEviden
     sourceArtifactId: "raw_doc1",
     capturedAt: NOW,
     trustLevel,
-    extracted: { counterparty_id: "cp_vendor", amount_due: "10.00", status: "open" },
+    extracted: { counterparty_id: "cp_vendor", amount_due: "10.00", status: "due" },
   };
 }
 
@@ -67,7 +67,10 @@ function baseIntent(overrides: Partial<GatePaymentIntent> = {}): GatePaymentInte
     id: "pi_TRUST",
     owner_id: TENANT,
     created_by_agent_id: ACTOR,
-    action_type: "pay_obligation",
+    // Real production action_type (see shared/src/gate/evidence-validator.ts):
+    // a stored PaymentIntent's action_type is a rail, never "pay_obligation";
+    // obligation_id is what routes check 9.5 to validatePayObligation.
+    action_type: "ach_outbound",
     source_account_id: "acct_X",
     destination_counterparty_id: "cp_vendor",
     amount: "10.00",

@@ -280,26 +280,45 @@ export class OutboxService {
   /**
    * Crash recovery. A row claimed into `dispatching` whose worker died never
    * reaches a terminal state and is NOT in the claim index, so it would be
-   * stranded. This returns `dispatching` rows whose lock is older than
-   * `staleSeconds` back to `pending` so the next claim re-picks them. Combined
-   * with the rail's idempotency key and the atomic conditional settle in
-   * PaymentIntentService.completeExecution (insert-execution + dispatching →
-   * executed in one tx; the transition no-ops and rolls the whole tx back if
-   * already settled), re-dispatch is at-least-once but the *effect* is
-   * exactly-once. Run on a privileged (cross-tenant) connection.
+   * stranded. This returns `dispatching`/`dispatched` rows whose lock is older
+   * than `staleSeconds` back to `pending` so the next claim re-picks them.
+   *
+   * F4 correction: the prior version of this comment claimed re-dispatch is
+   * always safe because "the rail call is idempotency-keyed" -- true only for
+   * the ACH rail (client_transaction_id). OnchainBaseRail and EscrowBaseRail
+   * re-read the live nonce on every dispatch, so a reclaimed row whose rail
+   * call already succeeded would send a SECOND on-chain transfer if
+   * processClaimedRow blindly re-dispatched it. The actual safety net lives in
+   * processClaimedRow: it checks `rail_receipt` before ever calling the rail
+   * again and resumes from the stored receipt instead of re-dispatching when
+   * one is already persisted (markDispatched writes rail_receipt durably
+   * BEFORE the intent settles, so a `dispatched` row -- or a `dispatching`
+   * row reclaimed after a completeExecution failure re-queued it -- always
+   * carries one). A genuinely undispatched row (still `dispatching`, no
+   * receipt yet) has no such record either way, so returning it to `pending`
+   * for a fresh attempt is the correct -- and only available -- recovery.
+   * Returns `prior_status` alongside each row (not otherwise recoverable from
+   * `RETURNING *`, since the UPDATE has already overwritten `status`) so the
+   * worker's audit trail can distinguish which in-flight state was reclaimed.
+   * Run on a privileged (cross-tenant) connection.
    */
-  public async reclaimStale(client: OutboxClient, staleSeconds: number): Promise<OutboxRow[]> {
-    // Both in-flight states are recoverable: `dispatching` (died before the
-    // receipt was persisted) and `dispatched` (died after persist, before the
-    // intent settled). Re-processing is safe — the rail call is idempotency-keyed
-    // and completeExecution no-ops once the intent is already `executed`.
-    const { rows } = await client.query<OutboxRow>(
-      `UPDATE execution_outbox
-          SET status = 'pending', locked_at = NULL, locked_by = NULL
-        WHERE status IN ('dispatching', 'dispatched')
-          AND locked_at IS NOT NULL
-          AND locked_at < now() - ($1 * interval '1 second')
-        RETURNING *`,
+  public async reclaimStale(
+    client: OutboxClient,
+    staleSeconds: number,
+  ): Promise<Array<OutboxRow & { prior_status: OutboxStatus }>> {
+    const { rows } = await client.query<OutboxRow & { prior_status: OutboxStatus }>(
+      `WITH stale AS (
+          SELECT id, status AS prior_status FROM execution_outbox
+           WHERE status IN ('dispatching', 'dispatched')
+             AND locked_at IS NOT NULL
+             AND locked_at < now() - ($1 * interval '1 second')
+           FOR UPDATE SKIP LOCKED
+        )
+        UPDATE execution_outbox eo
+           SET status = 'pending', locked_at = NULL, locked_by = NULL
+          FROM stale
+         WHERE eo.id = stale.id
+        RETURNING eo.*, stale.prior_status`,
       [staleSeconds],
     );
     return rows;

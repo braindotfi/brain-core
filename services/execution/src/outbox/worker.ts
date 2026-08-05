@@ -119,6 +119,25 @@ export async function runOutboxCycle(
   const staleSeconds = opts.staleSeconds ?? 300;
 
   const reclaimed = await deps.withPrivileged((c) => deps.outbox.reclaimStale(c, staleSeconds));
+  // F4: re-arming a money dispatch is the single most forensically important
+  // outbox transition (a stale-locked dispatching/dispatched row is about to
+  // be reclaimed for another attempt), so it must not be silent. One event per
+  // row, noting whether a rail_receipt already exists -- that is exactly the
+  // signal processClaimedRow uses below to resume instead of re-dispatching.
+  for (const row of reclaimed) {
+    await deps.audit.emit({
+      tenantId: row.tenant_id,
+      layer: "agent",
+      actor: deps.workerId,
+      action: "execution.outbox.reclaimed",
+      inputs: { outbox_id: row.id, payment_intent_id: row.payment_intent_id, rail: row.rail },
+      outputs: {
+        prior_status: row.prior_status,
+        had_rail_receipt: row.rail_receipt !== null,
+        attempt_count: row.attempt_count,
+      },
+    });
+  }
   const rows = await deps.withPrivileged((c) => deps.outbox.claimNext(c, deps.workerId, limit));
 
   const tally: CycleResult = {
@@ -175,6 +194,20 @@ export async function processClaimedRow(
     await emitStuck(deps, row, attempts, reason);
     await maybeEmitExhausted(deps, row, attempts, reason);
     return "reconciling";
+  }
+
+  // F4 — do not re-dispatch a row whose rail call already succeeded on a prior
+  // attempt. markDispatched persists rail_receipt (+ execution_id) durably
+  // BEFORE the intent settles, so any row that reaches this point already
+  // carrying one got here either as a reclaimed `dispatched` row (worker died
+  // between markDispatched and markSettled) or via the completeExecution
+  // failure path below (markFailed re-queues to pending/reconciling without
+  // clearing rail_receipt). Calling rail.dispatch again here would move funds
+  // a second time for any rail that is not itself idempotency-keyed (ACH is;
+  // onchain/escrow/x402 are not — see OutboxService.reclaimStale). Resume by
+  // re-attempting settlement against the stored receipt instead.
+  if (row.rail_receipt !== null && row.execution_id !== null) {
+    return await settleFromReceipt(deps, row, ctx, row.execution_id, row.rail_receipt);
   }
 
   if (deps.beforeDispatch !== undefined) {
@@ -267,6 +300,21 @@ export async function processClaimedRow(
   // money, so a DB failure here must NOT be treated as "no money moved": route
   // it to retry/reconcile. completeExecution is idempotent, so a reclaimed
   // re-run converges to exactly one settlement.
+  return await settleFromReceipt(deps, row, ctx, executionId, receipt);
+}
+
+/**
+ * Shared tail of processClaimedRow: attempt settlement against a receipt the
+ * rail already returned (freshly dispatched, or resumed from a persisted
+ * rail_receipt — see the F4 check above). Never calls the rail.
+ */
+async function settleFromReceipt(
+  deps: OutboxWorkerDeps,
+  row: OutboxRow,
+  ctx: ServiceCallContext,
+  executionId: string,
+  receipt: Record<string, unknown>,
+): Promise<RowOutcome> {
   try {
     await deps.executor.completeExecution(ctx, {
       paymentIntentId: row.payment_intent_id,

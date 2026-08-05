@@ -178,6 +178,21 @@ function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
+  it("H-21/H-22 regression: threads obligation_id and invoice_id into the create-time gate intent", async () => {
+    // stubGateIntent previously dropped these two fields even when the caller
+    // supplied them, silently disabling gate check 6.7 (obligation direction)
+    // and duplicate-detector rules 1/2/7 on the CREATE-time policy run.
+    const audit = new InMemoryAuditEmitter();
+    const { pool } = makeFakePool();
+    let seen: GatePaymentIntent | undefined;
+    const service = makeService(pool, audit, { onPolicy: (i) => (seen = i) });
+
+    await service.create(ctx, { ...baseInput, obligation_id: OBL, invoice_id: "inv_LINKED" });
+
+    expect(seen?.obligation_id).toBe(OBL);
+    expect(seen?.invoice_id).toBe("inv_LINKED");
+  });
+
   it.each(["other", "future_money_rail"])(
     "rejects non-executable action_type %s",
     async (actionType) => {
@@ -263,14 +278,18 @@ describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", 
     expect(insertConfidence(calls)).toBe(0.3);
   });
 
-  it("defaults to 1.0 when no resolver is wired and no input confidence is given", async () => {
+  it("F3: fails closed to confidence=0 (not 1.0) when no resolver is wired and no input confidence is given", async () => {
+    // Pre-F3 this asserted toBe(1.0): the ledger_payment_intents column
+    // default. An intent with no real confidence signal must not silently
+    // inherit the maximally-trusting value -- see the comment on
+    // persistedConfidence in create().
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = makeFakePool();
     const service = makeService(pool, audit); // no resolveObligationConfidence
 
     await service.create(ctx, baseInput);
 
-    expect(insertConfidence(calls)).toBe(1.0);
+    expect(insertConfidence(calls)).toBe(0);
   });
 
   it("H-2 regression: throws obligation_not_found when obligation_id was supplied but resolver returned null", async () => {
@@ -310,7 +329,8 @@ describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", 
     await service.create(ctx, inputNoObligation);
 
     expect(calledResolver).toBe(false);
-    expect(insertConfidence(calls)).toBe(1.0);
+    // F3: fails closed to 0, not the pre-F3 1.0 default -- see persistedConfidence.
+    expect(insertConfidence(calls)).toBe(0);
   });
 });
 

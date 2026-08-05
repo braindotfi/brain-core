@@ -741,6 +741,7 @@ function serializeObligation(row: ObligationRow): Obligation {
     recurrence: row.recurrence,
     status: row.status as Obligation["status"],
     linked_transaction_ids: row.linked_transaction_ids,
+    direction: row.direction,
     metadata: row.metadata ?? {},
   };
 }

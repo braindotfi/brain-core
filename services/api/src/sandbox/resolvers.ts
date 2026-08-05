@@ -71,6 +71,16 @@ export async function sandboxResolveAgent(
     id: agentId,
     state: "active",
     scope: { canExecutePayments: true },
+    // §6 gate check 9.5's source-trust rule (shared/src/gate/evidence-
+    // validator.ts pushTrust) treats an agent with no declared risk
+    // tolerance as requiring high-trust evidence, which document-tier
+    // evidence (pdf_upload/csv_upload/agent_contributed/other -- anything a
+    // caller can assert via /raw/ingest) never is. Without this, no
+    // document-evidence-backed invoice/obligation payment can ever pass
+    // check 9.5 in demo mode, regardless of how the evidence is ingested.
+    // "low" mirrors the risk tolerance the wedge-acceptance integration
+    // test uses for its equivalent synthetic agent.
+    max_risk_level: "low",
   };
 }
 

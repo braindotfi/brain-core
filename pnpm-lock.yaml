@@ -941,6 +941,9 @@ importers:
       '@brain/agent-router':
         specifier: workspace:*
         version: link:../../services/agent-router
+      '@brain/api':
+        specifier: workspace:*
+        version: link:../../services/api
       '@brain/audit':
         specifier: workspace:*
         version: link:../../services/audit
