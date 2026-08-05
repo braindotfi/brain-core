@@ -11,7 +11,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "plaid": "^18.0.0"
+    "plaid": "^45.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
