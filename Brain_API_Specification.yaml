@@ -1074,6 +1074,11 @@ paths:
                       policy_id: { type: [string, 'null'] }
                       agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: Platform identity already linked to a tenant. Returns `tenant_identity_already_linked` with `error.details.tenant_id`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: |
             Missing/invalid `X-Platform-Service-Auth` header (error code
@@ -1171,6 +1176,15 @@ paths:
                       policy_id: { type: [string, 'null'] }
                       agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: |
+            The globally unique platform identity is already linked to a tenant.
+            Returns `tenant_identity_already_linked` with the existing
+            `tenant_id` in `error.details`; use `POST /v1/sessions` to exchange
+            that identity for a member session instead of creating another tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: Missing or invalid platform credential.
           content:

@@ -6,6 +6,14 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.17 (production tenancy identity conflicts)
+
+- **Production tenant creation now handles an already-linked platform identity.**
+  `POST /v1/tenants` and `POST /v1/orgs/{orgId}/tenants` return `409`
+  `tenant_identity_already_linked` with the existing tenant id instead of
+  surfacing a PostgreSQL unique-constraint error. Clients can reattach through
+  the documented session and agent-token routes.
+
 ### v0.5.16 (explicit accounts receivable classification)
 
 - **AR-sourced Ledger invoices and obligations now carry

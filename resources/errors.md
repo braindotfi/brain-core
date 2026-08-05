@@ -135,6 +135,12 @@ When the §6 gate rejects an intent it surfaces as `payment_intent_gate_failed`,
 | `missing_required_field` | A required field is absent                                 |
 | `invalid_cursor`         | The pagination cursor is malformed or expired              |
 
+### Conflict (409)
+
+| Code                             | Meaning                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `tenant_identity_already_linked` | The platform identity is already linked to a tenant; use the returned `error.details.tenant_id` to reattach. |
+
 ### Rate limiting and server
 
 | Code               | Status | Meaning                                                          |

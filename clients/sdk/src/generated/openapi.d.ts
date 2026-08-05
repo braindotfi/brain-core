@@ -5519,6 +5519,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Platform identity already linked to a tenant. Returns `tenant_identity_already_linked` with `error.details.tenant_id`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
@@ -5595,6 +5604,20 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             /** @description Missing or invalid platform credential. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description The globally unique platform identity is already linked to a tenant.
+             *     Returns `tenant_identity_already_linked` with the existing
+             *     `tenant_id` in `error.details`; use `POST /v1/sessions` to exchange
+             *     that identity for a member session instead of creating another tenant.
+             */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

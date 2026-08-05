@@ -22,6 +22,10 @@ export function newSecretToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
+// This digest is for randomly generated opaque bearer tokens only. Never use
+// it for user-chosen or otherwise low-entropy secrets, which require a password
+// hashing function. TODO(security-review 2027-02-05): revalidate this invariant
+// before that date, or earlier when adding a hashToken caller.
 export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
