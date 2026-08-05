@@ -18,3 +18,14 @@ test("staging tenant identity lookup is fixed, validated, and read-only", () => 
   assert.match(workflow, /^ {10}REMOTE$/m);
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
+
+test("staging runtime health diagnostic has no free-form remote command input", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /- runtime-health/);
+  assert.match(workflow, /recent api error logs/);
+  assert.match(workflow, /recent worker error logs/);
+  assert.match(workflow, /docker exec brain-prod-postgres pg_isready/);
+  assert.match(workflow, /docker exec brain-prod-redis redis-cli ping/);
+  assert.doesNotMatch(workflow, /runtime_command|arbitrary command/i);
+});

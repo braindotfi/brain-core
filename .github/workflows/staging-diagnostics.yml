@@ -14,6 +14,7 @@ on:
           - document-extractor-connectivity
           - contextless-payroll-obligation-audit
           - tenant-identity-lookup
+          - runtime-health
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -48,8 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, or tenant-identity-lookup"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "runtime-health" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, or runtime-health"
             exit 1
           fi
 
@@ -228,6 +229,48 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
             run_tenant_identity_lookup
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "runtime-health" ]]; then
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+
+            redact_logs() {
+              sed -E \
+                -e 's#(postgres(ql)?://)[^[:space:]]+#\1[redacted]#g' \
+                -e 's#(Authorization: Bearer )[[:graph:]]+#\1[redacted]#g' \
+                -e 's#(Bearer )[A-Za-z0-9._-]+#\1[redacted]#g' \
+                -e 's#(password|token|secret)=([^[:space:]]+)#\1=[redacted]#gi'
+            }
+
+            echo 'container status'
+            for container in brain-prod-api brain-prod-worker brain-prod-agents brain-prod-postgres brain-prod-redis brain-prod-auth; do
+              status="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo absent)"
+              health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo absent)"
+              restarts="$(docker inspect --format '{{.RestartCount}}' "$container" 2>/dev/null || echo absent)"
+              started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container" 2>/dev/null || echo absent)"
+              echo "$container status=$status health=$health restarts=$restarts started_at=$started_at"
+            done
+
+            echo 'local dependency probes'
+            curl -sS --max-time 5 http://localhost:3000/health || true
+            echo
+            docker exec brain-prod-postgres pg_isready -U brain -d brain || true
+            docker exec brain-prod-redis redis-cli ping || true
+
+            echo 'recent api error logs'
+            docker logs --since 45m brain-prod-api 2>&1 \
+              | grep -Ei 'error|exception|fatal|unhandled|ECONNREFUSED|timeout|postgres|redis|internal_server_error' \
+              | tail -200 \
+              | redact_logs || true
+
+            echo 'recent worker error logs'
+            docker logs --since 45m brain-prod-worker 2>&1 \
+              | grep -Ei 'error|exception|fatal|unhandled|ECONNREFUSED|timeout|postgres|redis|internal_server_error' \
+              | tail -200 \
+              | redact_logs || true
+            REMOTE
             exit 0
           fi
 
