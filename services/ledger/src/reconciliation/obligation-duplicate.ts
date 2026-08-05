@@ -48,7 +48,7 @@ const IDENTITY_KEY_SQL = `COALESCE(
   NULLIF(metadata->'merge'->>'invoice_id', ''),
   NULLIF(metadata->'document'->>'invoice_number', ''),
   NULLIF(metadata->'stripe'->>'dispute_id', ''),
-  NULLIF(external_key, '')
+  NULLIF(CASE WHEN external_key LIKE 'canonical:%' THEN NULL ELSE external_key END, '')
 )`;
 
 export class ObligationDuplicateMatcher implements Matcher {

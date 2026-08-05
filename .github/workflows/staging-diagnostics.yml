@@ -9,8 +9,18 @@ on:
         type: choice
         options:
           - counterparty-trust-gate-impact
+          - upload-pipeline-state
+          - upload-pipeline-worker-logs
+          - document-extractor-connectivity
+          - contextless-payroll-obligation-audit
+          - tenant-identity-lookup
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
+        required: false
+        type: string
+        default: ""
+      identity_lookup:
+        description: "Exact platform user UUID or email for tenant-identity-lookup only."
         required: false
         type: string
         default: ""
@@ -32,14 +42,24 @@ jobs:
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
       DIAGNOSTIC: ${{ inputs.diagnostic }}
       TENANT_IDS: ${{ inputs.tenant_ids }}
+      IDENTITY_LOOKUP: ${{ inputs.identity_lookup }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, or tenant-identity-lookup"
             exit 1
+          fi
+
+          if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
+            if [[ "$IDENTITY_LOOKUP" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ || "$IDENTITY_LOOKUP" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
+              :
+            else
+              echo "tenant-identity-lookup requires an exact UUID or email"
+              exit 1
+            fi
           fi
 
           if [[ ${#TENANT_IDS} -gt 540 ]]; then
@@ -71,10 +91,24 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Compile fixed report for stdin execution
+        if: inputs.diagnostic == 'counterparty-trust-gate-impact'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/staging-diagnostics"
+          report_source=""
+          case "$DIAGNOSTIC" in
+            counterparty-trust-gate-impact)
+              report_source="scripts/ops/report-counterparty-trust-gate-impact.ts"
+              ;;
+            upload-pipeline-state)
+              report_source="scripts/ops/report-upload-pipeline-state.ts"
+              ;;
+            *)
+              echo "unsupported diagnostic: $DIAGNOSTIC"
+              exit 1
+              ;;
+          esac
           pnpm exec tsc \
             --target es2022 \
             --module es2022 \
@@ -82,8 +116,8 @@ jobs:
             --skipLibCheck \
             --esModuleInterop \
             --outDir "$RUNNER_TEMP/staging-diagnostics" \
-            scripts/ops/report-counterparty-trust-gate-impact.ts
-          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/report-counterparty-trust-gate-impact.js" >> "$GITHUB_ENV"
+            "$report_source"
+          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         shell: bash
@@ -102,10 +136,167 @@ jobs:
             "docker exec brain-prod-worker printenv GIT_SHA")"
           echo "staging_git_sha=$worker_sha"
 
-      - name: Run counterparty trust gate impact report
+      - name: Run fixed staging diagnostic
         shell: bash
         run: |
           set -euo pipefail
+
+          identity_lookup_b64="$(printf '%s' "$IDENTITY_LOOKUP" | base64 | tr -d '\n')"
+
+          run_tenant_identity_lookup() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "IDENTITY_LOOKUP_B64='$identity_lookup_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            identity_lookup="$(printf '%s' "$IDENTITY_LOOKUP_B64" | base64 -d)"
+            if [[ ! "$identity_lookup" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ && ! "$identity_lookup" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]]; then
+              echo "tenant-identity-lookup remote validation failed"
+              exit 1
+            fi
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v identity_lookup="$identity_lookup" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'matching platform identity links'
+            WITH matches AS (
+              SELECT l.tenant_id,
+                     l.member_id,
+                     l.external_ref,
+                     l.linked_at,
+                     m.email,
+                     m.display_name,
+                     m.status AS member_status,
+                     m.active AS member_active,
+                     t.kind,
+                     t.sandbox,
+                     t.created_via,
+                     t.created_at AS tenant_created_at
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+                JOIN tenants t ON t.id = l.tenant_id
+               WHERE l.surface = 'platform'
+                 AND (l.external_ref = :'identity_lookup'
+                      OR lower(m.email) = lower(:'identity_lookup'))
+            )
+            SELECT tenant_id,
+                   member_id,
+                   external_ref,
+                   email,
+                   display_name,
+                   member_status,
+                   member_active,
+                   kind,
+                   sandbox,
+                   created_via,
+                   tenant_created_at,
+                   linked_at
+              FROM matches
+             ORDER BY tenant_created_at DESC, tenant_id DESC;
+
+            \echo 'tenant creation audit events for matching identities'
+            WITH matching_tenants AS (
+              SELECT DISTINCT l.tenant_id
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+               WHERE l.surface = 'platform'
+                 AND (l.external_ref = :'identity_lookup'
+                      OR lower(m.email) = lower(:'identity_lookup'))
+            )
+            SELECT ae.tenant_id,
+                   ae.id AS audit_event_id,
+                   ae.created_at,
+                   ae.action,
+                   ae.actor,
+                   ae.inputs,
+                   ae.outputs
+              FROM audit_events ae
+              JOIN matching_tenants mt ON mt.tenant_id = ae.tenant_id
+             WHERE ae.action IN ('tenant.created', 'tenant.demo_seeded')
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
+            run_tenant_identity_lookup
+            exit 0
+          fi
+
+          run_upload_pipeline_report() {
+            local tenant_id="$1"
+            cat scripts/ops/report-upload-pipeline-state.sql | \
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -v tenant_id='$tenant_id'"
+          }
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-state" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-state requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              run_upload_pipeline_report "$tenant_id"
+            done
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "contextless-payroll-obligation-audit" ]]; then
+            cat scripts/ops/report-contextless-payroll-obligations.sql | \
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1"
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "document-extractor-connectivity" ]]; then
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+              set -euo pipefail
+              echo "agents_container_state=$(docker inspect --format={{.State.Status}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_container_health=$(docker inspect --format={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} brain-prod-agents 2>/dev/null || echo absent)"
+              echo "agents_boot_diagnostics:"
+              docker logs --tail=100 brain-prod-agents 2>&1 | \
+                grep -E "RuntimeError|Traceback|missing|required|OPENAI|BRAIN_API_TOKEN|BRAIN_AGENTS_INBOUND_SECRET" || true
+              docker exec brain-prod-worker node -e '\''
+                const base = process.env.DOCUMENT_EXTRACT_AGENT_URL;
+                console.log(`document_extract_agent_url_set=${base ? "true" : "false"}`);
+                if (!base) process.exit(0);
+                fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) })
+                  .then(async (response) => {
+                    console.log(`document_extract_agent_health_status=${response.status}`);
+                    console.log(`document_extract_agent_health_ok=${response.ok}`);
+                  })
+                  .catch((error) => {
+                    console.log(`document_extract_agent_health_error=${error.name}`);
+                    process.exitCode = 1;
+                  });
+              '\''
+            '
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "upload-pipeline-worker-logs" ]]; then
+            if [[ -z "$TENANT_IDS" ]]; then
+              echo "upload-pipeline-worker-logs requires tenant_ids"
+              exit 1
+            fi
+            IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
+            for tenant_id in "${tenant_ids[@]}"; do
+              echo "tenant_id=$tenant_id"
+              ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+                "docker logs --tail=3000 brain-prod-worker 2>&1 | grep -F '$tenant_id' | tail -200 || true"
+            done
+            exit 0
+          fi
 
           run_report() {
             local tenant_id="$1"
@@ -113,7 +304,7 @@ jobs:
             # The worker owns the scoped ledger-projector URL assembled by Compose.
             remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
             if [[ -n "$tenant_id" ]]; then
-              remote_command+=" -- --tenant-id '$tenant_id'"
+              remote_command+=" --tenant-id '$tenant_id'"
             fi
             cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" "$remote_command"

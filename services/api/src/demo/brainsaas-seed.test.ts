@@ -135,6 +135,7 @@ describe("seedBrainSaasDemo", () => {
 
     // AP inbox (3) + AR receivables (4).
     expect(Object.keys(result.apInvoices)).toEqual(["cloudops", "datacenter", "quickpay"]);
+    expect(Object.keys(result.apObligations)).toEqual(["cloudops", "datacenter", "quickpay"]);
     expect(Object.keys(result.arInvoices)).toEqual([
       "bigco",
       "midmarket",
@@ -157,6 +158,18 @@ describe("seedBrainSaasDemo", () => {
       "alchemy_wallet",
       "tax_return",
     ]);
+  });
+
+  it("seeds AP bills as payable obligations separate from AR invoices", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const inserts = scopedCalls.filter((c) => c.sql.includes("INSERT INTO ledger_obligations"));
+    expect(inserts).toHaveLength(3);
+    expect(inserts.map((entry) => entry.values?.[3])).toEqual(["19400.00", "187000.00", "4800.00"]);
+    for (const insert of inserts) {
+      expect(insert.sql).toContain("'payable'");
+    }
   });
 
   it("does not overwrite tenant kind when seeding an existing durable tenant", async () => {
@@ -491,6 +504,21 @@ describe("seedBrainSaasDemo", () => {
     const statuses = apInvoiceInserts.map((c) => c.values?.[7]);
     expect(statuses).toContain("overdue");
     expect(statuses).toContain("sent");
+  });
+
+  it("marks every seeded AR invoice with an explicit scenario", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const arInvoiceInserts = scopedCalls.filter(
+      (c) =>
+        c.sql.includes("INSERT INTO ledger_invoices") &&
+        c.sql.includes("'extracted',0.88,$11::jsonb"),
+    );
+    expect(arInvoiceInserts).toHaveLength(4);
+    for (const insert of arInvoiceInserts) {
+      expect(JSON.parse(String(insert.values?.[10]))).toEqual({ scenario: "ar" });
+    }
   });
 
   it("inserts one source document per AP invoice", async () => {

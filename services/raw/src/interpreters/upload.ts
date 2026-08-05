@@ -5,7 +5,7 @@ import type { ArtifactInterpreter, InterpretedOutput } from "./registry.js";
 export const UPLOAD_DOCUMENT_SCHEMA = "brain.upload.document.v1";
 export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1";
 export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
-export const UPLOAD_DOCUMENT_INTERPRETER_VERSION = "1.0.1";
+export const UPLOAD_DOCUMENT_INTERPRETER_VERSION = "1.0.3";
 const DEFAULT_CURRENCY = "USD";
 const HEADER_SCAN_LIMIT = 10;
 const MIN_BANK_STATEMENT_PDF_CONFIDENCE = 0.6;
@@ -1225,14 +1225,25 @@ function payrollAggregates(
     const amount = netAmount ?? grossAmount;
     if (amount === null) continue;
 
-    const runRef =
+    const explicitRunRef =
       firstField(record, ["run_ref", "pay_run", "payroll_run", "payroll_id", "run_id"]) ??
-      currentContext.runRef ??
-      `${ctx.rawArtifactId}:payroll:${out.size + 1}`;
+      currentContext.runRef;
     const payDate =
       normalizeSpreadsheetDate(
         firstField(record, ["pay_date", "payment_date", "run_date", "due_date"]),
       ) ?? currentContext.payDate;
+    // A payroll summary can inherit the employee-shaped header while having
+    // neither a run reference nor a pay date. It is not a payable run, and
+    // the old fallback emitted it with a synthetic key and no due date.
+    if (payDate === null) continue;
+    // Some payroll exports omit a run identifier on employee rows but retain
+    // the pay date. Treat that date as the run boundary so employee rows do
+    // not become separate obligations or collide in Ledger's legacy dedupe key.
+    const runRef =
+      explicitRunRef ??
+      (payDate === null
+        ? `${ctx.rawArtifactId}:payroll:${out.size + 1}`
+        : `${ctx.rawArtifactId}:payroll:${payDate}`);
     const cadence =
       firstField(record, ["cadence", "frequency", "run_cadence"]) ??
       currentContext.cadence ??
