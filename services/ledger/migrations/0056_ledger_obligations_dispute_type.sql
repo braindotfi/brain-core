@@ -6,7 +6,7 @@
 -- projection (services/ledger/src/projection/obligations.ts) passes
 -- row.type verbatim into this column's INSERT, so any tenant with a Stripe
 -- account that ever had a chargeback hit a 23514 check_violation here -- and,
--- before services/ledger/migrations/0053_ledger_projection_quarantine.sql,
+-- before services/ledger/migrations/0055_ledger_projection_quarantine.sql,
 -- that one bad row wedged the whole cross-tenant projection cycle.
 --
 -- A dispute is a genuine obligation type (money the business may owe back to

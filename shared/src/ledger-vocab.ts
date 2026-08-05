@@ -1,7 +1,7 @@
 /**
  * Ledger obligation vocabulary: the single source of truth for
  * ledger_obligations.type (services/ledger/migrations/0007_ledger_obligations.sql,
- * widened by services/ledger/migrations/0054_ledger_obligations_dispute_type.sql)
+ * widened by services/ledger/migrations/0056_ledger_obligations_dispute_type.sql)
  * and for the decimal-amount shape every obligation writer expects.
  *
  * canonical_obligation.type is unconstrained TEXT (services/canonical), but
