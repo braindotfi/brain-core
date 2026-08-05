@@ -34,7 +34,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@aws-sdk/client-s3": "^3.670.0",
-    "@aws-sdk/s3-request-presigner": "^3.670.0",
+    "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@azure/storage-blob": "^12.25.0",
     "@brain/agent-router": "workspace:*",
     "@brain/audit": "workspace:*",
