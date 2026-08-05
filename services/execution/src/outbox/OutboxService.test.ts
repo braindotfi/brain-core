@@ -198,4 +198,19 @@ describe("OutboxService terminal transitions", () => {
     expect(q?.sql).toContain("locked_at <");
     expect(q?.values).toEqual([300]);
   });
+
+  it("F4: reclaimStale returns prior_status alongside each row, not recoverable from RETURNING * alone", async () => {
+    // The UPDATE overwrites status to 'pending' before RETURNING runs, so the
+    // worker's audit trail needs the CTE-captured prior value to say what was
+    // actually reclaimed (dispatching vs dispatched).
+    const svc = new OutboxService();
+    const { client } = fakeClient((sql) =>
+      sql.includes("UPDATE execution_outbox")
+        ? [{ id: "exo_stale", status: "pending", prior_status: "dispatched" }]
+        : [],
+    );
+    const rows = await svc.reclaimStale(client, 300);
+    expect(rows[0]?.prior_status).toBe("dispatched");
+    expect(rows[0]?.status).toBe("pending");
+  });
 });

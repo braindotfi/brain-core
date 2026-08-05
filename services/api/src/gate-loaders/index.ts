@@ -268,6 +268,7 @@ export function makeResolveEvidence(
   return (ctx, intent) =>
     withTenantScope(pool, ctx.tenantId, async (c) => {
       if (intent.evidence_ids.length === 0) return [];
+      const evidenceIds = [...intent.evidence_ids];
       // JOIN the owning artifact so trust comes from its server-set source_type.
       // Both tables are tenant-scoped under RLS, so the join stays in-tenant.
       const { rows } = await c.query<{
@@ -283,16 +284,116 @@ export function makeResolveEvidence(
            FROM raw_parsed rp
            JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
           WHERE rp.id = ANY($1::text[])`,
-        [[...intent.evidence_ids]],
+        [evidenceIds],
       );
-      return rows.map((r) => ({
-        id: r.id,
-        kind: r.parser,
-        extracted: r.extracted,
-        sourceArtifactId: r.raw_artifact_id,
-        capturedAt: r.extracted_at,
-        trustLevel: sourceTrust(r.source_type),
-      }));
+
+      // H-21 kind-vocabulary fix: the pure validator (shared/src/gate) matches
+      // evidence by semantic kind ("invoice" / "obligation_reference") and reads
+      // ledger field names (invoice_number, counterparty_id, amount_due,
+      // amount_paid, status) that raw_parsed.extracted never carries -- a raw
+      // document payload has a counterparty NAME, not a resolved ledger id, and
+      // no invoice_number at all. The loader's documented job (see the header
+      // comment on shared/src/gate/evidence-validator.ts) is to resolve those
+      // against Ledger once the document has been PROJECTED into a structured
+      // obligation/invoice. Both ledger tables carry the raw_parsed id in their
+      // own evidence_ids array, so join on that. A raw_parsed row with no such
+      // link is not-yet-projected evidence and correctly stays unmatched (kind
+      // falls back to the parser id, which fails invoice_present /
+      // obligation_reference_present closed -- an un-projected document cannot
+      // back a specific invoice/obligation payment claim).
+      const invoiceMap = new Map<
+        string,
+        {
+          id: string;
+          invoice_number: string;
+          counterparty_id: string;
+          amount_due: string;
+          amount_paid: string;
+          currency: string;
+        }
+      >();
+      const obligationMap = new Map<
+        string,
+        { counterparty_id: string; amount_due: string; currency: string; status: string }
+      >();
+      if (rows.length > 0) {
+        const { rows: invoiceRows } = await c.query<{
+          raw_parsed_id: string;
+          id: string;
+          invoice_number: string;
+          counterparty_id: string;
+          amount_due: string;
+          amount_paid: string;
+          currency: string;
+        }>(
+          `SELECT x.raw_parsed_id, i.id, i.invoice_number, i.counterparty_id,
+                  i.amount_due::TEXT AS amount_due, i.amount_paid::TEXT AS amount_paid, i.currency
+             FROM ledger_invoices i, unnest(i.evidence_ids) AS x(raw_parsed_id)
+            WHERE x.raw_parsed_id = ANY($1::text[])`,
+          [evidenceIds],
+        );
+        for (const r of invoiceRows) invoiceMap.set(r.raw_parsed_id, r);
+
+        const { rows: obligationRows } = await c.query<{
+          raw_parsed_id: string;
+          counterparty_id: string;
+          amount_due: string;
+          currency: string;
+          status: string;
+        }>(
+          `SELECT x.raw_parsed_id, o.counterparty_id,
+                  o.amount_due::TEXT AS amount_due, o.currency, o.status
+             FROM ledger_obligations o, unnest(o.evidence_ids) AS x(raw_parsed_id)
+            WHERE x.raw_parsed_id = ANY($1::text[])`,
+          [evidenceIds],
+        );
+        for (const r of obligationRows) obligationMap.set(r.raw_parsed_id, r);
+      }
+
+      return rows.map((r) => {
+        const inv = invoiceMap.get(r.id);
+        if (inv !== undefined) {
+          return {
+            id: r.id,
+            kind: "invoice",
+            extracted: {
+              id: inv.id,
+              invoice_number: inv.invoice_number,
+              counterparty_id: inv.counterparty_id,
+              amount_due: inv.amount_due,
+              amount_paid: inv.amount_paid,
+              currency: inv.currency,
+            },
+            sourceArtifactId: r.raw_artifact_id,
+            capturedAt: r.extracted_at,
+            trustLevel: sourceTrust(r.source_type),
+          };
+        }
+        const obl = obligationMap.get(r.id);
+        if (obl !== undefined) {
+          return {
+            id: r.id,
+            kind: "obligation_reference",
+            extracted: {
+              counterparty_id: obl.counterparty_id,
+              amount_due: obl.amount_due,
+              currency: obl.currency,
+              status: obl.status,
+            },
+            sourceArtifactId: r.raw_artifact_id,
+            capturedAt: r.extracted_at,
+            trustLevel: sourceTrust(r.source_type),
+          };
+        }
+        return {
+          id: r.id,
+          kind: r.parser,
+          extracted: r.extracted,
+          sourceArtifactId: r.raw_artifact_id,
+          capturedAt: r.extracted_at,
+          trustLevel: sourceTrust(r.source_type),
+        };
+      });
     });
 }
 

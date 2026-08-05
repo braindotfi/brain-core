@@ -45,9 +45,20 @@ interface FakeClient {
   query: (sql: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
 }
 
-const scoped = vi.hoisted(() => ({ rows: [] as unknown[] }));
+const scoped = vi.hoisted(() => ({
+  rows: [] as unknown[],
+  invoiceRows: [] as unknown[],
+  obligationRows: [] as unknown[],
+}));
 function setScopedRows(rows: unknown[]): void {
   scoped.rows = rows;
+}
+function setLedgerEnrichmentRows(opts: {
+  invoiceRows?: unknown[];
+  obligationRows?: unknown[];
+}): void {
+  scoped.invoiceRows = opts.invoiceRows ?? [];
+  scoped.obligationRows = opts.obligationRows ?? [];
 }
 
 vi.mock("@brain/shared", async () => {
@@ -57,7 +68,11 @@ vi.mock("@brain/shared", async () => {
     withTenantScope: vi.fn(
       async (_pool: unknown, _tenantId: string, fn: (c: FakeClient) => Promise<unknown>) => {
         const client: FakeClient = {
-          query: async () => ({ rows: scoped.rows }),
+          query: async (sql: string) => {
+            if (sql.includes("FROM ledger_invoices")) return { rows: scoped.invoiceRows };
+            if (sql.includes("FROM ledger_obligations")) return { rows: scoped.obligationRows };
+            return { rows: scoped.rows };
+          },
         };
         return fn(client);
       },
@@ -452,6 +467,105 @@ describe("makeResolveEvidence", () => {
     // agent_contributed artifact cannot reach high.
     expect(out[1]?.trustLevel).toBe("low");
     expect(out[2]?.trustLevel).toBe("medium");
+  });
+
+  it("H-21: enriches a raw_parsed row linked to a projected ledger_obligations row as kind=obligation_reference", async () => {
+    const capturedAt = new Date("2026-02-01T00:00:00Z");
+    setScopedRows([
+      {
+        id: "rp_obl",
+        raw_artifact_id: "raw_obl",
+        parser: "doc_obligation_v1",
+        source_type: "pdf_upload",
+        extracted: { counterparty_name: "Acme", amount: "1200.00" },
+        extracted_at: capturedAt,
+      },
+    ]);
+    setLedgerEnrichmentRows({
+      obligationRows: [
+        {
+          raw_parsed_id: "rp_obl",
+          counterparty_id: "cp_acme",
+          amount_due: "1200.00",
+          currency: "USD",
+          status: "due",
+        },
+      ],
+    });
+    const intent = { evidence_ids: ["rp_obl"] } as unknown as GatePaymentIntent;
+    const out = await makeResolveEvidence(POOL)(ctx(), intent);
+    expect(out).toEqual([
+      {
+        id: "rp_obl",
+        kind: "obligation_reference",
+        extracted: {
+          counterparty_id: "cp_acme",
+          amount_due: "1200.00",
+          currency: "USD",
+          status: "due",
+        },
+        sourceArtifactId: "raw_obl",
+        capturedAt,
+        trustLevel: "low",
+      },
+    ]);
+  });
+
+  it("H-21: enriches a raw_parsed row linked to a projected ledger_invoices row as kind=invoice", async () => {
+    const capturedAt = new Date("2026-02-01T00:00:00Z");
+    setScopedRows([
+      {
+        id: "rp_inv",
+        raw_artifact_id: "raw_inv",
+        parser: "doc_obligation_v1",
+        source_type: "pdf_upload",
+        extracted: {},
+        extracted_at: capturedAt,
+      },
+    ]);
+    setLedgerEnrichmentRows({
+      invoiceRows: [
+        {
+          raw_parsed_id: "rp_inv",
+          id: "inv_1",
+          invoice_number: "INV-100",
+          counterparty_id: "cp_acme",
+          amount_due: "5000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+        },
+      ],
+    });
+    const intent = { evidence_ids: ["rp_inv"] } as unknown as GatePaymentIntent;
+    const out = await makeResolveEvidence(POOL)(ctx(), intent);
+    expect(out[0]?.kind).toBe("invoice");
+    expect(out[0]?.extracted).toEqual({
+      id: "inv_1",
+      invoice_number: "INV-100",
+      counterparty_id: "cp_acme",
+      amount_due: "5000.00",
+      amount_paid: "0.00",
+      currency: "USD",
+    });
+  });
+
+  it("H-21: an unprojected document (no ledger link yet) falls back to the raw parser id as kind", async () => {
+    const capturedAt = new Date("2026-02-01T00:00:00Z");
+    setScopedRows([
+      {
+        id: "rp_unlinked",
+        raw_artifact_id: "raw_unlinked",
+        parser: "doc_obligation_v1",
+        source_type: "pdf_upload",
+        extracted: { counterparty_name: "Acme" },
+        extracted_at: capturedAt,
+      },
+    ]);
+    setLedgerEnrichmentRows({});
+    const intent = { evidence_ids: ["rp_unlinked"] } as unknown as GatePaymentIntent;
+    const out = await makeResolveEvidence(POOL)(ctx(), intent);
+    expect(out[0]?.kind).toBe("doc_obligation_v1");
+    expect(out[0]?.extracted).toEqual({ counterparty_name: "Acme" });
   });
 });
 

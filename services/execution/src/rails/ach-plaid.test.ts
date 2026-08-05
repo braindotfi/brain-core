@@ -35,6 +35,7 @@ function dispatchInput(overrides: Partial<RailDispatchInput> = {}): RailDispatch
       type: "credit",
       user: { legal_name: "Acme Inc" },
       description: "Invoice 42 payment",
+      destination_counterparty_id: "cp_vendor_1",
     },
     ...overrides,
   };
@@ -86,6 +87,7 @@ describe("AchPlaidRail.dispatch", () => {
       authorization_id: "auth_1",
       transfer_id: "xfer_1",
       status: "pending",
+      destination_counterparty_id: "cp_vendor_1",
     });
     // Two-call sequence, in order.
     expect(authCalls).toHaveLength(1);
@@ -127,9 +129,34 @@ describe("AchPlaidRail.dispatch", () => {
     const { client } = mockPlaid();
     const rail = new AchPlaidRail({ client });
     const bad = dispatchInput({
-      action: { access_token: "a", account_id: "b", amount: 1000, user: { legal_name: "x" } },
+      action: {
+        access_token: "a",
+        account_id: "b",
+        amount: 1000,
+        user: { legal_name: "x" },
+        destination_counterparty_id: "cp_1",
+      },
     });
     await expect(rail.dispatch(bad)).rejects.toBeInstanceOf(BrainError);
+  });
+
+  it("F5: fails closed when destination_counterparty_id is missing from the action", async () => {
+    // The counterparty-swap attack this closes: without this, a payload that
+    // never carried a destination binding would still dispatch, moving money
+    // with no verified relationship to any gate-approved payee.
+    const { client, authCalls, createCalls } = mockPlaid();
+    const rail = new AchPlaidRail({ client });
+    const missing = dispatchInput({
+      action: {
+        access_token: "access-sandbox-1",
+        account_id: "acct_1",
+        amount: "1000.00",
+        user: { legal_name: "Acme Inc" },
+      },
+    });
+    await expect(rail.dispatch(missing)).rejects.toMatchObject({ code: "validation_failed" });
+    expect(authCalls).toHaveLength(0);
+    expect(createCalls).toHaveLength(0);
   });
 });
 

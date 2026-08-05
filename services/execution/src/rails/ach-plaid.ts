@@ -74,6 +74,13 @@ export interface AchTransferAction {
   user: { legal_name: string };
   /** Statement descriptor (Plaid caps at 15 chars). */
   description?: string;
+  /**
+   * F5 (H-05 follow-up): the ledger counterparty every gate check upstream
+   * (5, 5.25, 6, 11.5, actor-not-payee) validated this dispatch against.
+   * Required so the rail cannot silently drop the only field that ties the
+   * Plaid call to the approved payee -- see the caveat on dispatch() below.
+   */
+  destination_counterparty_id: string;
 }
 
 function parseAchAction(action: Record<string, unknown>): AchTransferAction {
@@ -98,11 +105,27 @@ function parseAchAction(action: Record<string, unknown>): AchTransferAction {
   if (typeof legalName !== "string" || legalName.length === 0) {
     throw brainError("validation_failed", "ACH action requires user.legal_name");
   }
+  // F5: the payload already carries destination_counterparty_id (every rail's
+  // input.action is built from the same base payload in
+  // PaymentIntentService.execute) -- this rail simply never read it. Every
+  // gate check that validated this payment (counterparty_allowed, trust,
+  // verification threshold, duplicate-payment / vendor-swap detection,
+  // actor-not-payee) did so against that id, so a dispatch that cannot bind
+  // to it has no verified relationship to any approved payee and must fail
+  // closed rather than silently proceed with only a funding-account identity.
+  const destinationCounterpartyId = action["destination_counterparty_id"];
+  if (typeof destinationCounterpartyId !== "string" || destinationCounterpartyId.length === 0) {
+    throw brainError(
+      "validation_failed",
+      "ACH action requires a string destination_counterparty_id",
+    );
+  }
   const out: AchTransferAction = {
     access_token: accessToken,
     account_id: accountId,
     amount,
     user: { legal_name: legalName },
+    destination_counterparty_id: destinationCounterpartyId,
   };
   const type = action["type"];
   if (type === "debit" || type === "credit") out.type = type;
@@ -127,6 +150,23 @@ export class AchPlaidRail implements Rail {
     this.client = deps.client;
   }
 
+  /**
+   * F5 CAVEAT — read before touching account_id/access_token below. Both are
+   * always resolved from the FUNDING (source) account's own Plaid credential
+   * (PaymentIntentService.sourceCredentialResolver), never from
+   * destination_counterparty_id, for BOTH "debit" and "credit" transfers.
+   * Whether Plaid Transfer's `type: credit` actually requires the payee's
+   * OWN linked Plaid item to land funds in their account, or genuinely
+   * settles to an arbitrary counterparty via the funding account's own ACH
+   * rail once authorized, is UNCONFIRMED — this codebase has no mechanism to
+   * resolve a counterparty-side Plaid credential at all (no counterparty
+   * equivalent of sourceCredentialResolver exists). This fix binds and
+   * requires destination_counterparty_id (parseAchAction fails closed if it
+   * is absent) and carries it into the receipt for forensic traceability; it
+   * deliberately does NOT change which Plaid account_id/access_token the
+   * transfer actually uses. Confirm the real fund-direction semantics against
+   * a Plaid sandbox transfer before changing that part.
+   */
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     const action = parseAchAction(input.action);
     const type = action.type ?? "credit";
@@ -175,6 +215,7 @@ export class AchPlaidRail implements Rail {
         authorization_id: auth.authorization.id,
         transfer_id: created.transfer.id,
         status: "pending",
+        destination_counterparty_id: action.destination_counterparty_id,
       },
     };
   }

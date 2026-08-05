@@ -25,3 +25,10 @@ export { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
 // demo token's principal has a real `members` row (see above), not just by
 // provision.ts / brainsaas-seed.ts.
 export { insertBootstrapAdminMember } from "./onboarding/bootstrap-member.js";
+
+// §6 gate check 9.5 evidence loader - re-exported so integration tests (e.g.
+// tests/invariants) can exercise the REAL ledger-enrichment join (raw_parsed
+// -> ledger_invoices / ledger_obligations by evidence_ids) instead of
+// hand-rolling a mock that drifts from production semantics. See the header
+// comment on gate-loaders/index.ts for why this loader lives here.
+export { makeResolveEvidence } from "./gate-loaders/index.js";

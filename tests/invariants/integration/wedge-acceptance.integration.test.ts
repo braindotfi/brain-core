@@ -44,6 +44,7 @@ import {
   type ServiceCallContext,
   PostgresAuditEmitter,
 } from "@brain/shared";
+import { makeResolveEvidence } from "@brain/api";
 
 import {
   LedgerService,
@@ -521,6 +522,7 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
   }
 
   function gateDeps(counterpartyId: string, outcome: "allow" | "confirm"): GateDependencies {
+    const resolveEvidenceLoader = makeResolveEvidence(pool);
     const agent: GateAgent = {
       id: "agent_wedge",
       state: "active",
@@ -553,46 +555,15 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
         trace: [],
       }),
       resolveApprovals: async (): Promise<GateApprovalState> => ({ signedRoles: ["owner"] }),
-      // Mirrors makeResolveEvidence: trust derives from the artifact's
-      // source_type, never the caller-chosen parser label.
-      resolveEvidence: async (intent: GatePaymentIntent): Promise<ResolvedEvidence[]> =>
-        withTenantScope(pool, TENANT, async (c) => {
-          if (intent.evidence_ids.length === 0) return [];
-          const { rows } = await c.query(
-            `SELECT rp.id, rp.raw_artifact_id, rp.parser, ra.source_type, rp.extracted, rp.extracted_at
-               FROM raw_parsed rp JOIN raw_artifacts ra ON ra.id = rp.raw_artifact_id
-              WHERE rp.id = ANY($1::text[])`,
-            [[...intent.evidence_ids]],
-          );
-          return rows.map(
-            (r: {
-              id: string;
-              raw_artifact_id: string;
-              parser: string;
-              source_type: string;
-              extracted: Record<string, unknown>;
-              extracted_at: Date;
-            }) => ({
-              id: r.id,
-              kind: r.parser,
-              extracted: r.extracted,
-              sourceArtifactId: r.raw_artifact_id,
-              capturedAt: r.extracted_at,
-              trustLevel:
-                r.source_type === "plaid" || r.source_type === "stripe"
-                  ? ("high" as const)
-                  : [
-                        "agent_contributed",
-                        "csv_upload",
-                        "pdf_upload",
-                        "email_inbound",
-                        "other",
-                      ].includes(r.source_type)
-                    ? ("low" as const)
-                    : ("medium" as const),
-            }),
-          );
-        }),
+      // The REAL production loader (services/api/src/gate-loaders/index.ts),
+      // not a hand-rolled mirror: it JOINs raw_parsed evidence against
+      // ledger_invoices / ledger_obligations (via their evidence_ids arrays)
+      // to derive the semantic kind ("invoice" / "obligation_reference") the
+      // pure validator matches on. A mock that set kind: parser directly
+      // could never produce those semantic kinds, so this stays wired to the
+      // real DB-enrichment logic to avoid drifting from production again.
+      resolveEvidence: (intent: GatePaymentIntent): Promise<ResolvedEvidence[]> =>
+        resolveEvidenceLoader(ctx, intent),
       resolveObligationProvenance: async (intent: GatePaymentIntent) =>
         withTenantScope(pool, TENANT, async (c) => {
           if (intent.obligation_id === null || intent.obligation_id === undefined) return null;
