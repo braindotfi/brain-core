@@ -175,10 +175,11 @@ Done
   `GET /v1/wiki/suggested-questions` derives tenant-aware suggestions only from
   that deterministic registry. Each registered intent supplies its eligibility
   query, and eligible intents are ranked by tenant-local invocation count.
-  Named-counterparty payable totals, overdue customer invoice listings, and
-  payroll-obligation totals also use deterministic tenant-scoped Ledger queries.
-  Named-counterparty questions fail safely without generative fallback when the
-  counterparty is missing or ambiguous.
+  Named-counterparty payable and receivable totals, overdue customer invoice
+  listings, payroll-obligation totals, and month-scoped net cash-flow totals
+  also use deterministic tenant-scoped Ledger queries. Named-counterparty
+  questions fail safely without generative fallback when the counterparty is
+  missing, ambiguous, or has the wrong direction.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as

@@ -111,8 +111,10 @@ export type DeterministicIntentId =
   | "cash_flow_listing"
   | "invoice_listing"
   | "payable_by_counterparty"
+  | "receivable_by_counterparty"
   | "overdue_customer_invoices"
-  | "payroll_obligation_total";
+  | "payroll_obligation_total"
+  | "monthly_net_cash_flow";
 
 interface TransactionAggregateIntent {
   operation: AggregateOperation;
@@ -175,6 +177,16 @@ interface InvoiceListingRow {
   counterparty_name?: string | null;
 }
 
+interface InvoiceAggregateRow extends InvoiceListingRow {
+  matching_count: string;
+  matching_sum: string;
+}
+
+interface NetCashFlowRow extends TransactionListingRow {
+  matching_count: string;
+  matching_net: string;
+}
+
 interface ObligationAggregateRow {
   id: string;
   type: string;
@@ -190,10 +202,20 @@ interface ObligationAggregateRow {
 interface CounterpartyResolutionRow {
   id: string;
   name: string;
+  type: string;
 }
 
 interface PayableByCounterpartyIntent {
   counterpartyName: string;
+}
+
+interface ReceivableByCounterpartyIntent {
+  counterpartyName: string;
+}
+
+interface NetCashFlowIntent {
+  range: DateRange;
+  asOf: Date | null;
 }
 
 interface OverdueCustomerInvoicesIntent {
@@ -722,6 +744,185 @@ function unresolvedCounterpartyResult(name: string, ambiguous = false): AskResul
       ? `I found multiple counterparties matching ${label}, so I can't calculate a reliable payable total.`
       : `I couldn't identify a counterparty matching ${label}.`,
     evidence: [],
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerReceivableByCounterparty(
+  client: TenantScopedClient,
+  intent: ReceivableByCounterpartyIntent,
+): Promise<AskResult> {
+  const normalizedName = normalizeCounterpartyName(intent.counterpartyName);
+  if (normalizedName === "") {
+    return unresolvedReceivableCounterpartyResult(intent.counterpartyName);
+  }
+
+  const { rows: counterparties } = await client.query<CounterpartyResolutionRow>(
+    `SELECT id, name, type
+       FROM ledger_counterparties
+      WHERE normalized_name = $1
+         OR normalized_name LIKE $2 ESCAPE '\\'
+         OR EXISTS (
+           SELECT 1
+             FROM unnest(aliases) AS alias
+            WHERE LOWER(alias) = LOWER($3)
+         )
+      ORDER BY name ASC, id ASC
+      LIMIT 2`,
+    [normalizedName, `${escapeLike(normalizedName)}\\_%`, intent.counterpartyName.trim()],
+  );
+
+  if (counterparties.length !== 1) {
+    return unresolvedReceivableCounterpartyResult(
+      intent.counterpartyName,
+      counterparties.length > 1,
+    );
+  }
+
+  const counterparty = counterparties[0]!;
+  if (counterparty.type !== "customer") {
+    return {
+      answered: false,
+      answer: `${counterparty.name} is not a customer counterparty, so I can't calculate a receivable total.`,
+      evidence: [toCounterpartyEvidence(counterparty)],
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const { rows } = await client.query<InvoiceAggregateRow>(
+    `SELECT inv.id,
+            inv.invoice_number,
+            inv.amount_due::text AS amount_due,
+            inv.amount_paid::text AS amount_paid,
+            inv.currency,
+            inv.issue_date,
+            inv.due_date,
+            inv.status,
+            inv.counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(inv.amount_due - COALESCE(inv.amount_paid, 0)) OVER (), 0)::text AS matching_sum
+       FROM ledger_invoices inv
+      WHERE inv.counterparty_id = $1
+        AND inv.metadata->>'scenario' = 'ar'
+        AND inv.status IN ('sent','partial','overdue')
+      ORDER BY inv.due_date ASC NULLS LAST, inv.id ASC
+      LIMIT $2`,
+    [counterparty.id, MAX_AGGREGATE_EVIDENCE],
+  );
+
+  const evidence = [toCounterpartyEvidence(counterparty), ...rows.map(toInvoiceEvidence)];
+  if (rows.length === 0) {
+    return {
+      answered: true,
+      answer: `No open customer invoices were found for ${counterparty.name}.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: `I can't calculate one receivable total for ${counterparty.name} across multiple currencies.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const count = Number(rows[0]!.matching_count);
+  return {
+    answered: true,
+    answer: `${counterparty.name} owes you ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)} across ${count} open customer ${count === 1 ? "invoice" : "invoices"}.`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function unresolvedReceivableCounterpartyResult(name: string, ambiguous = false): AskResult {
+  const label = name.trim() === "" ? "that counterparty" : `"${name.trim()}"`;
+  return {
+    answered: false,
+    answer: ambiguous
+      ? `I found multiple counterparties matching ${label}, so I can't calculate a reliable receivable total.`
+      : `I couldn't identify a counterparty matching ${label}.`,
+    evidence: [],
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerMonthlyNetCashFlow(
+  client: TenantScopedClient,
+  intent: NetCashFlowIntent,
+): Promise<AskResult> {
+  const values: unknown[] = [intent.range.start, intent.range.end];
+  const asOfClause =
+    intent.asOf === null
+      ? ""
+      : (() => {
+          values.push(intent.asOf);
+          return `AND transaction_date <= $${values.length}`;
+        })();
+  values.push(MAX_AGGREGATE_EVIDENCE);
+
+  const { rows } = await client.query<NetCashFlowRow>(
+    `SELECT id,
+            amount::text AS amount,
+            currency,
+            direction,
+            transaction_date,
+            description_normalized,
+            description_raw,
+            counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END) OVER (), 0)::text AS matching_net
+       FROM ledger_transactions
+      WHERE status IN ('posted','cleared')
+        AND direction IN ('inflow','outflow')
+        AND transaction_date >= $1
+        AND transaction_date < $2
+        ${asOfClause}
+      ORDER BY transaction_date DESC, id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  if (rows.length === 0) {
+    return structuredListingResult(
+      `No posted cash-flow transactions found ${intent.range.label}.`,
+      [],
+    );
+  }
+
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  const evidence = rows.map(toTransactionEvidence);
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: `I can't calculate one net cash-flow total ${intent.range.label} across multiple currencies.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const net = rows[0]!.matching_net;
+  const magnitude = net.startsWith("-") ? net.slice(1) : net;
+  const amount = formatCurrencyAmount(magnitude, currencies[0]!);
+  const answer =
+    net === "0" || net === "0.00"
+      ? `Net cash flow ${intent.range.label} is neutral at ${amount}.`
+      : `Net cash flow ${intent.range.label} is ${net.startsWith("-") ? "negative" : "positive"} by ${amount}.`;
+  return {
+    answered: true,
+    answer,
+    evidence,
     model: "structured-ledger-query",
     usage: { inputTokens: 0, outputTokens: 0 },
   };
@@ -1278,6 +1479,26 @@ function parsePayableByCounterpartyIntent(question: string): PayableByCounterpar
   return counterpartyName === "" ? null : { counterpartyName };
 }
 
+function parseReceivableByCounterpartyIntent(
+  question: string,
+): ReceivableByCounterpartyIntent | null {
+  const match =
+    /\b(?:what(?:'s| is)?|how much)\s+does\s+(.+?)\s+owe\s+us[?!.\s]*$/i.exec(question) ??
+    /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+us\s+by\s+(.+?)[?!.\s]*$/i.exec(question);
+  const counterpartyName = match?.[1]?.trim() ?? "";
+  return counterpartyName === "" ? null : { counterpartyName };
+}
+
+function parseMonthlyNetCashFlowIntent(
+  question: string,
+  asOf: Date | null,
+): NetCashFlowIntent | null {
+  const q = question.toLowerCase();
+  if (!/\bnet\s+cash[ -]?flow\b/.test(q)) return null;
+  const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
+  return range === null ? null : { range, asOf };
+}
+
 function parseOverdueCustomerInvoicesIntent(
   question: string,
   asOf: Date | null,
@@ -1463,6 +1684,15 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     isEligible: () => Promise.resolve(false),
   },
   {
+    id: "receivable_by_counterparty",
+    displayText: "How much does a customer owe us?",
+    suggestable: false,
+    parse: (question) => parseReceivableByCounterpartyIntent(question),
+    answer: (client, intent) =>
+      answerReceivableByCounterparty(client, intent as ReceivableByCounterpartyIntent),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
     id: "overdue_customer_invoices",
     displayText: "Which customer invoices are overdue?",
     parse: parseOverdueCustomerInvoicesIntent,
@@ -1477,6 +1707,13 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     answer: (client, intent) =>
       answerPayrollObligationTotal(client, intent as PayrollObligationTotalIntent),
     isEligible: hasEligiblePayrollObligations,
+  },
+  {
+    id: "monthly_net_cash_flow",
+    displayText: "Are we net cash-flow positive this month?",
+    parse: parseMonthlyNetCashFlowIntent,
+    answer: (client, intent) => answerMonthlyNetCashFlow(client, intent as NetCashFlowIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
   },
 ];
 
