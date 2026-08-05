@@ -32,7 +32,11 @@ patterns=(
 
 violations=0
 for pat in "${patterns[@]}"; do
-  if echo "$staged" | grep -E "$pat" >/dev/null; then
+  # -e is required, not stylistic: the private-key pattern starts with "-----",
+  # which grep otherwise parses as options and exits 2 with a usage error. Every
+  # pattern after it was then skipped, so the local secret scan silently passed
+  # on everything it exists to catch.
+  if echo "$staged" | grep -E -e "$pat" >/dev/null; then
     echo "error: pre-commit secret scan — pattern matched: $pat" >&2
     violations=$((violations + 1))
   fi
