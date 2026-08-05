@@ -114,6 +114,12 @@ checks enabled conditional boot fences without printing values. This catches
 missing `AUTH_COOKIE_SECRET` and `BRAIN_MCP_READER_DB_PASSWORD` before a deploy
 can change runtime state.
 
+Staging and production deploys also require `brain-prod-agents` to become
+healthy after recreation. The external document extractor writes parsed rows
+with a golden-tenant agent JWT carrying only `raw:write`; rotate its one-year
+`BRAIN_API_TOKEN` through `ops-rotate-agents-api-token.yml` without printing
+the credential.
+
 Supply-chain CI runs on every pull request and main push: `pnpm audit` and
 tfsec fail on high or critical findings, CodeQL uses security-extended queries
 for JavaScript, TypeScript, and Python, and Trivy scans both production images.

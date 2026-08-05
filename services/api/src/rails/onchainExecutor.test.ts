@@ -64,6 +64,7 @@ describe("onchainExecutor", () => {
       transactionHash: "0xHASH",
       blockNumber: 99n,
       gasUsed: 21_000n,
+      status: "success",
     });
     const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc" }); // default baseSepolia
     const res = await ex.execute({
@@ -92,6 +93,7 @@ describe("onchainExecutor", () => {
       transactionHash: "0xHASH",
       blockNumber: 1n,
       gasUsed: 21_000n,
+      status: "success",
     });
     m.estimateFeesPerGas.mockResolvedValue({
       maxFeePerGas: 9_000_000_000n, // 9 gwei > 3 gwei floor
@@ -120,6 +122,7 @@ describe("onchainExecutor", () => {
       transactionHash: "0xHASH",
       blockNumber: 1n,
       gasUsed: 21_000n,
+      status: "success",
     });
     m.estimateFeesPerGas.mockRejectedValue(new Error("RPC does not support eth_feeHistory"));
     const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc" });
@@ -195,6 +198,7 @@ describe("onchainExecutor", () => {
       transactionHash: "0xHASH",
       blockNumber: 100n,
       gasUsed: 50_000n,
+      status: "success",
     });
     const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc", chainId: 84_532 });
     await ex.execute({
@@ -220,6 +224,7 @@ describe("onchainExecutor", () => {
       transactionHash: "0xMINED",
       blockNumber: 99n,
       gasUsed: 21_000n,
+      status: "success",
     });
     const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc", chainId: 84_532 });
     const out = await ex.execute({
@@ -231,5 +236,28 @@ describe("onchainExecutor", () => {
       data: "0x",
     });
     expect(out.txHash).toBe("0xMINED");
+  });
+
+  // ----- F2: a reverted-but-mined receipt must NOT read as a settlement -----
+
+  it("execute throws when the receipt status is reverted (F2 regression)", async () => {
+    m.writeContract.mockResolvedValue("0xHASH");
+    m.waitForTransactionReceipt.mockResolvedValue({
+      transactionHash: "0xREVERTED",
+      blockNumber: 5n,
+      gasUsed: 21_000n,
+      status: "reverted",
+    });
+    const ex = buildOnchainExecutor({ privateKey: PK, rpcUrl: "http://rpc", chainId: 84_532 });
+    await expect(
+      ex.execute({
+        smartAccount: "0xSA",
+        holder: "0xH",
+        nonce: 1n,
+        target: "0xT",
+        value: 0n,
+        data: "0x",
+      }),
+    ).rejects.toThrow(/reverted/);
   });
 });

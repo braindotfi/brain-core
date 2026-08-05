@@ -15,6 +15,16 @@ The "Source Types" table further down is the conceptual taxonomy. The `source_ty
 
 Two body shapes are supported on `POST /v1/raw/ingest`: a binary upload via `multipart/form-data`, or a URL fetch via JSON. Both are idempotent by SHA-256: a re-submitted artifact (per tenant) returns the existing `raw_id` with `deduplicated: true`.
 
+#### Bring your own source
+
+Use `source_type: other` to submit an artifact from a source without a native
+Brain connector. This route requires a bearer principal with `raw:write`: a
+human JWT or a registered SIWX agent JWT that was granted that scope. Standard
+`brain_sk_` tenant API keys are read-only and cannot be issued `raw:write`; at
+launch API-key authentication is also disabled on the production API. A custom
+artifact is stored as raw evidence and is projected only after a compatible
+parser is registered. It is not a direct arbitrary Ledger-event write API.
+
 Binary upload:
 
 ```http

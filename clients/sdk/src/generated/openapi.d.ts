@@ -475,10 +475,13 @@ export interface paths {
         put?: never;
         /**
          * Ingest a financial artifact
-         * @description Requires `raw:write`. Accepts a financial artifact via direct
-         *     upload or URL reference. Content is stored immutably with SHA-256
-         *     content addressing. Duplicate artifacts (same tenant, same
-         *     SHA-256) return the existing raw_id.
+         * @description Requires `raw:write` on a bearer user JWT or a registered external-agent
+         *     JWT. Standard `brain_sk_` tenant API keys are read-only and cannot be
+         *     issued `raw:write`; API-key authentication is not enabled on the
+         *     production API at launch. Accepts a financial artifact via direct upload
+         *     or URL reference. Content is stored immutably with SHA-256 content
+         *     addressing. Duplicate artifacts (same tenant, same SHA-256) return the
+         *     existing raw_id.
          */
         post: operations["ingestRaw"];
         delete?: never;
@@ -981,8 +984,12 @@ export interface paths {
         };
         /**
          * List obligations (bills, invoices, subscriptions)
-         * @description Requires `ledger:read`. Cursor pagination is keyset-based and
-         *     opaque. Pass `next_cursor` unchanged to fetch the next page.
+         * @description Requires `ledger:read`. Results default to payable obligations. Pass
+         *     `direction=receivable` to list obligations owed to the tenant. Cursor
+         *     pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
+         *     fetch the next page. Pass `scenario=ar` or `scenario=ap` to filter
+         *     rows by their explicit projection scenario. When direction is omitted,
+         *     `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
          */
         get: operations["listObligations"];
         put?: never;
@@ -4537,6 +4544,10 @@ export interface components {
             /** @enum {string} */
             status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_transaction_ids?: string[];
+            /** @description Tenant-scoped structured context. Receivable AR rows carry scenario=ar. */
+            metadata: {
+                [key: string]: unknown;
+            };
         };
         CashFlowSummary: {
             tenantId: string;
@@ -4576,6 +4587,10 @@ export interface components {
             status: "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_document_ids?: string[];
             linked_transaction_ids?: string[];
+            /** @description Tenant-scoped structured context. Receivable AR rows carry scenario=ar. */
+            metadata: {
+                [key: string]: unknown;
+            };
         };
         /** @enum {string} */
         ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly" | "personal_budget" | "financial_health" | "purchase_advisor" | "tax_prep" | "travel_finance" | "bill_management" | "debt_optimization" | "savings";
@@ -5506,6 +5521,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Platform identity already linked to a tenant. Returns `tenant_identity_already_linked` with `error.details.tenant_id`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
@@ -5582,6 +5606,20 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             /** @description Missing or invalid platform credential. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description The globally unique platform identity is already linked to a tenant.
+             *     Returns `tenant_identity_already_linked` with the existing
+             *     `tenant_id` in `error.details`; use `POST /v1/sessions` to exchange
+             *     that identity for a member session instead of creating another tenant.
+             */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7188,6 +7226,9 @@ export interface operations {
     listObligations: {
         parameters: {
             query?: {
+                direction?: "payable" | "receivable";
+                /** @description Explicit projection scenario. Composes with an explicitly supplied direction. */
+                scenario?: "ap" | "ar";
                 status?: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
                 type?: string;
                 due_before?: string;

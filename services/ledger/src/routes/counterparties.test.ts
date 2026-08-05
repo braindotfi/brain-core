@@ -60,6 +60,38 @@ function fakePool(routes: Record<string, Array<Record<string, unknown>>> = {}): 
 describe("counterparty routes", () => {
   const counterpartyId = newCounterpartyId();
 
+  it("validates obligation scenarios and derives their natural default direction", async () => {
+    const listObligations = vi.fn(async () => ({ items: [], next_cursor: null }));
+    const app = await buildApp({ listObligations });
+    try {
+      const ar = await app.inject({ method: "GET", url: "/ledger/obligations?scenario=ar" });
+      expect(ar.statusCode).toBe(200);
+      expect(listObligations).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ direction: "receivable", scenario: "ar" }),
+      );
+
+      const explicitDirection = await app.inject({
+        method: "GET",
+        url: "/ledger/obligations?scenario=ar&direction=payable",
+      });
+      expect(explicitDirection.statusCode).toBe(200);
+      expect(listObligations).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ direction: "payable", scenario: "ar" }),
+      );
+
+      const invalid = await app.inject({
+        method: "GET",
+        url: "/ledger/obligations?scenario=unknown",
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json().error.details.reason).toBe("invalid_obligation_scenario");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("creates manual counterparties with server-derived provenance", async () => {
     const counterparty: Counterparty = {
       id: "cp_manual",

@@ -69,7 +69,7 @@ jobs:
       # Check out the resolved SHA, not whatever triggered this dispatch, so
       # the compose file / db-roles.sql / scripts shipped to the box match
       # the image being deployed below.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.resolve.outputs.sha }}
           fetch-depth: 0
@@ -262,6 +262,22 @@ jobs:
              done; \
              ( [ -n \"\$app_services\" ] && \$compose_agents up -d --no-deps --no-build \$app_services || exit 1 ) || \
               (\$compose_agents logs --tail=200 \$app_services && false)"
+
+      - name: Wait for agents healthy on VM
+        # Compose success only proves the container started. The extraction
+        # runtime must be healthy before this promotion can accept uploads.
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -euo pipefail
+            for _ in $(seq 1 18); do
+              status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" brain-prod-agents 2>/dev/null || true)"
+              [ "$status" = "healthy" ] && exit 0
+              sleep 5
+            done
+            echo "brain-prod-agents did not become healthy"
+            docker logs --tail=200 brain-prod-agents >&2 || true
+            exit 1
+          '
 
       # The Caddyfile shipped above is bind-mounted read-only into the caddy
       # container; a plain scp does not make Caddy re-read it, and the infra

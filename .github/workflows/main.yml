@@ -24,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.1.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Scan Terraform
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -107,9 +107,9 @@ jobs:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -170,9 +170,9 @@ jobs:
       BRAIN_DEMO_MODE: "true"
       BRAIN_BASE_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -202,9 +202,9 @@ jobs:
       run:
         working-directory: services/agents
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.4.x"
       - name: Set up Python 3.12
@@ -229,12 +229,12 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags so `git describe` can derive SERVICE_VERSION
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -257,7 +257,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.5.0
         with:
           registry: ghcr.io
@@ -297,7 +297,7 @@ jobs:
       COMPOSE_PROJECT: brain-staging
       HEALTH_URL: ${{ vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure SSH
         run: |
@@ -557,6 +557,22 @@ jobs:
              (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents up -d --no-deps --no-build api worker agents surface-gateway || \
               (docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml logs --tail=200 api worker agents surface-gateway && false))"
 
+      - name: Wait for agents healthy on VM
+        # Compose success only proves the container started. The extraction
+        # runtime must be healthy before this deploy can accept uploads.
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+            set -euo pipefail
+            for _ in $(seq 1 18); do
+              status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" brain-prod-agents 2>/dev/null || true)"
+              [ "$status" = "healthy" ] && exit 0
+              sleep 5
+            done
+            echo "brain-prod-agents did not become healthy"
+            docker logs --tail=200 brain-prod-agents >&2 || true
+            exit 1
+          '
+
       - name: Smoke test /health
         # A bare 200 is not enough: /health returns 200 before a deploy too, so
         # a deploy that silently failed to recreate the container would still
@@ -607,9 +623,9 @@ jobs:
       BRAIN_TEST_SOURCE_ACCT_ID: ${{ vars.E2E_EXTERNAL_AGENT_SOURCE_ACCT_ID }}
       BRAIN_TEST_VENDOR_ID: ${{ vars.E2E_EXTERNAL_AGENT_VENDOR_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -645,9 +661,9 @@ jobs:
       BRAIN_TESTNET_SUCCESS_DATA: ${{ vars.BRAIN_TESTNET_SUCCESS_DATA }}
       BRAIN_TESTNET_SUCCESS_VALUE: ${{ vars.BRAIN_TESTNET_SUCCESS_VALUE }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
