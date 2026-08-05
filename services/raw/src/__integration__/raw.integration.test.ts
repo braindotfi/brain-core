@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { newRawArtifactId, newTenantId } from "@brain/shared";
-import { buildHarness, signCrossTenantServiceAuth, type Harness } from "./harness.js";
+import { buildHarness, crossTenantServiceAuthHeaders, type Harness } from "./harness.js";
 
 const DESCRIBE = process.env.DATABASE_URL !== undefined ? describe : describe.skip;
 
@@ -374,7 +374,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        ...signCrossTenantServiceAuth(firstPayload),
+        ...crossTenantServiceAuthHeaders(firstPayload),
       },
       payload: firstPayload,
     });
@@ -402,7 +402,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        ...signCrossTenantServiceAuth(secondPayload),
+        ...crossTenantServiceAuthHeaders(secondPayload),
       },
       payload: secondPayload,
     });
@@ -485,7 +485,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
         authorization: `Bearer ${tenantAAgentToken}`,
         "content-type": "application/json",
         "x-brain-write-tenant": tenantB,
-        ...signCrossTenantServiceAuth(payload, tenantB),
+        ...crossTenantServiceAuthHeaders(payload, tenantB),
       },
       payload,
     });
@@ -529,7 +529,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
         "x-brain-write-tenant": "not-a-tenant-id",
-        ...signCrossTenantServiceAuth(payload, "not-a-tenant-id"),
+        ...crossTenantServiceAuthHeaders(payload, "not-a-tenant-id"),
       },
       payload,
     });
@@ -553,7 +553,7 @@ DESCRIBE("raw integration (requires DATABASE_URL)", () => {
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        ...signCrossTenantServiceAuth(payload),
+        ...crossTenantServiceAuthHeaders(payload),
       },
       payload,
     });

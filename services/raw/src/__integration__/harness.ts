@@ -40,28 +40,28 @@ import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/inde
 export const CROSS_TENANT_SERVICE_SECRET = "test-cross-tenant-service-secret";
 
 /**
- * Sign a raw request body with the v2 HMAC construction the api verifies for
- * X-Brain-Service-Auth (see services/raw/src/routes/parsed.ts and
- * shared/src/http/service-auth.ts's computeServiceAuthSignatureV2). Returns
- * the exact `x-brain-service-auth` / `x-brain-service-timestamp` header pair
- * -- callers must also send `x-brain-write-tenant: writeTenant` themselves
- * whenever writeTenant is non-empty (an empty writeTenant is the signed
- * value for "header omitted"). Tests must sign the EXACT bytes they POST as
- * the body.
+ * Build the v2 service-auth headers for a raw request body. Delegates to the
+ * shared computeServiceAuthSignatureV2 rather than re-deriving the
+ * construction here: a test that reimplements the signature can silently
+ * drift from the server and assert the wrong tenant, which is exactly what
+ * happened while this harness still signed the v1 body-only scheme against a
+ * v2 verifier. Tests must sign the EXACT bytes they POST as the body, and
+ * the EXACT X-Brain-Write-Tenant they send ("" when the header is omitted),
+ * because both are bound into the signature.
  */
-export function signCrossTenantServiceAuth(
+export function crossTenantServiceAuthHeaders(
   rawBody: string,
   writeTenant = "",
-): { "x-brain-service-auth": string; "x-brain-service-timestamp": string } {
-  const timestamp = String(Math.floor(Date.now() / 1000));
+): Record<string, string> {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
   return {
+    "x-brain-service-timestamp": timestamp,
     "x-brain-service-auth": computeServiceAuthSignatureV2(
       CROSS_TENANT_SERVICE_SECRET,
       timestamp,
       writeTenant,
       Buffer.from(rawBody, "utf8"),
     ),
-    "x-brain-service-timestamp": timestamp,
   };
 }
 

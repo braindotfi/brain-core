@@ -130,6 +130,8 @@ export interface Obligation extends LedgerCommonFields {
   recurrence: string | null;
   status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
   linked_transaction_ids: string[];
+  /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
+  metadata: Record<string, unknown>;
 }
 
 export interface Document extends LedgerCommonFields {
@@ -207,6 +209,10 @@ export interface TransactionListFilters {
 }
 
 export interface ObligationListFilters {
+  /** Defaults to payable. Use receivable for obligations owed to the tenant. */
+  direction?: "payable" | "receivable";
+  /** Projection scenario. `ar` and `ap` are explicit source classifications. */
+  scenario?: "ar" | "ap";
   status?: Obligation["status"];
   type?: Obligation["type"];
   due_before?: string;

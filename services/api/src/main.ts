@@ -201,9 +201,9 @@ import {
   unsupportedEvidenceKinds,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
-import { parseEther } from "viem";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
+import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
 
@@ -796,10 +796,21 @@ async function main(): Promise<void> {
   const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
 
   // Resolve on-chain dispatch params at execute time. Only wired when both the
-  // session key and the BrainSmartAccount address are configured. The closure
-  // looks up the destination counterparty's aliases for the target address.
+  // session key and the BrainSmartAccount address are configured. The actual
+  // recipient/currency/calldata logic (F3/F4 fixes) lives in
+  // resolveOnchainTransferParams so it is unit-testable independent of boot.
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
+  // F3: token transfers need real ERC-20 calldata. USDC is the only token
+  // contract this deployment has an address for (BRAIN_X402_USDC_ADDRESS);
+  // any other currency has no known contract, so resolveOnchainTransferParams
+  // fails closed rather than guessing an address. Decimals are read live
+  // (not hardcoded) -- see settlement-decimals-gate.ts for why a hardcoded
+  // assumption is unsafe here.
+  const getOnchainTransferTokenDecimals =
+    cfg.BRAIN_X402_USDC_ADDRESS !== undefined
+      ? makeBaseGetErc20Decimals(cfg.BASE_RPC_URL ?? cfg.RPC_URL, cfg.BRAIN_BASE_CHAIN_ID)
+      : undefined;
   const resolveOnchainParams:
     | ((
         ctx: ServiceCallContext,
@@ -818,19 +829,13 @@ async function main(): Promise<void> {
             intent.destination_counterparty_id,
           );
           if (cp === null) return null;
-          const ETH_ADDR = /^0x[0-9a-fA-F]{40}$/;
-          const target = cp.aliases.find((a) => ETH_ADDR.test(a));
-          if (target === undefined) return null;
-          const valueWei =
-            intent.currency.toUpperCase() === "ETH" ? parseEther(intent.amount).toString() : "0";
-          return {
-            smart_account: smartAccount,
+          return resolveOnchainTransferParams(cp, intent, {
+            smartAccount,
             holder: getHolderAddress(sessionKey as `0x${string}`),
-            target,
-            data: "0x",
-            value: valueWei,
-            policy_version: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
-          };
+            policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
+            usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
+            getUsdcDecimals: getOnchainTransferTokenDecimals,
+          });
         }
       : undefined;
 
@@ -1012,15 +1017,22 @@ async function main(): Promise<void> {
       cfg.BRAIN_X402_FACILITATOR_URL !== undefined &&
       cfg.BRAIN_X402_USDC_ADDRESS !== undefined &&
       cfg.BRAIN_SESSION_KEY !== undefined &&
-      cfg.BASE_RPC_URL !== undefined
+      cfg.BASE_RPC_URL !== undefined &&
+      // F1: x402 now routes through BrainSmartAccount.executeViaSessionKey
+      // (the same executor + smart account OnchainBaseRail/EscrowBaseRail
+      // use), so it needs the same on-chain executor and smart-account
+      // configuration those rails require.
+      cfg.BRAIN_ONCHAIN_SMART_ACCOUNT !== undefined &&
+      onchainExecutor !== undefined
     ) {
       const x402Client = buildX402Client({
         facilitatorUrl: cfg.BRAIN_X402_FACILITATOR_URL,
         usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
         network: cfg.BRAIN_X402_NETWORK,
-        privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
-        rpcUrl: cfg.BASE_RPC_URL,
-        chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        executor: onchainExecutor,
+        smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
+        holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
+        getUsdcDecimals: makeBaseGetErc20Decimals(cfg.BASE_RPC_URL, cfg.BRAIN_BASE_CHAIN_ID),
       });
       configured.push(new X402BaseRail({ client: x402Client }));
       liveNames.push("x402_base");
@@ -2016,7 +2028,9 @@ async function main(): Promise<void> {
         await v1.register(async (child) => registerAssistantQuestionsRoute(child, { pool, log }));
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
-        await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));
+        await v1.register(async (child) =>
+          registerMemberRoutes(child, { pool, audit, revocation: revocationStore }),
+        );
         // PaymentIntentService has its own approval sub-service; the proposal
         // decision route reuses this same money-path service so it cannot bypass
         // member authority, quorum, or hard approval floors.

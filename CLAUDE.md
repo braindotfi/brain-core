@@ -285,8 +285,11 @@ Done
   Scope checks are enforced by route handlers through `requireScope`; HEAD does
   not have a central gateway route-to-scope matrix.
   API-key auth and API-key management remain code-gated behind
-  `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today, so
-  they are tracked as feature-gated rather than stable in the BrainMVB surface.
+  `BRAIN_API_KEY_AUTH_ENABLED`, even though staging enables that flag today.
+  Production API-key authentication is deliberately disabled pending staging
+  acceptance and auth-surface review; no production enablement date is
+  committed. They are tracked as feature-gated rather than stable in the
+  BrainMVB surface.
 - Governance Phase 1 exposes BFF-only `GET /v1/governance/agents`,
   `GET /v1/governance/agents/{agent_id}`,
   `PATCH /v1/governance/agents/{agent_id}`, and
@@ -324,6 +327,14 @@ Done
   name, and does not change `normalized_name`.
 - Counterparty list supports `verified_status` filtering for `unverified`,
   `self_attested`, `document_verified`, and `sanctions_cleared`.
+- AR-sourced Ledger invoice and receivable-obligation rows carry the positive
+  `metadata.scenario="ar"` marker. `GET /v1/ledger/obligations` returns
+  metadata and supports `direction=receivable`, `scenario=ap|ar`, `limit`, and
+  opaque cursor pagination through `next_cursor`. With no explicit direction,
+  `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
+  `GET /v1/ledger/invoices` is the complete receivables inventory; the
+  receivable-obligation filter only contains rows with an obligation projection.
+  Clients must not infer AR by treating every non-AP row as receivable.
 - Manual counterparty create and edit are identity-only. Payment rail fields
   such as IBAN, account number, routing, SWIFT, BIC, wallet, and bank details
   are rejected with `payment_fields_not_allowed` and never write
@@ -348,6 +359,12 @@ Done
 - Production tenant creation is also available at
   `POST /v1/orgs/{orgId}/tenants`, using the same persistent production tenant
   flow as `POST /v1/tenants`.
+- Platform identity links are globally unique for `surface='platform'`.
+  `POST /v1/tenants` and `POST /v1/orgs/{orgId}/tenants` preflight that global
+  link and translate a concurrent insert race to
+  `409 tenant_identity_already_linked` with `error.details.tenant_id`; clients
+  must reattach through the session and agent-token routes rather than retrying
+  tenant creation.
 - Policy activation blocks on every linter ERROR finding, not only the
   confidence floor. Activation previously computed the other eight ERROR codes
   (`auto_no_amount_cap`, `auto_no_counterparty_constraint`,
@@ -592,6 +609,16 @@ Pending Dmitriy sign-off
   `failed` jobs. Source connector sync requests persist a tenant-scoped
   `raw_source_sync_jobs` row; clients poll
   `GET /v1/sources/:source_id/sync/:job_id` for status.
+- A repaired external extractor credential does not make already exhausted jobs
+  retry forever. Recovery migrations may requeue only the recorded terminal
+  `document extraction agent unreachable` outage state against the retained
+  bytes. Payroll upload recovery removes only stale rebuildable canonical and
+  compact rows when both the old per-employee parser output and current
+  run-level output exist, then replays the current parsed row. Historical raw
+  bytes and parsed evidence remain intact. The `brain_ledger_projector` role
+  needs SELECT, INSERT, and UPDATE on both `ledger_counterparties` and
+  `ledger_obligations`; missing runtime grants block compact AP/AR projection
+  even when canonical projection succeeds.
 - Plaid, Stripe, and Finch parser rows no longer write Ledger entities directly
   from `LedgerService.normalizeFromRaw`. Their `plaid_tx_v1`, `stripe_v1`, and
   `finch_payroll_v1` extractors validate shape and return no direct rows.
@@ -614,11 +641,16 @@ Pending Dmitriy sign-off
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
+  The agents container must be healthy before staging or production deploys
+  complete. Its `BRAIN_API_TOKEN` is a golden-tenant, agent-principal JWT with
+  only `raw:write`; rotate it without logging the value through
+  `ops-rotate-agents-api-token.yml` before its one-year expiry.
   Known upload PDFs are classified before parser selection: bank statement PDFs
   must clear the bank-statement confidence floor, while AR aging and payroll
   PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
   emit the upload-projected hook so compact AP/AR rebuilds and projection status
-  are not stranded.
+  are not stranded. Payroll aggregation emits only dated pay runs; context-less
+  summary rows are not payable obligations.
 - Production tenancy is governed by
   `docs/contracts/production-tenancy.md`. Production tenants are created only by
   `POST /v1/tenants` with the platform service credential. The route creates
@@ -629,7 +661,14 @@ Pending Dmitriy sign-off
   Brightline demo ledger, policy, agent, pending Needs Review proposals, and
   fake-connected source rows before the 201 response. This is the supported
   persistent "Continue with Demo" path; it does not change `tenant.kind`, add a
-  TTL, or make the tenant eligible for demo cleanup.
+  TTL, or make the tenant eligible for demo cleanup. `demo_seed: true` does not
+  persist the demo fixture bytes as raw artifacts. The staging-only
+  `staging-document-fixture-smoke.yml` workflow provisions an isolated
+  non-demo-seeded production tenant, uploads its core-owned source-equivalent
+  tax, wallet, payroll, and AR fixtures through `/v1/raw/ingest`, and waits for
+  each to reach `projection_status=projected`. It is the brain-core-only
+  extraction smoke path and must not be repurposed to change ordinary demo
+  provisioning.
 - Demo tenancy remains structurally separate. `/v1/demo/provision-run` stamps
   `tenant.kind='demo'`, can never create production tenants, and still returns
   split propose-only agent tokens and user-principal member tokens. Production
@@ -925,6 +964,13 @@ counterparty trust-state API. It creates an isolated seeded tenant, calls all
 four user-authenticated transitions through the public API, and verifies both
 the returned state and five audit events. Keep `prod-tenant-diagnostics.yml`
 read-only; do not add mutable checks to that workflow.
+
+`staging-diagnostics.yml` is staging-only and read-only. Its
+`tenant-identity-lookup` diagnostic accepts only one validated platform user
+UUID or email, joins `member_identity_links` to the matching member and tenant,
+and reports only `tenant.created` and `tenant.demo_seeded` audit events. It is
+for correlating a BFF identity to a core tenant without arbitrary SQL or VM
+writes.
 
 Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
 shipped by CI, but only to the **production** VM (`promote-prod.yml`), and

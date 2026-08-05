@@ -46,6 +46,7 @@ import {
   newAgentId,
   newDocumentId,
   newInvoiceId,
+  newObligationId,
   newPolicyId,
   newProposalId,
   newRawArtifactId,
@@ -242,6 +243,7 @@ export interface BrainSaasSeed {
   customers: Record<string, string>; // key -> counterparty id
   accounts: { operating: string; reserve: string; smartAccount: string | null };
   apInvoices: Record<string, string>; // vendorKey -> invoice id
+  apObligations: Record<string, string>; // vendorKey -> payable obligation id
   arInvoices: Record<string, string>; // customerKey -> invoice id
   sources: Record<DemoFakeSourceKey, string>; // source key -> raw_sources id
   proposals: Record<DemoProposalKey, string>; // proposal key -> proposal id
@@ -457,6 +459,7 @@ export async function seedBrainSaasDemo(
 
   // ---------- Invoices (AP inbox + AR receivables) + per-AP-invoice docs ----------
   const apInvoices: Record<string, string> = {};
+  const apObligations: Record<string, string> = {};
   const arInvoices: Record<string, string> = {};
   const apInvoiceDocs: Record<string, string> = {};
 
@@ -512,6 +515,29 @@ export async function seedBrainSaasDemo(
         ],
       );
       apInvoices[inv.vendorKey] = id;
+
+      const obligationId = newObligationId();
+      await c.query(
+        `INSERT INTO ledger_obligations (
+           id, owner_id, type, counterparty_id, amount_due, minimum_due, currency,
+           due_date, recurrence, status, source_ids, evidence_ids, provenance, confidence,
+           direction, linked_transaction_ids, metadata, external_key
+         ) VALUES ($1,$2,'bill',$3,$4,NULL,'USD',$5,NULL,$6,$7,$8,'extracted',0.9,
+                   'payable',ARRAY[]::TEXT[],$9::jsonb,$10)`,
+        [
+          obligationId,
+          tenantId,
+          vendors[inv.vendorKey]!.id,
+          inv.amount.toFixed(2),
+          inv.due_in_days < 0 ? daysAgo(-inv.due_in_days) : daysFrom(inv.due_in_days),
+          inv.due_in_days < 0 ? "overdue" : "upcoming",
+          sourceIds,
+          evidenceIds,
+          JSON.stringify({ scenario: "ap", invoice_id: id, po: inv.po, flags: inv.flags }),
+          `demo:ap:${inv.invoice_number}`,
+        ],
+      );
+      apObligations[inv.vendorKey] = obligationId;
     }
 
     // AR invoices — money owed TO us. Amount = outstanding, due_date set so the
@@ -522,8 +548,8 @@ export async function seedBrainSaasDemo(
         `INSERT INTO ledger_invoices (
            id, owner_id, invoice_number, counterparty_id,
            amount_due, amount_paid, currency, issue_date, due_date, status,
-           source_ids, evidence_ids, linked_document_ids, provenance, confidence
-         ) VALUES ($1,$2,$3,$4,$5,'0.00','USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'extracted',0.88)`,
+           source_ids, evidence_ids, linked_document_ids, provenance, confidence, metadata
+         ) VALUES ($1,$2,$3,$4,$5,'0.00','USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'extracted',0.88,$11::jsonb)`,
         [
           id,
           tenantId,
@@ -535,6 +561,7 @@ export async function seedBrainSaasDemo(
           cust.days_overdue > 0 ? "overdue" : "sent",
           sourceIds,
           evidenceIds,
+          JSON.stringify({ scenario: "ar" }),
         ],
       );
       arInvoices[cust.key] = id;
@@ -578,6 +605,7 @@ export async function seedBrainSaasDemo(
     reserveAccountId: reserve.id,
     smartAccountId: smartAccount?.id ?? null,
     apInvoices,
+    apObligations,
     arInvoices,
   });
 
@@ -602,6 +630,7 @@ export async function seedBrainSaasDemo(
       smartAccount: smartAccount?.id ?? null,
     },
     apInvoices,
+    apObligations,
     arInvoices,
     sources,
     proposals,
@@ -622,6 +651,7 @@ async function seedDemoFakeConnectedSources(
     reserveAccountId: string;
     smartAccountId: string | null;
     apInvoices: Record<string, string>;
+    apObligations: Record<string, string>;
     arInvoices: Record<string, string>;
   },
 ): Promise<Record<DemoFakeSourceKey, string>> {
@@ -685,6 +715,7 @@ async function seedDemoFakeConnectedSources(
       isStub: false,
       overlapsWith: {
         ap_invoice_ids: Object.values(refs.apInvoices),
+        ap_obligation_ids: Object.values(refs.apObligations),
         ar_invoice_ids: Object.values(refs.arInvoices),
         fixture_scope:
           "Brightline Systems Inc. general ledger, vendors, customers, bills, invoices",

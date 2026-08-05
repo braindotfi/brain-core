@@ -61,7 +61,11 @@ function memberRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function appPool(member = memberRow(), inviteRow: Record<string, unknown> | null = null) {
+function appPool(
+  member = memberRow(),
+  inviteRow: Record<string, unknown> | null = null,
+  opts: { failPlatformIdentityLink?: boolean } = {},
+) {
   const calls: QueryCall[] = [];
   const tenants = new Map<string, "production" | "demo">();
   const agents = new Map<string, AgentRow>();
@@ -81,6 +85,13 @@ function appPool(member = memberRow(), inviteRow: Record<string, unknown> | null
         const [tenantId] = values as [string];
         tenants.set(tenantId, "production");
         return Promise.resolve({ rows: [], rowCount: 1 });
+      }
+      if (opts.failPlatformIdentityLink && sql.includes("INSERT INTO member_identity_links")) {
+        const err = Object.assign(new Error("duplicate platform identity link"), {
+          code: "23505",
+          constraint: "idx_member_identity_links_platform_external_ref_unique",
+        });
+        return Promise.reject(err);
       }
       if (sql.includes("SELECT kind FROM tenants WHERE id = $1")) {
         const [tenantId] = values as [string];
@@ -174,9 +185,13 @@ function appPool(member = memberRow(), inviteRow: Record<string, unknown> | null
   };
 }
 
-function resolverPool(rows: unknown[] = []) {
+function resolverPool(rows: unknown[] = [], queryRows?: unknown[][]) {
+  let queryIndex = 0;
   return {
-    query: vi.fn(() => Promise.resolve({ rows, rowCount: rows.length })),
+    query: vi.fn(() => {
+      const nextRows = queryRows?.[queryIndex++] ?? rows;
+      return Promise.resolve({ rows: nextRows, rowCount: nextRows.length });
+    }),
   };
 }
 
@@ -185,6 +200,8 @@ async function build(
     appRows?: unknown[];
     resolverRows?: unknown[];
     inviteRow?: Record<string, unknown> | null;
+    failPlatformIdentityLink?: boolean;
+    resolverQueryRows?: unknown[][];
     deliverSetPasswordEmail?: (input: {
       tenantId: string;
       userId: string;
@@ -197,11 +214,13 @@ async function build(
 ) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
+  const poolOpts = opts.failPlatformIdentityLink === true ? { failPlatformIdentityLink: true } : {};
   const appDb = appPool(
     opts.appRows?.[0] === undefined ? memberRow() : (opts.appRows[0] as never),
     opts.inviteRow ?? null,
+    poolOpts,
   );
-  const resolver = resolverPool(opts.resolverRows ?? []);
+  const resolver = resolverPool(opts.resolverRows ?? [], opts.resolverQueryRows);
   const audit = { emit: vi.fn(async () => ({ id: "audit_1" })) };
   const signer = { sign: vi.fn(async () => "access-token") };
   await registerProductionTenancyRoutes(app, {
@@ -313,6 +332,63 @@ describe("production tenancy routes", () => {
       expect(appDb.agents.size).toBe(1);
       expect(appDb.productionAgentTokens.size).toBe(1);
       expect(body.demo_seed).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns the existing tenant id instead of creating a second tenant for a linked platform identity", async () => {
+    const existing = memberRow({ tenant_id: newTenantId() });
+    const { app, appDb } = await build({ resolverRows: [existing] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: existing.email, display_name: existing.display_name },
+          founder_external_ref: "platform-user-1",
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: "tenant_identity_already_linked",
+        details: { tenant_id: existing.tenant_id },
+      });
+      expect(
+        appDb.calls.some((c) =>
+          c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via)"),
+        ),
+      ).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("maps a concurrent platform identity-link unique violation to the same handled conflict", async () => {
+    const existing = memberRow({ tenant_id: newTenantId() });
+    const { app, appDb } = await build({
+      failPlatformIdentityLink: true,
+      resolverQueryRows: [[], [existing]],
+    });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          founder: { email: "founder@example.com" },
+          founder_external_ref: "platform-user-1",
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: "tenant_identity_already_linked",
+        details: { tenant_id: existing.tenant_id },
+      });
+      expect(appDb.calls.some((c) => c.sql === "ROLLBACK")).toBe(true);
     } finally {
       await app.close();
     }
