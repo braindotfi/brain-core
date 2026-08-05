@@ -19,7 +19,7 @@
     "@brain/shared": "workspace:*",
     "@brain/ledger": "workspace:*",
     "@brain/seed-golden-path": "workspace:*",
-    "pg": "^8.13.0"
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

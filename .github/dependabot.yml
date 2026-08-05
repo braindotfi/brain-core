@@ -5,6 +5,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # @scalar/fastify-api-reference 1.63.0 dropped dist/js/standalone.js and
+      # inlines the browser bundle into dist/index.js instead.
+      # services/api/src/docs/spec.ts reads that file so the renderer can be
+      # served same-origin from /v1/docs/scalar.js; the plugin's own page emits
+      # an inline script that the docs CSP (script-src 'self') blocks, which is
+      # why the plugin is never registered. Sourcing the bundle from somewhere
+      # else is a docs-surface change, not a version bump, so the package stays
+      # pinned at 1.58.0 until that work is done.
+      # Reason: upgrade requires a code change. Expiry: 2026-11-03.
+      - dependency-name: "@scalar/fastify-api-reference"
+        versions: [">=1.63.0"]
 
   - package-ecosystem: github-actions
     directory: /
