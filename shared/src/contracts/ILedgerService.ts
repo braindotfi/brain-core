@@ -130,6 +130,19 @@ export interface Obligation extends LedgerCommonFields {
   recurrence: string | null;
   status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
   linked_transaction_ids: string[];
+  /**
+   * payable = we owe the counterparty (vendor side).
+   * receivable = the counterparty owes us (customer side).
+   * NULL for older rows whose backfill could not infer a direction.
+   *
+   * The money path reads this: the section 6 gate's check 6.7 rejects paying
+   * out a receivable, and PaymentIntentService rejects a new obligation-linked
+   * intent whose obligation is not known payable. Both resolve the value
+   * through this DTO, so dropping the field here silently disarms check 6.7
+   * (NULL reads as "unknown", which passes) and makes every obligation-linked
+   * creation fail closed. It is a required field for that reason.
+   */
+  direction: "payable" | "receivable" | null;
   /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
   metadata: Record<string, unknown>;
 }

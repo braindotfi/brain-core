@@ -916,11 +916,8 @@ async function main(): Promise<void> {
   const resolveObligationDirection = async (
     ctx: ServiceCallContext,
     obligationId: string,
-  ): Promise<"payable" | "receivable" | null> => {
-    const row = await ledgerService.findObligationById(ctx, obligationId);
-    const d = (row as { direction?: string | null } | null)?.direction ?? null;
-    return d === "payable" || d === "receivable" ? d : null;
-  };
+  ): Promise<"payable" | "receivable" | null> =>
+    (await ledgerService.findObligationById(ctx, obligationId))?.direction ?? null;
 
   // Phase 2 trust contract: the gate's low-trust auto-execution rule (check
   // 9.5) reads the linked obligation's provenance — a reconciliation-
