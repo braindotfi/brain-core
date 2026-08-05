@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 
 const workflow = readFileSync(".github/workflows/main.yml", "utf8");
 const promoteWorkflow = readFileSync(".github/workflows/promote-prod.yml", "utf8");
+const rotateAgentsTokenWorkflow = readFileSync(
+  ".github/workflows/ops-rotate-agents-api-token.yml",
+  "utf8",
+);
 const composeProd = readFileSync("docker-compose.prod.yml", "utf8");
 const envProdExample = readFileSync(".env.prod.example", "utf8");
 
@@ -25,7 +29,7 @@ test("main workflow runs Python agents checks before VM image build", () => {
   assert.match(workflow, /uv run pytest/);
   assert.match(
     buildImageJob,
-    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac\]/,
+    /needs:\s*\[unit_and_integration, golden_path_smoke, python_agents, dependency_audit, iac, secrets\]/,
   );
 });
 
@@ -120,6 +124,10 @@ test("staging and production deploy recreates include the agents service", () =>
     promoteProductionJob,
     /\\?\$compose_agents up -d --no-deps --no-build \\?\$app_services/,
   );
+  assert.match(deployStagingJob, /Wait for agents healthy on VM/);
+  assert.match(promoteProductionJob, /Wait for agents healthy on VM/);
+  assert.match(deployStagingJob, /brain-prod-agents did not become healthy/);
+  assert.match(promoteProductionJob, /brain-prod-agents did not become healthy/);
 });
 
 test("staging deploy starts infra without pulling service dependencies", () => {
@@ -200,6 +208,15 @@ test("production env example documents API to agents extraction wiring", () => {
   ]) {
     assert.match(envProdExample, new RegExp(`^${name}=`, "m"));
   }
+});
+
+test("agents token rotation uses the bundled runtime token signer", () => {
+  assert.match(
+    rotateAgentsTokenWorkflow,
+    /docker exec brain-prod-api node tools\/dev-token\/dist\/index\.js/,
+  );
+  assert.match(rotateAgentsTokenWorkflow, /--principal-type agent/);
+  assert.match(rotateAgentsTokenWorkflow, /--scopes raw:write/);
 });
 
 test("production env example documents self-serve signup email delivery wiring", () => {

@@ -329,6 +329,8 @@ export async function registerLedgerRoutes(
     async (
       request: FastifyRequest<{
         Querystring: {
+          direction?: "payable" | "receivable";
+          scenario?: string;
           status?: string;
           type?: string;
           due_before?: string;
@@ -341,7 +343,13 @@ export async function registerLedgerRoutes(
       const ctx = principalCtx(request);
       requireScope(request.principal!.scopes, READ);
       const limit = parseLimit(request.query.limit);
+      const scenario =
+        request.query.scenario === undefined
+          ? undefined
+          : parseObligationScenario(request.query.scenario);
       const result = await service.listObligations(ctx, {
+        direction: request.query.direction ?? (scenario === "ar" ? "receivable" : "payable"),
+        ...(scenario !== undefined ? { scenario } : {}),
         ...(request.query.status !== undefined ? { status: request.query.status as never } : {}),
         ...(request.query.type !== undefined ? { type: request.query.type as never } : {}),
         ...(request.query.due_before !== undefined ? { due_before: request.query.due_before } : {}),
@@ -535,6 +543,7 @@ const VERIFIED_STATUSES = new Set([
   "sanctions_cleared",
 ]);
 const TRUST_STATUSES = new Set(["unreviewed", "trusted", "paused", "acknowledged"]);
+const OBLIGATION_SCENARIOS = new Set(["ap", "ar"]);
 
 function parseCounterpartyCreateBody(body: Record<string, unknown>): ManualCounterpartyCreateInput {
   assertPlainBody(body);
@@ -617,6 +626,15 @@ function parseTrustStatus(value: string): Counterparty["trust_status"] {
     });
   }
   return value as Counterparty["trust_status"];
+}
+
+function parseObligationScenario(value: string): "ap" | "ar" {
+  if (!OBLIGATION_SCENARIOS.has(value)) {
+    throw brainError("request_params_invalid", "invalid_obligation_scenario", {
+      details: { reason: "invalid_obligation_scenario" },
+    });
+  }
+  return value as "ap" | "ar";
 }
 
 function parseTrustTransitionBody(body: unknown): { reason?: string } {

@@ -21,6 +21,10 @@ POST /v1/tenants (auth: platform service credential)
 body: { company_name, demo_seed?, founder: { email, display_name }, founder_external_ref }
 -> 201 { tenant_id, member: {...bootstrap admin...}, session: { token, refresh_token,
 expires_in }, agent: {...propose-only production BFF service agent...}, demo_seed? }
+-> 409 Error { code: tenant_identity_already_linked, details: { tenant_id } } when the
+global platform identity link already belongs to a tenant. This is not a second
+tenant-creation attempt: exchange the identity through POST /v1/sessions and
+retrieve the existing agent token through POST /v1/tenants/{tenant_id}/agent-token.
 Base semantics: atomic - tenant + bootstrap admin member (role admin, all domains, high limit,
 active) + identity link (surface "platform", external_ref = founder_external_ref) + session +
 production BFF service agent + initial agent token, one transaction. Audit:
@@ -107,3 +111,6 @@ sessions remains POST /v1/sessions.
     separate and still cannot create production tenants. Fresh demo-seeded production tenants
     include pending agent-action proposals, so the approval loop is visible without waiting for
     background scanners.
+11. A platform identity has one global tenant link. Repeated or concurrent creation requests
+    return `tenant_identity_already_linked` with that tenant id and never leak a PostgreSQL
+    unique-constraint error.

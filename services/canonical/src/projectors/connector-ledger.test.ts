@@ -565,4 +565,27 @@ describe("connector ledger canonical projectors", () => {
     // type, not silently flattened to 'other'.
     expect(obligationTypes).toContain("dispute");
   });
+
+  it("skips payroll upload rows without a pay date", () => {
+    const diag = { skippedRows: {} };
+    const out = projectDocumentRecordsUploadLedger(
+      {
+        object_type: "payroll_register",
+        obligations: [
+          {
+            counterparty_name: "Payroll",
+            run_ref: "raw_1:payroll:3",
+            amount: "67128.76",
+            currency: "USD",
+            due_date: null,
+          },
+        ],
+      },
+      common,
+      diag,
+    );
+
+    expect(out).toEqual([]);
+    expect(diag.skippedRows).toEqual({ payroll_register_obligation_missing_required_field: 1 });
+  });
 });

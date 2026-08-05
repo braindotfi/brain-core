@@ -158,6 +158,12 @@ function invoiceNumber(row: CanonicalObligationRow): string {
   );
 }
 
+function projectionMetadata(row: CanonicalObligationRow): Record<string, unknown> {
+  // Receivable canonical obligations are accounts receivable by definition. Mark
+  // them positively so API consumers never have to classify AR by exclusion.
+  return row.direction === "receivable" ? { ...row.extensions, scenario: "ar" } : row.extensions;
+}
+
 /** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
 export async function projectCanonicalCounterparty(
   c: TenantScopedClient,
@@ -229,25 +235,11 @@ export async function projectCanonicalObligation(
   if (counterpartyId === null) return false;
 
   const dueDate = row.due_date ?? row.issue_date ?? EPOCH_ISO;
-  // F3: always carry a namespaced external_key (mirroring writes.ts's
-  // "stripe:dispute:dp_123" convention), derived from canonical's own unique
-  // (source_system, source_natural_key) natural key. Without this, every
-  // projected row lands with external_key IS NULL, inside the partial unique
-  // index uq_ledger_obligations_legacy_dedup on (owner_id, counterparty_id,
-  // type, amount_due, currency, due_date) -- and the dueDate collapse above
-  // (missing due_date AND issue_date both fall to EPOCH_ISO) makes two
-  // distinct canonical obligations (different id, e.g. two dateless AR-aging
-  // invoices for the same customer/amount) collide on that tuple. The
-  // ON CONFLICT target below only arbitrates canonical_obligation_id, so that
-  // collision raised an unhandled 23505 instead of being deduped. A non-null,
-  // per-canonical-row-unique external_key keeps every projected row out of
-  // that partial index's scope entirely.
-  const externalKey = `${row.source_system}:${row.source_natural_key}`;
   await c.query(
     `INSERT INTO ledger_obligations
        (id, owner_id, type, counterparty_id, amount_due, currency, due_date, status,
-        direction, source_ids, evidence_ids, provenance, confidence, metadata,
-        canonical_obligation_id, external_key)
+        direction, source_ids, evidence_ids, provenance, confidence, metadata, canonical_obligation_id,
+        external_key)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14::jsonb,$15,$16)
      ON CONFLICT (owner_id, canonical_obligation_id) WHERE canonical_obligation_id IS NOT NULL
      DO UPDATE SET
@@ -283,9 +275,9 @@ export async function projectCanonicalObligation(
       row.evidence_ids,
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.id,
-      externalKey,
+      `canonical:${row.id}`,
     ],
   );
   await projectCanonicalInvoice(c, tenantId, row, counterpartyId);
@@ -433,7 +425,7 @@ async function projectCanonicalInvoice(
       ledgerInvoiceStatus(row.status, row.due_date),
       row.source_ids,
       row.evidence_ids,
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
       row.id,

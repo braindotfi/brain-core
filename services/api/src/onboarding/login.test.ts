@@ -347,12 +347,23 @@ function makeSelfServeState(): {
         verification.set(tokenHash, { userId, tenantId });
         return { rows: [], rowCount: 1 };
       }
-      if (/SELECT user_id FROM email_verifications/.test(sql)) {
+      if (/UPDATE email_verifications/.test(sql)) {
         const [tokenHash] = values as [string];
         const row = verification.get(tokenHash);
         return {
           rows: row === undefined ? [] : [{ user_id: row.userId }],
           rowCount: row === undefined ? 0 : 1,
+        };
+      }
+      if (/SELECT status FROM users/.test(sql)) {
+        const [userId] = values as [string];
+        let status: string | undefined;
+        for (const user of users.values()) {
+          if (user.id === userId) status = user.status;
+        }
+        return {
+          rows: status === undefined ? [] : [{ status }],
+          rowCount: status === undefined ? 0 : 1,
         };
       }
       if (/UPDATE users SET status = 'active'/.test(sql)) {

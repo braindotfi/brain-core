@@ -15,9 +15,21 @@ const USER = newUserId();
 
 function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = []): Pool {
   const client = {
-    query: vi.fn((sql: string) => {
+    query: vi.fn((sql: string, _values?: unknown[]) => {
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      if (sql.startsWith("SELECT set_config")) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      // F2: the live admin-member re-check, in the same transaction as the
+      // deletes. Every fixture in this file deletes as an active admin
+      // unless a test builds its own bespoke pool.
+      if (sql.startsWith("SELECT role, active, status FROM members")) {
+        return Promise.resolve({
+          rows: [{ role: "admin", active: true, status: "active" }],
+          rowCount: 1,
+        });
       }
       // Pre-DELETE snapshot of raw_artifacts blob URIs.
       if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
@@ -36,6 +48,20 @@ function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = [
   return {
     connect: vi.fn(() => Promise.resolve(client)),
   } as unknown as Pool;
+}
+
+/** F2: a caller with no members row at all (never invited, wrong tenant, etc). */
+function fakePoolNoMember(): Pool {
+  const client = {
+    query: vi.fn((sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }),
+    release: vi.fn(),
+  };
+  return { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
 }
 
 describe("TenantDeletionService", () => {
@@ -176,6 +202,12 @@ describe("TenantDeletionService", () => {
   it("rolls back on a DELETE failure and does not emit the tombstone event", async () => {
     const client = {
       query: vi.fn((sql: string) => {
+        if (sql.startsWith("SELECT role, active, status FROM members")) {
+          return Promise.resolve({
+            rows: [{ role: "admin", active: true, status: "active" }],
+            rowCount: 1,
+          });
+        }
         if (sql.includes("ledger_payment_intents")) {
           return Promise.reject(new Error("constraint violation"));
         }
@@ -203,6 +235,12 @@ describe("TenantDeletionService", () => {
     // Fake pool that returns a job id for the purge-queue INSERT.
     const client = {
       query: vi.fn((sql: string) => {
+        if (sql.startsWith("SELECT role, active, status FROM members")) {
+          return Promise.resolve({
+            rows: [{ role: "admin", active: true, status: "active" }],
+            rowCount: 1,
+          });
+        }
         if (sql.startsWith("SELECT blob_uri FROM raw_artifacts")) {
           return Promise.resolve({ rows: [{ blob_uri: "tnt_x/a" }], rowCount: 1 });
         }
@@ -311,6 +349,43 @@ describe("TenantDeletionService", () => {
     const client = await pool.connect();
     const calls = vi.mocked(client.query).mock.calls.map((c) => c[0] as string);
     expect(calls).toContain("DELETE FROM surface_teams_installations WHERE brain_tenant_id = $1");
+  });
+
+  it("F2: refuses to delete when the caller is a viewer, not an admin member", async () => {
+    const client = {
+      query: vi.fn((sql: string) => {
+        if (sql.startsWith("SELECT role, active, status FROM members")) {
+          return Promise.resolve({
+            rows: [{ role: "viewer", active: true, status: "active" }],
+            rowCount: 1,
+          });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    await expect(svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT)).rejects.toMatchObject(
+      { code: "auth_scope_insufficient" },
+    );
+    const calls = client.query.mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("ROLLBACK");
+    expect(calls).not.toContain("COMMIT");
+    expect(calls.some((sql) => sql.startsWith("DELETE FROM"))).toBe(false);
+    expect(audit.events).toHaveLength(0);
+  });
+
+  it("F2: refuses to delete when the caller has no members row (actor_unresolved)", async () => {
+    const pool = fakePoolNoMember();
+    const audit = new InMemoryAuditEmitter();
+    const svc = new TenantDeletionService({ privilegedPool: pool, audit });
+
+    await expect(svc.deleteTenant({ tenantId: TENANT, actor: USER }, TENANT)).rejects.toMatchObject(
+      { code: "tenant_access_denied" },
+    );
   });
 
   it("a failing audit emitter does not fail the committed deletion (best-effort emit)", async () => {

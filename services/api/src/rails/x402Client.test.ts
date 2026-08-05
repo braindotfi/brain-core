@@ -1,64 +1,47 @@
 /**
- * Unit tests for buildX402Client (R-08 from Opus 4.8 review, batch 8 P5).
- * viem + fetch are mocked so no RPC and no facilitator are touched.
+ * Unit tests for buildX402Client (F1/F2 regression: x402 must route through
+ * the injected OnchainExecutor / BrainSmartAccount.executeViaSessionKey
+ * rather than a bare session-key EOA transfer).
  *
- * The x402 settle path has four steps:
- *   1. Read USDC.decimals()
- *   2. writeContract USDC.transfer(payTo, amountUnits)
- *   3. waitForTransactionReceipt
- *   4. POST to facilitator URL (best-effort; non-fatal)
- *
- * Coverage targets: each step's success + each step's failure mode + the
- * best-effort semantics of step 4 (settlement is the on-chain transfer; the
- * facilitator POST never causes a settle() throw).
+ * The x402 settle path has three steps:
+ *   1. Read USDC.decimals() and encode transfer(payTo, amountUnits)
+ *   2. executor.readNonce + executor.execute (BrainSmartAccount.executeViaSessionKey)
+ *   3. POST to facilitator URL (best-effort; non-fatal)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-
-const m = vi.hoisted(() => ({
-  readContract: vi.fn(),
-  writeContract: vi.fn(),
-  waitForTransactionReceipt: vi.fn(),
-  privateKeyToAccount: vi.fn((_pk: string) => ({ address: "0xACCOUNT" })),
-  parseUnits: vi.fn((amount: string, decimals: number) => {
-    const [whole = "0", frac = ""] = amount.split(".");
-    const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
-    return BigInt(whole + padded);
-  }),
-}));
-
-vi.mock("viem", () => ({
-  createPublicClient: vi.fn(() => ({
-    readContract: m.readContract,
-    waitForTransactionReceipt: m.waitForTransactionReceipt,
-  })),
-  createWalletClient: vi.fn(() => ({ writeContract: m.writeContract })),
-  http: vi.fn(() => ({})),
-  parseAbi: vi.fn((x: string[]) => x),
-  parseUnits: m.parseUnits,
-}));
-vi.mock("viem/accounts", () => ({ privateKeyToAccount: m.privateKeyToAccount }));
-vi.mock("viem/chains", () => ({ base: { id: 8453 }, baseSepolia: { id: 84_532 } }));
+import type { OnchainExecutor } from "@brain/execution";
 
 import { buildX402Client } from "./x402Client.js";
 
-const PK = ("0x" + "11".repeat(32)) as `0x${string}`;
-const USDC = "0xUSDC";
+const USDC = "0xUSDC" as `0x${string}`;
+const SMART_ACCOUNT = "0xSMARTACCOUNT";
+const HOLDER = "0xHOLDER";
+
+function makeExecutor(): {
+  executor: OnchainExecutor;
+  readNonce: ReturnType<typeof vi.fn>;
+  execute: ReturnType<typeof vi.fn>;
+} {
+  const readNonce = vi.fn();
+  const execute = vi.fn();
+  return { executor: { readNonce, execute }, readNonce, execute };
+}
 
 function makeClient(over: Partial<Parameters<typeof buildX402Client>[0]> = {}) {
+  const { executor } = over.executor !== undefined ? { executor: over.executor } : makeExecutor();
   return buildX402Client({
     facilitatorUrl: "https://facilitator.test/settle",
     usdcAddress: USDC,
     network: "base-sepolia",
-    privateKey: PK,
-    rpcUrl: "http://rpc",
-    chainId: 84_532,
+    executor,
+    smartAccount: SMART_ACCOUNT,
+    holderAddress: HOLDER,
+    getUsdcDecimals: vi.fn().mockResolvedValue(6),
     ...over,
   });
 }
 
-// vi.spyOn(global, "fetch") returns a strongly-typed MockInstance; use the
-// explicit fetch signature so the assertion against .mock.calls stays sound.
 let fetchSpy: MockInstance<
   (
     input: string | URL | Request,
@@ -69,10 +52,6 @@ const realFetch = global.fetch;
 
 describe("buildX402Client.settle", () => {
   beforeEach(() => {
-    m.readContract.mockReset();
-    m.writeContract.mockReset();
-    m.waitForTransactionReceipt.mockReset();
-    m.parseUnits.mockClear();
     fetchSpy = vi
       .spyOn(global, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -83,25 +62,34 @@ describe("buildX402Client.settle", () => {
     global.fetch = realFetch;
   });
 
-  it("happy path: reads decimals, transfers, waits, notifies, returns receipt hash", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockResolvedValue("0xTXSUBMIT");
-    m.waitForTransactionReceipt.mockResolvedValue({
-      transactionHash: "0xTXMINED",
-      blockNumber: 100n,
-      gasUsed: 50_000n,
-    });
-    const client = makeClient();
+  it("F1: routes settlement through executeViaSessionKey, not a bare transfer", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(3n);
+    execute.mockResolvedValue({ txHash: "0xTXMINED", blockNumber: 100n, gasUsed: 50_000n });
+    const getUsdcDecimals = vi.fn().mockResolvedValue(6);
+    const client = makeClient({ executor, getUsdcDecimals });
+
     const out = await client.settle({
-      payTo: "0xPAYEE",
+      payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "12.34",
       idempotencyKey: "ik_1",
     });
+
     expect(out.txHash).toBe("0xTXMINED");
     expect(out.settledAmount).toBe("12.34");
-    expect(m.parseUnits).toHaveBeenCalledWith("12.34", 6);
-    expect(m.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: "transfer", address: USDC }),
+    expect(getUsdcDecimals).toHaveBeenCalledWith(USDC);
+    expect(readNonce).toHaveBeenCalledWith({ smartAccount: SMART_ACCOUNT, holder: HOLDER });
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        smartAccount: SMART_ACCOUNT,
+        holder: HOLDER,
+        nonce: 3n,
+        target: USDC, // the USDC contract, not the payee -- transfer() is calldata
+        value: 0n,
+        // a9059cbb = transfer(address,uint256) selector; the payee + amount
+        // are encoded in the calldata, not sent as a native-value transfer.
+        data: expect.stringMatching(/^0xa9059cbb/),
+      }),
     );
     expect(fetchSpy).toHaveBeenCalledWith(
       "https://facilitator.test/settle",
@@ -109,48 +97,58 @@ describe("buildX402Client.settle", () => {
     );
   });
 
-  it("decimals read failure throws (transfer never runs)", async () => {
-    m.readContract.mockRejectedValue(new Error("RpcError: getCode reverted"));
-    const client = makeClient();
+  it("encodes the payee address and amount into the calldata, not the value/target", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockResolvedValue({ txHash: "0xTX", blockNumber: 1n, gasUsed: 1n });
+    const payee = "0xe3abc18b2718c20882e8a0d2142623c897de3544";
+    const client = makeClient({ executor });
+    await client.settle({ payTo: payee, amount: "1.00", idempotencyKey: "ik_2" });
+    const call = execute.mock.calls[0]![0] as { target: string; value: bigint; data: string };
+    expect(call.target).toBe(USDC); // the call targets the token, not the payee
+    expect(call.value).toBe(0n); // no native value; the transfer is in calldata
+    expect(call.data.toLowerCase()).toContain(payee.slice(2).toLowerCase().padStart(64, "0"));
+    // amount 1.00 USDC at 6 decimals = 1_000_000 = 0xf4240, right-padded to 32 bytes
+    expect(call.data.toLowerCase().endsWith("f4240")).toBe(true);
+  });
+
+  it("decimals read failure throws (execute never runs)", async () => {
+    const { executor, execute } = makeExecutor();
+    const getUsdcDecimals = vi.fn().mockRejectedValue(new Error("RpcError: getCode reverted"));
+    const client = makeClient({ executor, getUsdcDecimals });
     await expect(
-      client.settle({ payTo: "0xPAYEE", amount: "1.00", idempotencyKey: "ik_2" }),
+      client.settle({
+        payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
+        amount: "1.00",
+        idempotencyKey: "ik_3",
+      }),
     ).rejects.toThrow(/RpcError/);
-    expect(m.writeContract).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it("transfer revert throws (receipt wait never runs)", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockRejectedValue(new Error("execution reverted: ERC20InsufficientBalance"));
-    const client = makeClient();
+  it("F2: a reverted execute() throws (propagated from the shared executor); facilitator not notified", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockRejectedValue(new Error("executeViaSessionKey reverted (tx 0xDEAD)"));
+    const client = makeClient({ executor });
     await expect(
-      client.settle({ payTo: "0xPAYEE", amount: "999999999999.00", idempotencyKey: "ik_3" }),
-    ).rejects.toThrow(/ERC20InsufficientBalance/);
-    expect(m.waitForTransactionReceipt).not.toHaveBeenCalled();
-  });
-
-  it("receipt wait failure throws (facilitator not notified)", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockResolvedValue("0xTX");
-    m.waitForTransactionReceipt.mockRejectedValue(new Error("TimeoutError"));
-    const client = makeClient();
-    await expect(
-      client.settle({ payTo: "0xPAYEE", amount: "1.00", idempotencyKey: "ik_4" }),
-    ).rejects.toThrow(/TimeoutError/);
+      client.settle({
+        payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
+        amount: "1.00",
+        idempotencyKey: "ik_4",
+      }),
+    ).rejects.toThrow(/reverted/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("facilitator 5xx is non-fatal: settle still resolves with the on-chain receipt", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockResolvedValue("0xTX");
-    m.waitForTransactionReceipt.mockResolvedValue({
-      transactionHash: "0xCONFIRMED",
-      blockNumber: 1n,
-      gasUsed: 1n,
-    });
+  it("facilitator 5xx is non-fatal: settle still resolves with the on-chain result", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockResolvedValue({ txHash: "0xCONFIRMED", blockNumber: 1n, gasUsed: 1n });
     fetchSpy.mockResolvedValue(new Response("upstream down", { status: 503 }));
-    const client = makeClient();
+    const client = makeClient({ executor });
     const out = await client.settle({
-      payTo: "0xPAYEE",
+      payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_5",
     });
@@ -159,34 +157,26 @@ describe("buildX402Client.settle", () => {
   });
 
   it("facilitator network error is non-fatal: settle still resolves", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockResolvedValue("0xTX");
-    m.waitForTransactionReceipt.mockResolvedValue({
-      transactionHash: "0xCONFIRMED",
-      blockNumber: 1n,
-      gasUsed: 1n,
-    });
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockResolvedValue({ txHash: "0xCONFIRMED", blockNumber: 1n, gasUsed: 1n });
     fetchSpy.mockRejectedValue(new Error("ECONNREFUSED"));
-    const client = makeClient();
+    const client = makeClient({ executor });
     const out = await client.settle({
-      payTo: "0xPAYEE",
+      payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_6",
     });
     expect(out.txHash).toBe("0xCONFIRMED");
   });
 
-  it("forwards idempotency_key to the facilitator body", async () => {
-    m.readContract.mockResolvedValue(6);
-    m.writeContract.mockResolvedValue("0xTX");
-    m.waitForTransactionReceipt.mockResolvedValue({
-      transactionHash: "0xCONFIRMED",
-      blockNumber: 1n,
-      gasUsed: 1n,
-    });
-    const client = makeClient();
+  it("forwards idempotency_key and asset to the facilitator body", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockResolvedValue({ txHash: "0xCONFIRMED", blockNumber: 1n, gasUsed: 1n });
+    const client = makeClient({ executor });
     await client.settle({
-      payTo: "0xPAYEE",
+      payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_unique_xyz",
     });
@@ -195,13 +185,9 @@ describe("buildX402Client.settle", () => {
     );
     expect(body.idempotency_key).toBe("ik_unique_xyz");
     expect(body.tx_hash).toBe("0xCONFIRMED");
-    expect(body.pay_to).toBe("0xPAYEE");
+    expect(body.pay_to).toBe("0x19732c2b2656017fc00f5af5dcc33269e58a1d34");
     expect(body.amount).toBe("1.00");
     expect(body.asset).toBe("USDC");
     expect(body.network).toBe("base-sepolia");
-  });
-
-  it("selects Base mainnet (chainId=8453) when configured", () => {
-    expect(makeClient({ chainId: 8453 })).toBeDefined();
   });
 });

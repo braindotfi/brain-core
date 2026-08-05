@@ -42,6 +42,7 @@
 
 import type { Pool } from "pg";
 import type { AuditEmitter, AuditEventInput, ServiceCallContext } from "@brain/shared";
+import { brainError } from "@brain/shared";
 import { enqueueBlobPurgeJob } from "./blob-purge-repo.js";
 import { enqueueAuditOutbox } from "./blob-purge-audit-outbox.js";
 
@@ -273,6 +274,32 @@ export class TenantDeletionService {
     const purgeRequestedEventKey = `${targetTenantId}:tenant_blob.purge_requested`;
     try {
       await client.query("BEGIN");
+      // F2: the route only ever checked principal_type=user + self-tenant,
+      // with no scope check and no members-row check, so ANY active member
+      // -- including a viewer -- could erase the entire tenant. Require the
+      // caller to be a live, active admin member of the tenant being
+      // deleted (the same authority level member deactivation already
+      // requires), checked in THIS transaction rather than a separate
+      // connection: a caller demoted or deactivated between the check and
+      // the deletes must not still slip through, and this way there is one
+      // atomic all-or-nothing transaction, not a check-then-act gap.
+      const memberRes = await client.query<{
+        role: "admin" | "approver" | "viewer";
+        active: boolean;
+        status: "invited" | "active" | "deactivated";
+      }>(`SELECT role, active, status FROM members WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
+        ctx.actor,
+        targetTenantId,
+      ]);
+      const member = memberRes.rows[0];
+      if (member === undefined || !member.active || member.status !== "active") {
+        throw brainError("tenant_access_denied", "actor_unresolved", {
+          details: { reason: "actor_unresolved" },
+        });
+      }
+      if (member.role !== "admin") {
+        throw brainError("auth_scope_insufficient", "admin member required");
+      }
       // Snapshot the blob_uri list BEFORE the DELETE wipes the rows. These
       // URIs are what an operator must purge out-of-band to satisfy GDPR
       // Article 17 fully (Layer-1 immutability blocks in-band hard delete).

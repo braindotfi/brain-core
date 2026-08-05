@@ -146,25 +146,45 @@ export async function registerOnboardingRoutes(
       const tokenHash = sha256Hex(token);
 
       const userId = await withTenantScope(deps.pool, tenantId, async (c: TenantScopedClient) => {
-        const { rows } = await c.query<{ user_id: string }>(
-          `SELECT user_id FROM email_verifications
-            WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()`,
-          [tokenHash],
-        );
-        const row = rows[0];
-        if (row === undefined) {
-          throw brainError(
+        const invalid = () =>
+          brainError(
             "signup_token_invalid",
             "verification token is invalid, expired, or already used",
           );
-        }
+        // Atomic single-use claim (same shape as consumeSetPasswordToken in
+        // services/auth/src/routes/human-auth.ts): a zero-row result is a
+        // hard reject, and two concurrent presentations of the same token
+        // cannot both win.
+        const { rows } = await c.query<{ user_id: string }>(
+          `UPDATE email_verifications
+              SET consumed_at = now()
+            WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()
+            RETURNING user_id`,
+          [tokenHash],
+        );
+        const row = rows[0];
+        if (row === undefined) throw invalid();
+
+        // F5: `email_verifications` is shared by self-serve signup, the
+        // founder set-password invite, and /forgot-password, and has no
+        // `purpose` column. consumeSetPasswordToken already refuses a
+        // 'disabled' user's token so a reset link cannot reactivate an
+        // offboarded holder who still controls their mailbox; this route
+        // was missing the identical guard, so the SAME reset token could be
+        // replayed here to flip status back to 'active'. The token is
+        // already burned above either way (single-use, never replayable),
+        // so returning the identical invalid/expired/used error creates no
+        // new oracle for distinguishing "disabled" from "never existed".
+        const { rows: userRows } = await c.query<{ status: string }>(
+          `SELECT status FROM users WHERE id = $1`,
+          [row.user_id],
+        );
+        if (userRows[0]?.status === "disabled") throw invalid();
+
         await c.query(
           "UPDATE users SET status = 'active', email_verified_at = now() WHERE id = $1",
           [row.user_id],
         );
-        await c.query("UPDATE email_verifications SET consumed_at = now() WHERE token_hash = $1", [
-          tokenHash,
-        ]);
         return row.user_id;
       });
 

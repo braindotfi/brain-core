@@ -27,3 +27,13 @@ overrides:
   vitest: ">=4.1.0"
   "@vitest/coverage-v8": ">=4.1.0"
   "@vitest/ui": ">=4.1.0"
+
+minimumReleaseAge: 1440
+# @redocly/cli is pinned to the version that was resolving via
+# `npx --yes @redocly/cli@latest` at the time this pin was added
+# (2.43.3, published 2026-08-03). It is <24h old under the 1440-minute
+# floor above as of this commit, so it needs a narrow, temporary
+# exclusion; remove this entry once the release has aged past the
+# window (safe any time from roughly 2026-08-04 onward).
+minimumReleaseAgeExclude:
+  - "@redocly/cli"

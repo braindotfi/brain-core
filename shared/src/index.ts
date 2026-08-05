@@ -62,6 +62,12 @@ export {
   type RevocationStore,
 } from "./auth/revocation.js";
 export { default as authPlugin, extractBearer } from "./auth/middleware.js";
+export {
+  requireAdminMember,
+  type MemberAuthorityRow,
+  type MemberAuthorityRole,
+  type MemberAuthorityStatus,
+} from "./auth/member-authority.js";
 
 // Idempotency (§5)
 export {

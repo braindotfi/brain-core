@@ -61,6 +61,18 @@ describe("projectCanonicalObligation", () => {
     expect(insert.values).toContain("USD");
   });
 
+  it("uses the canonical id as an external key outside the legacy dedup target", async () => {
+    const { client, calls } = clientWithCounterparty();
+
+    await expect(
+      projectCanonicalObligation(client, "tnt_1", { ...BASE_OBLIGATION, currency: "USD" }),
+    ).resolves.toBe(true);
+
+    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
+    expect(insert.text).toContain("external_key");
+    expect(insert.values).toContain("canonical:co_1");
+  });
+
   it("rejects a non-null malformed currency instead of folding it into USD", async () => {
     const { client, calls } = clientWithCounterparty();
 
@@ -168,33 +180,15 @@ describe("projectCanonicalObligation", () => {
     expect(invoice?.values[2]).toBe("NL-2417");
     expect(invoice?.values[4]).toBe("500.00");
     expect(invoice?.values[14]).toBe("co_1");
+
+    const obligation = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"));
+    expect(JSON.parse(String(obligation?.values[13]))).toMatchObject({ scenario: "ar" });
+    expect(JSON.parse(String(invoice?.values[11]))).toMatchObject({
+      scenario: "ar",
+      document_upload: { invoice_ref: "NL-2417" },
+    });
   });
 
-  // F3 regression: without a non-null external_key, two distinct canonical
-  // obligations that collapse to the same (counterparty, type, amount,
-  // currency, due_date) tuple -- e.g. two dateless AR-aging invoices -- both
-  // land inside uq_ledger_obligations_legacy_dedup's WHERE external_key IS
-  // NULL scope and the second INSERT throws an unhandled 23505, since the
-  // declared ON CONFLICT arbiter (canonical_obligation_id) never matches
-  // across two different canonical rows. Asserting external_key is always
-  // set, and set from canonical's own unique natural key, keeps every
-  // projected row out of that partial index's scope.
-  it("sets a namespaced external_key from the canonical natural key so distinct rows never collide on the legacy dedup tuple", async () => {
-    const { client, calls } = clientWithCounterparty();
-
-    await expect(
-      projectCanonicalObligation(client, "tnt_1", {
-        ...BASE_OBLIGATION,
-        currency: "USD",
-        due_date: null,
-        issue_date: null,
-      }),
-    ).resolves.toBe(true);
-
-    const insert = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"))!;
-    expect(insert.text).toContain("external_key");
-    expect(insert.values).toContain("document_upload:inv_1");
-  });
 });
 
 describe("runLedgerAparProjectionCycle", () => {

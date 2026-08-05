@@ -216,6 +216,8 @@ export class LedgerService implements ILedgerService {
     const cursor = f.cursor !== undefined ? decodeKeysetCursor(f.cursor) : undefined;
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listObligationsRepo(c, {
+        ...(f.direction !== undefined ? { direction: f.direction } : {}),
+        ...(f.scenario !== undefined ? { scenario: f.scenario } : {}),
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.type !== undefined ? { type: f.type } : {}),
         ...(f.due_before !== undefined ? { due_before: new Date(f.due_before) } : {}),
@@ -740,6 +742,7 @@ function serializeObligation(row: ObligationRow): Obligation {
     recurrence: row.recurrence,
     status: row.status as Obligation["status"],
     linked_transaction_ids: row.linked_transaction_ids,
+    metadata: row.metadata ?? {},
   };
 }
 

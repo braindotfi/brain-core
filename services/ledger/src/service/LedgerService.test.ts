@@ -111,6 +111,49 @@ describe("LedgerService — limit clamping and reads", () => {
     expect(list.values).toEqual(["unverified", 51]);
   });
 
+  it("does not filter obligations by direction without an explicit caller filter", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await service.listObligations(ctx, { limit: 10 });
+    const list = calls.find((c) => c.text.includes("FROM ledger_obligations"))!;
+    expect(list.text).not.toContain("direction = $1");
+    expect(list.values).toEqual([11]);
+  });
+
+  it("allows callers to request receivable obligations explicitly", async () => {
+    const { pool, calls } = fakePool();
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    await service.listObligations(ctx, { direction: "receivable", limit: 10 });
+    const list = calls.find((c) => c.text.includes("FROM ledger_obligations"))!;
+    expect(list.values).toEqual(["receivable", 11]);
+  });
+
+  it("serializes obligation metadata so AR scenario markers are public", async () => {
+    const { pool } = fakePool({
+      "FROM ledger_obligations": [
+        {
+          ...rowCommon(),
+          id: "obl_ar",
+          type: "invoice",
+          counterparty_id: "cp_customer",
+          amount_due: "500.00",
+          minimum_due: null,
+          currency: "USD",
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          recurrence: null,
+          status: "due",
+          linked_transaction_ids: [],
+          direction: "receivable",
+          metadata: { scenario: "ar" },
+        },
+      ],
+    });
+    const service = new LedgerService({ pool, audit: new InMemoryAuditEmitter() });
+    const result = await service.listObligations(ctx, { direction: "receivable", limit: 10 });
+
+    expect(result.items[0]?.metadata).toEqual({ scenario: "ar" });
+  });
+
   it("serializes counterparty payment rollups", async () => {
     const { pool } = fakePool({
       "FROM ledger_counterparties cp": [

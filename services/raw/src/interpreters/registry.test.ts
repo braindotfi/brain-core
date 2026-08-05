@@ -788,6 +788,45 @@ describe("upload document interpreters", () => {
     });
   });
 
+  it("groups employee payroll rows by pay date when the export omits a run id", () => {
+    const csv = [
+      "Employee ID,Net Pay,Fed W/H (14%),FICA (7.65%),Pay Date",
+      "E-1001,100.00,14.00,7.65,2026-08-04",
+      "E-1002,200.00,28.00,15.30,2026-08-04",
+      "E-1003,50.00,7.00,3.83,2026-08-20",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        rawArtifactId: "raw_payroll_no_run_id",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+
+    expect(out!.parserVersion).toBe("1.0.3");
+    expect(out!.extracted).toMatchObject({
+      object_type: "payroll_register",
+      obligations: [
+        {
+          run_ref: "raw_payroll_no_run_id:payroll:2026-08-04",
+          amount: "300",
+          net_amount: "300",
+          tax_amount: "64.95",
+          due_date: "2026-08-04",
+        },
+        {
+          run_ref: "raw_payroll_no_run_id:payroll:2026-08-20",
+          amount: "50",
+          net_amount: "50",
+          tax_amount: "10.83",
+          due_date: "2026-08-20",
+        },
+      ],
+    });
+  });
+
   it("parses the June demo payroll register XLSX fixture as run-level obligations", () => {
     const out = uploadDocumentInterpreter(
       fixtureBytes("payroll_register_2026-06.xlsx"),
@@ -830,6 +869,37 @@ describe("upload document interpreters", () => {
     ]);
     expect(JSON.stringify(out!.extracted)).not.toContain("Amara Osei");
     expect(JSON.stringify(out!.extracted)).not.toContain("E-1001");
+  });
+
+  it("skips context-less payroll summary rows instead of emitting synthetic runs", () => {
+    const csv = [
+      "Employee,Net Pay,FICA,Pay Date",
+      "Payroll Summary,67128.76,0,",
+      "Pay Run: RUN-2026-07A | Pay Date: 2026-07-20",
+      "E-1001,100.00,7.65,",
+      "Pay Run: RUN-2026-08A | Pay Date: 2026-08-04",
+      "E-1002,200.00,15.30,",
+    ].join("\n");
+    const out = interpreterForSchema(UPLOAD_DOCUMENT_SCHEMA)!(
+      Buffer.from(csv),
+      ctx({
+        rawArtifactId: "raw_payroll_summary",
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        mimeType: "text/csv",
+      }),
+    );
+    const obligations = (
+      out!.extracted as {
+        obligations: Array<{ run_ref: string; amount: string; due_date: string | null }>;
+      }
+    ).obligations;
+
+    expect(obligations).toEqual([
+      expect.objectContaining({ run_ref: "RUN-2026-07A", amount: "100", due_date: "2026-07-20" }),
+      expect.objectContaining({ run_ref: "RUN-2026-08A", amount: "200", due_date: "2026-08-04" }),
+    ]);
+    expect(obligations.some((obligation) => obligation.run_ref.includes(":payroll:3"))).toBe(false);
   });
 
   it("parses payroll gross fallback and reports unparseable payroll rows", () => {
