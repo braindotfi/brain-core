@@ -4542,6 +4542,10 @@ export interface components {
             /** @enum {string} */
             status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_transaction_ids?: string[];
+            /** @description Tenant-scoped structured context. Receivable AR rows carry scenario=ar. */
+            metadata: {
+                [key: string]: unknown;
+            };
         };
         CashFlowSummary: {
             tenantId: string;
@@ -4581,6 +4585,10 @@ export interface components {
             status: "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled" | "disputed";
             linked_document_ids?: string[];
             linked_transaction_ids?: string[];
+            /** @description Tenant-scoped structured context. Receivable AR rows carry scenario=ar. */
+            metadata: {
+                [key: string]: unknown;
+            };
         };
         /** @enum {string} */
         ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly" | "personal_budget" | "financial_health" | "purchase_advisor" | "tax_prep" | "travel_finance" | "bill_management" | "debt_optimization" | "savings";

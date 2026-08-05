@@ -11,6 +11,7 @@ export interface ObligationRow extends LedgerRowCommon {
   recurrence: string | null;
   status: string;
   external_key: string | null;
+  metadata: Record<string, unknown>;
   linked_transaction_ids: string[];
   /**
    * payable = we owe the counterparty (vendor side).

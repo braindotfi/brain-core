@@ -8445,7 +8445,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, type, counterparty_id, amount_due, currency, due_date, status]
+          required: [id, owner_id, type, counterparty_id, amount_due, currency, due_date, status, metadata]
           properties:
             type:
               type: string
@@ -8462,6 +8462,10 @@ components:
             linked_transaction_ids:
               type: array
               items: { type: string }
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Tenant-scoped structured context. Receivable AR rows carry scenario=ar.
 
     CashFlowSummary:
       type: object
@@ -8496,7 +8500,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status]
+          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status, metadata]
           properties:
             invoice_number: { type: string }
             counterparty_id: { type: string }
@@ -8514,6 +8518,10 @@ components:
             linked_transaction_ids:
               type: array
               items: { type: string }
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Tenant-scoped structured context. Receivable AR rows carry scenario=ar.
 
     ProposalType:
       type: string

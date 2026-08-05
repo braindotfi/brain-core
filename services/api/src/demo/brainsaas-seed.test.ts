@@ -506,6 +506,21 @@ describe("seedBrainSaasDemo", () => {
     expect(statuses).toContain("sent");
   });
 
+  it("marks every seeded AR invoice with an explicit scenario", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const arInvoiceInserts = scopedCalls.filter(
+      (c) =>
+        c.sql.includes("INSERT INTO ledger_invoices") &&
+        c.sql.includes("'extracted',0.88,$11::jsonb"),
+    );
+    expect(arInvoiceInserts).toHaveLength(4);
+    for (const insert of arInvoiceInserts) {
+      expect(JSON.parse(String(insert.values?.[10]))).toEqual({ scenario: "ar" });
+    }
+  });
+
   it("inserts one source document per AP invoice", async () => {
     const { pool, audit } = deps();
     await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);

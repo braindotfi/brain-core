@@ -142,6 +142,12 @@ function invoiceNumber(row: CanonicalObligationRow): string {
   );
 }
 
+function projectionMetadata(row: CanonicalObligationRow): Record<string, unknown> {
+  // Receivable canonical obligations are accounts receivable by definition. Mark
+  // them positively so API consumers never have to classify AR by exclusion.
+  return row.direction === "receivable" ? { ...row.extensions, scenario: "ar" } : row.extensions;
+}
+
 /** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
 export async function projectCanonicalCounterparty(
   c: TenantScopedClient,
@@ -252,7 +258,7 @@ export async function projectCanonicalObligation(
       row.evidence_ids,
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.id,
       `canonical:${row.id}`,
     ],
@@ -402,7 +408,7 @@ async function projectCanonicalInvoice(
       ledgerInvoiceStatus(row.status, row.due_date),
       row.source_ids,
       row.evidence_ids,
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
       row.id,

@@ -548,8 +548,8 @@ export async function seedBrainSaasDemo(
         `INSERT INTO ledger_invoices (
            id, owner_id, invoice_number, counterparty_id,
            amount_due, amount_paid, currency, issue_date, due_date, status,
-           source_ids, evidence_ids, linked_document_ids, provenance, confidence
-         ) VALUES ($1,$2,$3,$4,$5,'0.00','USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'extracted',0.88)`,
+           source_ids, evidence_ids, linked_document_ids, provenance, confidence, metadata
+         ) VALUES ($1,$2,$3,$4,$5,'0.00','USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'extracted',0.88,$11::jsonb)`,
         [
           id,
           tenantId,
@@ -561,6 +561,7 @@ export async function seedBrainSaasDemo(
           cust.days_overdue > 0 ? "overdue" : "sent",
           sourceIds,
           evidenceIds,
+          JSON.stringify({ scenario: "ar" }),
         ],
       );
       arInvoices[cust.key] = id;
