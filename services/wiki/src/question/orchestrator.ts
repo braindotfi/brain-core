@@ -114,7 +114,10 @@ export type DeterministicIntentId =
   | "receivable_by_counterparty"
   | "overdue_customer_invoices"
   | "payroll_obligation_total"
-  | "monthly_net_cash_flow";
+  | "monthly_net_cash_flow"
+  | "trailing_monthly_net_cash_flow"
+  | "largest_payable"
+  | "new_vendor_listing";
 
 interface TransactionAggregateIntent {
   operation: AggregateOperation;
@@ -187,6 +190,11 @@ interface NetCashFlowRow extends TransactionListingRow {
   matching_net: string;
 }
 
+interface TrailingCashFlowRow extends TransactionListingRow {
+  matching_months: string;
+  matching_average_net: string;
+}
+
 interface ObligationAggregateRow {
   id: string;
   type: string;
@@ -197,6 +205,14 @@ interface ObligationAggregateRow {
   counterparty_id: string;
   matching_count: string;
   matching_sum: string;
+}
+
+interface LargestPayableRow extends ObligationAggregateRow {
+  counterparty_name: string;
+}
+
+interface NewVendorRow extends CounterpartyResolutionRow {
+  created_at: Date;
 }
 
 interface CounterpartyResolutionRow {
@@ -215,6 +231,14 @@ interface ReceivableByCounterpartyIntent {
 
 interface NetCashFlowIntent {
   range: DateRange;
+  asOf: Date | null;
+}
+
+interface TrailingCashFlowIntent {
+  asOf: Date | null;
+}
+
+interface NewVendorListingIntent {
   asOf: Date | null;
 }
 
@@ -928,6 +952,136 @@ async function answerMonthlyNetCashFlow(
   };
 }
 
+async function answerTrailingMonthlyNetCashFlow(
+  client: TenantScopedClient,
+  intent: TrailingCashFlowIntent,
+): Promise<AskResult> {
+  const values: unknown[] = [];
+  const asOfClause =
+    intent.asOf === null
+      ? ""
+      : (() => {
+          values.push(intent.asOf);
+          return `AND transaction_date <= $${values.length}`;
+        })();
+  values.push(MAX_AGGREGATE_EVIDENCE);
+
+  const { rows } = await client.query<TrailingCashFlowRow>(
+    `WITH filtered AS (
+       SELECT id, amount, currency, direction, transaction_date,
+              description_normalized, description_raw, counterparty_id
+         FROM ledger_transactions
+        WHERE status IN ('posted','cleared')
+          AND direction IN ('inflow','outflow')
+          ${asOfClause}
+     ), monthly AS (
+       SELECT date_trunc('month', transaction_date) AS month,
+              currency,
+              SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END) AS net
+         FROM filtered
+        GROUP BY date_trunc('month', transaction_date), currency
+     ), statistics AS (
+       SELECT currency,
+              COUNT(*)::text AS matching_months,
+              AVG(net)::text AS matching_average_net
+         FROM monthly
+        GROUP BY currency
+     )
+     SELECT filtered.id,
+            filtered.amount::text AS amount,
+            filtered.currency,
+            filtered.direction,
+            filtered.transaction_date,
+            filtered.description_normalized,
+            filtered.description_raw,
+            filtered.counterparty_id,
+            statistics.matching_months,
+            statistics.matching_average_net
+       FROM filtered
+       JOIN statistics ON statistics.currency = filtered.currency
+      ORDER BY filtered.transaction_date DESC, filtered.id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+
+  if (rows.length === 0) {
+    return structuredListingResult("No posted cash-flow history found.", []);
+  }
+
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  const evidence = rows.map(toTransactionEvidence);
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer:
+        "I can't calculate one trailing monthly cash-flow average across multiple currencies.",
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const average = rows[0]!.matching_average_net;
+  const magnitude = average.startsWith("-") ? average.slice(1) : average;
+  const amount = formatCurrencyAmount(magnitude, currencies[0]!);
+  const months = Number(rows[0]!.matching_months);
+  return {
+    answered: true,
+    answer: `Trailing monthly cash flow is ${average.startsWith("-") ? "negative" : "positive"} by ${amount} across ${months} ${months === 1 ? "month" : "months"} with posted activity.`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerLargestPayable(client: TenantScopedClient): Promise<AskResult> {
+  const { rows } = await client.query<LargestPayableRow>(
+    `SELECT obl.id,
+            obl.type,
+            obl.amount_due::text AS amount_due,
+            obl.currency,
+            obl.due_date,
+            obl.status,
+            obl.counterparty_id,
+            cp.name AS counterparty_name,
+            '1'::text AS matching_count,
+            obl.amount_due::text AS matching_sum
+       FROM ledger_obligations obl
+       JOIN ledger_counterparties cp ON cp.id = obl.counterparty_id
+      WHERE obl.direction = 'payable'
+        AND obl.status IN ('upcoming','due','overdue')
+      ORDER BY obl.amount_due DESC, obl.due_date ASC, obl.id ASC
+      LIMIT 1`,
+  );
+  const row = rows[0];
+  if (row === undefined) return structuredListingResult("No open payable obligations found.", []);
+  return structuredListingResult(
+    `The largest open payable is ${formatCurrencyAmount(row.amount_due, row.currency)} to ${row.counterparty_name}, due ${row.due_date.toISOString().slice(0, 10)}.`,
+    [toObligationEvidence(row)],
+  );
+}
+
+async function answerNewVendorListing(
+  client: TenantScopedClient,
+  intent: NewVendorListingIntent,
+): Promise<AskResult> {
+  const reference = intent.asOf ?? new Date();
+  const since = new Date(reference.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const { rows } = await client.query<NewVendorRow>(
+    `SELECT id, name, type, created_at
+       FROM ledger_counterparties
+      WHERE type = 'vendor'
+        AND created_at >= $1
+        AND created_at <= $2
+      ORDER BY created_at DESC, name ASC, id ASC
+      LIMIT $3`,
+    [since, reference, MAX_LISTING_RECORDS],
+  );
+  if (rows.length === 0) return structuredListingResult("No vendors are marked as new.", []);
+  const names = rows.map((row) => row.name).join(", ");
+  return structuredListingResult(`Yes. New vendors: ${names}.`, rows.map(toCounterpartyEvidence));
+}
+
 async function answerOverdueCustomerInvoices(
   client: TenantScopedClient,
   intent: OverdueCustomerInvoicesIntent,
@@ -1476,7 +1630,7 @@ function parsePayableByCounterpartyIntent(question: string): PayableByCounterpar
     /\b(?:what(?:'s| is)?|how much)\s+do\s+we\s+owe\s+(?:to\s+)?(.+?)[?!.\s]*$/i.exec(question) ??
     /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+(.+?)[?!.\s]*$/i.exec(question);
   const counterpartyName = match?.[1]?.trim() ?? "";
-  return counterpartyName === "" ? null : { counterpartyName };
+  return isCounterpartyNameCandidate(counterpartyName) ? { counterpartyName } : null;
 }
 
 function parseReceivableByCounterpartyIntent(
@@ -1486,7 +1640,12 @@ function parseReceivableByCounterpartyIntent(
     /\b(?:what(?:'s| is)?|how much)\s+does\s+(.+?)\s+owe\s+us[?!.\s]*$/i.exec(question) ??
     /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+us\s+by\s+(.+?)[?!.\s]*$/i.exec(question);
   const counterpartyName = match?.[1]?.trim() ?? "";
-  return counterpartyName === "" ? null : { counterpartyName };
+  return isCounterpartyNameCandidate(counterpartyName) ? { counterpartyName } : null;
+}
+
+function isCounterpartyNameCandidate(value: string): boolean {
+  if (value === "" || /[,;]/.test(value)) return false;
+  return !/\b(?:and|or|what|which|when|where|why|how|total|overdue|receivables?)\b/i.test(value);
 }
 
 function parseMonthlyNetCashFlowIntent(
@@ -1497,6 +1656,24 @@ function parseMonthlyNetCashFlowIntent(
   if (!/\bnet\s+cash[ -]?flow\b/.test(q)) return null;
   const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
   return range === null ? null : { range, asOf };
+}
+
+function parseTrailingCashFlowIntent(
+  question: string,
+  asOf: Date | null,
+): TrailingCashFlowIntent | null {
+  return /\btrailing\s+monthly\s+cash[ -]?flow\b/i.test(question) ? { asOf } : null;
+}
+
+function parseLargestPayableIntent(question: string): Record<string, never> | null {
+  return /\blargest\s+(?:single\s+)?payable\b/i.test(question) ? {} : null;
+}
+
+function parseNewVendorListingIntent(
+  question: string,
+  asOf: Date | null,
+): NewVendorListingIntent | null {
+  return /\bvendors?\b.*\b(?:marked\s+as\s+)?new\b/i.test(question) ? { asOf } : null;
 }
 
 function parseOverdueCustomerInvoicesIntent(
@@ -1714,6 +1891,29 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     parse: parseMonthlyNetCashFlowIntent,
     answer: (client, intent) => answerMonthlyNetCashFlow(client, intent as NetCashFlowIntent),
     isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "trailing_monthly_net_cash_flow",
+    displayText: "What's our trailing monthly cash flow?",
+    parse: parseTrailingCashFlowIntent,
+    answer: (client, intent) =>
+      answerTrailingMonthlyNetCashFlow(client, intent as TrailingCashFlowIntent),
+    isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, null),
+  },
+  {
+    id: "largest_payable",
+    displayText: "What's our largest single payable?",
+    suggestable: false,
+    parse: (question) => parseLargestPayableIntent(question),
+    answer: (client) => answerLargestPayable(client),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "new_vendor_listing",
+    displayText: "Do we have any vendors marked as new?",
+    parse: parseNewVendorListingIntent,
+    answer: (client, intent) => answerNewVendorListing(client, intent as NewVendorListingIntent),
+    isEligible: () => Promise.resolve(false),
   },
 ];
 
