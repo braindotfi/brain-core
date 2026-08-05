@@ -832,9 +832,9 @@
           "auth": "bearer or api_key_when_enabled",
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
-          "request_shape": "query { status?, type?, due_before?, limit?, cursor? }",
-          "response_shape": "200 { obligations, next_cursor }",
-          "example_request": "GET /v1/ledger/obligations",
+          "request_shape": "query { direction?: payable|receivable, status?, type?, due_before?, limit?, cursor? }",
+          "response_shape": "200 { obligations[{..., metadata}], next_cursor }; AR rows carry metadata.scenario=ar",
+          "example_request": "GET /v1/ledger/obligations?direction=receivable",
           "example_response": { "obligations": [], "next_cursor": null },
           "openapi": "documented:/ledger/obligations"
         },
@@ -881,7 +881,7 @@
           "required_scope": "ledger:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "query { status?, counterparty_id?, limit?, cursor? }",
-          "response_shape": "200 { invoices, next_cursor }",
+          "response_shape": "200 { invoices[{..., metadata}], next_cursor }; AR rows carry metadata.scenario=ar",
           "example_request": "GET /v1/ledger/invoices",
           "example_response": { "invoices": [], "next_cursor": null },
           "openapi": "documented:/ledger/invoices"

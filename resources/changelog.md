@@ -6,6 +6,18 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.16 (explicit accounts receivable classification)
+
+- **AR-sourced Ledger invoices and obligations now carry
+  `metadata.scenario: "ar"`.** Consumers can identify receivables positively
+  instead of classifying every non-AP row as AR.
+- **Ledger obligation metadata is now part of the public response contract.**
+  `GET /v1/ledger/obligations` returns each row's structured metadata, matching
+  invoice responses.
+- **Invoice and obligation pagination is documented.** Both list endpoints
+  return an opaque `next_cursor`; receivables can additionally be selected with
+  `GET /v1/ledger/obligations?direction=receivable`.
+
 ### v0.5.15 (tenant-aware Wiki question suggestions)
 
 - **`GET /v1/wiki/suggested-questions` returns eligible deterministic

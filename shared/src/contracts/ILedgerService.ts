@@ -130,6 +130,8 @@ export interface Obligation extends LedgerCommonFields {
   recurrence: string | null;
   status: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
   linked_transaction_ids: string[];
+  /** Tenant-scoped, off-chain structured context with no dedicated column. Defaults to {}. */
+  metadata: Record<string, unknown>;
 }
 
 export interface Document extends LedgerCommonFields {

@@ -159,6 +159,13 @@ describe("projectCanonicalObligation", () => {
     expect(invoice?.values[2]).toBe("NL-2417");
     expect(invoice?.values[4]).toBe("500.00");
     expect(invoice?.values[14]).toBe("co_1");
+
+    const obligation = calls.find((c) => c.text.includes("INSERT INTO ledger_obligations"));
+    expect(JSON.parse(String(obligation?.values[13]))).toMatchObject({ scenario: "ar" });
+    expect(JSON.parse(String(invoice?.values[11]))).toMatchObject({
+      scenario: "ar",
+      document_upload: { invoice_ref: "NL-2417" },
+    });
   });
 });
 
