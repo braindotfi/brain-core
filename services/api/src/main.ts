@@ -2022,7 +2022,9 @@ async function main(): Promise<void> {
         await v1.register(async (child) => registerAssistantQuestionsRoute(child, { pool, log }));
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
-        await v1.register(async (child) => registerMemberRoutes(child, { pool, audit }));
+        await v1.register(async (child) =>
+          registerMemberRoutes(child, { pool, audit, revocation: revocationStore }),
+        );
         // PaymentIntentService has its own approval sub-service; the proposal
         // decision route reuses this same money-path service so it cannot bypass
         // member authority, quorum, or hard approval floors.
