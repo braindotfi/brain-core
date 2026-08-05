@@ -171,6 +171,33 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
               (transaction) => transaction.direction === direction,
             );
           }
+          if (text.includes("direction IN ('inflow','outflow')")) {
+            transactions = transactions.filter(
+              (transaction) =>
+                transaction.direction === "inflow" || transaction.direction === "outflow",
+            );
+          }
+          if (text.includes("matching_net")) {
+            const net = transactions.reduce(
+              (sum, transaction) =>
+                sum +
+                (transaction.direction === "inflow"
+                  ? Number(transaction.amount)
+                  : -Number(transaction.amount)),
+              0,
+            );
+            const aggregate = {
+              matching_count: String(transactions.length),
+              matching_net: net.toFixed(2),
+            };
+            return {
+              rows: transactions.map((transaction) => ({
+                ...transaction,
+                ...aggregate,
+              })) as never[],
+              rowCount: transactions.length,
+            };
+          }
           const total = transactions.reduce(
             (sum, transaction) => sum + Number(transaction.amount),
             0,
@@ -223,6 +250,16 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         if (text.includes("inv.metadata->>'scenario' = 'ar'")) {
           invoices = invoices.filter((invoice) => invoice.scenario === "ar");
         }
+        if (text.includes("inv.status IN ('sent','partial','overdue')")) {
+          invoices = invoices.filter((invoice) =>
+            ["sent", "partial", "overdue"].includes(invoice.status),
+          );
+        }
+        if (text.includes("inv.counterparty_id = $1")) {
+          invoices = invoices.filter(
+            (invoice) => invoice.counterparty_id === parameters[parameterIndex++],
+          );
+        }
         if (text.includes("cp.type = 'customer'")) {
           invoices = invoices.filter(
             (invoice) =>
@@ -250,6 +287,20 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         }
         if (text.includes("SELECT EXISTS")) {
           return { rows: [{ eligible: invoices.length > 0 }] as never[], rowCount: 1 };
+        }
+        if (text.includes("COUNT(*) OVER ()")) {
+          const total = invoices.reduce(
+            (sum, invoice) => sum + Number(invoice.amount_due) - Number(invoice.amount_paid),
+            0,
+          );
+          const aggregate = {
+            matching_count: String(invoices.length),
+            matching_sum: total.toFixed(2),
+          };
+          return {
+            rows: invoices.map((invoice) => ({ ...invoice, ...aggregate })) as never[],
+            rowCount: invoices.length,
+          };
         }
         const limit = parameters.at(-1);
         if (typeof limit === "number") invoices = invoices.slice(0, limit);
@@ -941,6 +992,217 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(llm.seen).toEqual([]);
   });
 
+  it("sums only open AR invoices for a uniquely resolved customer", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_UNRELATED_PAYROLL",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "33564.38",
+          currency: "USD",
+          due_date: new Date("2026-08-04T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_PAYROLL",
+        },
+      ],
+      counterparties: [
+        {
+          id: "cp_ENTERPRISE",
+          name: "Enterprise Holdings",
+          normalized_name: "enterprise_holdings",
+          type: "customer",
+          risk_level: null,
+        },
+        {
+          id: "cp_CLOUDOPS",
+          name: "CloudOps",
+          normalized_name: "cloudops",
+          type: "vendor",
+          risk_level: null,
+        },
+        { id: "cp_PAYROLL", name: "Gusto", type: "vendor", risk_level: null },
+      ],
+      invoices: [
+        {
+          id: "inv_ENTERPRISE",
+          invoice_number: "INV-ENTERPRISE",
+          amount_due: "384000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_ENTERPRISE",
+          scenario: "ar",
+        },
+        {
+          id: "inv_UNRELATED_AR",
+          invoice_number: "INV-UNRELATED",
+          amount_due: "485000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-15T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_OTHER",
+          scenario: "ar",
+        },
+        {
+          id: "inv_CLOUDOPS_AP",
+          invoice_number: "BILL-CLOUDOPS",
+          amount_due: "19400.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-12T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_CLOUDOPS",
+          scenario: "ap",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("receivable totals must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "How much does Enterprise Holdings owe us?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-receivable",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "Enterprise Holdings owes you $384,000.00 across 1 open customer invoice.",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "cp_ENTERPRISE",
+      "inv_ENTERPRISE",
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it.each([
+    [
+      "How much does Unknown Customer owe us?",
+      'I couldn\'t identify a counterparty matching "Unknown Customer".',
+    ],
+    [
+      "How much does CloudOps owe us?",
+      "CloudOps is not a customer counterparty, so I can't calculate a receivable total.",
+    ],
+  ])(
+    "safely refuses unsupported receivable total questions: %s",
+    async (question, expectedAnswer) => {
+      const rows: FakeRows = {
+        transactions: [],
+        obligations: [],
+        counterparties: [{ id: "cp_CLOUDOPS", name: "CloudOps", type: "vendor", risk_level: null }],
+      };
+      const llm = new InspectingLlmAdapter(() => {
+        throw new Error("unresolved or mismatched receivable questions must not call the LLM");
+      });
+
+      const result = await askWiki(
+        {
+          client: fakeClient(rows),
+          llm,
+          embed: new DeterministicEmbeddingAdapter(16),
+          redis: fakeRedis() as unknown as Redis,
+          metrics: new MockMetrics(),
+        },
+        { question, asOf: null, maxEvidenceDepth: 3, tenantId: "tnt_test", model: "m-receivable" },
+      );
+
+      expect(result).toMatchObject({ answered: false, answer: expectedAnswer });
+      expect(llm.seen).toEqual([]);
+    },
+  );
+
+  it("calculates net cash flow from the complete requested month", async () => {
+    const rows: FakeRows = {
+      transactions: [
+        {
+          id: "tx_AUG_INFLOW",
+          amount: "150000.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-08-02T00:00:00Z"),
+          description_normalized: "Customer payment",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_AUG_OUTFLOW",
+          amount: "6000.00",
+          currency: "USD",
+          direction: "outflow",
+          transaction_date: new Date("2026-08-03T00:00:00Z"),
+          description_normalized: "Operating expense",
+          description_raw: null,
+          counterparty_id: null,
+        },
+        {
+          id: "tx_JULY_UNRELATED",
+          amount: "1000.00",
+          currency: "USD",
+          direction: "inflow",
+          transaction_date: new Date("2026-07-31T00:00:00Z"),
+          description_normalized: "Prior month payment",
+          description_raw: null,
+          counterparty_id: null,
+        },
+      ],
+      obligations: [],
+      counterparties: [],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("net cash-flow questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Are we net cash-flow positive this month, and by how much?",
+        asOf: new Date("2026-08-05T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-net-cash-flow",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "Net cash flow in August 2026 is positive by $144,000.00.",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "tx_AUG_INFLOW",
+      "tx_AUG_OUTFLOW",
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
+
   it("lists only overdue AR invoices for customer-invoice questions", async () => {
     const rows: FakeRows = {
       transactions: [],
@@ -1145,6 +1407,11 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         intentId: "transaction_listing",
         displayText: "Show my last 10 transactions",
         usageRankScore: 2,
+      },
+      {
+        intentId: "monthly_net_cash_flow",
+        displayText: "Are we net cash-flow positive this month?",
+        usageRankScore: 0,
       },
       {
         intentId: "transaction_count",
