@@ -142,13 +142,21 @@ fi
 # evidence_ids traces back to this raw_parsed row -- exactly what the §6 gate
 # check 9.5 loader (makeResolveEvidence) joins against to resolve
 # kind: "obligation_reference".
+#
+# The amount is bounded on both sides and cannot be picked freely:
+#   - It must stay ABOVE 1000.00 so the demo policy matches
+#     `confirm-mid-payment` rather than `confirm-small-payment`, keeping this
+#     run on the tier whose approval path steps 8 and 9 exercise.
+#   - It must stay BELOW the seeded Chase Checking available balance
+#     (1180.00, from the golden-path seed) or the section 6 gate fails closed
+#     at check 8 (available_balance_sufficient) before the rail is reached.
 GP_DUE_DATE=$(date -u -d '+14 days' +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -v+14d +%Y-%m-%dT00:00:00Z)
 PARSED_BODY=$(jq -n --arg due "$GP_DUE_DATE" '{
   parser: "doc_obligation_v1", parser_version: "1.0.0",
   extracted: {
     counterparty_name: "Golden Path Vendor",
     direction: "payable", type: "bill",
-    amount: "1250.00", currency: "USD",
+    amount: "1050.00", currency: "USD",
     due_date: $due, status: "due"
   },
   confidence: 0.45
@@ -185,6 +193,19 @@ GP_AMOUNT=$(echo "$GP_OBLIGATION" | jq -r '.amount_due')
 GP_CURRENCY=$(echo "$GP_OBLIGATION" | jq -r '.currency')
 ok "obligation $GP_OBLIGATION_ID projected (counterparty $GP_CP_ID, $GP_AMOUNT $GP_CURRENCY)"
 record "ingest_projection" ok "$GP_OBLIGATION_ID"
+
+# The counterparty the canonical projector just minted for this document is
+# stamped with a payment-instruction row at now() (migration 0027's trigger
+# fires on INSERT, not only on a real destination change), which gate check
+# 11.5 rule 6 reads as the destination_recently_changed fraud signal. The seed
+# already backdates for this reason, but it runs before this counterparty
+# exists, so the demo dataset's "established vendor" posture has to be restored
+# here. A genuine destination change during a run still stamps now() and is
+# still flagged.
+if ! pnpm -C tools/seed-golden-path run establish-destinations >/tmp/gp_destinations.log 2>&1; then
+  fail "could not backdate payment instructions:"; cat /tmp/gp_destinations.log >&2
+  record "establish_destinations" fail ""; exit 1
+fi
 
 # ── 4. Normalize → assert ledger rows ────────────────────────────────────────
 header "4. Normalize → Ledger invoices + counterparties"

@@ -8,7 +8,8 @@
   "types": "dist/index.d.ts",
   "bin": {
     "brain-seed-golden-path": "./dist/cli.js",
-    "brain-seed-brainsaas": "./dist/cli-brainsaas.js"
+    "brain-seed-brainsaas": "./dist/cli-brainsaas.js",
+    "brain-seed-establish-destinations": "./dist/cli-establish-destinations.js"
   },
   "scripts": {
     "build": "tsc -b",
@@ -17,7 +18,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run --passWithNoTests",
     "seed": "node dist/cli.js",
-    "seed:brainsaas": "node dist/cli-brainsaas.js"
+    "seed:brainsaas": "node dist/cli-brainsaas.js",
+    "establish-destinations": "node dist/cli-establish-destinations.js"
   },
   "dependencies": {
     "@brain/api": "workspace:*",
