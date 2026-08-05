@@ -1074,6 +1074,11 @@ paths:
                       policy_id: { type: [string, 'null'] }
                       agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: Platform identity already linked to a tenant. Returns `tenant_identity_already_linked` with `error.details.tenant_id`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: |
             Missing/invalid `X-Platform-Service-Auth` header (error code
@@ -1171,6 +1176,15 @@ paths:
                       policy_id: { type: [string, 'null'] }
                       agent_id: { type: [string, 'null'] }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: |
+            The globally unique platform identity is already linked to a tenant.
+            Returns `tenant_identity_already_linked` with the existing
+            `tenant_id` in `error.details`; use `POST /v1/sessions` to exchange
+            that identity for a member session instead of creating another tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: Missing or invalid platform credential.
           content:
@@ -1674,10 +1688,13 @@ paths:
       tags: [Raw]
       summary: Ingest a financial artifact
       description: |
-        Requires `raw:write`. Accepts a financial artifact via direct
-        upload or URL reference. Content is stored immutably with SHA-256
-        content addressing. Duplicate artifacts (same tenant, same
-        SHA-256) return the existing raw_id.
+        Requires `raw:write` on a bearer user JWT or a registered external-agent
+        JWT. Standard `brain_sk_` tenant API keys are read-only and cannot be
+        issued `raw:write`; API-key authentication is not enabled on the
+        production API at launch. Accepts a financial artifact via direct upload
+        or URL reference. Content is stored immutably with SHA-256 content
+        addressing. Duplicate artifacts (same tenant, same SHA-256) return the
+        existing raw_id.
       operationId: ingestRaw
       requestBody:
         required: true
@@ -2714,10 +2731,21 @@ paths:
       tags: [Ledger]
       summary: List obligations (bills, invoices, subscriptions)
       description: |
-        Requires `ledger:read`. Cursor pagination is keyset-based and
-        opaque. Pass `next_cursor` unchanged to fetch the next page.
+        Requires `ledger:read`. Results default to payable obligations. Pass
+        `direction=receivable` to list obligations owed to the tenant. Cursor
+        pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
+        fetch the next page. Pass `scenario=ar` or `scenario=ap` to filter
+        rows by their explicit projection scenario. When direction is omitted,
+        `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
       operationId: listObligations
       parameters:
+        - name: direction
+          in: query
+          schema: { type: string, enum: [payable, receivable], default: payable }
+        - name: scenario
+          in: query
+          description: Explicit projection scenario. Composes with an explicitly supplied direction.
+          schema: { type: string, enum: [ap, ar] }
         - name: status
           in: query
           schema: { type: string, enum: [upcoming, due, paid, overdue, cancelled, disputed] }
@@ -8437,7 +8465,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, type, counterparty_id, amount_due, currency, due_date, status]
+          required: [id, owner_id, type, counterparty_id, amount_due, currency, due_date, status, metadata]
           properties:
             type:
               type: string
@@ -8454,6 +8482,10 @@ components:
             linked_transaction_ids:
               type: array
               items: { type: string }
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Tenant-scoped structured context. Receivable AR rows carry scenario=ar.
 
     CashFlowSummary:
       type: object
@@ -8488,7 +8520,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status]
+          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status, metadata]
           properties:
             invoice_number: { type: string }
             counterparty_id: { type: string }
@@ -8506,6 +8538,10 @@ components:
             linked_transaction_ids:
               type: array
               items: { type: string }
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Tenant-scoped structured context. Receivable AR rows carry scenario=ar.
 
     ProposalType:
       type: string

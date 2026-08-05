@@ -142,6 +142,12 @@ function invoiceNumber(row: CanonicalObligationRow): string {
   );
 }
 
+function projectionMetadata(row: CanonicalObligationRow): Record<string, unknown> {
+  // Receivable canonical obligations are accounts receivable by definition. Mark
+  // them positively so API consumers never have to classify AR by exclusion.
+  return row.direction === "receivable" ? { ...row.extensions, scenario: "ar" } : row.extensions;
+}
+
 /** Upsert one canonical counterparty into the Ledger projection; returns the Ledger id. */
 export async function projectCanonicalCounterparty(
   c: TenantScopedClient,
@@ -216,8 +222,9 @@ export async function projectCanonicalObligation(
   await c.query(
     `INSERT INTO ledger_obligations
        (id, owner_id, type, counterparty_id, amount_due, currency, due_date, status,
-        direction, source_ids, evidence_ids, provenance, confidence, metadata, canonical_obligation_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14::jsonb,$15)
+        direction, source_ids, evidence_ids, provenance, confidence, metadata, canonical_obligation_id,
+        external_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14::jsonb,$15,$16)
      ON CONFLICT (owner_id, canonical_obligation_id) WHERE canonical_obligation_id IS NOT NULL
      DO UPDATE SET
         type = EXCLUDED.type,
@@ -251,8 +258,9 @@ export async function projectCanonicalObligation(
       row.evidence_ids,
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.id,
+      `canonical:${row.id}`,
     ],
   );
   await projectCanonicalInvoice(c, tenantId, row, counterpartyId);
@@ -400,7 +408,7 @@ async function projectCanonicalInvoice(
       ledgerInvoiceStatus(row.status, row.due_date),
       row.source_ids,
       row.evidence_ids,
-      JSON.stringify(row.extensions),
+      JSON.stringify(projectionMetadata(row)),
       row.provenance,
       projectedConfidence(row.provenance, row.confidence),
       row.id,

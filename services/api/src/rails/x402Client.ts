@@ -1,68 +1,93 @@
 /**
  * Concrete X402Client builder wired at boot.
  *
- * Implements the x402 HTTP settlement protocol: a POST to the facilitator URL
- * with the payment details; the facilitator verifies the on-chain USDC transfer
- * has been initiated and returns a tx_hash. The rail file (x402-base.ts) stays
- * SDK-free and uses this injected client.
+ * Implements the x402 HTTP settlement protocol: settle the USDC transfer
+ * on-chain, then POST the result to the facilitator URL for attestation /
+ * bookkeeping. The rail file (x402-base.ts) stays SDK-free and uses this
+ * injected client.
  *
- * Env: BRAIN_X402_FACILITATOR_URL, BRAIN_X402_USDC_ADDRESS, BRAIN_X402_NETWORK.
- * Session key signs the USDC transfer on behalf of the tenant's smart account.
+ * F1: the settlement itself is routed through the injected `OnchainExecutor`
+ * (`BrainSmartAccount.executeViaSessionKey`) instead of a bare session-key EOA
+ * signing an ERC-20 transfer directly. A direct transfer bypasses every
+ * on-chain guard the contract enforces (allowedTargets, allowedSelectors,
+ * maxPerTx/maxPerPeriod, the policyVersion binding, the _nonces replay guard,
+ * the pause kill switches) -- CLAUDE.md's safety argument for why x402
+ * intentionally skips ledger_reservations is that "their spend ceilings are
+ * the on-chain session-key caps"; a direct transfer had no ceiling at all.
+ * This is the same executor + smart-account routing EscrowBaseRail already
+ * uses for escrow_release (services/execution/src/rails/escrow-base.ts).
+ *
+ * Reverted-receipt handling (F2) lives once in the shared executor
+ * (onchainExecutor.ts's `execute`), so it applies here too now that this
+ * client routes through it -- no separate unchecked receipt wait remains.
+ *
+ * Env: BRAIN_X402_FACILITATOR_URL, BRAIN_X402_USDC_ADDRESS, BRAIN_X402_NETWORK,
+ * BRAIN_ONCHAIN_SMART_ACCOUNT. Session key signs on behalf of the tenant's
+ * smart account.
  */
 
-import { createPublicClient, createWalletClient, http, parseUnits, parseAbi } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { base, baseSepolia } from "viem/chains";
-import type { X402Client, X402SettleArgs, X402SettleResult } from "@brain/execution";
+import { encodeFunctionData, parseAbi, parseUnits } from "viem";
+import type {
+  OnchainExecutor,
+  X402Client,
+  X402SettleArgs,
+  X402SettleResult,
+} from "@brain/execution";
 
-const USDC_ABI = parseAbi([
+const ERC20_ABI = parseAbi([
   "function transfer(address to, uint256 amount) external returns (bool)",
-  "function decimals() external view returns (uint8)",
 ]);
 
-export function buildX402Client(opts: {
+export interface BuildX402ClientOpts {
   facilitatorUrl: string;
   usdcAddress: string;
   network: string;
-  privateKey: `0x${string}`;
-  rpcUrl: string;
-  chainId?: number;
-}): X402Client {
-  const chain = opts.chainId === 8453 ? base : baseSepolia;
-  const account = privateKeyToAccount(opts.privateKey);
-  const publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
-  const walletClient = createWalletClient({ account, chain, transport: http(opts.rpcUrl) });
+  /** Shared on-chain executor (same one OnchainBaseRail/EscrowBaseRail use). */
+  executor: OnchainExecutor;
+  /** 0x 20-byte BrainSmartAccount address the session key executes through. */
+  smartAccount: string;
+  /** 0x 20-byte session-key holder (the signer) address. */
+  holderAddress: string;
+  /** Reads USDC.decimals() -- injected so this module stays viem-client-light. */
+  getUsdcDecimals: (tokenAddress: string) => Promise<number>;
+}
 
+export function buildX402Client(opts: BuildX402ClientOpts): X402Client {
   return {
     async settle(args: X402SettleArgs): Promise<X402SettleResult> {
-      // 1. Read USDC decimals (6 for USDC, cached by viem).
-      const decimals = await publicClient.readContract({
-        address: opts.usdcAddress as `0x${string}`,
-        abi: USDC_ABI,
-        functionName: "decimals",
-      });
-
-      // 2. Transfer USDC from the session-key account to the payee.
+      // 1. Read USDC decimals and encode the ERC-20 transfer calldata.
+      const decimals = await opts.getUsdcDecimals(opts.usdcAddress);
       const amountUnits = parseUnits(args.amount, decimals);
-      const txHash = await walletClient.writeContract({
-        address: opts.usdcAddress as `0x${string}`,
-        abi: USDC_ABI,
+      const data = encodeFunctionData({
+        abi: ERC20_ABI,
         functionName: "transfer",
         args: [args.payTo as `0x${string}`, amountUnits],
       });
 
-      // 3. Wait for receipt.
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      // 2. Route the transfer through BrainSmartAccount.executeViaSessionKey
+      //    so the on-chain caps and replay guard apply (F1).
+      const nonce = await opts.executor.readNonce({
+        smartAccount: opts.smartAccount,
+        holder: opts.holderAddress,
+      });
+      const result = await opts.executor.execute({
+        smartAccount: opts.smartAccount,
+        holder: opts.holderAddress,
+        nonce,
+        target: opts.usdcAddress,
+        value: 0n,
+        data,
+      });
 
-      // 4. Notify the facilitator for settlement attestation / bookkeeping.
-      //    If the facilitator is unreachable, we still have the confirmed tx —
+      // 3. Notify the facilitator for settlement attestation / bookkeeping.
+      //    If the facilitator is unreachable, we still have the confirmed tx --
       //    the settlement is recorded; the facilitator step is best-effort.
       try {
         const resp = await fetch(opts.facilitatorUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            tx_hash: receipt.transactionHash,
+            tx_hash: result.txHash,
             pay_to: args.payTo,
             amount: args.amount,
             asset: "USDC",
@@ -72,7 +97,7 @@ export function buildX402Client(opts: {
           signal: AbortSignal.timeout(10_000),
         });
         if (!resp.ok) {
-          // Log but don't throw — the on-chain transfer is the source of truth.
+          // Log but don't throw -- the on-chain transfer is the source of truth.
           console.warn(
             `[x402Client] facilitator notification failed: ${resp.status} ${resp.statusText}`,
           );
@@ -82,7 +107,7 @@ export function buildX402Client(opts: {
       }
 
       return {
-        txHash: receipt.transactionHash,
+        txHash: result.txHash,
         settledAmount: args.amount,
       };
     },

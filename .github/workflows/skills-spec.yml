@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check publication credential
         id: auth
@@ -33,10 +33,10 @@ jobs:
             echo "BRAIN_SKILLS_PUSH_TOKEN is not provisioned; skipping publication."
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.auth.outputs.configured == 'true'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.auth.outputs.configured == 'true'
         with:
           node-version-file: ".nvmrc"
@@ -52,7 +52,7 @@ jobs:
 
       - name: Check out public skills repository
         if: steps.auth.outputs.configured == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: braindotfi/brain-skills
           path: brain-skills

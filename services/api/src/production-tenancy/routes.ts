@@ -37,6 +37,8 @@ const REFRESH_TOKEN_TTL_DAYS = 30;
 const SET_PASSWORD_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 /** A founder email that resolves to bootstrapPlaceholderEmail's undeliverable pattern. */
 const BOOTSTRAP_PLACEHOLDER_EMAIL_SUFFIX = "@brain.invalid";
+const PLATFORM_IDENTITY_LINK_UNIQUE_INDEX =
+  "idx_member_identity_links_platform_external_ref_unique";
 const MEMBER_SESSION_SCOPES = [
   "ledger:read",
   "ledger:write",
@@ -180,6 +182,8 @@ export async function registerProductionTenancyRoutes(
         : founderEmail;
     const companyName = typeof body?.company_name === "string" ? body.company_name : null;
     const externalRef = requireString(body?.founder_external_ref, "founder_external_ref");
+    const linkedMember = await findMemberByPlatformExternalRef(deps.resolverPool, externalRef);
+    if (linkedMember !== null) throw platformIdentityAlreadyLinked(linkedMember.tenant_id);
     const tenantId = newTenantId();
     const memberId = newUserId();
     const sessionSeed = newSessionSeed(tenantId, memberId);
@@ -194,36 +198,47 @@ export async function registerProductionTenancyRoutes(
     const setPasswordToken = newSecretToken();
     const setPasswordTokenExpiresAt = new Date(Date.now() + SET_PASSWORD_TOKEN_TTL_MS);
 
-    const agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
-      await client.query(
-        `INSERT INTO tenants (id, kind, sandbox, created_via)
-           VALUES ($1, 'production', FALSE, 'admin')`,
-        [tenantId],
-      );
-      await client.query(
-        `INSERT INTO users (id, tenant_id, email, role)
-           VALUES ($1, $2, $3, 'owner')
-           ON CONFLICT DO NOTHING`,
-        [memberId, tenantId, founderEmail],
-      );
-      await client.query(
-        `INSERT INTO email_verifications (token_hash, user_id, tenant_id, expires_at)
-           VALUES ($1, $2, $3, $4)`,
-        [hashToken(setPasswordToken), memberId, tenantId, setPasswordTokenExpiresAt],
-      );
-      await insertBootstrapAdminMember(client, {
-        tenantId,
-        memberId,
-        email: founderEmail,
-        displayName: founderDisplayName,
+    let agentResult: { agentId: string; agentCreated: boolean; agentToken: AgentTokenSeed };
+    try {
+      agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
+        await client.query(
+          `INSERT INTO tenants (id, kind, sandbox, created_via)
+             VALUES ($1, 'production', FALSE, 'admin')`,
+          [tenantId],
+        );
+        await client.query(
+          `INSERT INTO users (id, tenant_id, email, role)
+             VALUES ($1, $2, $3, 'owner')
+             ON CONFLICT DO NOTHING`,
+          [memberId, tenantId, founderEmail],
+        );
+        await client.query(
+          `INSERT INTO email_verifications (token_hash, user_id, tenant_id, expires_at)
+             VALUES ($1, $2, $3, $4)`,
+          [hashToken(setPasswordToken), memberId, tenantId, setPasswordTokenExpiresAt],
+        );
+        await insertBootstrapAdminMember(client, {
+          tenantId,
+          memberId,
+          email: founderEmail,
+          displayName: founderDisplayName,
+        });
+        await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
+        await ensureActiveDefaultPolicy(client, tenantId, memberId);
+        await insertRefreshToken(client, sessionSeed);
+        const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
+        const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
+        return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
       });
-      await insertPlatformIdentityLink(client, tenantId, memberId, externalRef);
-      await ensureActiveDefaultPolicy(client, tenantId, memberId);
-      await insertRefreshToken(client, sessionSeed);
-      const agent = await ensureBffServiceAgent(client, tenantId, smartAccount);
-      const agentToken = await insertProductionAgentToken(client, tenantId, agent.agentId);
-      return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
-    });
+    } catch (err) {
+      if (!isPlatformIdentityLinkConflict(err)) throw err;
+      const linkedAfterConflict = await findMemberByPlatformExternalRef(
+        deps.resolverPool,
+        externalRef,
+      );
+      if (linkedAfterConflict === null) throw err;
+      throw platformIdentityAlreadyLinked(linkedAfterConflict.tenant_id);
+    }
 
     const member = await findMemberInTenant(deps.pool, tenantId, memberId);
     if (member === null) throw brainError("internal_server_error", "bootstrap member missing");
@@ -741,6 +756,20 @@ async function insertPlatformIdentityLink(
      DO UPDATE SET member_id = EXCLUDED.member_id, linked_at = now()`,
     [tenantId, memberId, externalRef],
   );
+}
+
+function platformIdentityAlreadyLinked(tenantId: string) {
+  return brainError(
+    "tenant_identity_already_linked",
+    "platform identity is already linked to a tenant",
+    { details: { tenant_id: tenantId } },
+  );
+}
+
+function isPlatformIdentityLinkConflict(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const dbError = err as { code?: unknown; constraint?: unknown };
+  return dbError.code === "23505" && dbError.constraint === PLATFORM_IDENTITY_LINK_UNIQUE_INDEX;
 }
 
 async function findTenantKind(
