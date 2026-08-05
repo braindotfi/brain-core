@@ -24,15 +24,22 @@ export async function registerSchema(app: FastifyInstance, deps: WikiDeps): Prom
           out[`relation/${k}`] = s;
         }
       } else if (kind.startsWith("entity/")) {
-        const k = kind.slice("entity/".length) as keyof typeof deps.schemas.entity;
-        const s = deps.schemas.entity[k];
-        if (s === undefined) throw brainError("wiki_schema_validation_failed", "unknown kind");
-        out[kind] = s;
+        // Object.hasOwn, not an `=== undefined` check on the lookup: `kind` is
+        // a raw query param, so `entity/constructor` (or toString, valueOf,
+        // ...) resolves to an INHERITED Object.prototype member, passes a
+        // not-undefined test, and gets written into the response. Own-property
+        // membership is what "is this a registered schema kind" actually means.
+        const k = kind.slice("entity/".length);
+        if (!Object.hasOwn(deps.schemas.entity, k)) {
+          throw brainError("wiki_schema_validation_failed", "unknown kind");
+        }
+        out[kind] = deps.schemas.entity[k as keyof typeof deps.schemas.entity];
       } else if (kind.startsWith("relation/")) {
-        const k = kind.slice("relation/".length) as keyof typeof deps.schemas.relation;
-        const s = deps.schemas.relation[k];
-        if (s === undefined) throw brainError("wiki_schema_validation_failed", "unknown kind");
-        out[kind] = s;
+        const k = kind.slice("relation/".length);
+        if (!Object.hasOwn(deps.schemas.relation, k)) {
+          throw brainError("wiki_schema_validation_failed", "unknown kind");
+        }
+        out[kind] = deps.schemas.relation[k as keyof typeof deps.schemas.relation];
       } else {
         throw brainError(
           "request_params_invalid",

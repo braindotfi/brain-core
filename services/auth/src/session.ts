@@ -150,7 +150,11 @@ export function clearHostCookie(name: string): string {
 
 /** Parses a `Cookie:` request header into a name -> value map. Tolerant of malformed input. */
 export function parseCookies(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+  // Null-prototype, because every key here is attacker-chosen: a request
+  // carrying `Cookie: constructor=x` writes that name straight into the map,
+  // and on a `{}` literal a lookup for a cookie that was never sent can
+  // return an inherited Object.prototype member instead of undefined.
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
   if (header === undefined || header.length === 0) return out;
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");

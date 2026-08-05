@@ -1,17 +1,30 @@
 /**
  * Server-rendered HTML for /login, /set-password, /forgot-password. No client
  * framework, no bundler -- same posture as services/api/src/proof/view.ts,
- * whose `esc()` is copied verbatim below. Every interpolated value goes
+ * whose `esc()` this started as a verbatim copy of. It now differs in form
+ * only (global regexes rather than string-argument replaceAll, see below);
+ * the escaped character set is the same. Every interpolated value goes
  * through `esc()`.
  */
 
+/**
+ * The same five replacements as before, written as global regexes instead of
+ * `replaceAll` with string arguments. Behaviour is identical. The reason for
+ * the shape is legibility to static analysis: CodeQL's XSS sanitizer model
+ * (and most others) recognises a `replace(/</g, ...)` chain as HTML escaping
+ * and does not recognise the string-argument `replaceAll` form. Every value
+ * this file interpolates already went through here, so the reflected-XSS
+ * findings against the auth pages were false positives, but an escaper the
+ * scanner can see is worth more than one only a reviewer can see. `&` stays
+ * first: escaping it after the others would double-encode their output.
+ */
 export function esc(value: unknown): string {
   return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export interface PageOptions {

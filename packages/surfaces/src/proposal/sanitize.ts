@@ -7,7 +7,12 @@ export function sanitizeForSurface(text: string, surface: SurfaceSanitizerTarget
     case "slack":
       return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     case "teams":
-      return text.replace(/([[\]()*_`])/g, "\\$1");
+      // The backslash must be in the class, and first: escaping only the
+      // metacharacters left an attacker-supplied "\" unescaped, so input
+      // `\*bold*` became `\` + `\*bold*`, which renders as a literal
+      // backslash followed by a live emphasis run. Escaping the escape
+      // character closes that bypass.
+      return text.replace(/([\\[\]()*_`])/g, "\\$1");
     case "email":
       return text;
   }

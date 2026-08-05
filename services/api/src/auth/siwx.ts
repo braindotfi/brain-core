@@ -93,9 +93,18 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
   const tokenTtl = opts.tokenTtlSeconds ?? DEFAULT_AGENT_TTL_SECONDS;
   const nonceTtlSecs = Math.ceil(NONCE_TTL_MS / 1000);
 
+  // Both SIWX routes are unauthenticated (skipAuth) and were relying on the
+  // app-wide 300/minute limiter in main.ts alone. That is the generic ceiling
+  // for authenticated API traffic, not the right one for a credential
+  // endpoint: /challenge mints a nonce and writes Redis on every call, and
+  // /siwx is the login exchange. 10/minute matches what every other
+  // unauthenticated auth route in this codebase already uses (onboarding
+  // /login, services/auth's /login and /set-password).
+  const SIWX_RATE_LIMIT = { max: 10, timeWindow: "1 minute" } as const;
+
   app.post(
     "/auth/siwx/challenge",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, rateLimit: SIWX_RATE_LIMIT } },
     async (_req: FastifyRequest, reply: FastifyReply) => {
       const nonce = generateNonce();
       const sessionId = brainId("token");
@@ -107,7 +116,7 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
 
   app.post(
     "/auth/siwx",
-    { config: { skipAuth: true } },
+    { config: { skipAuth: true, rateLimit: SIWX_RATE_LIMIT } },
     async (req: FastifyRequest, reply: FastifyReply) => {
       if (opts.demoMode === true) {
         const expiresAt = Math.floor(Date.now() / 1000) + tokenTtl;
