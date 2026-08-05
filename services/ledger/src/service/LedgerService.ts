@@ -216,6 +216,7 @@ export class LedgerService implements ILedgerService {
     const rows = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       listObligationsRepo(c, {
         ...(f.direction !== undefined ? { direction: f.direction } : {}),
+        ...(f.scenario !== undefined ? { scenario: f.scenario } : {}),
         ...(f.status !== undefined ? { status: f.status } : {}),
         ...(f.type !== undefined ? { type: f.type } : {}),
         ...(f.due_before !== undefined ? { due_before: new Date(f.due_before) } : {}),

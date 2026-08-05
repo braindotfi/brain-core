@@ -983,11 +983,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List payable obligations (bills, invoices, subscriptions)
+         * List obligations (bills, invoices, subscriptions)
          * @description Requires `ledger:read`. Results default to payable obligations. Pass
          *     `direction=receivable` to list obligations owed to the tenant. Cursor
          *     pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
-         *     fetch the next page.
+         *     fetch the next page. Pass `scenario=ar` or `scenario=ap` to filter
+         *     rows by their explicit projection scenario. When direction is omitted,
+         *     `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
          */
         get: operations["listObligations"];
         put?: never;
@@ -7225,6 +7227,8 @@ export interface operations {
         parameters: {
             query?: {
                 direction?: "payable" | "receivable";
+                /** @description Explicit projection scenario. Composes with an explicitly supplied direction. */
+                scenario?: "ap" | "ar";
                 status?: "upcoming" | "due" | "paid" | "overdue" | "cancelled" | "disputed";
                 type?: string;
                 due_before?: string;

@@ -329,9 +329,12 @@ Done
   `self_attested`, `document_verified`, and `sanctions_cleared`.
 - AR-sourced Ledger invoice and receivable-obligation rows carry the positive
   `metadata.scenario="ar"` marker. `GET /v1/ledger/obligations` returns
-  metadata and supports `direction=receivable`, `limit`, and opaque cursor
-  pagination through `next_cursor`; clients must not infer AR by treating every
-  non-AP row as receivable.
+  metadata and supports `direction=receivable`, `scenario=ap|ar`, `limit`, and
+  opaque cursor pagination through `next_cursor`. With no explicit direction,
+  `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
+  `GET /v1/ledger/invoices` is the complete receivables inventory; the
+  receivable-obligation filter only contains rows with an obligation projection.
+  Clients must not infer AR by treating every non-AP row as receivable.
 - Manual counterparty create and edit are identity-only. Payment rail fields
   such as IBAN, account number, routing, SWIFT, BIC, wallet, and bank details
   are rejected with `payment_fields_not_allowed` and never write

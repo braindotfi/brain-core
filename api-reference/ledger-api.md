@@ -153,6 +153,7 @@ gate payment execution.
 ```http
 GET /v1/ledger/invoices?status=sent
 GET /v1/ledger/obligations?direction=receivable&status=due&due_before=2026-06-30
+GET /v1/ledger/obligations?scenario=ar
 ```
 
 `Invoice.status`: `draft | sent | partial | paid | overdue | cancelled | disputed`. `Obligation.type`: `bill | invoice | subscription | loan | rent | payroll | tax | card_statement | other`.
@@ -160,9 +161,15 @@ GET /v1/ledger/obligations?direction=receivable&status=due&due_before=2026-06-30
 Both endpoints use opaque cursor pagination. Pass `limit` (default `50`, max
 `500`) and the preceding response's `next_cursor` as `cursor`; a final page
 returns `next_cursor: null`. Use `direction=receivable` on obligations when
-listing accounts receivable. AR-sourced invoice and receivable-obligation rows
-carry `metadata.scenario: "ar"`. Clients should use that positive marker for
+listing receivable obligations, or `scenario=ar` to select explicitly AR-marked
+rows. AR-sourced invoice and receivable-obligation rows carry
+`metadata.scenario: "ar"`. Clients should use that positive marker for
 classification rather than treating every non-AP row as receivable.
+
+`GET /v1/ledger/invoices` is the complete Ledger source for a receivables
+inventory. `GET /v1/ledger/obligations?direction=receivable` contains only
+receivables that have an obligation projection, so it is not an interchangeably
+complete AR list.
 
 ### Promote Raw → Ledger
 

@@ -24,6 +24,7 @@ export interface ObligationRow extends LedgerRowCommon {
 
 export interface ObligationListFilters {
   direction?: "payable" | "receivable";
+  scenario?: "ar" | "ap";
   status?: string;
   type?: string;
   due_before?: Date;
@@ -53,6 +54,10 @@ export async function listObligations(
   if (filters.direction !== undefined) {
     values.push(filters.direction);
     where.push(`direction = $${values.length}`);
+  }
+  if (filters.scenario !== undefined) {
+    values.push(filters.scenario);
+    where.push(`metadata->>'scenario' = $${values.length}`);
   }
   if (filters.status !== undefined) {
     values.push(filters.status);

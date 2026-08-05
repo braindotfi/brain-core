@@ -241,6 +241,13 @@ describe("listObligations", () => {
     expect(_log[0]!.values).toEqual(["payable", 10]);
   });
 
+  it("adds a metadata scenario filter", async () => {
+    const { _log, ...client } = fakeClient();
+    await listObligations(client, { scenario: "ar", limit: 10 });
+    expect(_log[0]!.sql).toContain("metadata->>'scenario' = $1");
+    expect(_log[0]!.values).toEqual(["ar", 10]);
+  });
+
   it("adds due_before filter", async () => {
     const { _log, ...client } = fakeClient();
     const due = new Date("2024-12-31");

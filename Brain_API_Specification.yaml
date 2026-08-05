@@ -2729,17 +2729,23 @@ paths:
   /ledger/obligations:
     get:
       tags: [Ledger]
-      summary: List payable obligations (bills, invoices, subscriptions)
+      summary: List obligations (bills, invoices, subscriptions)
       description: |
         Requires `ledger:read`. Results default to payable obligations. Pass
         `direction=receivable` to list obligations owed to the tenant. Cursor
         pagination is keyset-based and opaque. Pass `next_cursor` unchanged to
-        fetch the next page.
+        fetch the next page. Pass `scenario=ar` or `scenario=ap` to filter
+        rows by their explicit projection scenario. When direction is omitted,
+        `scenario=ar` selects receivable rows and `scenario=ap` selects payable rows.
       operationId: listObligations
       parameters:
         - name: direction
           in: query
           schema: { type: string, enum: [payable, receivable], default: payable }
+        - name: scenario
+          in: query
+          description: Explicit projection scenario. Composes with an explicitly supplied direction.
+          schema: { type: string, enum: [ap, ar] }
         - name: status
           in: query
           schema: { type: string, enum: [upcoming, due, paid, overdue, cancelled, disputed] }
