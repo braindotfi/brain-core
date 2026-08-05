@@ -267,7 +267,7 @@
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
           "request_shape": "{ company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, member, session, agent, demo_seed? }",
+          "response_shape": "201 { tenant_id, member, session, agent, demo_seed? } | 409 Error { code: tenant_identity_already_linked, details: { tenant_id } }",
           "example_request": {
             "headers": { "X-Platform-Service-Auth": "<secret>" },
             "body": {
@@ -312,7 +312,7 @@
           "required_scope": "tenant:create",
           "enforcement": "shared_secret_header",
           "request_shape": "path { orgId }; body { company_name?, demo_seed?, founder: { email, display_name? }, founder_external_ref }",
-          "response_shape": "201 { tenant_id, org_id, member, session, agent, demo_seed? }",
+          "response_shape": "201 { tenant_id, org_id, member, session, agent, demo_seed? } | 409 Error { code: tenant_identity_already_linked, details: { tenant_id } }",
           "example_request": {
             "path": "/v1/orgs/org_123/tenants",
             "body": {

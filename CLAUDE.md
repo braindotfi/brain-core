@@ -356,6 +356,12 @@ Done
 - Production tenant creation is also available at
   `POST /v1/orgs/{orgId}/tenants`, using the same persistent production tenant
   flow as `POST /v1/tenants`.
+- Platform identity links are globally unique for `surface='platform'`.
+  `POST /v1/tenants` and `POST /v1/orgs/{orgId}/tenants` preflight that global
+  link and translate a concurrent insert race to
+  `409 tenant_identity_already_linked` with `error.details.tenant_id`; clients
+  must reattach through the session and agent-token routes rather than retrying
+  tenant creation.
 - Policy activation blocks on every linter ERROR finding, not only the
   confidence floor. Activation previously computed the other eight ERROR codes
   (`auto_no_amount_cap`, `auto_no_counterparty_constraint`,
