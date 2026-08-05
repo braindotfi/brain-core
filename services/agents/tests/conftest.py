@@ -1,9 +1,9 @@
 """Test session bootstrap.
 
 Default the inbound-auth dependency to dev-override so the existing route
-tests (test_reconciliation, test_payment, test_anomaly, test_plaid_extractor)
-keep posting JSON without HMAC signatures. test_auth.py opts back into
-production posture via monkeypatch.
+tests (test_reconciliation, test_anomaly, test_plaid_extractor,
+test_document_extractor) keep posting JSON without HMAC signatures.
+test_auth.py opts back into production posture via monkeypatch.
 
 Without this, every existing /run/* test would have to sign every payload.
 """

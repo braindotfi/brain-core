@@ -7,6 +7,7 @@ Ledger normalize step is what later promotes the parsed row into a candidate
 obligation, capped at confidence <= 0.5 as agent-contributed evidence.
 """
 
+import asyncio
 import base64
 import binascii
 from typing import Any
@@ -20,6 +21,7 @@ from brain_agents.deps import AppDeps, get_deps
 from brain_agents.document_extractor.agent import DocumentOcrUnavailableError, OcrTextResult
 from brain_agents.document_extractor.extract_text import (
     DocumentTextUnavailableError,
+    DocumentTooLargeError,
     UnsupportedDocumentTypeError,
     extract_text,
 )
@@ -36,6 +38,11 @@ _SUPPORTED_PARSERS = {
     _BANK_STATEMENT_UPLOAD_PARSER,
     _DOCUMENT_RECORDS_UPLOAD_PARSER,
 }
+# RFC F3: extract_text() is synchronous CPU work (pypdf/openpyxl); run it off
+# the event loop via asyncio.to_thread and bound the wall-clock time, in
+# addition to extract_text's own page-count/size bounds, so a slow parse
+# cannot pin the process and stall /health for every other tenant.
+_EXTRACT_TEXT_TIMEOUT_SECONDS = 30.0
 
 
 class DocumentExtractRequest(BaseModel):
@@ -122,7 +129,17 @@ async def _resolve_document_text(
         except (binascii.Error, ValueError) as exc:
             raise HTTPException(status_code=400, detail="document_b64 is not valid base64") from exc
         try:
-            return extract_text(content, req.mime_type), None
+            text = await asyncio.wait_for(
+                asyncio.to_thread(extract_text, content, req.mime_type),
+                timeout=_EXTRACT_TEXT_TIMEOUT_SECONDS,
+            )
+            return text, None
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=422, detail="document text extraction timed out"
+            ) from exc
+        except DocumentTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
         except UnsupportedDocumentTypeError as exc:
             if _is_ocr_image_mime(req.mime_type):
                 ocr = await _ocr_document_text(deps, content, req.mime_type)

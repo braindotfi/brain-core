@@ -14,10 +14,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { computeServiceAuthSignatureV2 } from "../routes/parsed.js";
 import { Client, Pool } from "pg";
 import Fastify from "fastify";
 import {
+  computeServiceAuthSignatureV2,
   InMemoryAuditEmitter,
   InMemoryIdempotencyStore,
   MemoryBlobAdapter,
@@ -41,8 +41,8 @@ export const CROSS_TENANT_SERVICE_SECRET = "test-cross-tenant-service-secret";
 
 /**
  * Build the v2 service-auth headers for a raw request body. Delegates to the
- * route module's own computeServiceAuthSignatureV2 rather than re-deriving
- * the construction here: a test that reimplements the signature can silently
+ * shared computeServiceAuthSignatureV2 rather than re-deriving the
+ * construction here: a test that reimplements the signature can silently
  * drift from the server and assert the wrong tenant, which is exactly what
  * happened while this harness still signed the v1 body-only scheme against a
  * v2 verifier. Tests must sign the EXACT bytes they POST as the body, and

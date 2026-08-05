@@ -1110,6 +1110,12 @@ async function main(): Promise<void> {
     resolveSubjectOwnerTenant,
     resolveActivePolicyVersion,
     resolveInvoiceShortcut: invoiceShortcut,
+    // Same shared secret Raw uses for its crossTenantServiceSecret (RFC F2):
+    // lets POST /execution/propose bind a caller-supplied tenant the same
+    // HMAC-verified way POST /raw/{id}/parsed already does.
+    ...(cfg.BRAIN_AGENTS_INBOUND_SECRET !== undefined
+      ? { crossTenantServiceSecret: cfg.BRAIN_AGENTS_INBOUND_SECRET }
+      : {}),
   };
 
   // Least-privilege cross-tenant pools (replace the single broad brain_privileged

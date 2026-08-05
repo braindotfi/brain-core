@@ -19,9 +19,12 @@ import { scopesForAgentRole } from "@brain/internal-agents";
 import {
   brainError,
   computeAgentScopeHash,
+  extractRawBody,
   isBrainId,
   newProposalId,
   requireScope,
+  singleHeaderValue,
+  verifyServiceAuthSignatureV2,
   withTenantScope,
   type Scope,
 } from "@brain/shared";
@@ -50,64 +53,133 @@ function proposedAgentId(principal: NonNullable<FastifyRequest["principal"]>, re
   return principal.id;
 }
 
+/**
+ * Resolve which tenant a proposal (and its execution.propose audit event)
+ * should land in. Same trust model and v2 HMAC scheme as Raw's
+ * resolveWriteAuthorization (services/raw/src/routes/parsed.ts, the same
+ * @brain/shared primitives): defaults to the JWT principal's own tenant, and
+ * only honors a caller-supplied X-Brain-Write-Tenant header when
+ * deps.crossTenantServiceSecret is configured AND the request carries a
+ * verified v2 X-Brain-Service-Auth HMAC (body + timestamp + write-tenant,
+ * within the bounded replay window) over the raw request body. Any missing
+ * configuration or signature/timestamp/tenant-binding mismatch falls back to
+ * the principal's tenant (RFC F2 back-compat for every caller except propose
+ * itself, which the Python client refuses to call at all without a working
+ * signature -- see brain_agents.client.BrainApiClient.propose).
+ */
+function resolveProposeTenant(
+  request: FastifyRequest,
+  principalTenantId: string,
+  crossTenantServiceSecret: string | undefined,
+): string {
+  if (crossTenantServiceSecret === undefined || crossTenantServiceSecret.length === 0) {
+    return principalTenantId;
+  }
+  const signatureHeader = singleHeaderValue(request.headers["x-brain-service-auth"]);
+  const timestampHeader = singleHeaderValue(request.headers["x-brain-service-timestamp"]);
+  const targetTenantHeader = singleHeaderValue(request.headers["x-brain-write-tenant"]);
+  // The empty string is itself the signed value for "no redirect requested"
+  // -- see resolveWriteAuthorization in parsed.ts for the same reasoning.
+  const signedWriteTenant = targetTenantHeader ?? "";
+  const rawBody = extractRawBody(request.body);
+  if (
+    !verifyServiceAuthSignatureV2(
+      rawBody,
+      signatureHeader,
+      timestampHeader,
+      signedWriteTenant,
+      crossTenantServiceSecret,
+    )
+  ) {
+    return principalTenantId;
+  }
+  return signedWriteTenant.length > 0 ? signedWriteTenant : principalTenantId;
+}
+
 export async function registerExecutionRoutes(
   app: FastifyInstance,
   deps: ExecutionDeps,
 ): Promise<void> {
-  // POST /execution/propose
-  app.post(
-    "/execution/propose",
-    async (
-      request: FastifyRequest<{ Body: { action?: Record<string, unknown>; agent_id?: string } }>,
-      reply,
-    ) => {
-      const principal = requirePrincipal(request);
-      requireScope(principal.scopes, PROPOSE);
+  // POST /execution/propose. Registered in its own encapsulated child so the
+  // raw-body-capturing content-type parser below (needed to verify
+  // X-Brain-Service-Auth, RFC F2) never touches any other execution route's
+  // body parsing, regardless of whether the caller mounts this on the api
+  // monolith's shared app or the standalone execution server's own app.
+  await app.register(async (child) => {
+    child.addContentTypeParser(
+      "application/json",
+      { parseAs: "buffer" },
+      (_req: unknown, body: Buffer, done: (err: Error | null, body?: unknown) => void) => {
+        try {
+          const parsed =
+            body.length > 0 ? (JSON.parse(body.toString("utf8")) as Record<string, unknown>) : {};
+          parsed["__rawBody"] = body;
+          done(null, parsed);
+        } catch (err) {
+          done(err as Error, undefined);
+        }
+      },
+    );
 
-      const action = request.body?.action;
-      if (action === undefined) {
-        throw brainError("request_body_invalid", "action required");
-      }
-      const decision = await deps.evaluatePolicy(principal.tenantId, action);
-      const proposingAgent = proposedAgentId(principal, request.body?.agent_id);
+    child.post(
+      "/execution/propose",
+      async (
+        request: FastifyRequest<{ Body: { action?: Record<string, unknown>; agent_id?: string } }>,
+        reply,
+      ) => {
+        const principal = requirePrincipal(request);
+        requireScope(principal.scopes, PROPOSE);
 
-      const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
-        insertProposal(c, {
-          id: newProposalId(),
-          tenantId: principal.tenantId,
-          proposingAgent,
-          action,
+        const action = request.body?.action;
+        if (action === undefined) {
+          throw brainError("request_body_invalid", "action required");
+        }
+        const tenantId = resolveProposeTenant(
+          request,
+          principal.tenantId,
+          deps.crossTenantServiceSecret,
+        );
+        const decision = await deps.evaluatePolicy(tenantId, action);
+        const proposingAgent = proposedAgentId(principal, request.body?.agent_id);
+
+        const row = await withTenantScope(deps.pool, tenantId, (c) =>
+          insertProposal(c, {
+            id: newProposalId(),
+            tenantId,
+            proposingAgent,
+            action,
+            policyVersion: decision.policy_version,
+            policyDecision: decision.outcome,
+            policyTrace: decision.trace as ProposalRow["policy_trace"],
+            requiredApprovers: decision.required_approvers,
+            status:
+              decision.outcome === "reject"
+                ? "rejected"
+                : decision.outcome === "allow"
+                  ? "approved"
+                  : "pending",
+          }),
+        );
+
+        await deps.audit.emit({
+          tenantId,
+          layer: "execution",
+          actor: principal.id,
+          action: "execution.propose",
+          inputs: { action_kind: String(action.kind ?? "unknown"), agent: proposingAgent },
+          outputs: {
+            proposal_id: row.id,
+            decision: decision.outcome,
+            policy_version: decision.policy_version,
+          },
           policyVersion: decision.policy_version,
-          policyDecision: decision.outcome,
-          policyTrace: decision.trace as ProposalRow["policy_trace"],
-          requiredApprovers: decision.required_approvers,
-          status:
-            decision.outcome === "reject"
-              ? "rejected"
-              : decision.outcome === "allow"
-                ? "approved"
-                : "pending",
-        }),
-      );
+        });
 
-      await deps.audit.emit({
-        tenantId: principal.tenantId,
-        layer: "execution",
-        actor: principal.id,
-        action: "execution.propose",
-        inputs: { action_kind: String(action.kind ?? "unknown"), agent: proposingAgent },
-        outputs: {
-          proposal_id: row.id,
-          decision: decision.outcome,
-          policy_version: decision.policy_version,
-        },
-        policyVersion: decision.policy_version,
-      });
-
-      reply.status(201);
-      return serializeProposal(row);
-    },
-  );
+        reply.status(201);
+        return serializeProposal(row);
+      },
+    );
+  });
 
   // POST /execution/execute
   //

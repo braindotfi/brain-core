@@ -11,7 +11,6 @@ from brain_agents.auth import expected_signature, verify_signature
 from brain_agents.client import BrainApiClient
 from brain_agents.deps import AppDeps
 from brain_agents.document_extractor.agent import DocumentExtractorAgent
-from brain_agents.payment.agent import PaymentAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
 from brain_agents.server import create_app
@@ -35,7 +34,6 @@ def _deps() -> AppDeps:
     return AppDeps(
         brain_client=brain,
         recon_agent=recon,
-        payment_agent=AsyncMock(spec=PaymentAgent),
         anomaly_agent=AsyncMock(spec=AnomalyAgent),
         plaid_extractor_agent=MagicMock(spec=PlaidExtractorAgent),
         document_extractor_agent=AsyncMock(spec=DocumentExtractorAgent),
@@ -202,8 +200,13 @@ async def test_dev_override_allows_unauthenticated(monkeypatch: pytest.MonkeyPat
 
 
 async def test_every_run_route_is_gated(app_client: httpx.AsyncClient) -> None:
-    """All four /run/* routes must require auth — peer review's coverage demand."""
-    paths = ["/run/reconciliation", "/run/payment", "/run/anomaly", "/run/plaid_extract"]
+    """Every /run/* route must require auth — peer review's coverage demand.
+
+    The payment agent (formerly /run/payment) was removed as an unused,
+    unvalidated money-adjacent surface (RFC F5); the remaining three cover
+    every /run/* route in the app.
+    """
+    paths = ["/run/reconciliation", "/run/anomaly", "/run/plaid_extract"]
     for p in paths:
         resp = await app_client.post(p, json={})
         assert resp.status_code in (
