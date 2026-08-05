@@ -6,6 +6,16 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.18 (obligation scenario filtering)
+
+- **`GET /v1/ledger/obligations` now supports `scenario=ap|ar`.** The filter
+  is validated and applied in the Ledger query rather than silently ignored.
+  When direction is omitted, `scenario=ar` selects receivable rows and
+  `scenario=ap` selects payable rows.
+- **Invoices are documented as the complete receivables inventory.** The
+  receivable-obligation filter is limited to rows that have an obligation
+  projection and is not interchangeable with the invoice list.
+
 ### v0.5.17 (production tenancy identity conflicts)
 
 - **Production tenant creation now handles an already-linked platform identity.**

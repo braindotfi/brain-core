@@ -211,6 +211,8 @@ export interface TransactionListFilters {
 export interface ObligationListFilters {
   /** Defaults to payable. Use receivable for obligations owed to the tenant. */
   direction?: "payable" | "receivable";
+  /** Projection scenario. `ar` and `ap` are explicit source classifications. */
+  scenario?: "ar" | "ap";
   status?: Obligation["status"];
   type?: Obligation["type"];
   due_before?: string;
