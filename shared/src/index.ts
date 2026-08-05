@@ -100,6 +100,14 @@ export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id
 export { default as errorHandlerPlugin, mapError } from "./http/error-handler.js";
 export * from "./http/context.js";
 export { parseDateParam, parsePositiveIntParam } from "./http/query-params.js";
+export {
+  SERVICE_AUTH_PREFIX_V2,
+  SERVICE_AUTH_REPLAY_WINDOW_SECONDS,
+  computeServiceAuthSignatureV2,
+  verifyServiceAuthSignatureV2,
+  extractRawBody,
+  singleHeaderValue,
+} from "./http/service-auth.js";
 export { encodeKeysetCursor, decodeKeysetCursor, type KeysetCursor } from "./pagination.js";
 
 // Blob storage (§3 Layer 1)
