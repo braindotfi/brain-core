@@ -222,7 +222,14 @@ interface ParsedBrainUri {
  */
 export function parseBrainUri(uri: string): ParsedBrainUri | null {
   if (!uri.startsWith("brain://")) return null;
-  const rest = uri.slice("brain://".length).replace(/\/+$/, "");
+  // Trailing slashes are trimmed by index, not by `.replace(/\/+$/, "")`. That
+  // regex is quadratic on a caller-supplied URI: an unanchored `\/+$` retries
+  // from every start position, and each retry backtracks the whole slash run,
+  // so a `brain://` prefix followed by a long run of slashes and one trailing
+  // non-slash burns O(n^2) before failing to match.
+  let end = uri.length;
+  while (end > 0 && uri[end - 1] === "/") end -= 1;
+  const rest = uri.slice("brain://".length, Math.max(end, "brain://".length));
   const segments = rest.split("/");
   // Collection-level resource (no id): the static action-type catalog.
   if (segments.length === 2 && segments[0] === "payments" && segments[1] === "action_types") {

@@ -45,6 +45,19 @@ export interface AuthPluginOptions {
   apiKeyUsageAudit?: AuditEmitter;
 }
 
+/**
+ * CodeQL reports js/polynomial-redos here. It is a false positive against how
+ * this function is actually reached, and the regex is deliberately left alone.
+ * The quadratic path needs `\s+` and `.+` to compete over a long whitespace
+ * run AND the match to ultimately fail, and `^`-anchoring means it can only
+ * fail if a LINE TERMINATOR sits between the whitespace and the end of the
+ * value (`.` never crosses one, and the `trim()` below strips terminators from
+ * the ends, so it would have to be interior). Both call sites pass an HTTP
+ * `authorization` header value, and Node's HTTP parser rejects CR/LF inside
+ * header values outright, so no such input can arrive. With only spaces and
+ * tabs available, `.` matches all of them, the first greedy attempt always
+ * succeeds, and the scan is linear.
+ */
 const AUTH_HEADER_RE = /^Bearer\s+(.+)$/i;
 
 export function extractBearer(header: string | undefined): string | null {

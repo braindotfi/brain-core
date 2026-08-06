@@ -10,6 +10,8 @@ import {
   handleSlackInteraction,
   handleTeamsSubmit,
   HttpEmailClient,
+  postSlackOutcome,
+  sanitizeForSurface,
   signToken,
   toActorId,
   toPlainOutcome,
@@ -533,6 +535,40 @@ test("Dual approval does not enqueue until approval recording returns quorum", a
   assert.equal(counters.audit, 1);
   assert.equal(counters.execute, 0);
   assert.equal(toPlainOutcome(outcome), "pending");
+});
+
+test("postSlackOutcome refuses a response_url that is not Slack's", async () => {
+  // response_url arrives inside the signature-verified interaction body, but
+  // that signature is the only thing standing between an attacker-chosen URL
+  // and a server-side request from inside Brain's network. Binding the POST to
+  // Slack's documented host means a leaked signing secret cannot be escalated
+  // into an SSRF primitive.
+  const message = { responseType: "ephemeral" as const, text: "ok" };
+  for (const bad of [
+    "http://hooks.slack.com/actions/1", // right host, wrong scheme
+    "https://hooks.slack.com.evil.test/actions/1", // suffix-confusion host
+    "https://evil.test/hooks.slack.com", // host in the path
+    "https://169.254.169.254/latest/meta-data/", // cloud metadata
+    "https://internal.brain.local/admin",
+    "file:///etc/passwd",
+    "not a url",
+  ]) {
+    await assert.rejects(
+      () => postSlackOutcome({ responseUrl: bad, message }),
+      /slack_response_url_rejected/,
+      `expected ${bad} to be rejected`,
+    );
+  }
+});
+
+test("Teams sanitization escapes the escape character", () => {
+  // Escaping only the markdown metacharacters left an attacker-supplied
+  // backslash untouched, so "\\*bold*" became "\\" + "\\*bold*": the pair
+  // renders as one literal backslash and the emphasis run goes live again.
+  assert.equal(sanitizeForSurface("\\*bold*", "teams"), "\\\\\\*bold\\*");
+  assert.equal(sanitizeForSurface("a\\b", "teams"), "a\\\\b");
+  assert.equal(sanitizeForSurface("[link](x)", "teams"), "\\[link\\]\\(x\\)");
+  assert.equal(sanitizeForSurface("plain text", "teams"), "plain text");
 });
 
 test("Expired proposal clicks do not audit or enqueue", async () => {

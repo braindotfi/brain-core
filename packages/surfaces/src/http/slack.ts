@@ -155,10 +155,35 @@ export function slackOutcomeMessage(outcome: ApprovalOutcome): SlackOutcomeMessa
   }
 }
 
+/**
+ * Slack always issues `response_url` on this exact host (its interactivity
+ * docs pin it), so the outbound POST is bound to it rather than following
+ * whatever the payload carried. The value arrives inside a signature-verified
+ * interaction body, but that signature is the ONLY thing standing between an
+ * attacker-chosen URL and a server-side request from inside Brain's network:
+ * a leaked or mis-scoped signing secret would otherwise turn every approval
+ * click into an SSRF primitive against internal services. Failing closed here
+ * costs nothing when Slack behaves.
+ */
+const SLACK_RESPONSE_URL_HOST = "hooks.slack.com";
+
+function isSlackResponseUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" && url.hostname === SLACK_RESPONSE_URL_HOST;
+}
+
 export async function postSlackOutcome(input: {
   responseUrl: string;
   message: SlackOutcomeMessage;
 }): Promise<void> {
+  if (!isSlackResponseUrl(input.responseUrl)) {
+    throw new Error("slack_response_url_rejected");
+  }
   const response = await fetch(input.responseUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -879,12 +879,21 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/**
+ * Global regexes rather than string-argument `replaceAll`, so static analysis
+ * recognises this as HTML escaping (services/auth/src/html.ts's esc carries
+ * the same note). `'` is added to the set: every interpolation site here uses
+ * double-quoted attributes, so the gap was not reachable, but an escaper that
+ * covers only one quote style is one single-quoted attribute away from being
+ * wrong. `&` stays first to avoid double-encoding the rest.
+ */
 function escapeHtml(value: string): string {
   return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function isSlackAppUninstalledEvent(value: unknown): value is { type: "app_uninstalled" } {

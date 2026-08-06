@@ -139,6 +139,24 @@ function makeMinimalPdf(lines: string[]): Buffer {
   return Buffer.from(`%PDF-1.7\n1 0 obj\n<<>>\nstream\n${text}\nendstream\nendobj\n`, "latin1");
 }
 
+/** Same shape as makeMinimalPdf, but each line is one `[...] TJ` array whose
+ *  elements are the given fragments with kerning offsets between them, which
+ *  is how real PDF producers emit justified text. */
+function makePdfWithTjArrays(lines: string[][]): Buffer {
+  const text = lines
+    .map((parts) => {
+      const elements = parts
+        .map(
+          (part, i) =>
+            `(${part.replace(/([\\()])/g, "\\$1")})${i < parts.length - 1 ? " -250" : ""}`,
+        )
+        .join(" ");
+      return `[${elements}] TJ`;
+    })
+    .join("\n");
+  return Buffer.from(`%PDF-1.7\n1 0 obj\n<<>>\nstream\n${text}\nendstream\nendobj\n`, "latin1");
+}
+
 function columnName(index: number): string {
   let n = index + 1;
   let out = "";
@@ -332,6 +350,69 @@ describe("upload document interpreters", () => {
       expect.objectContaining({ amount: "7", date: "2026-06-21", direction: "outflow" }),
       expect.objectContaining({ amount: "15", date: "2026-06-22", direction: "inflow" }),
     ]);
+  });
+
+  // The two below carry the same statement content as the `Tj` test above and
+  // assert the same three transactions come out. makeMinimalPdf only emits
+  // `Tj`, so the TJ-array branch of extractPdfTextOperations had no coverage
+  // at all when its element loop was rewritten to remove exponential
+  // backtracking. Reusing the identical expectations makes them a regression
+  // guard on that rewrite, not just a smoke test.
+  const STATEMENT_TXS = [
+    expect.objectContaining({ amount: "20", date: "2026-06-20", direction: "inflow" }),
+    expect.objectContaining({ amount: "7", date: "2026-06-21", direction: "outflow" }),
+    expect.objectContaining({ amount: "15", date: "2026-06-22", direction: "inflow" }),
+  ];
+  const statementCtx = (): InterpreterArtifactContext =>
+    ctx({
+      sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+      sourceType: "pdf_upload",
+      sourceRef: { currency: "eur", bank_name: "Demo Bank" },
+      mimeType: "application/pdf",
+    });
+  const statementTxs = (out: { extracted: unknown } | null): unknown[] =>
+    (out!.extracted as { transactions: unknown[] }).transactions;
+
+  it("parses transaction text split across TJ array elements", () => {
+    const out = uploadDocumentInterpreter(
+      // Fragments are split MID-WORD on purpose. extractPdfStringTokens trims
+      // each token and joins with "", so a fragment ending in a space would
+      // lose that space -- a pre-existing property of the token decoder, not
+      // of the array regex. Real kerned output splits mid-word too.
+      makePdfWithTjArrays([
+        ["June 2026 State", "ment"],
+        ["06/20 ACH CREDIT Split Customer 10.00 20", ".00 999", ".00"],
+        ["06/21 Fee Adjustment 7.00 8.00 99", "1.00"],
+        ["Jun 22 Deposit Named Month 1", "5.00"],
+      ]),
+      statementCtx(),
+    );
+    expect(statementTxs(out)).toEqual(STATEMENT_TXS);
+  });
+
+  it("does not backtrack exponentially on an unterminated TJ array", () => {
+    // An UNCLOSED `[` followed by many numeric tokens is the pathological
+    // shape: with no `]` the element loop can never succeed, so the old regex
+    // explored every way of splitting each digit run across iterations before
+    // giving up -- 2^40 paths for the 40 groups below, out of a file a tenant
+    // can upload. Decompressed stream bytes are not bounded by the ingest
+    // upload cap, so a small file reached this.
+    const body = [
+      `[${"000.".repeat(40)}`,
+      "(June 2026 Statement) Tj",
+      "(06/20 ACH CREDIT Split Customer 10.00 20.00 999.00) Tj",
+      "(06/21 Fee Adjustment 7.00 8.00 991.00) Tj",
+      "(Jun 22 Deposit Named Month 15.00) Tj",
+    ].join("\n");
+    const started = Date.now();
+    const out = uploadDocumentInterpreter(
+      Buffer.from(`%PDF-1.7\n1 0 obj\n<<>>\nstream\n${body}\nendstream\nendobj\n`, "latin1"),
+      statementCtx(),
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The unterminated array is skipped, and the well-formed operators around
+    // it still extract exactly as they do without it.
+    expect(statementTxs(out)).toEqual(STATEMENT_TXS);
   });
 
   it("parses bank statement token rows that use ISO date tokens", () => {

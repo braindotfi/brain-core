@@ -48,6 +48,21 @@ describe("parseBrainUri", () => {
       kind: "ledger.account",
       id: "acct_X",
     });
+    expect(parseBrainUri("brain://ledger/accounts/acct_X///")).toEqual({
+      kind: "ledger.account",
+      id: "acct_X",
+    });
+    expect(parseBrainUri("brain://")).toBeNull();
+  });
+  it("does not backtrack on a long slash run", () => {
+    // The trailing-slash trim used to be `.replace(/\/+$/, "")`, which is
+    // unanchored and therefore quadratic: every start position re-walks the
+    // whole slash run before `$` fails against the trailing non-slash. `uri`
+    // is caller-supplied, so this was a free way to burn CPU in the MCP
+    // server. The index scan that replaced it is linear.
+    const started = Date.now();
+    expect(parseBrainUri(`brain://${"/".repeat(200_000)}x`)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
   });
   it("returns null for unknown collection", () => {
     expect(parseBrainUri("brain://ledger/widgets/widget_1")).toBeNull();

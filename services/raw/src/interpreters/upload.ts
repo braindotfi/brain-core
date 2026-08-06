@@ -422,8 +422,22 @@ function ascii85Group(group: string, emitted: number): number[] {
 
 function extractPdfTextOperations(content: string): string[] {
   const out: string[] = [];
+  // `content` is DECOMPRESSED stream data from a tenant-uploaded PDF, so its
+  // length is not bounded by the ingest upload cap (a Flate stream expands).
+  // The TJ-array element loop used to be exponentially ambiguous on that
+  // input: `(?:\s*(?:...|-?\d+(?:\.\d+)?)\s*)+` let one run of digits be split
+  // across iterations (`000` as a single `\d+`, or `0` + `00`, and so on)
+  // because `\s*` sits on both sides of the alternation and can match empty.
+  // A `[` followed by many `000.` groups and no closing `]` then backtracks
+  // 2^k ways before failing. Two changes remove the ambiguity without changing
+  // what matches: the leading `\s*` is hoisted out of the loop so each
+  // iteration has exactly one whitespace slot, and the number branch gets a
+  // `(?![\d.])` tail so `\d+` cannot hand digits back to a later iteration.
+  // Capture numbering is unchanged (the lookahead is non-capturing); group 2
+  // just no longer carries leading whitespace, which extractPdfStringTokens
+  // re-scans from scratch anyway.
   const textOpRe =
-    /(\[((?:\s*(?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>|-?\d+(?:\.\d+)?)\s*)+)\]\s*TJ\b)|((?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)\s*Tj\b)/g;
+    /(\[\s*((?:(?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>|-?\d+(?:\.\d+)?(?![\d.]))\s*)+)\]\s*TJ\b)|((?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>)\s*Tj\b)/g;
   for (const match of content.matchAll(textOpRe)) {
     const s =
       match[2] !== undefined

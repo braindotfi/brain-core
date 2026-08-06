@@ -212,9 +212,16 @@ test("PINNED_SELECTORS: a missing methodIdentifiers entry is flagged, not silent
 
 function assertCaughtAsSelector(tsSrc, expectedLiteral) {
   const r = runGuard({ tsSrc, contractName: "BrainEscrow", abi: [] });
-  assert.equal(r.code, 1, `expected the guard to catch this selector, got:\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  assert.equal(
+    r.code,
+    1,
+    `expected the guard to catch this selector, got:\nstdout: ${r.stdout}\nstderr: ${r.stderr}`,
+  );
   assert.match(r.stderr, /\[SELECTOR\]/);
-  assert.match(r.stderr, new RegExp(expectedLiteral.replace("0x", "0x")));
+  // `expectedLiteral` is always a bare `0x<hex>` selector, which carries no
+  // regex metacharacters. The previous `.replace("0x", "0x")` here was a
+  // no-op that read like an escaping step and was not one.
+  assert.match(r.stderr, new RegExp(expectedLiteral));
 }
 
 test("bypass 1: concatenation ('0x' + '66afd8ef') is caught", () => {
