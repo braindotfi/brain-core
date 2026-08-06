@@ -5,7 +5,7 @@
   "description": "Brain Finance Inc. — financial intelligence protocol (MVP).",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=22.0.0",
+    "node": "^24.0.0",
     "pnpm": ">=10.0.0"
   },
   "packageManager": "pnpm@10.34.4",
@@ -85,7 +85,7 @@
     "@brain/shared": "workspace:*",
     "@eslint/js": "^9.39.4",
     "@redocly/cli": "2.43.3",
-    "@types/node": "^22.7.0",
+    "@types/node": "^24.0.0",
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
     "@vitest/coverage-v8": "^4.1.8",

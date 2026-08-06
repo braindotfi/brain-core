@@ -58,7 +58,7 @@ services:
 
   # One-shot runner: apply migrations, then drive the golden path.
   smoke:
-    image: node:22-bookworm
+    image: node:24-bookworm
     working_dir: /repo
     volumes:
       - .:/repo

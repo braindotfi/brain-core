@@ -77,7 +77,7 @@
   },
   "devDependencies": {
     "@scalar/api-reference": "1.62.9",
-    "@types/node": "^22.7.0",
+    "@types/node": "^24.0.0",
     "@types/pg": "^8.11.10",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.12.0",

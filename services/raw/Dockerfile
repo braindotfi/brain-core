@@ -9,14 +9,14 @@
 # add the standalone entrypoint when the service runs as its own process.
 
 # ---- build stage ----
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile && pnpm --filter @brain/raw... run build
 
 # ---- runtime stage ----
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /app ./
