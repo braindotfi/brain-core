@@ -2,6 +2,7 @@
  * /counterparties/{counterparty_id} — page generator.
  */
 
+import { subjectNotFound } from "./types.js";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -26,7 +27,7 @@ export class CounterpartyPageGenerator implements PageGenerator {
     if (id === null) throw new Error("CounterpartyPageGenerator requires a subject id");
 
     const cp = await fetchCounterparty(deps, id);
-    if (cp === null) throw new Error(`counterparty ${id} not found`);
+    if (cp === null) throw subjectNotFound(this.pageType, "counterparty", id);
     // Sequential reads: one shared tenant-scoped client serializes queries on a
     // single connection anyway (pg@9 rejects concurrent client.query() calls).
     const openObligations = await fetchOpenObligations(deps, id);

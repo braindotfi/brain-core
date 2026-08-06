@@ -2,6 +2,7 @@
  * /obligations/{obligation_id} — page generator.
  */
 
+import { subjectNotFound } from "./types.js";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -26,7 +27,7 @@ export class ObligationPageGenerator implements PageGenerator {
     if (id === null) throw new Error("ObligationPageGenerator requires a subject id");
 
     const obl = await fetchObligation(deps, id);
-    if (obl === null) throw new Error(`obligation ${id} not found`);
+    if (obl === null) throw subjectNotFound(this.pageType, "obligation", id);
     // Sequential reads: one shared tenant-scoped client serializes queries on a
     // single connection anyway (pg@9 rejects concurrent client.query() calls).
     const counterparty = await fetchCounterparty(deps, obl.counterparty_id);

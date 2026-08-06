@@ -5,6 +5,7 @@
  * counterparties, and any reconciliation gaps.
  */
 
+import { subjectNotFound } from "./types.js";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -31,7 +32,7 @@ export class AccountPageGenerator implements PageGenerator {
 
     const acct = await fetchAccount(deps, accountId);
     if (acct === null) {
-      throw new Error(`account ${accountId} not found`);
+      throw subjectNotFound(this.pageType, "account", accountId);
     }
 
     // Sequential reads: these share one tenant-scoped client, which serializes

@@ -2914,6 +2914,7 @@ async function main(): Promise<void> {
           pageService: wikiPageService,
           audit,
           log,
+          metrics,
         },
         { intervalMs: cfg.BRAIN_WIKI_REGENERATION_WORKER_INTERVAL_MS },
       )

@@ -184,6 +184,29 @@ Done
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
+- Wiki pages are a projection, so an orphaned page is pruned rather than
+  retried forever. `wiki_pages` is both the work list and the output store of
+  the regeneration worker: `runWikiRegenerationCycle` regenerates every slug it
+  finds, a failed render never reaches the upsert so `rendered_at` never
+  advances, and no tenant exceeds the 100-row page batch, so a page whose
+  Ledger subject was deleted was retried on every cycle indefinitely. Three
+  data-repair migrations delete `ledger_obligations` rows
+  (`services/raw/migrations/0025`, `0026`, `services/ledger/migrations/0043`)
+  and none of them touch `wiki_pages`; nothing in the runtime deleted a page
+  either. This was not an RLS visibility artifact: `wiki_pages.tenant_id` and
+  `ledger_obligations.owner_id` are both matched against the same
+  `app.tenant_id` by the same NOBYPASSRLS `brain_wiki_reader` role. Entity
+  generators now signal a missing subject with the typed
+  `wiki_subject_not_found` (`subjectNotFound` in
+  `services/wiki/src/pages/types.ts`), and the worker prunes the page through
+  `WikiPageService.deletePage`, emits `wiki.page.pruned`, and counts
+  `brain.wiki.regeneration.page_pruned.count`. Only that code prunes: any other
+  render failure, such as an embedding outage, still warns and leaves the page
+  alone, so a transient fault can never delete memory. Pruning is recoverable
+  because the next upload projection re-derives the slug and renders the page
+  again. Metrics are tagged by `page_type` and error `reason` only, never by
+  tenant or slug, which are unbounded cardinality, and a healthy cycle costs
+  one summary log line.
 - Every service-owned table with a `tenant_id` column must enable and force
   Postgres row-level security and define at least one tenant policy. The
   `check-rls-coverage` guard scans all `services/*/migrations/*.sql` files as

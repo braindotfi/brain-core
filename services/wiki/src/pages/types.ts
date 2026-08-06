@@ -14,7 +14,8 @@
  * (orchestrator.ts) and reads pages + Ledger.
  */
 
-import type { TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/shared";
+import { brainError } from "@brain/shared";
+import type { BrainError, TenantScopedClient, WikiPage, ServiceCallContext } from "@brain/shared";
 
 /**
  * Read-only projections the memory layer needs from services it does NOT own.
@@ -85,4 +86,23 @@ export interface PageGenerator {
     deps: PageGenerationContext,
     subject: { subjectId: string | null; slug: string },
   ): Promise<PageGenerationOutput>;
+}
+
+/**
+ * How a generator signals that the subject a page projects no longer exists.
+ *
+ * This is part of the generator contract, not an incidental error: a page is a
+ * projection of Ledger truth, so a missing subject means the page itself is no
+ * longer truth and the background reconciler prunes it. It must stay
+ * distinguishable from every other render failure (an embedding outage, a DB
+ * blip), which must never delete anything.
+ */
+export function subjectNotFound(
+  pageType: WikiPage["page_type"],
+  subjectLabel: string,
+  subjectId: string,
+): BrainError {
+  return brainError("wiki_subject_not_found", `${subjectLabel} ${subjectId} not found`, {
+    details: { page_type: pageType, subject_id: subjectId },
+  });
 }

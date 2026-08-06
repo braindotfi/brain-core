@@ -8,6 +8,7 @@
  */
 
 import { brainError } from "@brain/shared";
+import { subjectNotFound } from "./types.js";
 import type { PageGenerationContext, PageGenerationOutput, PageGenerator } from "./types.js";
 import { bullet, renderPage, revisionFromTouches } from "./sections.js";
 
@@ -36,7 +37,7 @@ export class AgentPageGenerator implements PageGenerator {
     }
 
     const agent = await deps.agentReader.byId(deps.ctx, id);
-    if (agent === null) throw new Error(`agent ${id} not found`);
+    if (agent === null) throw subjectNotFound(this.pageType, "agent", id);
     const recentIntents = await fetchRecentPaymentIntents(deps, id);
 
     const currentTruth =

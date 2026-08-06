@@ -1,9 +1,12 @@
 import type { Pool } from "pg";
 import {
+  isBrainError,
   startManagedInterval,
   withTenantScope,
   type AuditEmitter,
+  type BrainError,
   type ManagedWorker,
+  type MetricsEmitter,
   type ServiceCallContext,
 } from "@brain/shared";
 import type { LedgerUploadProjectedEvent } from "@brain/canonical";
@@ -15,7 +18,14 @@ const ACTOR = "system:wiki-regeneration-worker";
 const DEFAULT_TENANT_BATCH_SIZE = 50;
 const DEFAULT_PAGE_BATCH_SIZE = 100;
 
-type WikiPageServicePort = Pick<WikiPageService, "listPages" | "regenerate">;
+type WikiPageServicePort = Pick<WikiPageService, "listPages" | "regenerate" | "deletePage">;
+
+/**
+ * Outcome of one slug. `pruned` is deliberately not `failed`: the page was a
+ * projection of a Ledger row that no longer exists, so removing it is the
+ * projection converging, not an error an operator needs to act on.
+ */
+type SlugOutcome = "regenerated" | "pruned" | "failed";
 
 interface Logger {
   info?(obj: unknown, msg?: string): void;
@@ -28,6 +38,7 @@ export interface WikiRegenerationDeps {
   readonly pageService: WikiPageServicePort;
   readonly audit?: AuditEmitter;
   readonly log?: Logger;
+  readonly metrics?: MetricsEmitter;
 }
 
 export interface WikiRegenerationOptions {
@@ -65,15 +76,24 @@ export async function runWikiRegenerationCycle(
     deps.tenantDiscoveryPool,
     opts.tenantBatchSize ?? DEFAULT_TENANT_BATCH_SIZE,
   );
+  const totals: Record<SlugOutcome, number> = { regenerated: 0, pruned: 0, failed: 0 };
+  let pageCount = 0;
   for (const tenantId of tenantIds) {
     const ctx = ctxFor(tenantId);
     const pages = await deps.pageService.listPages(ctx, {
       limit: opts.pageBatchSize ?? DEFAULT_PAGE_BATCH_SIZE,
     });
+    pageCount += pages.pages.length;
     for (const page of pages.pages) {
-      await regenerateSlug(deps, ctx, page.slug);
+      totals[await regenerateSlug(deps, ctx, page.slug)] += 1;
     }
   }
+  // One bounded line per cycle. Per-page detail stays on the prune and failure
+  // paths so a healthy cycle costs a single log entry.
+  deps.log?.info?.(
+    { tenants: tenantIds.length, pages: pageCount, ...totals },
+    "wiki regeneration cycle complete",
+  );
 }
 
 export async function regenerateWikiForUploadProjection(
@@ -89,7 +109,7 @@ export async function regenerateWikiForUploadProjection(
   const ctx = ctxFor(event.tenantId);
   let regeneratedCount = 0;
   for (const slug of slugs) {
-    if (await regenerateSlug(deps, ctx, slug, event)) regeneratedCount += 1;
+    if ((await regenerateSlug(deps, ctx, slug, event)) === "regenerated") regeneratedCount += 1;
   }
   if (regeneratedCount === 0) {
     deps.log?.warn?.(
@@ -209,11 +229,17 @@ async function regenerateSlug(
   ctx: ServiceCallContext,
   slug: string,
   event?: LedgerUploadProjectedEvent,
-): Promise<boolean> {
+): Promise<SlugOutcome> {
   try {
     await deps.pageService.regenerate(ctx, slug);
-    return true;
+    return "regenerated";
   } catch (err) {
+    // Only a missing subject prunes. Any other failure (an embedding outage, a
+    // DB blip) must leave the page alone and stay a warning, so a transient
+    // fault can never delete memory.
+    if (isBrainError(err) && err.code === "wiki_subject_not_found") {
+      return prunePage(deps, ctx, slug, pageTypeOf(err));
+    }
     deps.log?.warn?.(
       {
         err,
@@ -224,8 +250,49 @@ async function regenerateSlug(
       },
       "wiki page regeneration failed",
     );
-    return false;
+    // Tagged by error code, not slug or tenant: those are unbounded cardinality.
+    deps.metrics?.increment("brain.wiki.regeneration.failed.count", {
+      reason: isBrainError(err) ? err.code : "unknown",
+    });
+    return "failed";
   }
+}
+
+async function prunePage(
+  deps: WikiRegenerationDeps,
+  ctx: ServiceCallContext,
+  slug: string,
+  pageType: string,
+): Promise<SlugOutcome> {
+  try {
+    const deleted = await deps.pageService.deletePage(ctx, slug);
+    // Bounded by construction: a page prunes at most once, so this is not a
+    // stream the way the retried warning was.
+    deps.log?.info?.({ tenantId: ctx.tenantId, slug, pageType, deleted }, "wiki page pruned");
+    deps.metrics?.increment("brain.wiki.regeneration.page_pruned.count", { page_type: pageType });
+    if (deleted) {
+      await deps.audit?.emit({
+        tenantId: ctx.tenantId,
+        layer: "wiki",
+        eventType: "system_activity",
+        severity: "info",
+        actor: ACTOR,
+        action: "wiki.page.pruned",
+        inputs: { slug, page_type: pageType },
+        outputs: { reason: "subject_not_found" },
+      });
+    }
+    return "pruned";
+  } catch (err) {
+    deps.log?.warn?.({ err, tenantId: ctx.tenantId, slug }, "wiki page prune failed");
+    deps.metrics?.increment("brain.wiki.regeneration.failed.count", { reason: "prune_failed" });
+    return "failed";
+  }
+}
+
+function pageTypeOf(err: BrainError): string {
+  const pageType = err.details?.["page_type"];
+  return typeof pageType === "string" ? pageType : "unknown";
 }
 
 function ctxFor(tenantId: string): ServiceCallContext {

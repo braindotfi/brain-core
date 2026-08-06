@@ -114,6 +114,20 @@ export class WikiPageService {
     return row === null ? null : toPage(row);
   }
 
+  /**
+   * Drop a page whose subject no longer exists in the Ledger. Wiki pages are a
+   * projection, so an orphan is not memory, it is a stale render of deleted
+   * truth that the regeneration worker would otherwise retry every cycle
+   * forever. Returns whether a row was removed. Recoverable by design: if the
+   * subject comes back, the next regeneration renders the page again.
+   */
+  public async deletePage(ctx: ServiceCallContext, slug: string): Promise<boolean> {
+    return withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const { rowCount } = await c.query(`DELETE FROM wiki_pages WHERE slug = $1`, [slug]);
+      return (rowCount ?? 0) > 0;
+    });
+  }
+
   public async search(
     ctx: ServiceCallContext,
     q: string,
