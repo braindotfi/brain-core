@@ -4,7 +4,10 @@ import { newTenantId } from "@brain/shared";
 import type { AuditEmitter, EmbeddingAdapter, ServiceCallContext } from "@brain/shared";
 import { WikiPageService } from "./WikiPageService.js";
 
-const ctx: ServiceCallContext = { tenantId: newTenantId(), actor: "system:test" };
+const ctx: ServiceCallContext = {
+  tenantId: newTenantId(),
+  actor: "system:wiki-regeneration-worker",
+};
 
 describe("WikiPageService.deletePage", () => {
   it("deletes the slug inside tenant scope", async () => {
