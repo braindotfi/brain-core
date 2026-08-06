@@ -271,6 +271,11 @@ jobs:
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.
         run: pnpm -r --filter='./services/**' --filter='!./services/agents' run --if-present test:integration
 
+      - name: Shared Redis integration tests
+        env:
+          REDIS_INTEGRATION_TESTS: "true"
+        run: pnpm -C shared run test:integration
+
       - name: Invariants DB-integration tests (P0.2)
         run: pnpm -C tests/invariants run test:integration
 
