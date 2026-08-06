@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -113,7 +113,7 @@ jobs:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with:
@@ -176,7 +176,7 @@ jobs:
       BRAIN_DEMO_MODE: "true"
       BRAIN_BASE_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with:
@@ -208,7 +208,7 @@ jobs:
       run:
         working-directory: services/agents
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -235,7 +235,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # full history + tags so `git describe` can derive SERVICE_VERSION
       - uses: docker/setup-buildx-action@v4
@@ -303,7 +303,7 @@ jobs:
       COMPOSE_PROJECT: brain-staging
       HEALTH_URL: ${{ vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Configure SSH
         run: |
@@ -629,7 +629,7 @@ jobs:
       BRAIN_TEST_SOURCE_ACCT_ID: ${{ vars.E2E_EXTERNAL_AGENT_SOURCE_ACCT_ID }}
       BRAIN_TEST_VENDOR_ID: ${{ vars.E2E_EXTERNAL_AGENT_VENDOR_ID }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with:
@@ -667,7 +667,7 @@ jobs:
       BRAIN_TESTNET_SUCCESS_DATA: ${{ vars.BRAIN_TESTNET_SUCCESS_DATA }}
       BRAIN_TESTNET_SUCCESS_VALUE: ${{ vars.BRAIN_TESTNET_SUCCESS_VALUE }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with:

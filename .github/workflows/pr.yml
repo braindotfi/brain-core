@@ -110,7 +110,7 @@ jobs:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           # check-migrations-append-only (run via `pnpm run lint` below) needs
           # origin/main reachable for `git merge-base`, same reason the
@@ -213,7 +213,7 @@ jobs:
       DATABASE_URL_AUTH_AUDIT: postgres://brain_auth_audit_writer:brain_auth_audit_writer@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - uses: pnpm/action-setup@v6
 
@@ -286,7 +286,7 @@ jobs:
       run:
         working-directory: services/agents
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -320,7 +320,7 @@ jobs:
       run:
         working-directory: contracts
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
@@ -377,7 +377,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -429,7 +429,7 @@ jobs:
       BRAIN_BASE_URL: http://localhost:3000
       BRAIN_DEMO_E2E_FULL: "true"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with:
