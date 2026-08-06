@@ -1036,6 +1036,69 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(llm.seen).toEqual([]);
   });
 
+  it("clarifies the opposite direction for a customer with no payable obligations", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [
+        {
+          id: "cp_ENTERPRISE",
+          name: "Enterprise Holdings",
+          normalized_name: "enterprise_holdings",
+          type: "customer",
+          risk_level: null,
+        },
+      ],
+      invoices: [
+        {
+          id: "inv_ENTERPRISE",
+          invoice_number: "AR-ENTERPRISE-001",
+          amount_due: "290000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-08-01T00:00:00Z"),
+          due_date: new Date("2026-08-21T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_ENTERPRISE",
+          scenario: "ar",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("directional counterparty questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What do we owe Enterprise Holdings?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-payable",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer:
+        "You do not owe Enterprise Holdings any open payable obligations. Enterprise Holdings owes you $290,000.00 across 1 open customer invoice.",
+      deterministicIntentId: "payable_by_counterparty",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
+      "cp_ENTERPRISE",
+      "inv_ENTERPRISE",
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
+
   it.each([
     [
       "What do we owe Unknown Vendor?",

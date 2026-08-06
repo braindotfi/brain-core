@@ -181,6 +181,9 @@ Done
   deterministic tenant-scoped Ledger queries. Named-counterparty questions
   fail safely without generative fallback when the counterparty is missing,
   ambiguous, has the wrong direction, or is part of a compound question.
+  A payable question for a customer with no open payables but open AR invoices
+  states both directions, using authoritative AR `ledger_invoices` rows rather
+  than implying no overall relationship exists.
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
