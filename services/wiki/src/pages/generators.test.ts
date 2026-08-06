@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { isBrainError } from "@brain/shared";
 import type { ServiceCallContext, TenantScopedClient } from "@brain/shared";
 import { PolicyPageGenerator } from "./policy.js";
+import { AccountPageGenerator } from "./account.js";
 import { AgentPageGenerator } from "./agent.js";
+import { CounterpartyPageGenerator } from "./counterparty.js";
 import { InvoicePageGenerator } from "./invoice.js";
+import { ObligationPageGenerator } from "./obligation.js";
 import type { AgentView, PolicyReader, PolicyView, AgentReader } from "./types.js";
 
 const ctx: ServiceCallContext = { tenantId: "tnt_test", actor: "user_test", requestId: "req_1" };
@@ -220,5 +224,56 @@ describe("InvoicePageGenerator", () => {
     expect(out.body_md).toContain("`cp_missing` (missing)");
     expect(out.body_md).toContain("No linked entities");
     expect(out.body_md).toContain("Overdue invoice");
+  });
+});
+
+describe("missing subject", () => {
+  // The regeneration worker prunes on this code and only on this code, so an
+  // untyped Error here would put the page back into the retry-forever loop that
+  // filled the staging worker log. Every entity generator must agree.
+  const emptyClient = {
+    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+  } as unknown as TenantScopedClient;
+
+  const cases = [
+    { gen: new ObligationPageGenerator(), id: "obl_1", slug: "/obligations/obl_1" },
+    { gen: new InvoicePageGenerator(), id: "inv_1", slug: "/invoices/inv_1" },
+    { gen: new CounterpartyPageGenerator(), id: "cp_1", slug: "/counterparties/cp_1" },
+    { gen: new AccountPageGenerator(), id: "acct_1", slug: "/accounts/acct_1" },
+  ];
+
+  for (const { gen, id, slug } of cases) {
+    it(`${gen.pageType} throws wiki_subject_not_found when the row is gone`, async () => {
+      const err = await gen
+        .render({ ctx, client: emptyClient }, { subjectId: id, slug })
+        .then(() => null)
+        .catch((e: unknown) => e);
+
+      expect(isBrainError(err)).toBe(true);
+      expect(err).toMatchObject({
+        code: "wiki_subject_not_found",
+        statusCode: 404,
+        details: { page_type: gen.pageType, subject_id: id },
+      });
+    });
+  }
+
+  it("agent throws wiki_subject_not_found when the reader has no agent", async () => {
+    const reader: AgentReader = { byId: async () => null };
+    const err = await new AgentPageGenerator()
+      .render(
+        { ctx, client: noDbClient(), agentReader: reader },
+        {
+          subjectId: "agent_1",
+          slug: "/agents/agent_1",
+        },
+      )
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(err).toMatchObject({
+      code: "wiki_subject_not_found",
+      details: { page_type: "agent", subject_id: "agent_1" },
+    });
   });
 });

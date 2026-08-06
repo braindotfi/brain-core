@@ -66,6 +66,7 @@ export const BRAIN_ERROR_CODES = [
   // Wiki
   "wiki_entity_not_found",
   "wiki_page_not_found",
+  "wiki_subject_not_found",
   "wiki_schema_validation_failed",
   "wiki_temporal_range_invalid",
   "wiki_question_timeout",
@@ -302,6 +303,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   route_not_found: 404,
   wiki_entity_not_found: 404,
   wiki_page_not_found: 404,
+  wiki_subject_not_found: 404,
   policy_not_found: 404,
   proof_not_found: 404,
   agent_run_not_found: 404,
