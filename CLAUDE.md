@@ -1000,9 +1000,11 @@ read-only; do not add mutable checks to that workflow.
 `staging-diagnostics.yml` is staging-only and read-only. Its
 `tenant-identity-lookup` diagnostic accepts only one validated platform user
 UUID or email, joins `member_identity_links` to the matching member and tenant,
-and reports only `tenant.created` and `tenant.demo_seeded` audit events. It is
-for correlating a BFF identity to a core tenant without arbitrary SQL or VM
-writes.
+and reports only `tenant.created` and `tenant.demo_seeded` audit events. Its
+`wiki-question-trace` diagnostic accepts exactly one validated tenant ID plus
+an event ID, UTC time bound, or bounded question substring, then prints the
+matching stored `wiki.question` audit inputs and outputs in a read-only
+transaction. Neither diagnostic permits arbitrary SQL or VM writes.
 
 Caddy config (`Caddyfile`, `docker-compose.caddy.yml`) is repo-tracked and
 shipped by CI, but only to the **production** VM (`promote-prod.yml`), and

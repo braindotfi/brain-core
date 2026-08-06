@@ -18,3 +18,17 @@ test("staging tenant identity lookup is fixed, validated, and read-only", () => 
   assert.match(workflow, /^ {10}REMOTE$/m);
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
+
+test("staging Wiki question trace is tenant-bounded, selector-bounded, and read-only", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /wiki-question-trace/);
+  assert.match(workflow, /requires exactly one canonical tenant id/);
+  assert.match(workflow, /requires an event id, timestamp bound, or question search/);
+  assert.match(workflow, /wiki_question_search must be 160 characters or less/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(workflow, /action = 'wiki\.question'/);
+  assert.match(workflow, /inputs->>'question' ILIKE/);
+  assert.match(workflow, /LIMIT 20;/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+});

@@ -14,6 +14,7 @@ on:
           - document-extractor-connectivity
           - contextless-payroll-obligation-audit
           - tenant-identity-lookup
+          - wiki-question-trace
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -21,6 +22,26 @@ on:
         default: ""
       identity_lookup:
         description: "Exact platform user UUID or email for tenant-identity-lookup only."
+        required: false
+        type: string
+        default: ""
+      wiki_question_event_id:
+        description: "Optional evt_... id for one wiki.question audit row."
+        required: false
+        type: string
+        default: ""
+      wiki_question_since:
+        description: "Optional ISO UTC lower bound for wiki.question audit rows."
+        required: false
+        type: string
+        default: ""
+      wiki_question_until:
+        description: "Optional ISO UTC upper bound for wiki.question audit rows."
+        required: false
+        type: string
+        default: ""
+      wiki_question_search:
+        description: "Optional case-insensitive substring for the stored question."
         required: false
         type: string
         default: ""
@@ -43,13 +64,17 @@ jobs:
       DIAGNOSTIC: ${{ inputs.diagnostic }}
       TENANT_IDS: ${{ inputs.tenant_ids }}
       IDENTITY_LOOKUP: ${{ inputs.identity_lookup }}
+      WIKI_QUESTION_EVENT_ID: ${{ inputs.wiki_question_event_id }}
+      WIKI_QUESTION_SINCE: ${{ inputs.wiki_question_since }}
+      WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
+      WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, or tenant-identity-lookup"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, or wiki-question-trace"
             exit 1
           fi
 
@@ -78,6 +103,31 @@ jobs:
                 exit 1
               fi
             done
+          fi
+
+          if [[ "$DIAGNOSTIC" == "wiki-question-trace" ]]; then
+            if [[ ! "$TENANT_IDS" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+              echo "wiki-question-trace requires exactly one canonical tenant id"
+              exit 1
+            fi
+            if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+              echo "wiki_question_event_id must match ^evt_[0-9A-HJKMNP-TV-Z]{26}$ when provided"
+              exit 1
+            fi
+            for value in "$WIKI_QUESTION_SINCE" "$WIKI_QUESTION_UNTIL"; do
+              if [[ -n "$value" && ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+                echo "wiki_question_since/wiki_question_until must be ISO UTC timestamps when provided"
+                exit 1
+              fi
+            done
+            if [[ ${#WIKI_QUESTION_SEARCH} -gt 160 ]]; then
+              echo "wiki_question_search must be 160 characters or less"
+              exit 1
+            fi
+            if [[ -z "$WIKI_QUESTION_EVENT_ID" && -z "$WIKI_QUESTION_SINCE" && -z "$WIKI_QUESTION_UNTIL" && -z "$WIKI_QUESTION_SEARCH" ]]; then
+              echo "wiki-question-trace requires an event id, timestamp bound, or question search"
+              exit 1
+            fi
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
@@ -142,6 +192,10 @@ jobs:
           set -euo pipefail
 
           identity_lookup_b64="$(printf '%s' "$IDENTITY_LOOKUP" | base64 | tr -d '\n')"
+          wiki_question_event_id_b64="$(printf '%s' "$WIKI_QUESTION_EVENT_ID" | base64 | tr -d '\n')"
+          wiki_question_since_b64="$(printf '%s' "$WIKI_QUESTION_SINCE" | base64 | tr -d '\n')"
+          wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
+          wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
 
           run_tenant_identity_lookup() {
             ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
@@ -228,6 +282,85 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
             run_tenant_identity_lookup
+            exit 0
+          fi
+
+          run_wiki_question_trace() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TENANT_ID='$TENANT_IDS' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            wiki_question_event_id="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
+            wiki_question_since="$(printf '%s' "$WIKI_QUESTION_SINCE_B64" | base64 -d)"
+            wiki_question_until="$(printf '%s' "$WIKI_QUESTION_UNTIL_B64" | base64 -d)"
+            wiki_question_search="$(printf '%s' "$WIKI_QUESTION_SEARCH_B64" | base64 -d)"
+
+            if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+              echo "wiki-question-trace tenant id failed remote validation"
+              exit 1
+            fi
+            if [[ -n "$wiki_question_event_id" && ! "$wiki_question_event_id" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+              echo "wiki-question-trace event id failed remote validation"
+              exit 1
+            fi
+            for value in "$wiki_question_since" "$wiki_question_until"; do
+              if [[ -n "$value" && ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+                echo "wiki-question-trace timestamp failed remote validation"
+                exit 1
+              fi
+            done
+            if [[ ${#wiki_question_search} -gt 160 ]]; then
+              echo "wiki-question-trace search failed remote validation"
+              exit 1
+            fi
+            if [[ -z "$wiki_question_event_id" && -z "$wiki_question_since" && -z "$wiki_question_until" && -z "$wiki_question_search" ]]; then
+              echo "wiki-question-trace requires a selector"
+              exit 1
+            fi
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" \
+              -v wiki_question_event_id="$wiki_question_event_id" \
+              -v wiki_question_since="$wiki_question_since" \
+              -v wiki_question_until="$wiki_question_until" \
+              -v wiki_question_search="$wiki_question_search" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'wiki.question audit payloads'
+            SELECT id,
+                   created_at,
+                   actor,
+                   event_type,
+                   severity,
+                   inputs,
+                   outputs,
+                   policy_decision_id
+              FROM audit_events
+             WHERE tenant_id = :'tenant_id'
+               AND action = 'wiki.question'
+               AND (:'wiki_question_event_id' = '' OR id = :'wiki_question_event_id')
+               AND (
+                 NULLIF(:'wiki_question_since', '') IS NULL
+                 OR created_at >= NULLIF(:'wiki_question_since', '')::timestamptz
+               )
+               AND (
+                 NULLIF(:'wiki_question_until', '') IS NULL
+                 OR created_at <= NULLIF(:'wiki_question_until', '')::timestamptz
+               )
+               AND (:'wiki_question_search' = ''
+                    OR inputs->>'question' ILIKE '%' || :'wiki_question_search' || '%')
+             ORDER BY created_at DESC, id DESC
+             LIMIT 20;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "wiki-question-trace" ]]; then
+            run_wiki_question_trace
             exit 0
           fi
 
