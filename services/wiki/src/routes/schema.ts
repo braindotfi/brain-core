@@ -33,13 +33,17 @@ export async function registerSchema(app: FastifyInstance, deps: WikiDeps): Prom
         if (!Object.hasOwn(deps.schemas.entity, k)) {
           throw brainError("wiki_schema_validation_failed", "unknown kind");
         }
-        out[kind] = deps.schemas.entity[k as keyof typeof deps.schemas.entity];
+        return Object.fromEntries([
+          [kind, deps.schemas.entity[k as keyof typeof deps.schemas.entity]],
+        ]);
       } else if (kind.startsWith("relation/")) {
         const k = kind.slice("relation/".length);
         if (!Object.hasOwn(deps.schemas.relation, k)) {
           throw brainError("wiki_schema_validation_failed", "unknown kind");
         }
-        out[kind] = deps.schemas.relation[k as keyof typeof deps.schemas.relation];
+        return Object.fromEntries([
+          [kind, deps.schemas.relation[k as keyof typeof deps.schemas.relation]],
+        ]);
       } else {
         throw brainError(
           "request_params_invalid",
