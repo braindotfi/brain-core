@@ -1746,6 +1746,94 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(llm.seen).toEqual([]);
   });
 
+  it.each(["What's our total accounts receivable?", "How much are we owed in total?"])(
+    "returns the complete AR invoice total for %s without calling the LLM",
+    async (question) => {
+      const arInvoices = Array.from({ length: 11 }, (_, index) => ({
+        id: `inv_AR_${index + 1}`,
+        invoice_number: `AR-${index + 1}`,
+        amount_due: index === 0 ? "82800.00" : "50000.00",
+        amount_paid: "0.00",
+        currency: "USD",
+        issue_date: new Date("2026-08-01T00:00:00Z"),
+        due_date: new Date("2026-08-15T00:00:00Z"),
+        status: "sent",
+        counterparty_id: "cp_CUSTOMER",
+        scenario: "ar" as const,
+      }));
+      const llm = new InspectingLlmAdapter(() => {
+        throw new Error("accounts receivable totals must not call the LLM");
+      });
+
+      const result = await askWiki(
+        {
+          client: fakeClient({
+            transactions: [],
+            obligations: [
+              {
+                id: "obl_PAYROLL",
+                type: "payroll",
+                direction: "payable",
+                amount_due: "33564.38",
+                currency: "USD",
+                due_date: new Date("2026-08-04T00:00:00Z"),
+                status: "upcoming",
+                counterparty_id: "cp_PAYROLL",
+              },
+            ],
+            counterparties: [
+              {
+                id: "cp_CUSTOMER",
+                name: "Enterprise Holdings",
+                type: "customer",
+                risk_level: null,
+              },
+              { id: "cp_VENDOR", name: "CloudOps", type: "vendor", risk_level: null },
+            ],
+            invoices: [
+              ...arInvoices,
+              {
+                id: "inv_AP",
+                invoice_number: "AP-1",
+                amount_due: "999999.00",
+                amount_paid: "0.00",
+                currency: "USD",
+                issue_date: new Date("2026-08-01T00:00:00Z"),
+                due_date: new Date("2026-08-15T00:00:00Z"),
+                status: "sent",
+                counterparty_id: "cp_VENDOR",
+                scenario: "ap",
+              },
+            ],
+          }),
+          llm,
+          embed: new DeterministicEmbeddingAdapter(16),
+          redis: fakeRedis() as unknown as Redis,
+          metrics: new MockMetrics(),
+        },
+        {
+          question,
+          asOf: null,
+          maxEvidenceDepth: 3,
+          tenantId: "tnt_ar_total",
+          model: "m-ar-total",
+        },
+      );
+
+      expect(result).toMatchObject({
+        answered: true,
+        answer: "Total open accounts receivable is $582,800.00 across 11 open customer invoices.",
+        deterministicIntentId: "accounts_receivable_total",
+        model: "structured-ledger-query",
+      });
+      expect(result.evidence.map((evidence) => evidence.entityId)).toEqual(
+        arInvoices.map((invoice) => invoice.id),
+      );
+      expect(result.evidence.map((evidence) => evidence.entityId)).not.toContain("inv_AP");
+      expect(llm.seen).toEqual([]);
+    },
+  );
+
   it("derives eligible suggested questions only from registered deterministic intents", async () => {
     const suggestions = await listSuggestedQuestions(
       fakeClient({
@@ -1762,7 +1850,9 @@ describe("askWiki — Ledger-grounded retrieval", () => {
           },
         ],
         obligations: [],
-        counterparties: [],
+        counterparties: [
+          { id: "cp_CUSTOMER", name: "Example Customer", type: "customer", risk_level: null },
+        ],
         invoices: [
           {
             id: "inv_JULY",
@@ -1774,6 +1864,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
             due_date: new Date("2026-07-31T00:00:00Z"),
             status: "sent",
             counterparty_id: "cp_CUSTOMER",
+            scenario: "ar",
           },
         ],
         intentUsage: [
@@ -1819,6 +1910,11 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       {
         intentId: "transaction_sum",
         displayText: "What is my total transaction volume this month?",
+        usageRankScore: 0,
+      },
+      {
+        intentId: "accounts_receivable_total",
+        displayText: "What's our total accounts receivable?",
         usageRankScore: 0,
       },
       {
@@ -2669,7 +2765,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
   });
 
-  it("filters accounts receivable questions to receivable invoices", async () => {
+  it("filters generic AR evidence to receivable invoice obligations", async () => {
     const rows: FakeRows = {
       transactions: [],
       obligations: [
@@ -2749,10 +2845,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         { role: "system" as const, content: SYSTEM_PROMPT },
         {
           role: "user" as const,
-          content: buildUserPrompt(
-            "What's my total outstanding accounts receivable?",
-            expectedEvidence,
-          ),
+          content: buildUserPrompt("What is AR today?", expectedEvidence),
         },
       ],
       temperature: 0,
@@ -2781,7 +2874,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         evidenceBoundaryFactory: boundaryFactory,
       },
       {
-        question: "What's my total outstanding accounts receivable?",
+        question: "What is AR today?",
         asOf: null,
         maxEvidenceDepth: 3,
         tenantId: "tnt_solstice",
