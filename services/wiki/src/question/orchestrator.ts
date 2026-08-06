@@ -112,6 +112,7 @@ export type DeterministicIntentId =
   | "invoice_listing"
   | "payable_by_counterparty"
   | "receivable_by_counterparty"
+  | "accounts_receivable_total"
   | "overdue_customer_invoices"
   | "payroll_obligation_total"
   | "monthly_net_cash_flow"
@@ -258,6 +259,8 @@ interface OverdueCustomerInvoicesIntent {
 interface PayrollObligationTotalIntent {
   asOf: Date | null;
 }
+
+type AccountsReceivableTotalIntent = Record<string, never>;
 
 interface DeterministicIntentDefinition {
   id: DeterministicIntentId;
@@ -1247,6 +1250,63 @@ async function answerPayrollObligationTotal(
   };
 }
 
+async function answerAccountsReceivableTotal(
+  client: TenantScopedClient,
+  _intent: AccountsReceivableTotalIntent,
+): Promise<AskResult> {
+  const { rows } = await client.query<InvoiceAggregateRow>(
+    `SELECT inv.id,
+            inv.invoice_number,
+            inv.amount_due::text AS amount_due,
+            inv.amount_paid::text AS amount_paid,
+            inv.currency,
+            inv.issue_date,
+            inv.due_date,
+            inv.status,
+            inv.counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(inv.amount_due - COALESCE(inv.amount_paid, 0)) OVER (), 0)::text AS matching_sum
+       FROM ledger_invoices inv
+       JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
+      WHERE inv.metadata->>'scenario' = 'ar'
+        AND cp.type = 'customer'
+        AND inv.status IN ('sent','partial','overdue')
+      ORDER BY inv.due_date ASC NULLS LAST, inv.id ASC
+      LIMIT ${MAX_AGGREGATE_EVIDENCE}`,
+  );
+
+  const evidence = rows.map(toInvoiceEvidence);
+  if (rows.length === 0) {
+    return {
+      answered: true,
+      answer: "No open customer invoices were found.",
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: "I can't calculate one accounts receivable total across multiple currencies.",
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const count = Number(rows[0]!.matching_count);
+  return {
+    answered: true,
+    answer: `Total open accounts receivable is ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)} across ${count} open customer ${count === 1 ? "invoice" : "invoices"}.`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
 function toCounterpartyEvidence(row: CounterpartyResolutionRow): AskEvidenceItem {
   const trust =
     row.trust_status === null || row.trust_status === undefined
@@ -1792,6 +1852,23 @@ function parsePayrollObligationTotalIntent(
   return { asOf };
 }
 
+function parseAccountsReceivableTotalIntent(
+  question: string,
+): AccountsReceivableTotalIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(total|sum|how much)\b/.test(q)) return null;
+  if (/[,;]/.test(q) || /\b(?:and|or)\b/.test(q)) return null;
+  if (/\bdoes\s+.+?\s+owe\s+us\b/.test(q) || /\bowed\s+to\s+us\s+by\b/.test(q)) {
+    return null;
+  }
+  return /\baccounts receivable\b/.test(q) ||
+    /\breceivables?\b/.test(q) ||
+    /\b(?:are|is)\s+we\s+owed\b/.test(q) ||
+    /\b(?:customers?|customer invoices?)\s+owe\s+us\b/.test(q)
+    ? {}
+    : null;
+}
+
 function parseAggregateOperationIntent(
   operation: AggregateOperation,
 ): (question: string, asOf: Date | null) => TransactionAggregateIntent | null {
@@ -1890,6 +1967,20 @@ async function hasEligiblePayrollObligations(
   return rows[0]?.eligible === true;
 }
 
+async function hasEligibleOpenCustomerInvoices(client: TenantScopedClient): Promise<boolean> {
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_invoices inv
+         JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
+        WHERE inv.metadata->>'scenario' = 'ar'
+          AND cp.type = 'customer'
+          AND inv.status IN ('sent','partial','overdue')
+     ) AS eligible`,
+  );
+  return rows[0]?.eligible === true;
+}
+
 async function hasEligibleTrustedVendors(client: TenantScopedClient): Promise<boolean> {
   const { rows } = await client.query<{ eligible: boolean }>(
     `SELECT EXISTS(
@@ -1972,6 +2063,14 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     answer: (client, intent) =>
       answerReceivableByCounterparty(client, intent as ReceivableByCounterpartyIntent),
     isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "accounts_receivable_total",
+    displayText: "What's our total accounts receivable?",
+    parse: (question) => parseAccountsReceivableTotalIntent(question),
+    answer: (client, intent) =>
+      answerAccountsReceivableTotal(client, intent as AccountsReceivableTotalIntent),
+    isEligible: (client) => hasEligibleOpenCustomerInvoices(client),
   },
   {
     id: "overdue_customer_invoices",
