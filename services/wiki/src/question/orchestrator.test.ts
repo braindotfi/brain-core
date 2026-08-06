@@ -412,11 +412,15 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         }
         if (text.includes("trust_status = $1")) {
           const [trustStatus, limit] = values as [string, number];
-          const vendors = rows.counterparties
-            .filter(
-              (counterparty) =>
-                counterparty.type === "vendor" && counterparty.trust_status === trustStatus,
-            )
+          const matchingVendors = rows.counterparties.filter(
+            (counterparty) =>
+              counterparty.type === "vendor" && counterparty.trust_status === trustStatus,
+          );
+          const vendors = matchingVendors
+            .map((counterparty) => ({
+              ...counterparty,
+              matching_count: String(matchingVendors.length),
+            }))
             .slice(0, limit);
           return { rows: vendors as never[], rowCount: vendors.length };
         }
@@ -1457,6 +1461,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
   it.each([
     ["Who are my trusted vendors?", "Trusted vendors: CloudOps Inc.", "cp_CLOUDOPS"],
     ["Which vendors are paused?", "Paused vendors: Datacenter Hosting Ltd.", "cp_DATACENTER"],
+    ["How many trusted vendors do I have?", "You have 1 trusted vendor.", "cp_CLOUDOPS"],
   ])(
     "answers vendor trust-status listings without calling the LLM: %s",
     async (question, expectedAnswer, expectedEvidenceId) => {
