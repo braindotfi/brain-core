@@ -3,7 +3,7 @@
 # Node 22 + pnpm 9.12 toolchain only; dependencies are installed at container start
 # against the bind-mounted source (and persisted in a named node_modules volume), so
 # the image stays generic and never carries a stale install. No build, no prod prune.
-FROM node:22-slim AS dev
+FROM node:24-slim AS dev
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
@@ -13,7 +13,7 @@ WORKDIR /app
 CMD ["pnpm", "-C", "services/api", "run", "dev"]
 
 # ---- build stage ----
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 
 RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
@@ -69,7 +69,7 @@ RUN pnpm -C tools/dev-token run build
 RUN pnpm -C tools/seed-golden-path run build
 
 # ---- runtime stage ----
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 # SERVICE_VERSION is the single source of truth reported by /health. CI bakes it
