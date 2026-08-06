@@ -248,6 +248,7 @@ interface NewVendorListingIntent {
 
 interface VendorTrustStatusListingIntent {
   trustStatus: CounterpartyTrustStatus;
+  operation: "count" | "list";
 }
 
 interface OverdueCustomerInvoicesIntent {
@@ -1094,8 +1095,8 @@ async function answerVendorTrustStatusListing(
   client: TenantScopedClient,
   intent: VendorTrustStatusListingIntent,
 ): Promise<AskResult> {
-  const { rows } = await client.query<CounterpartyResolutionRow>(
-    `SELECT id, name, type, trust_status
+  const { rows } = await client.query<CounterpartyResolutionRow & { matching_count: string }>(
+    `SELECT id, name, type, trust_status, COUNT(*) OVER ()::text AS matching_count
        FROM ledger_counterparties
       WHERE type = 'vendor'
         AND trust_status = $1
@@ -1104,6 +1105,13 @@ async function answerVendorTrustStatusListing(
     [intent.trustStatus, MAX_LISTING_RECORDS],
   );
   const label = intent.trustStatus === "trusted" ? "trusted" : intent.trustStatus;
+  if (intent.operation === "count") {
+    const count = rows.length === 0 ? 0 : Number(rows[0]!.matching_count);
+    return structuredListingResult(
+      `You have ${count} ${label} ${count === 1 ? "vendor" : "vendors"}.`,
+      rows.map(toCounterpartyEvidence),
+    );
+  }
   if (rows.length === 0) {
     return structuredListingResult(`No vendors are currently marked as ${label}.`, []);
   }
@@ -1740,8 +1748,11 @@ function parseVendorTrustStatusListingIntent(
   if (!/\b(?:vendor|vendors|counterparty|counterparties)\b/i.test(question)) return null;
   const match = /\b(trusted|paused|acknowledged|unreviewed)\b/i.exec(question);
   if (match === null) return null;
-  if (!/\b(?:who|which|list|show|display|are|my)\b/i.test(question)) return null;
-  return { trustStatus: match[1]!.toLowerCase() as CounterpartyTrustStatus };
+  const operation = /\bhow\s+many\b/i.test(question) ? "count" : "list";
+  if (operation === "list" && !/\b(?:who|which|list|show|display|are|my)\b/i.test(question)) {
+    return null;
+  }
+  return { trustStatus: match[1]!.toLowerCase() as CounterpartyTrustStatus, operation };
 }
 
 function parseOverdueCustomerInvoicesIntent(
