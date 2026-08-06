@@ -738,6 +738,19 @@ async function answerPayableByCounterparty(
 
   const evidence = [toCounterpartyEvidence(counterparty), ...rows.map(toObligationEvidence)];
   if (rows.length === 0) {
+    if (counterparty.type === "customer") {
+      const receivable = await answerReceivableByCounterparty(client, intent);
+      if (receivable.answered && receivable.evidence.length > 1) {
+        return {
+          answered: true,
+          answer: `You do not owe ${counterparty.name} any open payable obligations. ${receivable.answer}`,
+          evidence: receivable.evidence,
+          model: "structured-ledger-query",
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      }
+    }
+
     return {
       answered: true,
       answer: `No open payable obligations were found for ${counterparty.name}.`,
