@@ -20,4 +20,14 @@ describe("loadScalarBundle", () => {
     expect(bundle.length).toBeGreaterThan(100_000);
     expect(bundle).toContain("api-reference");
   });
+
+  it("still honours the data-url auto-init contract view.ts renders", () => {
+    // view.ts emits `<script id="api-reference" data-url="...">` and NOTHING
+    // else: no inline executable script, so the docs CSP stays script-src
+    // 'self'. That only works while the bundle keeps auto-initialising from
+    // that attribute. Scalar has already deprecated one spelling of this
+    // (data-spec-url), so pin the one we actually depend on -- a silent switch
+    // would render an empty docs page that no other test would catch.
+    expect(loadScalarBundle()).toContain("data-url");
+  });
 });

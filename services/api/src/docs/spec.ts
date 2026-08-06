@@ -7,13 +7,25 @@
  *     `<pkg>/assets/openapi.yaml` (see package.json `copy-spec`) so it ships in
  *     the dist artifact; we resolve the copy first and fall back to the repo-root
  *     original for `tsx` dev runs that skip the copy.
- *  2. The Scalar standalone renderer — a single self-contained browser bundle
- *     shipped by `@scalar/fastify-api-reference` at `dist/js/standalone.js`. We
- *     reuse just that file (served same-origin) rather than registering the
- *     plugin: the plugin emits an inline `Scalar.createApiReference(...)` <script>
- *     that the gateway's strict `script-src 'self'` CSP would block. Our hand-
- *     rolled page (view.ts) auto-inits from a `data-url` attribute instead, so no
- *     inline script is needed and script-src stays strict.
+ *  2. The Scalar standalone renderer — a single self-contained browser bundle,
+ *     served same-origin. We do NOT register Scalar's Fastify plugin: it emits an
+ *     inline `Scalar.createApiReference(...)` <script> that the gateway's strict
+ *     `script-src 'self'` CSP would block. Our hand-rolled page (view.ts)
+ *     auto-inits from a `data-url` attribute instead, so no inline script is
+ *     needed and script-src stays strict.
+ *
+ *     The bundle comes from `@scalar/api-reference`, which is the package that
+ *     publishes it (`dist/browser/standalone.js`, present in every version we
+ *     checked). It used to be read out of `@scalar/fastify-api-reference` — a
+ *     Fastify plugin this service never registers, depended on purely as a file
+ *     source. That was the actual defect: when 1.62.9 stopped shipping
+ *     `dist/js/standalone.js` and inlined the renderer into its own index.js,
+ *     the bundle vanished from disk, and since loadScalarBundle runs at route
+ *     registration the result was an API boot failure, not a degraded docs page.
+ *     The build now snapshots the bundle into `assets/` (see
+ *     scripts/copy-docs-assets.mjs), so upstream repackaging is a CI build error
+ *     instead of a production crash-loop, and no Scalar package ships in the
+ *     production image at all.
  *
  * Both reads are cached after first call — the spec and bundle never change at
  * runtime.
@@ -61,13 +73,25 @@ export function loadOpenApiSpecText(): string {
 
 /** Candidate paths for the Scalar standalone bundle, in priority order. */
 function bundleCandidates(): string[] {
-  const require = createRequire(import.meta.url);
-  // Resolve the plugin's entry (`<pkg>/dist/index.js`); the bundle is a sibling
-  // under `js/`. Mirror the plugin's own getJavaScriptFile() candidate list so a
-  // minor layout change does not break us silently.
-  const entry = require.resolve("@scalar/fastify-api-reference");
-  const distDir = dirname(entry);
-  return [resolve(distDir, "js/standalone.js"), resolve(distDir, "../dist/js/standalone.js")];
+  const candidates: string[] = [];
+  // Copied into the package at build time by scripts/copy-docs-assets.mjs. This
+  // is the ONLY candidate that exists in the production image, which installs
+  // --prod and therefore has no @scalar/* package at all. Same HERE-relative
+  // shape as specCandidates above, so it resolves from src/ and dist/ alike.
+  candidates.push(resolve(HERE, "../../assets/scalar-standalone.js"));
+  // Dev/test fallback: read straight from the devDependency for `tsx` runs and
+  // vitest, which skip the build step. Wrapped because require.resolve throws
+  // when the package is absent (a --prod install), and there the copy above is
+  // the real answer, so a throw here would be a false failure.
+  try {
+    const require = createRequire(import.meta.url);
+    candidates.push(
+      resolve(dirname(require.resolve("@scalar/api-reference")), "browser/standalone.js"),
+    );
+  } catch {
+    // Not installed. The built asset above is the only candidate.
+  }
+  return candidates;
 }
 
 /** Load and cache the Scalar standalone renderer bundle. Throws if not found. */

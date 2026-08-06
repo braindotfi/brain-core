@@ -136,10 +136,14 @@ COPY --from=builder /app/shared/dist shared/dist
 COPY --from=builder /app/packages/core/dist packages/core/dist
 COPY --from=builder /app/packages/surfaces/dist packages/surfaces/dist
 COPY --from=builder /app/services/api/dist services/api/dist
-# OpenAPI spec for the /v1/docs UI. `services/api` build runs copy-spec to
-# generate services/api/assets/openapi.yaml; the runtime loader (docs/spec.ts)
-# reads it at boot, so without this COPY the /v1/docs plugin throws and the api
-# crash-loops in prod.
+# BOTH /v1/docs assets. `services/api` build runs copy-spec (now
+# scripts/copy-docs-assets.mjs) to generate services/api/assets/openapi.yaml AND
+# services/api/assets/scalar-standalone.js; the runtime loader (docs/spec.ts)
+# reads both at boot, so without this COPY the /v1/docs plugin throws and the
+# api crash-loops in prod. The Scalar bundle in particular has no other source
+# here: @scalar/api-reference is a devDependency, so the --prod install in this
+# stage does not have it. That is deliberate -- no Scalar package ships in the
+# production image, only the snapshotted bundle.
 COPY --from=builder /app/services/api/assets services/api/assets
 COPY --from=builder /app/services/raw/dist services/raw/dist
 COPY --from=builder /app/services/canonical/dist services/canonical/dist
