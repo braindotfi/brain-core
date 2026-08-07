@@ -6,6 +6,14 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.19 (grounded accounts receivable totals)
+
+- **Total accounts-receivable questions now use deterministic invoice data.**
+  `What's our total accounts receivable?` and `How much are we owed in total?`
+  sum open customer AR invoices and return cited Ledger evidence. The result
+  uses the complete `ledger_invoices` AR source, not the partial receivable-
+  obligation projection.
+
 ### v0.5.18 (obligation scenario filtering)
 
 - **`GET /v1/ledger/obligations` now supports `scenario=ap|ar`.** The filter
