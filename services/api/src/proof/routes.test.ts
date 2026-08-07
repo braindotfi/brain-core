@@ -93,6 +93,10 @@ function rowsForExecuted(sql: string): unknown[] {
         period_end: new Date("2026-01-02T00:00:00Z"),
         onchain_tx_hash: Buffer.from("aa".repeat(32), "hex"),
         onchain_block_number: 100,
+        // The contract is read from the row, never from current config: see
+        // fetchProofSources.ts. Null here would mean "we do not know which
+        // contract this landed on", and the proof must then omit chain_anchor.
+        onchain_contract_address: "0xanchor",
       },
     ];
   }
@@ -138,6 +142,41 @@ describe("poolProofBuilder", () => {
     expect(proof.rail_receipt).toEqual({ rail: "ach", ach_trace: "t" });
     expect(proof.human_explanation).toContain("agent_1");
     expect(proof.human_explanation).toContain("executed");
+  });
+
+  // Regression lock for the 2026-08-06 rotation: the proof named the contract
+  // configured TODAY next to a tx hash from a contract that no longer receives
+  // anchors, so every served proof failed independent verification.
+  it("names the contract the anchor was published to, not the configured one", async () => {
+    const build = poolProofBuilder(makeFakePool(rowsForExecuted), {
+      ...OPTS,
+      anchorContractAddress: "0xrotated-new-address",
+    });
+    const proof = await build(TENANT, "pi_ACTION");
+    expect(proof?.chain_anchor?.contract_address).toBe("0xanchor");
+  });
+
+  it("omits chain_anchor when the anchor row does not record its contract", async () => {
+    const build = poolProofBuilder(
+      makeFakePool((sql) =>
+        sql.includes("FROM audit_anchors")
+          ? [
+              {
+                period_start: new Date("2025-12-31T00:00:00Z"),
+                period_end: new Date("2026-01-02T00:00:00Z"),
+                onchain_tx_hash: Buffer.from("aa".repeat(32), "hex"),
+                onchain_block_number: 100,
+                onchain_contract_address: null,
+              },
+            ]
+          : rowsForExecuted(sql),
+      ),
+      OPTS,
+    );
+    const proof = await build(TENANT, "pi_ACTION");
+    // Under-claim rather than attest to a contract we cannot name.
+    expect(proof?.chain_anchor).toBeNull();
+    expect(proof?.merkle_root).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("returns null when the action is not visible to the tenant (=> 404)", async () => {

@@ -173,6 +173,8 @@ export interface AuditAnchorRow {
   onchain_tx_hash: Buffer | null;
   onchain_block_number: string | null;
   onchain_status: AnchorOnchainStatus;
+  /** Contract the tx was published to; NULL for rows that never landed on-chain. */
+  onchain_contract_address: string | null;
   created_at: Date;
 }
 
@@ -257,14 +259,22 @@ export async function setAnchorTxHash(
   id: string,
   txHash: Buffer,
   blockNumber: bigint,
+  contractAddress?: string,
 ): Promise<void> {
   // A persisted tx hash means the anchor() call mined successfully (the caller
   // only reaches here for a confirmed/already-anchored broadcast), so move the
   // row to its terminal `confirmed` state in the same write.
+  //
+  // The contract address is written in the same statement, because this is the
+  // only point at which "which contract did this transaction actually go to" is
+  // known for certain. COALESCE preserves an already-recorded address rather
+  // than nulling it when a caller does not supply one.
   await client.query(
-    `UPDATE audit_anchors SET onchain_tx_hash = $1, onchain_block_number = $2, onchain_status = 'confirmed'
+    `UPDATE audit_anchors
+        SET onchain_tx_hash = $1, onchain_block_number = $2, onchain_status = 'confirmed',
+            onchain_contract_address = COALESCE($4, onchain_contract_address)
       WHERE id = $3`,
-    [txHash, blockNumber.toString(), id],
+    [txHash, blockNumber.toString(), id, contractAddress ?? null],
   );
 }
 

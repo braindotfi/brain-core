@@ -18,7 +18,9 @@ function fakePool(orphans: OrphanRow[]): { pool: Pool; txQueries: string[] } {
   const txQueries: string[] = [];
   const client = {
     query: vi.fn(async (text: string) => {
-      txQueries.push(text.trim().split("\n")[0]!.trim());
+      // Normalized to one line rather than truncated to the first, so an
+      // assertion keeps matching when a statement is reformatted across lines.
+      txQueries.push(text.trim().replace(/\s+/g, " "));
       return { rows: [], rowCount: 0 };
     }),
     release: vi.fn(),

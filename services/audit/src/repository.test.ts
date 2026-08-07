@@ -242,7 +242,22 @@ describe("setAnchorTxHash", () => {
     // A persisted tx hash is a confirmed anchor — the same write makes it terminal.
     expect(log[0]!.sql).toContain("onchain_status = 'confirmed'");
     expect(log[0]!.sql).toContain("WHERE id = $3");
-    expect(log[0]!.values).toEqual([txHash, "42", "anc_1"]);
+    expect(log[0]!.values).toEqual([txHash, "42", "anc_1", null]);
+  });
+
+  it("records the contract the tx was published to when the caller knows it", async () => {
+    const { client, log } = fakeClient();
+    const txHash = Buffer.from("cafebabe", "hex");
+    await setAnchorTxHash(client, "anc_1", txHash, 42n, "0xanchor");
+    expect(log[0]!.values).toEqual([txHash, "42", "anc_1", "0xanchor"]);
+  });
+
+  // The reconciler heals a row without knowing which contract it matched on;
+  // COALESCE must not blank an address an earlier write already recorded.
+  it("preserves an existing address when no contract is supplied", async () => {
+    const { client, log } = fakeClient();
+    await setAnchorTxHash(client, "anc_1", Buffer.from("cafebabe", "hex"), 42n);
+    expect(log[0]!.sql).toContain("COALESCE($4, onchain_contract_address)");
   });
 });
 

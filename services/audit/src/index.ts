@@ -14,9 +14,14 @@ export * from "./merkle.js";
 export { verifyInclusion } from "./verify.js";
 export {
   createPendingAnchor,
+  classifyAnchorBatchOutcome,
+  reportAnchorPublisherHealth,
   publishAnchor,
   publishPendingAnchorBatch,
   publishPendingAnchor,
+  ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS,
+  type AnchorPublisherHealth,
+  type AnchorBatchOutcomeSeverity,
   type AnchorBatchBroadcaster,
   type AnchorBroadcaster,
   type BroadcastBatchResult,

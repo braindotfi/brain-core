@@ -56,6 +56,8 @@ interface BroadcastResult {
   txHash: Buffer;
   blockNumber: bigint;
   status: BroadcastStatus;
+  /** Contract this tx went to; stamped once at the factory boundary below. */
+  contractAddress?: string;
 }
 type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
 type AnchorBatchBroadcaster = (inputs: BroadcastInput[]) => Promise<BroadcastBatchResult[]>;
@@ -68,11 +70,14 @@ type ViemAnchorBroadcaster = AnchorBroadcaster & {
 };
 interface AnchorLog {
   warn(message: string): void;
+  warn(details: Record<string, unknown>, message: string): void;
 }
 
 export const MAX_ANCHOR_BATCH_SIZE = 50;
 
-const BRAIN_AUDIT_ANCHOR_ABI = [
+// Exported so the boot-time selector fence checks the DEPLOYED contract against
+// exactly the ABI this module calls, rather than a second copy that can drift.
+export const BRAIN_AUDIT_ANCHOR_ABI = [
   {
     name: "anchor",
     type: "function",
@@ -305,7 +310,7 @@ export function createViemAnchorBroadcaster(
 
   async function assertAffordable(gas: bigint, maxFeePerGas: bigint): Promise<void> {
     const balance = await publicClient.getBalance({ address: account.address });
-    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei);
+    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei, opts.log);
     const guardedCost = applySafetyFactor(gas * maxFeePerGas, gasSafetyFactor);
     if (balance < guardedCost) {
       opts.metrics?.increment("brain.audit.anchor.publisher_wallet_insufficient_funds.count", {
@@ -547,7 +552,27 @@ export function createViemAnchorBroadcaster(
     }
   }
 
-  return Object.assign(broadcastAnchor, { broadcastAnchorBatch });
+  // Stamp the contract every landed broadcast actually went to, at the single
+  // boundary where every result leaves this module. The publisher persists it
+  // on the anchor row so the proof path reads which contract a historical
+  // anchor was published to instead of assuming it is whatever
+  // AUDIT_ANCHOR_ADDRESS points at today — the assumption that mislabelled
+  // every served proof after the 2026-08-06 rotation. Only landed outcomes
+  // carry it: a reverted or unresolved attempt anchored nothing anywhere.
+  const withContract = (result: BroadcastResult): BroadcastResult =>
+    result.status === "confirmed" || result.status === "already_anchored"
+      ? { ...result, contractAddress: opts.contractAddress }
+      : result;
+
+  const stampedAnchor: AnchorBroadcaster = async (input) =>
+    withContract(await broadcastAnchor(input));
+  const stampedBatch: AnchorBatchBroadcaster = async (inputs) =>
+    (await broadcastAnchorBatch(inputs)).map((entry) => ({
+      ...entry,
+      result: withContract(entry.result),
+    }));
+
+  return Object.assign(stampedAnchor, { broadcastAnchorBatch: stampedBatch });
 }
 
 function anchorPairKey(tenantIdBytes: `0x${string}`, rootHex: `0x${string}`): string {
@@ -598,13 +623,22 @@ function emitWalletBalanceMetrics(
   metrics: MetricsEmitter | undefined,
   balanceWei: bigint,
   alertThresholdWei: bigint,
+  log?: AnchorLog,
 ): void {
+  const belowAlert = balanceWei < alertThresholdWei;
+  // The gauges below have no consumer in this deployment, so a low balance that
+  // only moved a gauge went unseen for six days. The log line is the signal an
+  // operator actually reads; it fires BEFORE the funds run out, unlike the
+  // InsufficientAnchorFundsError which fires once they already have.
+  if (belowAlert) {
+    log?.warn(
+      { balanceWei: balanceWei.toString(), alertThresholdWei: alertThresholdWei.toString() },
+      "audit anchor publisher wallet below alert threshold; top it up before it stops broadcasting",
+    );
+  }
   if (metrics === undefined) return;
   metrics.gauge("brain.audit.anchor.publisher_wallet_balance_wei", Number(balanceWei));
-  metrics.gauge(
-    "brain.audit.anchor.publisher_wallet_balance_below_alert",
-    balanceWei < alertThresholdWei ? 1 : 0,
-  );
+  metrics.gauge("brain.audit.anchor.publisher_wallet_balance_below_alert", belowAlert ? 1 : 0);
 }
 
 // --- Anchor event reader (read-only; backs the orphan-recovery reconciler) ---

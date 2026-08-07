@@ -22,7 +22,13 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { brainError, requireScope, type Scope } from "@brain/shared";
 import type { Pool } from "pg";
-import { reportVerifierHealth, type AuditVerifierHealth } from "@brain/audit";
+import {
+  reportVerifierHealth,
+  reportAnchorPublisherHealth,
+  ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS,
+  type AuditVerifierHealth,
+  type AnchorPublisherHealth,
+} from "@brain/audit";
 import {
   reportAuditOutboxHealth,
   type AuditOutboxHealth,
@@ -42,6 +48,7 @@ export interface AuditHealthResponse {
   status: AuditHealthStatus;
   verifier: AuditVerifierHealth;
   outbox: AuditOutboxHealth;
+  anchorPublisher: AnchorPublisherHealth;
 }
 
 /**
@@ -62,6 +69,7 @@ export interface AuditHealthResponse {
 export function deriveAuditHealthStatus(
   verifier: AuditVerifierHealth,
   outbox: AuditOutboxHealth,
+  anchorPublisher: AnchorPublisherHealth,
 ): AuditHealthStatus {
   const anchorRoot = verifier.anchorRoot;
   if (
@@ -69,6 +77,15 @@ export function deriveAuditHealthStatus(
     anchorRoot.lastPassStatus === "failed" ||
     verifier.openFindings > 0 ||
     outbox.exhausted > 0
+  ) {
+    return "critical";
+  }
+  // A stalled publisher is an active break in the on-chain claim, not a
+  // degradation: past this age the audit trail is provably not anchored, and
+  // §4's "anchored and tamper-evident" wording is false while it holds.
+  if (
+    anchorPublisher.oldestUnanchoredAgeSeconds !== null &&
+    anchorPublisher.oldestUnanchoredAgeSeconds > ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS
   ) {
     return "critical";
   }
@@ -106,18 +123,20 @@ export function registerAuditHealthRoute(app: FastifyInstance, deps: AuditHealth
     }
     requireScope(request.principal.scopes, ADMIN);
 
-    const [verifier, outbox] = await Promise.all([
+    const [verifier, outbox, anchorPublisher] = await Promise.all([
       reportVerifierHealth({ privilegedPool: deps.privilegedPool }),
       // quiet: a polled endpoint must not emit a critical log line per poll;
       // the worker-cycle caller keeps the loud default (Fable-5 F-3).
       reportAuditOutboxHealth({ privilegedPool: deps.privilegedPool, quiet: true }),
+      reportAnchorPublisherHealth({ privilegedPool: deps.privilegedPool }),
     ]);
 
     reply.status(200);
     const body: AuditHealthResponse = {
-      status: deriveAuditHealthStatus(verifier, outbox),
+      status: deriveAuditHealthStatus(verifier, outbox, anchorPublisher),
       verifier,
       outbox,
+      anchorPublisher,
     };
     return body;
   });

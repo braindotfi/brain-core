@@ -76,7 +76,12 @@ import {
   SERVICE_AGENT_TOKEN_TTL_SECONDS,
   SERVICE_TOKEN_SCOPES,
 } from "./onboarding/service-token.js";
-import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
+import {
+  createViemAnchorBroadcaster,
+  createViemAnchorEventReader,
+  BRAIN_AUDIT_ANCHOR_ABI,
+} from "./anchorBroadcaster.js";
+import { assertDeployedContractSelectors } from "./composition/contract-selector-fence.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
@@ -210,6 +215,7 @@ import { buildX402Client } from "./rails/x402Client.js";
 import {
   registerAuditRoutes,
   registerWebhookRoutes,
+  classifyAnchorBatchOutcome,
   createPendingAnchor,
   nextAnchorWindow,
   publishAnchor,
@@ -219,7 +225,7 @@ import {
   startAuditConsistencyVerifier,
   startWebhookDispatchWorker,
 } from "@brain/audit";
-import type { AuditAnchorRow, AuditDeps } from "@brain/audit";
+import type { AuditAnchorRow, AuditDeps, PublishPendingAnchorBatchSummary } from "@brain/audit";
 
 import {
   sandboxEvaluateLegacyPolicy,
@@ -449,6 +455,26 @@ async function main(): Promise<void> {
         ? makeBaseGetChainId(cfg.BASE_RPC_URL)
         : async () => cfg.BRAIN_BASE_CHAIN_ID,
   });
+
+  // Refuse to boot when a configured contract address does not expose the
+  // functions this build calls. #393 shipped anchorBatch() against a contract
+  // that never had it, and every publish reverted at gas estimation for four
+  // days with no boot-time signal. Logic + tests live in
+  // composition/contract-selector-fence.ts.
+  {
+    const contractRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+    await assertDeployedContractSelectors({
+      nodeEnv: cfg.NODE_ENV,
+      expectations: [
+        {
+          contractName: "BrainAuditAnchor",
+          address: cfg.AUDIT_PUBLISHER_KEY !== undefined ? cfg.AUDIT_ANCHOR_ADDRESS : undefined,
+          requiredFunctions: BRAIN_AUDIT_ANCHOR_ABI,
+        },
+      ],
+      getCode: makeBaseGetCode(contractRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
+    });
+  }
 
   // Refuse to boot against any non-testnet chain with BRAIN_ESCROW_ADDRESS
   // configured unless BOTH the committed audit record and an operator env
@@ -3162,6 +3188,24 @@ async function main(): Promise<void> {
   if (composition.workers.has("audit") && anchorBroadcaster !== undefined) {
     const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
     let anchorRunning = false;
+    // A cycle that attempts work and publishes nothing is the outage signature
+    // (see classifyAnchorBatchOutcome). Counting consecutive zero-yield batches
+    // separates one transient RPC failure from a publisher that has been dead
+    // for days, which is the distinction the 2026-06/07 incident lacked.
+    let consecutiveZeroYieldBatches = 0;
+
+    const logAnchorBatchSummary = (
+      summary: PublishPendingAnchorBatchSummary,
+      message: string,
+    ): void => {
+      const severity = classifyAnchorBatchOutcome(summary);
+      if (severity === "error") consecutiveZeroYieldBatches += 1;
+      else if (summary.attempted > 0) consecutiveZeroYieldBatches = 0;
+      const payload = { ...summary, consecutiveZeroYieldBatches };
+      if (severity === "error") log.error(payload, `${message} (published nothing)`);
+      else if (severity === "warn") log.warn(payload, message);
+      else log.info(payload, message);
+    };
 
     const runAnchor = async (): Promise<void> => {
       if (anchorRunning) return;
@@ -3197,7 +3241,7 @@ async function main(): Promise<void> {
                 pending.rows,
                 metrics,
               );
-              log.info(summary, "pending anchor retry batch completed");
+              logAnchorBatchSummary(summary, "pending anchor retry batch completed");
             } else {
               for (const row of pending.rows) {
                 await publishPendingAnchor(pool, anchorBroadcaster, row);
@@ -3306,7 +3350,7 @@ async function main(): Promise<void> {
                   batch,
                   metrics,
                 );
-                log.info(summary, "anchor publish batch completed");
+                logAnchorBatchSummary(summary, "anchor publish batch completed");
               }
             } else {
               for (const row of newAnchorRows) {
