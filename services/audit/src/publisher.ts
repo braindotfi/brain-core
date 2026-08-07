@@ -103,6 +103,73 @@ export interface PublishPendingAnchorBatchSummary {
   txCount: number;
 }
 
+/**
+ * Log severity for one batch summary.
+ *
+ * A cycle that attempted work and published nothing is the exact signature of
+ * the 2026-06/07 outage: the publisher kept logging "completed" at INFO with
+ * `confirmed:0 unresolved:50` while the backlog grew for six weeks. Nothing in
+ * the row states showed it either, because a transaction-level failure
+ * deliberately leaves the row `pending` rather than marking it terminally
+ * reverted (PR #434). Severity is therefore the only in-band signal a total
+ * failure produces, and both call sites must derive it the same way.
+ */
+export type AnchorBatchOutcomeSeverity = "error" | "warn" | "info";
+
+export function classifyAnchorBatchOutcome(
+  summary: PublishPendingAnchorBatchSummary,
+): AnchorBatchOutcomeSeverity {
+  if (summary.attempted === 0) return "info";
+  if (summary.confirmed + summary.alreadyAnchored === 0) return "error";
+  if (summary.unresolved > 0 || summary.reverted > 0) return "warn";
+  return "info";
+}
+
+/**
+ * Backlog snapshot for the operator audit-health surface.
+ *
+ * Deliberately derived from `audit_anchors` alone rather than from the
+ * publisher's in-process counters: the publisher runs in the worker container
+ * and /internal/audit/health is served by the api container, so no in-memory
+ * cycle state is reachable from there. The two durable columns are also the
+ * two that actually detect a stall — a dead publisher shows up as a backlog
+ * that only grows and an oldest-pending age that only climbs, which is exactly
+ * what nobody could see for six weeks.
+ *
+ * Publisher wallet balance is intentionally absent for the same cross-process
+ * reason; it is surfaced as a WARN log from the broadcaster instead.
+ */
+export interface AnchorPublisherHealth {
+  /** Anchors still awaiting a successful broadcast. */
+  pendingBacklogDepth: number;
+  /** Age of the oldest unpublished anchor; null when the backlog is empty. */
+  oldestUnanchoredAgeSeconds: number | null;
+}
+
+/** Oldest-pending age past which the publisher is treated as stalled, not busy. */
+export const ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS = 24 * 60 * 60;
+
+export async function reportAnchorPublisherHealth(deps: {
+  /** MUST be the BYPASSRLS privileged pool: the backlog spans every tenant. */
+  privilegedPool: Pool;
+}): Promise<AnchorPublisherHealth> {
+  const res = await deps.privilegedPool.query<{
+    pending_count: string;
+    oldest_pending_age_s: number | null;
+  }>(
+    `SELECT COUNT(*)::text AS pending_count,
+            extract(epoch FROM now() - MIN(created_at))::float8 AS oldest_pending_age_s
+       FROM audit_anchors
+      WHERE onchain_tx_hash IS NULL
+        AND onchain_status = 'pending'`,
+  );
+  const row = res.rows[0];
+  return {
+    pendingBacklogDepth: Number(row?.pending_count ?? 0),
+    oldestUnanchoredAgeSeconds: row?.oldest_pending_age_s ?? null,
+  };
+}
+
 export interface PublishOptions {
   tenantId: string;
   periodStart: Date;

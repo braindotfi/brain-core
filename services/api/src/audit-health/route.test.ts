@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { errorHandlerPlugin, newTenantId, type Principal, type Scope } from "@brain/shared";
 import type { Pool } from "pg";
 import { deriveAuditHealthStatus, registerAuditHealthRoute } from "./route.js";
-import type { AuditVerifierHealth } from "@brain/audit";
+import type { AnchorPublisherHealth, AuditVerifierHealth } from "@brain/audit";
 import type { AuditOutboxHealth } from "../tenant-deletion/blob-purge-audit-outbox.js";
 
 const TENANT = newTenantId();
@@ -19,13 +19,15 @@ function principal(scopes: Scope[]): Principal {
   };
 }
 
-/** Privileged pool serving the 4 verifier queries (2 checkpoints + findings + outbox). */
+/** Privileged pool serving the 5 verifier queries (2 checkpoints + findings + outbox + anchors). */
 function fakePool(opts: {
   checkpoint?: Record<string, unknown> | null;
   anchorCheckpoint?: Record<string, unknown> | null;
   open?: number;
   pending?: number;
   exhausted?: number;
+  anchorBacklog?: number;
+  anchorOldestAgeSeconds?: number | null;
 }): Pool {
   return {
     query: vi.fn(async (text: string, params?: unknown[]) => {
@@ -51,6 +53,17 @@ function fakePool(opts: {
               exhausted: opts.exhausted ?? 0,
               oldest_pending_age_s: 0,
               oldest_exhausted_age_s: 0,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (text.includes("FROM audit_anchors")) {
+        return {
+          rows: [
+            {
+              pending_count: String(opts.anchorBacklog ?? 0),
+              oldest_pending_age_s: opts.anchorOldestAgeSeconds ?? null,
             },
           ],
           rowCount: 1,
@@ -110,31 +123,37 @@ describe("deriveAuditHealthStatus", () => {
     oldestPendingAgeSeconds: 0,
     oldestExhaustedAgeSeconds: 0,
   };
+  const anchorPublisher: AnchorPublisherHealth = {
+    pendingBacklogDepth: 0,
+    oldestUnanchoredAgeSeconds: null,
+  };
 
   it("is safe on a clean pass with no findings/exhausted evidence", () => {
-    expect(deriveAuditHealthStatus(base, outbox)).toBe("safe");
+    expect(deriveAuditHealthStatus(base, outbox, anchorPublisher)).toBe("safe");
   });
 
   it("is critical on a failed pass, an open finding, or an exhausted outbox row", () => {
-    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "failed" }, outbox)).toBe("critical");
-    expect(deriveAuditHealthStatus({ ...base, openFindings: 1 }, outbox)).toBe("critical");
-    expect(deriveAuditHealthStatus(base, { ...outbox, exhausted: 1 })).toBe("critical");
+    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "failed" }, outbox, anchorPublisher)).toBe("critical");
+    expect(deriveAuditHealthStatus({ ...base, openFindings: 1 }, outbox, anchorPublisher)).toBe("critical");
+    expect(deriveAuditHealthStatus(base, { ...outbox, exhausted: 1 }, anchorPublisher)).toBe(
+      "critical",
+    );
   });
 
   it("is degraded when no clean pass yet, or unverifiable versions exist", () => {
-    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "never" }, outbox)).toBe("degraded");
-    expect(deriveAuditHealthStatus({ ...base, legacyUnverifiable: 4 }, outbox)).toBe("degraded");
-    expect(deriveAuditHealthStatus({ ...base, unsupportedVersion: 1 }, outbox)).toBe("degraded");
+    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "never" }, outbox, anchorPublisher)).toBe("degraded");
+    expect(deriveAuditHealthStatus({ ...base, legacyUnverifiable: 4 }, outbox, anchorPublisher)).toBe("degraded");
+    expect(deriveAuditHealthStatus({ ...base, unsupportedVersion: 1 }, outbox, anchorPublisher)).toBe("degraded");
   });
 
   it("is critical when the verifier's clean pass is stale", () => {
-    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: 31 * 60 }, outbox)).toBe(
+    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: 31 * 60 }, outbox, anchorPublisher)).toBe(
       "critical",
     );
   });
 
   it("is degraded when verifier staleness is unavailable", () => {
-    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: null }, outbox)).toBe(
+    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: null }, outbox, anchorPublisher)).toBe(
       "degraded",
     );
   });
@@ -144,6 +163,7 @@ describe("deriveAuditHealthStatus", () => {
       deriveAuditHealthStatus(
         { ...base, anchorRoot: { ...base.anchorRoot, lastPassStatus: "failed" } },
         outbox,
+        anchorPublisher,
       ),
     ).toBe("critical");
   });
@@ -153,6 +173,7 @@ describe("deriveAuditHealthStatus", () => {
       deriveAuditHealthStatus(
         { ...base, anchorRoot: { ...base.anchorRoot, secondsSinceCleanFullPass: 31 * 60 } },
         outbox,
+        anchorPublisher,
       ),
     ).toBe("critical");
   });
@@ -169,8 +190,30 @@ describe("deriveAuditHealthStatus", () => {
           },
         },
         outbox,
+        anchorPublisher,
       ),
     ).toBe("degraded");
+  });
+
+  // The six-week silent outage: every verifier pass clean, every finding
+  // closed, and the on-chain claim false the whole time because nothing was
+  // being published. Backlog age is the only signal that catches it.
+  it("is critical when the oldest unanchored window is older than a day", () => {
+    expect(
+      deriveAuditHealthStatus(base, outbox, {
+        pendingBacklogDepth: 172_329,
+        oldestUnanchoredAgeSeconds: 25 * 60 * 60,
+      }),
+    ).toBe("critical");
+  });
+
+  it("stays safe with a large but fresh backlog", () => {
+    expect(
+      deriveAuditHealthStatus(base, outbox, {
+        pendingBacklogDepth: 1_600,
+        oldestUnanchoredAgeSeconds: 20 * 60,
+      }),
+    ).toBe("safe");
   });
 });
 

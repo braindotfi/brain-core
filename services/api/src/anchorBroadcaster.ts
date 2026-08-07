@@ -68,6 +68,7 @@ type ViemAnchorBroadcaster = AnchorBroadcaster & {
 };
 interface AnchorLog {
   warn(message: string): void;
+  warn(details: Record<string, unknown>, message: string): void;
 }
 
 export const MAX_ANCHOR_BATCH_SIZE = 50;
@@ -305,7 +306,7 @@ export function createViemAnchorBroadcaster(
 
   async function assertAffordable(gas: bigint, maxFeePerGas: bigint): Promise<void> {
     const balance = await publicClient.getBalance({ address: account.address });
-    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei);
+    emitWalletBalanceMetrics(opts.metrics, balance, walletBalanceAlertWei, opts.log);
     const guardedCost = applySafetyFactor(gas * maxFeePerGas, gasSafetyFactor);
     if (balance < guardedCost) {
       opts.metrics?.increment("brain.audit.anchor.publisher_wallet_insufficient_funds.count", {
@@ -598,13 +599,22 @@ function emitWalletBalanceMetrics(
   metrics: MetricsEmitter | undefined,
   balanceWei: bigint,
   alertThresholdWei: bigint,
+  log?: AnchorLog,
 ): void {
+  const belowAlert = balanceWei < alertThresholdWei;
+  // The gauges below have no consumer in this deployment, so a low balance that
+  // only moved a gauge went unseen for six days. The log line is the signal an
+  // operator actually reads; it fires BEFORE the funds run out, unlike the
+  // InsufficientAnchorFundsError which fires once they already have.
+  if (belowAlert) {
+    log?.warn(
+      { balanceWei: balanceWei.toString(), alertThresholdWei: alertThresholdWei.toString() },
+      "audit anchor publisher wallet below alert threshold; top it up before it stops broadcasting",
+    );
+  }
   if (metrics === undefined) return;
   metrics.gauge("brain.audit.anchor.publisher_wallet_balance_wei", Number(balanceWei));
-  metrics.gauge(
-    "brain.audit.anchor.publisher_wallet_balance_below_alert",
-    balanceWei < alertThresholdWei ? 1 : 0,
-  );
+  metrics.gauge("brain.audit.anchor.publisher_wallet_balance_below_alert", belowAlert ? 1 : 0);
 }
 
 // --- Anchor event reader (read-only; backs the orphan-recovery reconciler) ---

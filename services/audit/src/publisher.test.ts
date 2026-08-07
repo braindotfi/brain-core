@@ -25,12 +25,14 @@ vi.mock("./repository.js", () => ({
 }));
 
 import {
+  classifyAnchorBatchOutcome,
   createPendingAnchor,
   publishAnchor,
   publishPendingAnchor,
   publishPendingAnchorBatch,
   type BroadcastBatchResult,
   type BroadcastResult,
+  type PublishPendingAnchorBatchSummary,
 } from "./publisher.js";
 import * as repo from "./repository.js";
 
@@ -316,5 +318,46 @@ describe("publishAnchor", () => {
     // manual publish endpoint; it must never appear in this log line.
     const loggedFields = vi.mocked(logger.error).mock.calls[0]?.[0] as Record<string, unknown>;
     expect(loggedFields).not.toHaveProperty("tenantId");
+  });
+});
+
+describe("classifyAnchorBatchOutcome", () => {
+  const summary = (
+    over: Partial<PublishPendingAnchorBatchSummary> = {},
+  ): PublishPendingAnchorBatchSummary => ({
+    attempted: 50,
+    skippedTerminal: 0,
+    confirmed: 50,
+    alreadyAnchored: 0,
+    reverted: 0,
+    unresolved: 0,
+    txCount: 1,
+    ...over,
+  });
+
+  it("is error when a cycle attempted work and published nothing", () => {
+    // The exact summary shape logged at INFO throughout the six-week outage.
+    expect(classifyAnchorBatchOutcome(summary({ confirmed: 0, unresolved: 50, txCount: 0 }))).toBe(
+      "error",
+    );
+  });
+
+  it("is info when nothing was attempted, i.e. an idle cycle on an empty backlog", () => {
+    expect(classifyAnchorBatchOutcome(summary({ attempted: 0, confirmed: 0, txCount: 0 }))).toBe(
+      "info",
+    );
+  });
+
+  it("is warn on partial yield", () => {
+    expect(classifyAnchorBatchOutcome(summary({ confirmed: 30, unresolved: 20 }))).toBe("warn");
+    expect(classifyAnchorBatchOutcome(summary({ confirmed: 49, reverted: 1 }))).toBe("warn");
+  });
+
+  it("counts already-anchored as yield, not failure", () => {
+    expect(classifyAnchorBatchOutcome(summary({ confirmed: 0, alreadyAnchored: 50 }))).toBe("info");
+  });
+
+  it("is info on a fully confirmed batch", () => {
+    expect(classifyAnchorBatchOutcome(summary())).toBe("info");
   });
 });

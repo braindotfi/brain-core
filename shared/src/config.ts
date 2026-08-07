@@ -605,7 +605,21 @@ const envSchema = z.object({
   AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS: positiveBigIntDefault(100_000n),
   AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS: z.coerce.number().int().positive().default(2_000),
   AUDIT_ANCHOR_GAS_SAFETY_FACTOR: z.coerce.number().positive().default(2),
-  AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI: z.coerce.bigint().nonnegative().default(0n),
+  /**
+   * Publisher-wallet low-balance threshold. A zero default made the
+   * `publisher_wallet_balance_below_alert` gauge unable to ever fire, so it
+   * read as covered while the wallet drained to a standstill for six days
+   * (2026-07-30 to 2026-08-05).
+   *
+   * The default is ~0.05 ETH: roughly ten full 50-entry `anchorBatch` cycles at
+   * the 3 gwei fee floor with the x2 gas safety factor, i.e. hours of runway
+   * rather than minutes. It is a warning threshold, never a fence — nothing
+   * stops broadcasting because of it.
+   */
+  AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI: z.coerce
+    .bigint()
+    .nonnegative()
+    .default(50_000_000_000_000_000n),
   AUDIT_ANCHOR_BATCH_SIZE: z.coerce.number().int().positive().max(50).default(50),
 
   // ---- Collections overdue scanner ----
