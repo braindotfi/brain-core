@@ -133,29 +133,47 @@ describe("deriveAuditHealthStatus", () => {
   });
 
   it("is critical on a failed pass, an open finding, or an exhausted outbox row", () => {
-    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "failed" }, outbox, anchorPublisher)).toBe("critical");
-    expect(deriveAuditHealthStatus({ ...base, openFindings: 1 }, outbox, anchorPublisher)).toBe("critical");
+    expect(
+      deriveAuditHealthStatus({ ...base, lastPassStatus: "failed" }, outbox, anchorPublisher),
+    ).toBe("critical");
+    expect(deriveAuditHealthStatus({ ...base, openFindings: 1 }, outbox, anchorPublisher)).toBe(
+      "critical",
+    );
     expect(deriveAuditHealthStatus(base, { ...outbox, exhausted: 1 }, anchorPublisher)).toBe(
       "critical",
     );
   });
 
   it("is degraded when no clean pass yet, or unverifiable versions exist", () => {
-    expect(deriveAuditHealthStatus({ ...base, lastPassStatus: "never" }, outbox, anchorPublisher)).toBe("degraded");
-    expect(deriveAuditHealthStatus({ ...base, legacyUnverifiable: 4 }, outbox, anchorPublisher)).toBe("degraded");
-    expect(deriveAuditHealthStatus({ ...base, unsupportedVersion: 1 }, outbox, anchorPublisher)).toBe("degraded");
+    expect(
+      deriveAuditHealthStatus({ ...base, lastPassStatus: "never" }, outbox, anchorPublisher),
+    ).toBe("degraded");
+    expect(
+      deriveAuditHealthStatus({ ...base, legacyUnverifiable: 4 }, outbox, anchorPublisher),
+    ).toBe("degraded");
+    expect(
+      deriveAuditHealthStatus({ ...base, unsupportedVersion: 1 }, outbox, anchorPublisher),
+    ).toBe("degraded");
   });
 
   it("is critical when the verifier's clean pass is stale", () => {
-    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: 31 * 60 }, outbox, anchorPublisher)).toBe(
-      "critical",
-    );
+    expect(
+      deriveAuditHealthStatus(
+        { ...base, secondsSinceCleanFullPass: 31 * 60 },
+        outbox,
+        anchorPublisher,
+      ),
+    ).toBe("critical");
   });
 
   it("is degraded when verifier staleness is unavailable", () => {
-    expect(deriveAuditHealthStatus({ ...base, secondsSinceCleanFullPass: null }, outbox, anchorPublisher)).toBe(
-      "degraded",
-    );
+    expect(
+      deriveAuditHealthStatus(
+        { ...base, secondsSinceCleanFullPass: null },
+        outbox,
+        anchorPublisher,
+      ),
+    ).toBe("degraded");
   });
 
   it("is critical when the anchor-root verifier's last pass failed", () => {

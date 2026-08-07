@@ -225,11 +225,7 @@ import {
   startAuditConsistencyVerifier,
   startWebhookDispatchWorker,
 } from "@brain/audit";
-import type {
-  AuditAnchorRow,
-  AuditDeps,
-  PublishPendingAnchorBatchSummary,
-} from "@brain/audit";
+import type { AuditAnchorRow, AuditDeps, PublishPendingAnchorBatchSummary } from "@brain/audit";
 
 import {
   sandboxEvaluateLegacyPolicy,

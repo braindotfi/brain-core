@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AbiFunction } from "viem";
-import {
-  assertDeployedContractSelectors,
-  missingSelectors,
-} from "./contract-selector-fence.js";
+import { assertDeployedContractSelectors, missingSelectors } from "./contract-selector-fence.js";
 
 // The two functions at the centre of the #393 incident: anchorBatch was called
 // against a contract that only had anchor.
