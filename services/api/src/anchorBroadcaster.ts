@@ -56,6 +56,8 @@ interface BroadcastResult {
   txHash: Buffer;
   blockNumber: bigint;
   status: BroadcastStatus;
+  /** Contract this tx went to; stamped once at the factory boundary below. */
+  contractAddress?: string;
 }
 type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
 type AnchorBatchBroadcaster = (inputs: BroadcastInput[]) => Promise<BroadcastBatchResult[]>;
@@ -550,7 +552,27 @@ export function createViemAnchorBroadcaster(
     }
   }
 
-  return Object.assign(broadcastAnchor, { broadcastAnchorBatch });
+  // Stamp the contract every landed broadcast actually went to, at the single
+  // boundary where every result leaves this module. The publisher persists it
+  // on the anchor row so the proof path reads which contract a historical
+  // anchor was published to instead of assuming it is whatever
+  // AUDIT_ANCHOR_ADDRESS points at today — the assumption that mislabelled
+  // every served proof after the 2026-08-06 rotation. Only landed outcomes
+  // carry it: a reverted or unresolved attempt anchored nothing anywhere.
+  const withContract = (result: BroadcastResult): BroadcastResult =>
+    result.status === "confirmed" || result.status === "already_anchored"
+      ? { ...result, contractAddress: opts.contractAddress }
+      : result;
+
+  const stampedAnchor: AnchorBroadcaster = async (input) =>
+    withContract(await broadcastAnchor(input));
+  const stampedBatch: AnchorBatchBroadcaster = async (inputs) =>
+    (await broadcastAnchorBatch(inputs)).map((entry) => ({
+      ...entry,
+      result: withContract(entry.result),
+    }));
+
+  return Object.assign(stampedAnchor, { broadcastAnchorBatch: stampedBatch });
 }
 
 function anchorPairKey(tenantIdBytes: `0x${string}`, rootHex: `0x${string}`): string {

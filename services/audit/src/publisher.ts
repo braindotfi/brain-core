@@ -77,6 +77,13 @@ export interface BroadcastResult {
   txHash: Buffer;
   blockNumber: bigint;
   status: BroadcastStatus;
+  /**
+   * The contract this transaction was actually sent to, persisted on the anchor
+   * row so the proof path never has to infer it from current configuration
+   * (which is what mislabelled every historical proof after the 2026-08-06
+   * rotation). Optional so an injected test broadcaster stays a two-line stub.
+   */
+  contractAddress?: string;
 }
 
 export type AnchorBroadcaster = (input: BroadcastInput) => Promise<BroadcastResult>;
@@ -277,7 +284,13 @@ export async function publishPendingAnchor(
       await setAnchorReverted(c, row.id);
     } else if (broadcast.status !== "unresolved") {
       // confirmed | already_anchored both carry a valid on-chain anchor tx.
-      await setAnchorTxHash(c, row.id, broadcast.txHash, broadcast.blockNumber);
+      await setAnchorTxHash(
+        c,
+        row.id,
+        broadcast.txHash,
+        broadcast.blockNumber,
+        broadcast.contractAddress,
+      );
     }
     // "unresolved" is a batch-only outcome in practice (the single-row
     // broadcaster never returns it); leave the row untouched either way.
@@ -353,7 +366,13 @@ export async function publishPendingAnchorBatch(
     }
     if (broadcast.txHash.length > 0) txHashes.add(broadcast.txHash.toString("hex"));
     await withTenantScope(pool, row.tenant_id, async (c) => {
-      await setAnchorTxHash(c, row.id, broadcast.txHash, broadcast.blockNumber);
+      await setAnchorTxHash(
+        c,
+        row.id,
+        broadcast.txHash,
+        broadcast.blockNumber,
+        broadcast.contractAddress,
+      );
     });
   }
   summary.txCount = txHashes.size;

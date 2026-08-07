@@ -273,8 +273,10 @@ async function buildMerkleProof(
     period_end: Date | string;
     onchain_tx_hash: Buffer | string | null;
     onchain_block_number: number | string | null;
+    onchain_contract_address: string | null;
   }>(
-    `SELECT period_start, period_end, onchain_tx_hash, onchain_block_number
+    `SELECT period_start, period_end, onchain_tx_hash, onchain_block_number,
+            onchain_contract_address
        FROM audit_anchors
       WHERE onchain_tx_hash IS NOT NULL
         AND period_start <= $1 AND period_end >= $1
@@ -299,14 +301,24 @@ async function buildMerkleProof(
   const merkleRoot = tree.root.toString("hex");
   const merkleProof = makeProof(tree, idx).map((b) => b.toString("hex"));
 
+  // The contract MUST come from the anchor row, not from configuration. Pairing
+  // a historical tx hash with whatever AUDIT_ANCHOR_ADDRESS points at today made
+  // every proof served after the 2026-08-06 rotation name a contract the
+  // transaction never touched — a third party verifying against the address we
+  // handed them gets a negative result and concludes the audit trail is faked.
+  //
+  // When the row predates the column and the backfill did not resolve it, omit
+  // chain_anchor rather than guessing: under-claiming a real anchor is
+  // recoverable, publishing a wrong attestation is not.
   const txHash = hex(anchor.onchain_tx_hash);
+  const contractAddress = anchor.onchain_contract_address;
   const chainAnchor: ProofChainAnchor | null =
-    txHash !== null && opts.anchorContractAddress !== null
+    txHash !== null && contractAddress !== null
       ? {
           tx_hash: txHash,
           block_number:
             anchor.onchain_block_number === null ? 0 : Number(anchor.onchain_block_number),
-          contract_address: opts.anchorContractAddress,
+          contract_address: contractAddress,
           chain: opts.chain,
         }
       : null;

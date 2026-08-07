@@ -54,6 +54,7 @@ function anchorRow(overrides: Partial<AuditAnchorRow> = {}): AuditAnchorRow {
     onchain_tx_hash: null,
     onchain_block_number: null,
     onchain_status: "pending",
+    onchain_contract_address: null,
     created_at: new Date(),
     ...overrides,
   };
@@ -113,6 +114,7 @@ describe("publishAnchor", () => {
       pending.id,
       broadcastResult("confirmed").txHash,
       4242n,
+      undefined,
     );
     expect(repo.setAnchorReverted).not.toHaveBeenCalled();
   });
@@ -187,6 +189,7 @@ describe("publishAnchor", () => {
       pending.id,
       broadcastResult("confirmed").txHash,
       4242n,
+      undefined,
     );
   });
 
@@ -281,6 +284,7 @@ describe("publishAnchor", () => {
       "anchor_2",
       expect.anything(),
       expect.anything(),
+      undefined,
     );
     expect(repo.setAnchorReverted).not.toHaveBeenCalled();
     expect(summary).toMatchObject({
