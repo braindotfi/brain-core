@@ -139,6 +139,8 @@ jobs:
           \pset pager off
           \pset null '(null)'
           BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '5s';
+          SET LOCAL lock_timeout = '1s';
 
           \echo 'counterparty trust schema'
           SELECT EXISTS (
@@ -294,6 +296,216 @@ jobs:
              AND outcome = 'reject'
            ORDER BY decided_at DESC
            LIMIT 50;
+
+          \echo 'compliance rejected-decision clusters (last 30 days, maximum 200 decisions)'
+          WITH recent_rejections AS (
+            SELECT id,
+                   decided_at,
+                   policy_id,
+                   policy_version,
+                   matched_rule_id,
+                   subject_type,
+                   subject_id,
+                   required_approvers,
+                   trace
+              FROM policy_decisions
+             WHERE tenant_id = :'tenant_id'
+               AND subject_type = 'agent_action'
+               AND outcome = 'reject'
+               AND decided_at >= current_timestamp - INTERVAL '30 days'
+             ORDER BY decided_at DESC, id DESC
+             LIMIT 200
+          )
+          SELECT policy_id,
+                 policy_version,
+                 COALESCE(matched_rule_id, '(no matching rule)') AS matched_rule_id,
+                 subject_type,
+                 date_trunc('hour', decided_at) AS decided_hour,
+                 COUNT(*) AS rejected_count,
+                 MIN(decided_at) AS first_decided_at,
+                 MAX(decided_at) AS last_decided_at,
+                 ARRAY_AGG(subject_id ORDER BY decided_at DESC, id DESC) AS subject_ids
+            FROM recent_rejections
+           GROUP BY policy_id,
+                    policy_version,
+                    matched_rule_id,
+                    subject_type,
+                    date_trunc('hour', decided_at)
+           ORDER BY first_decided_at DESC,
+                    policy_id,
+                    policy_version,
+                    matched_rule_id;
+
+          \echo 'policy version history and bounded rule summaries'
+          SELECT p.id AS policy_id,
+                 p.version,
+                 p.state,
+                 p.created_at,
+                 p.activated_at,
+                 p.deactivated_at,
+                 encode(p.content_hash, 'hex') AS content_hash,
+                 COALESCE(rule_summary.rules, '[]'::jsonb) AS rules,
+                 COALESCE(list_summary.lists, '[]'::jsonb) AS lists,
+                 COALESCE(agent_action_summary.agent_actions, '[]'::jsonb) AS agent_actions
+            FROM policies p
+            LEFT JOIN LATERAL (
+              SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'id', rule.value->>'id',
+                         'applies_to', rule.value->'applies_to',
+                         'when', rule.value->'when',
+                         'execute', rule.value->>'execute',
+                         'require', rule.value->>'require',
+                         'approval_required_above', rule.value->'approval_required_above'
+                       )
+                       ORDER BY rule.ordinality
+                     ) AS rules
+                FROM jsonb_array_elements(COALESCE(p.content->'rules', '[]'::jsonb))
+                     WITH ORDINALITY AS rule(value, ordinality)
+            ) rule_summary ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'name', list_entry.key,
+                         'member_count', jsonb_array_length(list_entry.value)
+                       )
+                       ORDER BY list_entry.key
+                     ) AS lists
+                FROM jsonb_each(COALESCE(p.content->'lists', '{}'::jsonb)) AS list_entry(key, value)
+            ) list_summary ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT jsonb_agg(
+                       jsonb_build_object(
+                         'agent_key', agent_action_entry.key,
+                         'action_count', jsonb_array_length(agent_action_entry.value)
+                       )
+                       ORDER BY agent_action_entry.key
+                     ) AS agent_actions
+                FROM jsonb_each(COALESCE(p.content->'agent_actions', '{}'::jsonb))
+                     AS agent_action_entry(key, value)
+            ) agent_action_summary ON TRUE
+           WHERE p.tenant_id = :'tenant_id'
+           ORDER BY p.version DESC, p.created_at DESC;
+
+          \echo 'spread sample of compliance findings with source decision, audit, and router confidence'
+          WITH compliance_candidates AS (
+            SELECT p.id,
+                   p.created_at,
+                   p.proposing_agent,
+                   p.status,
+                   p.policy_version,
+                   p.policy_decision,
+                   p.required_approvers,
+                   p.policy_trace,
+                   p.action
+              FROM proposals p
+             WHERE p.tenant_id = :'tenant_id'
+               AND p.action->>'agent_kind' = 'compliance'
+               AND p.created_at >= current_timestamp - INTERVAL '30 days'
+             ORDER BY p.created_at ASC, p.id ASC
+             LIMIT 100
+          ),
+          bucketed_candidates AS (
+            SELECT c.*,
+                   ntile(8) OVER (ORDER BY c.created_at ASC, c.id ASC) AS sample_bucket
+              FROM compliance_candidates c
+          ),
+          sampled_findings AS (
+            SELECT DISTINCT ON (sample_bucket) *
+              FROM bucketed_candidates
+             ORDER BY sample_bucket, created_at ASC, id ASC
+          )
+          SELECT finding.sample_bucket,
+                 finding.id AS compliance_proposal_id,
+                 finding.created_at AS compliance_proposal_created_at,
+                 finding.proposing_agent AS compliance_proposing_agent,
+                 finding.status AS compliance_proposal_status,
+                 finding.policy_version AS compliance_policy_version,
+                 finding.policy_decision AS compliance_policy_decision,
+                 finding.required_approvers AS compliance_required_approvers,
+                 finding.action AS compliance_action_payload,
+                 source_decision.id AS source_policy_decision_id,
+                 source_decision.decided_at AS source_policy_decided_at,
+                 source_decision.policy_id AS source_policy_id,
+                 source_decision.policy_version AS source_policy_version,
+                 source_decision.subject_type AS source_subject_type,
+                 source_decision.subject_id AS source_subject_id,
+                 source_decision.outcome AS source_policy_outcome,
+                 source_decision.matched_rule_id AS source_matched_rule_id,
+                 source_decision.required_approvers AS source_required_approvers,
+                 source_decision.trace AS source_policy_trace,
+                 source_audit.id AS source_audit_event_id,
+                 source_audit.created_at AS source_audit_created_at,
+                 source_audit.action AS source_audit_action,
+                 source_audit.inputs AS source_audit_inputs,
+                 source_audit.outputs AS source_audit_outputs,
+                 original_proposal.id AS correlated_original_proposal_id,
+                 original_proposal.created_at AS correlated_original_proposal_created_at,
+                 original_proposal.status AS correlated_original_proposal_status,
+                 original_proposal.action AS correlated_original_action_payload,
+                 original_proposal.correlation_method AS original_action_correlation_method,
+                 compliance_run.id AS compliance_agent_run_id,
+                 compliance_run.created_at AS compliance_agent_run_created_at,
+                 compliance_run.confidence AS router_confidence,
+                 compliance_run.evidence_score AS router_evidence_score,
+                 compliance_run.execution_mode AS router_execution_mode,
+                 compliance_run.reason AS compliance_agent_run_reason,
+                 routing.id AS routing_decision_id,
+                 routing.confidence AS routing_decision_confidence,
+                 routing.evidence_score AS routing_decision_evidence_score,
+                 routing.reason AS routing_decision_reason,
+                 router_audit.id AS router_selection_audit_id,
+                 router_audit.created_at AS router_selection_audit_created_at,
+                 router_audit.outputs->'signals' AS router_signal_components,
+                 router_audit.outputs->>'confidence' AS router_selection_confidence,
+                 router_audit.correlation_seconds AS router_audit_correlation_seconds
+            FROM sampled_findings finding
+            LEFT JOIN policy_decisions source_decision
+              ON source_decision.tenant_id = :'tenant_id'
+             AND source_decision.id = finding.action->>'policy_decision_id'
+            LEFT JOIN audit_events source_audit
+              ON source_audit.tenant_id = :'tenant_id'
+             AND source_audit.id = finding.action->>'audit_event_id'
+            LEFT JOIN LATERAL (
+              SELECT p.id,
+                     p.created_at,
+                     p.status,
+                     p.action,
+                     'policy_trace_and_time_window'::text AS correlation_method
+                FROM proposals p
+               WHERE p.tenant_id = :'tenant_id'
+                 AND source_decision.id IS NOT NULL
+                 AND p.policy_decision = source_decision.outcome
+                 AND p.policy_version = source_decision.policy_version
+                 AND p.policy_trace = source_decision.trace
+                 AND p.created_at BETWEEN source_decision.decided_at - INTERVAL '5 seconds'
+                                      AND source_decision.decided_at + INTERVAL '5 seconds'
+               ORDER BY ABS(EXTRACT(EPOCH FROM (p.created_at - source_decision.decided_at))), p.id
+               LIMIT 1
+            ) original_proposal ON TRUE
+            LEFT JOIN agent_runs compliance_run
+              ON compliance_run.tenant_id = :'tenant_id'
+             AND compliance_run.proposal_id = finding.id
+            LEFT JOIN agent_routing_decisions routing
+              ON routing.tenant_id = :'tenant_id'
+             AND routing.id = compliance_run.routing_decision_id
+            LEFT JOIN LATERAL (
+              SELECT ae.id,
+                     ae.created_at,
+                     ae.outputs,
+                     ABS(EXTRACT(EPOCH FROM (ae.created_at - compliance_run.created_at)))
+                       AS correlation_seconds
+                FROM audit_events ae
+               WHERE ae.tenant_id = :'tenant_id'
+                 AND ae.action = 'agent.router.selected'
+                 AND ae.outputs->>'selected_agent_id' = 'compliance'
+                 AND compliance_run.created_at IS NOT NULL
+                 AND ae.created_at BETWEEN compliance_run.created_at - INTERVAL '5 seconds'
+                                       AND compliance_run.created_at + INTERVAL '5 seconds'
+               ORDER BY ABS(EXTRACT(EPOCH FROM (ae.created_at - compliance_run.created_at))), ae.id
+               LIMIT 1
+            ) router_audit ON TRUE
+           ORDER BY finding.created_at ASC, finding.id ASC;
 
           \echo 'wiki.question audit payloads'
           SELECT id,
