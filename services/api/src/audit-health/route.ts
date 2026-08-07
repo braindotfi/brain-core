@@ -25,7 +25,7 @@ import type { Pool } from "pg";
 import {
   reportVerifierHealth,
   reportAnchorPublisherHealth,
-  ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS,
+  ANCHOR_STALL_INTERVAL_MULTIPLE,
   type AuditVerifierHealth,
   type AnchorPublisherHealth,
 } from "@brain/audit";
@@ -40,6 +40,12 @@ export const AUDIT_VERIFIER_STALE_AFTER_SECONDS = 30 * 60;
 export interface AuditHealthRouteDeps {
   /** MUST be the BYPASSRLS privileged pool: the queries span every tenant. */
   privilegedPool: Pool;
+  /**
+   * The anchor publisher's cycle interval. The stall threshold is a multiple
+   * of it rather than an independent constant, so changing the cadence cannot
+   * silently leave the alarm calibrated for the old one.
+   */
+  anchorIntervalMs: number;
 }
 
 export type AuditHealthStatus = "safe" | "degraded" | "critical";
@@ -70,6 +76,12 @@ export function deriveAuditHealthStatus(
   verifier: AuditVerifierHealth,
   outbox: AuditOutboxHealth,
   anchorPublisher: AnchorPublisherHealth,
+  /**
+   * Default matches the pinned one-hour AUDIT_ANCHOR_INTERVAL_MS. The route
+   * always passes the configured value; the default exists so a caller that
+   * does not care about the publisher does not have to compute it.
+   */
+  anchorStallAfterSeconds: number = ANCHOR_STALL_INTERVAL_MULTIPLE * 60 * 60,
 ): AuditHealthStatus {
   const anchorRoot = verifier.anchorRoot;
   if (
@@ -81,11 +93,16 @@ export function deriveAuditHealthStatus(
     return "critical";
   }
   // A stalled publisher is an active break in the on-chain claim, not a
-  // degradation: past this age the audit trail is provably not anchored, and
-  // §4's "anchored and tamper-evident" wording is false while it holds.
+  // degradation: while it holds, §4's "anchored and tamper-evident" wording is
+  // false. Stalled means "there is work waiting AND nothing has landed on-chain
+  // for several cycles", never "the oldest pending row is old". The latter is
+  // permanently true in production (a 172,329-row backlog whose head is from
+  // 2026-06-05) and would pin this endpoint to critical for months, which is
+  // how a signal stops being read.
   if (
-    anchorPublisher.oldestUnanchoredAgeSeconds !== null &&
-    anchorPublisher.oldestUnanchoredAgeSeconds > ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS
+    anchorPublisher.pendingBacklogDepth > 0 &&
+    anchorPublisher.secondsSinceLastLandedAnchor !== null &&
+    anchorPublisher.secondsSinceLastLandedAnchor > anchorStallAfterSeconds
   ) {
     return "critical";
   }
@@ -109,7 +126,12 @@ export function deriveAuditHealthStatus(
     verifier.unsupportedVersion > 0 ||
     verifier.legacyUnverifiable > 0 ||
     anchorRoot.lastPassStatus === "never" ||
-    anchorRoot.secondsSinceCleanFullPass === null
+    anchorRoot.secondsSinceCleanFullPass === null ||
+    // Work waiting and the publisher has never landed anything. Distinct from
+    // stalled: a fresh environment sits here legitimately until its first
+    // cycle, so it must not page, but it must not read as safe either.
+    (anchorPublisher.pendingBacklogDepth > 0 &&
+      anchorPublisher.secondsSinceLastLandedAnchor === null)
   ) {
     return "degraded";
   }
@@ -133,7 +155,12 @@ export function registerAuditHealthRoute(app: FastifyInstance, deps: AuditHealth
 
     reply.status(200);
     const body: AuditHealthResponse = {
-      status: deriveAuditHealthStatus(verifier, outbox, anchorPublisher),
+      status: deriveAuditHealthStatus(
+        verifier,
+        outbox,
+        anchorPublisher,
+        (deps.anchorIntervalMs / 1000) * ANCHOR_STALL_INTERVAL_MULTIPLE,
+      ),
       verifier,
       outbox,
       anchorPublisher,

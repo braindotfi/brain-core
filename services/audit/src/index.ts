@@ -19,7 +19,7 @@ export {
   publishAnchor,
   publishPendingAnchorBatch,
   publishPendingAnchor,
-  ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS,
+  ANCHOR_STALL_INTERVAL_MULTIPLE,
   type AnchorPublisherHealth,
   type AnchorBatchOutcomeSeverity,
   type AnchorBatchBroadcaster,

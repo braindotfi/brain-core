@@ -133,15 +133,24 @@ export function classifyAnchorBatchOutcome(
 }
 
 /**
- * Backlog snapshot for the operator audit-health surface.
+ * Publisher snapshot for the operator audit-health surface.
  *
  * Deliberately derived from `audit_anchors` alone rather than from the
  * publisher's in-process counters: the publisher runs in the worker container
  * and /internal/audit/health is served by the api container, so no in-memory
- * cycle state is reachable from there. The two durable columns are also the
- * two that actually detect a stall — a dead publisher shows up as a backlog
- * that only grows and an oldest-pending age that only climbs, which is exactly
- * what nobody could see for six weeks.
+ * cycle state is reachable from there.
+ *
+ * `secondsSinceLastLandedAnchor` is the LIVENESS measure, and it is the one
+ * that drives status. Backlog AGE cannot: production carries 172,329 pending
+ * rows whose oldest is from 2026-06-05, so an oldest-pending-age rule reports
+ * critical from the moment it ships and keeps reporting it for the months the
+ * backlog takes to drain. A permanently red signal is one operators stop
+ * reading, which is the exact failure this surface exists to prevent. Time
+ * since the publisher last landed anything is immune to that history: it
+ * resets on every successful cycle no matter how deep the backlog is.
+ *
+ * Backlog depth and oldest-pending age are still reported, because they are
+ * what an operator needs once the alarm fires. They just do not set status.
  *
  * Publisher wallet balance is intentionally absent for the same cross-process
  * reason; it is surfaced as a WARN log from the broadcaster instead.
@@ -151,29 +160,51 @@ export interface AnchorPublisherHealth {
   pendingBacklogDepth: number;
   /** Age of the oldest unpublished anchor; null when the backlog is empty. */
   oldestUnanchoredAgeSeconds: number | null;
+  /**
+   * Seconds since the publisher last landed ANY anchor on-chain. Null when it
+   * never has, which is a genuinely different state from stalled and is
+   * reported as degraded rather than critical: staging, and any fresh
+   * environment, sits there legitimately until its first cycle.
+   */
+  secondsSinceLastLandedAnchor: number | null;
 }
 
-/** Oldest-pending age past which the publisher is treated as stalled, not busy. */
-export const ANCHOR_BACKLOG_CRITICAL_AGE_SECONDS = 24 * 60 * 60;
+/**
+ * Publisher cycles without a landed anchor, while work is waiting, before the
+ * publisher is treated as stalled rather than merely between cycles. Three
+ * gives a cycle of slack for a transient RPC failure and still catches a real
+ * stall within a few hours at the pinned one-hour interval.
+ */
+export const ANCHOR_STALL_INTERVAL_MULTIPLE = 3;
 
 export async function reportAnchorPublisherHealth(deps: {
   /** MUST be the BYPASSRLS privileged pool: the backlog spans every tenant. */
   privilegedPool: Pool;
 }): Promise<AnchorPublisherHealth> {
+  // One pass over audit_anchors with FILTERed aggregates rather than two
+  // queries: the pending predicate and the landed predicate are disjoint
+  // halves of the same table, and this endpoint is polled.
   const res = await deps.privilegedPool.query<{
     pending_count: string;
     oldest_pending_age_s: number | null;
+    since_last_landed_s: number | null;
   }>(
-    `SELECT COUNT(*)::text AS pending_count,
-            extract(epoch FROM now() - MIN(created_at))::float8 AS oldest_pending_age_s
-       FROM audit_anchors
-      WHERE onchain_tx_hash IS NULL
-        AND onchain_status = 'pending'`,
+    `SELECT COUNT(*) FILTER (
+              WHERE onchain_tx_hash IS NULL AND onchain_status = 'pending'
+            )::text AS pending_count,
+            extract(epoch FROM now() - MIN(created_at) FILTER (
+              WHERE onchain_tx_hash IS NULL AND onchain_status = 'pending'
+            ))::float8 AS oldest_pending_age_s,
+            extract(epoch FROM now() - MAX(created_at) FILTER (
+              WHERE onchain_tx_hash IS NOT NULL
+            ))::float8 AS since_last_landed_s
+       FROM audit_anchors`,
   );
   const row = res.rows[0];
   return {
     pendingBacklogDepth: Number(row?.pending_count ?? 0),
     oldestUnanchoredAgeSeconds: row?.oldest_pending_age_s ?? null,
+    secondsSinceLastLandedAnchor: row?.since_last_landed_s ?? null,
   };
 }
 

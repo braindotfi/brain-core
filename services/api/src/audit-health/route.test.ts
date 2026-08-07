@@ -28,6 +28,7 @@ function fakePool(opts: {
   exhausted?: number;
   anchorBacklog?: number;
   anchorOldestAgeSeconds?: number | null;
+  anchorSinceLastLandedSeconds?: number | null;
 }): Pool {
   return {
     query: vi.fn(async (text: string, params?: unknown[]) => {
@@ -64,6 +65,7 @@ function fakePool(opts: {
             {
               pending_count: String(opts.anchorBacklog ?? 0),
               oldest_pending_age_s: opts.anchorOldestAgeSeconds ?? null,
+              since_last_landed_s: opts.anchorSinceLastLandedSeconds ?? 60,
             },
           ],
           rowCount: 1,
@@ -92,7 +94,7 @@ async function buildApp(pool: Pool, scopes: Scope[]): Promise<FastifyInstance> {
   app.addHook("onRequest", async (req) => {
     req.principal = principal(scopes);
   });
-  registerAuditHealthRoute(app, { privilegedPool: pool });
+  registerAuditHealthRoute(app, { privilegedPool: pool, anchorIntervalMs: 3_600_000 });
   return app;
 }
 
@@ -126,6 +128,7 @@ describe("deriveAuditHealthStatus", () => {
   const anchorPublisher: AnchorPublisherHealth = {
     pendingBacklogDepth: 0,
     oldestUnanchoredAgeSeconds: null,
+    secondsSinceLastLandedAnchor: 60,
   };
 
   it("is safe on a clean pass with no findings/exhausted evidence", () => {
@@ -215,23 +218,61 @@ describe("deriveAuditHealthStatus", () => {
 
   // The six-week silent outage: every verifier pass clean, every finding
   // closed, and the on-chain claim false the whole time because nothing was
-  // being published. Backlog age is the only signal that catches it.
-  it("is critical when the oldest unanchored window is older than a day", () => {
+  // being published. Time since the last landed anchor is what catches it.
+  it("is critical when work is waiting and nothing has landed for several cycles", () => {
     expect(
       deriveAuditHealthStatus(base, outbox, {
         pendingBacklogDepth: 172_329,
-        oldestUnanchoredAgeSeconds: 25 * 60 * 60,
+        oldestUnanchoredAgeSeconds: 5_106_023,
+        secondsSinceLastLandedAnchor: 21 * 60 * 60,
       }),
     ).toBe("critical");
   });
 
-  it("stays safe with a large but fresh backlog", () => {
+  // The regression this rule exists for: production's backlog head is 59 days
+  // old and will stay that way for months. An oldest-pending-age rule pins the
+  // endpoint to critical from the moment it ships, and a permanently red
+  // signal is one nobody reads.
+  it("is safe with a huge ancient backlog while the publisher is still landing anchors", () => {
     expect(
       deriveAuditHealthStatus(base, outbox, {
-        pendingBacklogDepth: 1_600,
-        oldestUnanchoredAgeSeconds: 20 * 60,
+        pendingBacklogDepth: 172_329,
+        oldestUnanchoredAgeSeconds: 5_106_023,
+        secondsSinceLastLandedAnchor: 12 * 60,
       }),
     ).toBe("safe");
+  });
+
+  it("is safe when nothing is waiting, however long since the last anchor", () => {
+    expect(
+      deriveAuditHealthStatus(base, outbox, {
+        pendingBacklogDepth: 0,
+        oldestUnanchoredAgeSeconds: null,
+        secondsSinceLastLandedAnchor: 30 * 24 * 60 * 60,
+      }),
+    ).toBe("safe");
+  });
+
+  it("is degraded, not critical, when work is waiting and nothing was ever anchored", () => {
+    // Staging's real state until its first cycle lands. Must not read as safe,
+    // must not page either.
+    expect(
+      deriveAuditHealthStatus(base, outbox, {
+        pendingBacklogDepth: 40,
+        oldestUnanchoredAgeSeconds: 3_600,
+        secondsSinceLastLandedAnchor: null,
+      }),
+    ).toBe("degraded");
+  });
+
+  it("scales the stall threshold with the configured interval", () => {
+    const stalled = {
+      pendingBacklogDepth: 10,
+      oldestUnanchoredAgeSeconds: 7_200,
+      secondsSinceLastLandedAnchor: 4 * 60 * 60,
+    };
+    expect(deriveAuditHealthStatus(base, outbox, stalled, 3 * 60 * 60)).toBe("critical");
+    expect(deriveAuditHealthStatus(base, outbox, stalled, 24 * 60 * 60)).toBe("safe");
   });
 });
 
