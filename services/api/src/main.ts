@@ -1888,7 +1888,10 @@ async function main(): Promise<void> {
     // Operator audit-health snapshot (90eade5 doc 5.10): auth + audit:admin, queries
     // the global verifier tables via the privileged pool. Root-mounted (not /v1) so
     // it stays an internal operational surface outside the public OpenAPI contract.
-    registerAuditHealthRoute(app, { privilegedPool: auditVerifierPool });
+    registerAuditHealthRoute(app, {
+      privilegedPool: auditVerifierPool,
+      anchorIntervalMs: cfg.AUDIT_ANCHOR_INTERVAL_MS,
+    });
 
     // OAuth 2.0 protected-resource metadata (RFC 9728) for the MCP surface.
     // Root-mounted + public so the canonical `mcp.brain.fi` host (Caddy proxies
@@ -3193,6 +3196,14 @@ async function main(): Promise<void> {
     // separates one transient RPC failure from a publisher that has been dead
     // for days, which is the distinction the 2026-06/07 incident lacked.
     let consecutiveZeroYieldBatches = 0;
+    // Both batch signals key off `attempted > 0`, and both call sites are
+    // guarded by a non-empty row set, so a cycle that creates nothing and
+    // retries nothing emits NOTHING. The 2026-08-06 12:07 to 2026-08-07 09:22
+    // gap was exactly that shape: 21 hours, zero transactions, zero attempted
+    // batches, and not one line to show for it. One heartbeat per completed
+    // cycle closes that, and the consecutive count makes "quiet" and "dead"
+    // read differently at a glance.
+    let consecutiveEmptyCycles = 0;
 
     const logAnchorBatchSummary = (
       summary: PublishPendingAnchorBatchSummary,
@@ -3361,6 +3372,27 @@ async function main(): Promise<void> {
             log.error({ err, batchSize: newAnchorRows.length }, "anchor publish batch failed");
           }
         }
+
+        // The cycle heartbeat. Emitted unconditionally, including for a cycle
+        // that found no work at all, because "the publisher produced no log
+        // line" and "the publisher is not running" were indistinguishable
+        // before this. tenantsWithBacklog is the enumeration result, so a
+        // healthy-but-idle cycle is visibly different from an enumeration that
+        // returned nothing when it should not have.
+        if (newAnchorRows.length === 0 && pending.rows.length === 0) {
+          consecutiveEmptyCycles += 1;
+        } else {
+          consecutiveEmptyCycles = 0;
+        }
+        log.info(
+          {
+            tenantsWithBacklog: res.rows.length,
+            anchorsCreated: newAnchorRows.length,
+            pendingRetried: pending.rows.length,
+            consecutiveEmptyCycles,
+          },
+          "anchor cycle completed",
+        );
       } catch (err) {
         log.error({ err }, "anchor tenant query failed");
       } finally {
