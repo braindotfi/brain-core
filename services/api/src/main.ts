@@ -76,7 +76,12 @@ import {
   SERVICE_AGENT_TOKEN_TTL_SECONDS,
   SERVICE_TOKEN_SCOPES,
 } from "./onboarding/service-token.js";
-import { createViemAnchorBroadcaster, createViemAnchorEventReader } from "./anchorBroadcaster.js";
+import {
+  createViemAnchorBroadcaster,
+  createViemAnchorEventReader,
+  BRAIN_AUDIT_ANCHOR_ABI,
+} from "./anchorBroadcaster.js";
+import { assertDeployedContractSelectors } from "./composition/contract-selector-fence.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
@@ -454,6 +459,26 @@ async function main(): Promise<void> {
         ? makeBaseGetChainId(cfg.BASE_RPC_URL)
         : async () => cfg.BRAIN_BASE_CHAIN_ID,
   });
+
+  // Refuse to boot when a configured contract address does not expose the
+  // functions this build calls. #393 shipped anchorBatch() against a contract
+  // that never had it, and every publish reverted at gas estimation for four
+  // days with no boot-time signal. Logic + tests live in
+  // composition/contract-selector-fence.ts.
+  {
+    const contractRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+    await assertDeployedContractSelectors({
+      nodeEnv: cfg.NODE_ENV,
+      expectations: [
+        {
+          contractName: "BrainAuditAnchor",
+          address: cfg.AUDIT_PUBLISHER_KEY !== undefined ? cfg.AUDIT_ANCHOR_ADDRESS : undefined,
+          requiredFunctions: BRAIN_AUDIT_ANCHOR_ABI,
+        },
+      ],
+      getCode: makeBaseGetCode(contractRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
+    });
+  }
 
   // Refuse to boot against any non-testnet chain with BRAIN_ESCROW_ADDRESS
   // configured unless BOTH the committed audit record and an operator env

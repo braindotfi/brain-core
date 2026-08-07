@@ -73,7 +73,9 @@ interface AnchorLog {
 
 export const MAX_ANCHOR_BATCH_SIZE = 50;
 
-const BRAIN_AUDIT_ANCHOR_ABI = [
+// Exported so the boot-time selector fence checks the DEPLOYED contract against
+// exactly the ABI this module calls, rather than a second copy that can drift.
+export const BRAIN_AUDIT_ANCHOR_ABI = [
   {
     name: "anchor",
     type: "function",
