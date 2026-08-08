@@ -98,7 +98,7 @@ jobs:
               'account_id', (SELECT id FROM ledger_accounts WHERE owner_id = :'tenant_id' ORDER BY id LIMIT 1),
               'transaction_id', (SELECT id FROM ledger_transactions WHERE owner_id = :'tenant_id' ORDER BY transaction_date LIMIT 1)
             )::text;
-            SQL
+          SQL
           )"
 
           invoke() {
