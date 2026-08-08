@@ -92,10 +92,34 @@ jobs:
             docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
               -v tenant_id="$smoke_tenant_id" <<'SQL'
             SELECT json_build_object(
-              'invoice_id', (SELECT id FROM ledger_invoices WHERE owner_id = :'tenant_id' AND metadata->>'scenario' = 'ar' ORDER BY due_date LIMIT 1),
+              'invoice', (
+                SELECT json_build_object(
+                  'id', id,
+                  'amount', amount_due::text,
+                  'currency', currency,
+                  'due_date', due_date::date::text,
+                  'counterparty_id', counterparty_id
+                )
+                  FROM ledger_invoices
+                 WHERE owner_id = :'tenant_id'
+                   AND metadata->>'scenario' = 'ar'
+                 ORDER BY due_date
+                 LIMIT 1
+              ),
               'obligation_id', (SELECT id FROM ledger_obligations WHERE owner_id = :'tenant_id' AND direction = 'payable' ORDER BY due_date LIMIT 1),
               'counterparty_id', (SELECT id FROM ledger_counterparties WHERE owner_id = :'tenant_id' AND type = 'vendor' ORDER BY id LIMIT 1),
-              'account_id', (SELECT id FROM ledger_accounts WHERE owner_id = :'tenant_id' ORDER BY id LIMIT 1),
+              'balance', (
+                SELECT json_build_object(
+                  'id', id,
+                  'account_id', account_id,
+                  'current_balance', current_balance::text,
+                  'currency', currency
+                )
+                  FROM ledger_balances
+                 WHERE owner_id = :'tenant_id'
+                 ORDER BY as_of DESC, id
+                 LIMIT 1
+              ),
               'transaction_id', (SELECT id FROM ledger_transactions WHERE owner_id = :'tenant_id' ORDER BY transaction_date LIMIT 1)
             )::text;
           SQL
@@ -105,6 +129,13 @@ jobs:
             local label="$1"
             local body="$2"
             local response
+            printf '%s' "$body" | LABEL="$label" docker exec -i -e LABEL brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                console.log(JSON.stringify({ workflow: process.env.LABEL, request: JSON.parse(body) }));
+              });
+            '
             response="$(
               printf '%s' "$body" | curl -fsS --retry 2 --connect-timeout 10 --max-time 60 \
                 -X POST "$API_BASE/v1/agents/run" \
@@ -124,6 +155,7 @@ jobs:
                   action: parsed.action ?? null,
                   run_id: parsed.run_id ?? null,
                   proposal_id: parsed.proposed?.id ?? null,
+                  reason: parsed.reason ?? null,
                 }));
               });
             '
@@ -132,19 +164,22 @@ jobs:
           collections_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "invoice.overdue", context: { invoice_id: ids.invoice_id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Customer", invoice_number: "ACTIVITY-AR-1", amount: "100.00", currency: "USD", days_overdue: 30 } }));
+              process.stdout.write(JSON.stringify({ event: "invoice.overdue", context: { invoice_id: ids.invoice.id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Customer", invoice_number: "ACTIVITY-AR-1", amount: "100.00", currency: "USD", days_overdue: 30 } }));
             });
           ')"
           cash_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "forecast.requested", context: { account_id: ids.account_id, available_cash: { currency: "USD", value: "100000.00" }, receivables: [], payables: [] } }));
+              const balance = ids.balance;
+              const invoice = ids.invoice;
+              process.stdout.write(JSON.stringify({ event: "forecast.requested", context: { balance_id: balance.id, current_balance: balance.current_balance, currency: balance.currency, receivables: [{ invoice_id: invoice.id, amount: invoice.amount, currency: invoice.currency, due_date: invoice.due_date, counterparty_id: invoice.counterparty_id, counterparty_name: "Activity Smoke Customer" }], payables: [] } }));
             });
           ')"
           treasury_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "cash.balance_high", context: { account_id: ids.account_id, source_account_id: ids.account_id, available_cash: { currency: "USD", value: "100000.00" }, amount: { currency: "USD", value: "1000.00" } } }));
+              const balance = ids.balance;
+              process.stdout.write(JSON.stringify({ event: "cash.balance_high", context: { balance_id: balance.id, account_id: balance.account_id, source_account_id: balance.account_id, current_balance: balance.current_balance, currency: balance.currency, thresholds: { operating_minimum: "50000.00", low_balance_floor: "25000.00", surplus_floor: "100000.00" } } }));
             });
           ')"
           vendor_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
@@ -156,7 +191,7 @@ jobs:
           fraud_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "transaction.unusual", context: { transaction_id: ids.transaction_id, account_id: ids.account_id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Vendor", amount: "9999.00", currency: "USD", transaction_date: "2026-08-09", history_count: 4, account_mean_amount: 10 } }));
+              process.stdout.write(JSON.stringify({ event: "transaction.unusual", context: { transaction_id: ids.transaction_id, account_id: ids.balance.account_id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Vendor", amount: "9999.00", currency: "USD", transaction_date: "2026-08-09", history_count: 4, account_mean_amount: 10 } }));
             });
           ')"
           payment_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
@@ -168,7 +203,8 @@ jobs:
           close_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "transaction.unreconciled", context: { transaction_id: ids.transaction_id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Customer", direction: "inflow", amount: "100.00", currency: "USD", candidates: [] } }));
+              const invoice = ids.invoice;
+              process.stdout.write(JSON.stringify({ event: "reconciliation.candidate_found", context: { transaction_id: ids.transaction_id, account_id: ids.balance.account_id, counterparty_id: invoice.counterparty_id, counterparty_name: "Activity Smoke Customer", direction: "inflow", amount: invoice.amount, currency: invoice.currency, transaction_date: invoice.due_date, candidates: [{ kind: "invoice", id: invoice.id, amount: invoice.amount, currency: invoice.currency, date: invoice.due_date, counterparty_id: invoice.counterparty_id, counterparty_name: "Activity Smoke Customer", label: "Activity Smoke Invoice", status: "overdue" }] } }));
             });
           ')"
 
@@ -192,7 +228,7 @@ jobs:
              AND layer = 'agent'
            ORDER BY created_at ASC, id ASC;
           \echo 'agent run outcomes'
-          SELECT id, agent_id, event_type, action, status, execution_mode, confidence, evidence_score, failure_reason, created_at
+          SELECT id, agent_id, event_type, action, status, execution_mode, confidence, evidence_score, failure_reason, reason, created_at
             FROM agent_runs
            WHERE tenant_id = :'tenant_id'
            ORDER BY created_at ASC, id ASC;
