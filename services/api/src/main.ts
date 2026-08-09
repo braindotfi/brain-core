@@ -1787,6 +1787,7 @@ async function main(): Promise<void> {
     evidence: agentEvidence,
     propose: { agents: agentService, paymentIntents: paymentIntentService },
     store: agentRunStore,
+    audit,
     getTenantCategory: resolveTenantCategory,
     isShadowed,
     checkRail,

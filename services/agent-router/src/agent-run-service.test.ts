@@ -111,6 +111,7 @@ function makeService(
     routerEvidence?: Evidence[];
     handlers?: Record<string, InternalAgentHandler>;
     isShadowed?: (agentId: string) => boolean;
+    audit?: InMemoryAuditEmitter;
   } = {},
 ): AgentRunService {
   const agents = {
@@ -133,6 +134,7 @@ function makeService(
       throw new Error("payment intent must not be created in shadow mode");
     },
   } as unknown as IPaymentIntentService;
+  const audit = opts.audit ?? new InMemoryAuditEmitter();
   return new AgentRunService({
     router: new AgentRouter({
       catalog: () => Object.values(internalAgentDefinitions),
@@ -140,7 +142,7 @@ function makeService(
       evidence: new StaticEvidenceGatherer(opts.routerEvidence ?? opts.evidence ?? EVIDENCE),
       getScopedCapabilities: () => new Set(scoped),
       getTenantCategory: () => "business",
-      audit: new InMemoryAuditEmitter(),
+      audit,
     }),
     actionResolver: new ActionResolver({ classifier: new RulesIntentClassifier() }),
     handlers: opts.handlers ?? internalAgentHandlers,
@@ -148,6 +150,7 @@ function makeService(
     evidence: new StaticEvidenceGatherer(opts.evidence ?? EVIDENCE),
     propose: { agents, paymentIntents },
     store,
+    audit,
     getTenantCategory: () => "business",
     isShadowed: opts.isShadowed ?? (() => true),
   });
@@ -198,6 +201,7 @@ describe("AgentRunService (shadow mode)", () => {
     const { store, runs } = makeStore();
     let proposed = 0;
     const reconciliationEvidence: Evidence[] = [{ kind: "transaction", ref: "tx_meridian" }];
+    const audit = new InMemoryAuditEmitter();
     const svc = makeService(
       store,
       ["reconciliation_review"],
@@ -211,6 +215,7 @@ describe("AgentRunService (shadow mode)", () => {
           ...internalAgentHandlers,
           reconciliation: INFORMATIONAL_RECONCILIATION_HANDLER,
         },
+        audit,
       },
     );
 
@@ -234,6 +239,22 @@ describe("AgentRunService (shadow mode)", () => {
         },
       },
     });
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({
+        tenantId: "tnt_acme",
+        actor: "reconciliation",
+        action: "agent.run.notify_only",
+        inputs: expect.objectContaining({
+          run_id: "agnr_1",
+          event: "transaction.unreconciled",
+          action: "propose_match",
+        }),
+        outputs: expect.objectContaining({
+          status: "notify_only",
+          notification_reason: "informational_low_confidence_reconciliation",
+        }),
+      }),
+    );
   });
 
   it("records a no_match routing decision and no run", async () => {
@@ -299,6 +320,7 @@ describe("AgentRunService (shadow mode)", () => {
   it("records missing_evidence when the gathered bundle has critical missing evidence", async () => {
     const { store, runs } = makeStore();
     let createdPI = 0;
+    const audit = new InMemoryAuditEmitter();
     const svc = makeService(
       store,
       ["payment_propose"],
@@ -313,6 +335,7 @@ describe("AgentRunService (shadow mode)", () => {
           { kind: "invoice", ref: "inv_1" },
           { kind: "counterparty", ref: "cp_1" },
         ],
+        audit,
       },
     );
 
@@ -331,6 +354,27 @@ describe("AgentRunService (shadow mode)", () => {
       critical_missing: true,
       missing_required_evidence: ["payment_destination"],
     });
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({
+        tenantId: "tnt_acme",
+        actor: "payment",
+        action: "agent.run.missing_evidence",
+        inputs: expect.objectContaining({
+          run_id: "agnr_1",
+          event: "bill.due_soon",
+          action: "propose_payment",
+          entity_refs: expect.objectContaining({
+            destination_counterparty_id: "cp_vendor",
+            source_account_id: "acct_source",
+          }),
+        }),
+        outputs: expect.objectContaining({
+          status: "missing_evidence",
+          failure_reason: "critical_missing_evidence",
+          missing_required_evidence: ["payment_destination"],
+        }),
+      }),
+    );
   });
 
   it("records failed when an agent-channel payload omits required fields", async () => {

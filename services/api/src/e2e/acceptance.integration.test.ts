@@ -146,6 +146,7 @@ suite("E-2 end-to-end acceptance gate (requires DATABASE_URL)", () => {
     });
     runService = new AgentRunService({
       router,
+      audit: appAudit,
       actionResolver: new ActionResolver({ classifier }),
       handlers: internalAgentHandlers,
       definitions: internalAgentDefinitions,
