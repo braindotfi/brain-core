@@ -111,13 +111,14 @@ jobs:
               'balance', (
                 SELECT json_build_object(
                   'id', id,
-                  'account_id', account_id,
+                  'account_id', id,
                   'current_balance', current_balance::text,
                   'currency', currency
                 )
-                  FROM ledger_balances
+                  FROM ledger_accounts
                  WHERE owner_id = :'tenant_id'
-                 ORDER BY as_of DESC, id
+                   AND status = 'active'
+                 ORDER BY id
                  LIMIT 1
               ),
               'transaction_id', (SELECT id FROM ledger_transactions WHERE owner_id = :'tenant_id' ORDER BY transaction_date LIMIT 1)
