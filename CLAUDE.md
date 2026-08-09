@@ -260,6 +260,11 @@ Done
   workflows fail to human review, not silent rejection. The policy VM still
   default-denies unmatched rules; `PolicyService.evaluateLegacy` converts only
   scoped high-risk proposal fallthroughs to `confirm` with a signer requirement.
+- Every persisted `agent_runs` terminal `missing_evidence` or `notify_only`
+  outcome emits `agent.run.missing_evidence` or `agent.run.notify_only` through
+  the audit emitter. The event carries the run id, trigger, resolved action,
+  known entity references, and either missing evidence or notification reason;
+  `agent.action.proposed` remains the terminal event for proposal-created runs.
 - Approval actors resolve through `ActorResolver` only. Session surfaces derive
   the actor from authenticated server context and ignore any actor field in the
   payload. Session actor resolution requires `principal_type=user`; agent

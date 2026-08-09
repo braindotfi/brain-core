@@ -16,6 +16,7 @@
  */
 
 import type {
+  AuditEmitter,
   ExecutionMode,
   IAgentService,
   ServiceCallContext,
@@ -103,6 +104,8 @@ export interface AgentRunServiceDeps {
   readonly evidence: EvidenceGatherer;
   readonly propose: ProposeDeps;
   readonly store: AgentRunStore;
+  /** Emits terminal audit events for persisted run outcomes. */
+  readonly audit: AuditEmitter;
   /** Resolve the tenant's category for persistence + routing reasons. */
   readonly getTenantCategory: (tenantId: string) => TenantCategory | Promise<TenantCategory>;
   /**
@@ -574,6 +577,7 @@ export class AgentRunService {
       failureReason: args.failureReason,
       idempotencyKey: args.idempotencyKey ?? null,
     });
+    await this.emitTerminalAudit(ctx, args, run.id);
     return {
       status: args.status,
       routing_decision_id: args.routingDecisionId,
@@ -584,6 +588,85 @@ export class AgentRunService {
       reason: args.reason,
     };
   }
+
+  private async emitTerminalAudit(
+    ctx: ServiceCallContext,
+    args: {
+      agentId: string;
+      status: AgentRunStatus;
+      reason: Record<string, unknown>;
+      input: RoutingInput;
+      action?: string | null;
+      failureReason: string;
+      evidenceScore?: number | null;
+    },
+    runId: string,
+  ): Promise<void> {
+    if (args.status !== "missing_evidence" && args.status !== "notify_only") return;
+
+    const entityRefs = entityRefsForAudit(args.input.context);
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: args.agentId,
+      action:
+        args.status === "missing_evidence" ? "agent.run.missing_evidence" : "agent.run.notify_only",
+      inputs: {
+        run_id: runId,
+        event: args.input.event ?? null,
+        intent: args.input.intent ?? null,
+        action: args.action ?? null,
+        entity_refs: entityRefs,
+      },
+      outputs:
+        args.status === "missing_evidence"
+          ? {
+              status: args.status,
+              failure_reason: args.failureReason,
+              missing_required_evidence: missingEvidenceForAudit(args.reason),
+              evidence_score: args.evidenceScore ?? null,
+            }
+          : {
+              status: args.status,
+              notification_reason: args.failureReason,
+              target_agent_id: readString(args.reason["target_agent_id"]),
+              evidence_score: args.evidenceScore ?? null,
+            },
+      idempotencyKey: `agent.run.${args.status}:${runId}`,
+    });
+  }
+}
+
+const ENTITY_REF_FIELDS = [
+  "account_id",
+  "balance_id",
+  "counterparty_id",
+  "destination_counterparty_id",
+  "invoice_id",
+  "obligation_id",
+  "source_account_id",
+  "transaction_id",
+] as const;
+
+function entityRefsForAudit(context: Record<string, unknown> | undefined): Record<string, string> {
+  if (context === undefined) return {};
+  return Object.fromEntries(
+    ENTITY_REF_FIELDS.flatMap((field) => {
+      const value = readString(context[field]);
+      return value === null ? [] : [[field, value]];
+    }),
+  );
+}
+
+function missingEvidenceForAudit(reason: Record<string, unknown>): readonly string[] {
+  const raw = reason["missing_required_evidence"] ?? reason["missing_evidence"];
+  return Array.isArray(raw)
+    ? raw.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function toPolicyStatus(policyDecisionId: string | null): AgentPolicyStatus {
