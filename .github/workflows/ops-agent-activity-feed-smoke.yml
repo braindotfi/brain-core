@@ -218,6 +218,26 @@ jobs:
           invoke reconciliation "$close_body"
 
           echo "smoke_tenant_id=$smoke_tenant_id"
+          echo 'agent audit entries via GET /v1/audit/events'
+          curl -fsS --retry 2 --connect-timeout 10 --max-time 60 \
+            "$API_BASE/v1/audit/events?layer=agent&limit=100" \
+            -H "Authorization: Bearer ${smoke_agent_token}" | \
+            docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const events = JSON.parse(body).events;
+                if (!Array.isArray(events)) process.exit(1);
+                console.log(JSON.stringify(events.map((event) => ({
+                  id: event.id,
+                  created_at: event.created_at,
+                  actor: event.actor,
+                  action: event.action,
+                  inputs: event.inputs,
+                  outputs: event.outputs,
+                }))));
+              });
+            '
           docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 \
             -v tenant_id="$smoke_tenant_id" <<'SQL'
           \pset pager off
