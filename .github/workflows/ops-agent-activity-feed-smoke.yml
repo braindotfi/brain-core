@@ -165,7 +165,7 @@ jobs:
           collections_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
             let body = ""; process.stdin.on("data", c => { body += c; }); process.stdin.on("end", () => {
               const ids = JSON.parse(body);
-              process.stdout.write(JSON.stringify({ event: "invoice.overdue", context: { invoice_id: ids.invoice.id, counterparty_id: ids.counterparty_id, counterparty_name: "Activity Smoke Customer", invoice_number: "ACTIVITY-AR-1", amount: "100.00", currency: "USD", days_overdue: 30 } }));
+              process.stdout.write(JSON.stringify({ event: "invoice.overdue", context: { invoice_id: ids.invoice.id, counterparty_id: ids.invoice.counterparty_id, counterparty_name: "Activity Smoke Customer", invoice_number: "ACTIVITY-AR-1", amount: "100.00", currency: "USD", days_overdue: 30 } }));
             });
           ')"
           cash_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
@@ -209,6 +209,15 @@ jobs:
             });
           ')"
 
+          # These intentionally sparse contexts exercise the terminal
+          # missing_evidence path for every workflow with required evidence.
+          collections_missing_body='{"event":"invoice.overdue","context":{}}'
+          cash_missing_body='{"event":"forecast.requested","context":{}}'
+          treasury_missing_body='{"event":"cash.balance_high","context":{}}'
+          vendor_missing_body='{"event":"vendor.created","context":{}}'
+          fraud_missing_body='{"event":"transaction.unusual","context":{}}'
+          reconciliation_missing_body='{"event":"reconciliation.candidate_found","context":{}}'
+
           invoke collections "$collections_body"
           invoke cash_forecast "$cash_body"
           invoke treasury "$treasury_body"
@@ -216,6 +225,12 @@ jobs:
           invoke fraud_anomaly "$fraud_body"
           invoke payment "$payment_body"
           invoke reconciliation "$close_body"
+          invoke collections_missing_evidence "$collections_missing_body"
+          invoke cash_forecast_missing_evidence "$cash_missing_body"
+          invoke treasury_missing_evidence "$treasury_missing_body"
+          invoke vendor_risk_missing_evidence "$vendor_missing_body"
+          invoke fraud_anomaly_missing_evidence "$fraud_missing_body"
+          invoke reconciliation_missing_evidence "$reconciliation_missing_body"
 
           echo "smoke_tenant_id=$smoke_tenant_id"
           echo 'agent audit entries via GET /v1/audit/events'
