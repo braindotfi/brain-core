@@ -105,6 +105,7 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
     });
     runService = new AgentRunService({
       router,
+      audit,
       actionResolver,
       handlers: internalAgentHandlers,
       definitions: internalAgentDefinitions,

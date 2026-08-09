@@ -110,6 +110,7 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
     });
     runService = new AgentRunService({
       router,
+      audit,
       actionResolver,
       handlers: internalAgentHandlers,
       definitions: internalAgentDefinitions,

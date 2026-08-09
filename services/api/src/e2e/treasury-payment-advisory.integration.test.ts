@@ -101,6 +101,7 @@ suite("treasury and payment advisory scanner integration (requires DATABASE_URL)
     });
     runService = new AgentRunService({
       router,
+      audit,
       actionResolver: new ActionResolver({ classifier }),
       handlers: internalAgentHandlers,
       definitions: internalAgentDefinitions,
