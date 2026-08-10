@@ -1,0 +1,112 @@
+name: ops-prod-raw-ingest-incident-diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: inspect fixed production raw-ingest failures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-raw-ingest-incident-diagnostics
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed read-only incident diagnostics
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          readonly REQUEST_IDS=(
+            'req_d0118d13-7522-4554-afc2-dab2f6fc9e29'
+            'req_2c84e38d-df7a-4dbc-bed1-3bfb572941b2'
+          )
+          readonly REQUEST_ID_RE='^req_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          for request_id in "${REQUEST_IDS[@]}"; do
+            if [[ ! "$request_id" =~ $REQUEST_ID_RE ]]; then
+              echo "fixed request id failed validation: $request_id" >&2
+              exit 1
+            fi
+          done
+
+          echo '::group::runtime'
+          echo "api_health=$(curl -fsS --max-time 10 https://api.brain.fi/health || true)"
+          echo "api_git_sha=$(docker exec brain-prod-api printenv GIT_SHA 2>/dev/null || true)"
+          echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA 2>/dev/null || true)"
+          echo '::endgroup::'
+
+          api_logs="$(mktemp)"
+          trap 'rm -f "$api_logs"' EXIT
+          docker logs --since 168h brain-prod-api >"$api_logs" 2>&1 || true
+
+          echo '::group::fixed request traces'
+          for request_id in "${REQUEST_IDS[@]}"; do
+            echo "request_id=$request_id"
+            matches="$(grep -F "$request_id" "$api_logs" || true)"
+            if [[ -z "$matches" ]]; then
+              echo 'matching_api_log_lines=0'
+            else
+              printf '%s\n' "$matches" \
+                | sed -E 's/(authorization|cookie|token|secret)":"[^"]*"/\1":"[REDACTED]"/gi' \
+                | tail -n 40
+            fi
+          done
+          echo '::endgroup::'
+
+          echo '::group::recent raw-ingest failures'
+          failures="$(grep -F '"url":"/v1/raw/ingest"' "$api_logs" \
+            | grep -E '"statusCode":500|"status":500' || true)"
+          failure_count="$(printf '%s\n' "$failures" | sed '/^$/d' | wc -l | tr -d ' ')"
+          echo "raw_ingest_500_response_log_count_last_168h=$failure_count"
+          if [[ "$failure_count" != '0' ]]; then
+            printf '%s\n' "$failures" \
+              | sed -E 's/(authorization|cookie|token|secret)":"[^"]*"/\1":"[REDACTED]"/gi' \
+              | tail -n 100
+          fi
+          echo '::endgroup::'
+
+          echo '::group::recent raw-ingest error causes'
+          causes="$(grep -E '"message":"request failed"|request failed' "$api_logs" \
+            | grep -E 'raw/ingest|S3|blob|MinIO|production_agent_tokens|JWT|token|raw artifact' || true)"
+          cause_count="$(printf '%s\n' "$causes" | sed '/^$/d' | wc -l | tr -d ' ')"
+          echo "raw_ingest_related_error_log_count_last_168h=$cause_count"
+          if [[ "$cause_count" != '0' ]]; then
+            printf '%s\n' "$causes" \
+              | sed -E 's/(authorization|cookie|token|secret)":"[^"]*"/\1":"[REDACTED]"/gi' \
+              | tail -n 100
+          fi
+          echo '::endgroup::'
+
+          echo '::group::token-path facts'
+          cd ~/brain-core
+          docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 <<'SQL'
+          \pset pager off
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '5s';
+          SELECT COUNT(*) AS active_production_agent_token_rows,
+                 MIN(expires_at) AS earliest_active_expiry,
+                 MAX(expires_at) AS latest_active_expiry
+            FROM production_agent_tokens
+           WHERE revoked_at IS NULL
+             AND expires_at > now();
+          COMMIT;
+          SQL
+          echo '::endgroup::'
+          REMOTE
