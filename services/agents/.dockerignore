@@ -1,0 +1,13 @@
+# Local dev artefacts that must never enter the image or the build context.
+# .venv alone is ~163MB and is rebuilt inside the image by uv.
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov

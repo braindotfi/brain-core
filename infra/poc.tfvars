@@ -10,5 +10,5 @@
 # not created — they are handled internally by the api boot binary.
 
 environment      = "staging"
-primary_location = "eastus"
+primary_location = "canadacentral"
 services         = ["api"]

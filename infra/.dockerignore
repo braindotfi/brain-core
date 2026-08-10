@@ -1,0 +1,8 @@
+# db-roles.Dockerfile builds with `infra/` as its context. This directory also
+# holds .terraform provider plugins (~540MB), tfstate, and plan files -- none of
+# which belong in an image (and plan/state files carry secrets).
+# Whitelist only what the image copies.
+*
+!db-roles.sql
+!db-roles-entrypoint.sh
+!baseline-0049.sh
