@@ -264,6 +264,8 @@ Done
   must never leave more than one unresolved proposal open for the same invoice.
   Later sweeps refresh the pending row, while the guarded production cleanup
   marks historical duplicates `superseded` with an audit link to the retained row.
+  Run cleanup in `report` mode first; `apply` remains pending an operator's
+  review of those counts and explicit go-ahead.
 - Every persisted `agent_runs` terminal `missing_evidence` or `notify_only`
   outcome emits `agent.run.missing_evidence` or `agent.run.notify_only` through
   the audit emitter. The event carries the run id, trigger, resolved action,
