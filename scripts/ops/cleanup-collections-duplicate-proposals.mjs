@@ -94,6 +94,119 @@ async function unresolvedCount(pool) {
   }
 }
 
+async function reportEvidence(pool) {
+  await pool.query("BEGIN TRANSACTION READ ONLY");
+  try {
+    await pool.query("SET LOCAL statement_timeout = '10s'");
+    await pool.query("SET LOCAL lock_timeout = '1s'");
+    const { rows: summaryRows } = await pool.query(
+      `WITH scoped AS (
+         SELECT p.tenant_id,
+                p.action->>'invoice_id' AS invoice_id,
+                p.id,
+                p.created_at,
+                p.status,
+                p.action,
+                row_number() OVER (
+                  PARTITION BY p.tenant_id, p.action->>'invoice_id'
+                  ORDER BY p.created_at DESC, p.id DESC
+                ) AS position,
+                count(*) OVER (PARTITION BY p.tenant_id, p.action->>'invoice_id') AS group_size
+           FROM proposals p
+          WHERE p.proposing_agent = 'collections'
+            AND p.status = 'pending'
+            AND p.action->>'type' = 'collections'
+            AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+       ), grouped AS (
+         SELECT tenant_id,
+                invoice_id,
+                max(group_size)::int AS group_size,
+                min(created_at) AS oldest_created_at,
+                max(created_at) AS newest_created_at
+           FROM scoped
+          GROUP BY tenant_id, invoice_id
+       ), retained AS (
+         SELECT s.*, i.due_date AS invoice_due_date
+           FROM scoped s
+           LEFT JOIN ledger_invoices i
+             ON i.owner_id = s.tenant_id
+            AND i.id = s.invoice_id
+          WHERE s.position = 1
+       )
+       SELECT (SELECT count(*)::int FROM scoped) AS scoped_pending_rows,
+              (SELECT count(*)::int FROM grouped) AS distinct_tenant_invoice_groups,
+              (SELECT count(DISTINCT tenant_id)::int FROM scoped) AS tenant_count,
+              (SELECT count(*)::int FROM grouped WHERE group_size = 1) AS singleton_groups,
+              (SELECT count(*)::int FROM grouped WHERE group_size > 1) AS duplicate_groups,
+              (SELECT coalesce(sum(group_size), 0)::int FROM grouped WHERE group_size > 1)
+                AS rows_in_duplicate_groups,
+              (SELECT coalesce(sum(group_size - 1), 0)::int FROM grouped WHERE group_size > 1)
+                AS rows_to_supersede,
+              (SELECT min(oldest_created_at) FROM grouped WHERE group_size > 1)
+                AS duplicate_oldest_created_at,
+              (SELECT max(newest_created_at) FROM grouped WHERE group_size > 1)
+                AS duplicate_newest_created_at,
+              (SELECT count(*)::int FROM retained WHERE status <> 'pending')
+                AS retained_rows_not_pending,
+              (SELECT count(*)::int FROM retained WHERE invoice_due_date IS NULL)
+                AS retained_rows_without_invoice_due_date,
+              (SELECT count(*)::int
+                 FROM retained
+                WHERE invoice_due_date IS NOT NULL
+                  AND action->>'days_overdue' ~ '^[0-9]+$'
+                  AND (action->>'days_overdue')::int <> greatest(
+                    0,
+                    current_date - invoice_due_date::date
+                  )) AS retained_rows_with_days_overdue_mismatch`,
+    );
+    const { rows: largestGroupRows } = await pool.query(
+      `WITH scoped AS (
+         SELECT p.tenant_id,
+                p.action->>'invoice_id' AS invoice_id,
+                p.id,
+                p.created_at,
+                p.action,
+                row_number() OVER (
+                  PARTITION BY p.tenant_id, p.action->>'invoice_id'
+                  ORDER BY p.created_at DESC, p.id DESC
+                ) AS position,
+                count(*) OVER (PARTITION BY p.tenant_id, p.action->>'invoice_id') AS group_size
+           FROM proposals p
+          WHERE p.proposing_agent = 'collections'
+            AND p.status = 'pending'
+            AND p.action->>'type' = 'collections'
+            AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+       ), largest_group AS (
+         SELECT tenant_id, invoice_id, group_size
+           FROM scoped
+          WHERE group_size > 1
+          ORDER BY group_size DESC, tenant_id, invoice_id
+          LIMIT 1
+       )
+       SELECT s.tenant_id,
+              s.invoice_id,
+              s.id AS proposal_id,
+              s.created_at,
+              s.position,
+              s.group_size,
+              s.action->>'invoice_number' AS invoice_number,
+              s.action->>'counterparty_name' AS counterparty_name,
+              s.action->>'due_date' AS due_date,
+              s.action->>'days_overdue' AS days_overdue
+         FROM scoped s
+         JOIN largest_group g
+           ON g.tenant_id = s.tenant_id
+          AND g.invoice_id = s.invoice_id
+        ORDER BY s.created_at ASC, s.id ASC`,
+    );
+    await pool.query("COMMIT");
+    return { summary: summaryRows[0] ?? {}, largest_group_rows: largestGroupRows };
+  } catch (error) {
+    await pool.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
 async function supersedeGroup(appPool, audit, group) {
   const client = await appPool.connect();
   try {
@@ -177,6 +290,7 @@ async function main() {
   try {
     const unresolvedBefore = await unresolvedCount(ownerPool);
     const groups = await duplicateGroups(ownerPool);
+    const evidence = await reportEvidence(ownerPool);
     const proposalsToSupersede = groups.reduce(
       (count, group) => count + group.supersede_proposal_ids.length,
       0,
@@ -185,6 +299,7 @@ async function main() {
     process.stdout.write(`unresolved_before=${unresolvedBefore}\n`);
     process.stdout.write(`duplicate_groups=${groups.length}\n`);
     process.stdout.write(`proposals_to_supersede=${proposalsToSupersede}\n`);
+    process.stdout.write(`report_evidence=${JSON.stringify(evidence)}\n`);
     for (const group of groups) process.stdout.write(`${JSON.stringify(group)}\n`);
 
     if (!apply) return;
