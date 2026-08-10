@@ -907,8 +907,13 @@ resource "azurerm_container_app_job" "terraform" {
   # Resolved by the job's managed identity at container start, over the vault's
   # private endpoint -- so the secret never leaves the VNet and is never passed
   # on a command line.
+  # The in-app secret NAME is deliberately not the Key Vault secret name.
+  # Container Apps caches a resolved reference per name; when the vault value
+  # changed, the job kept presenting the old one and failing AADSTS7000215 long
+  # after the vault held a good value. Renaming the entry forces a fresh
+  # resolution. Bump the suffix if this credential is ever rotated in place.
   secret {
-    name                = "terraform-client-secret"
+    name                = "tf-sp-secret-v2"
     identity            = azurerm_user_assigned_identity.terraform.id
     key_vault_secret_id = azurerm_key_vault_secret.operator_supplied["terraform-client-secret"].versionless_id
   }
@@ -935,7 +940,7 @@ resource "azurerm_container_app_job" "terraform" {
       }
       env {
         name        = "ARM_CLIENT_SECRET"
-        secret_name = "terraform-client-secret"
+        secret_name = "tf-sp-secret-v2"
       }
       env {
         name  = "ARM_TENANT_ID"
