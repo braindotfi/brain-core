@@ -78,7 +78,11 @@ enable_onchain_signing = true
 audit_anchor_interval_ms = 3600000
 
 service_version = "0.0.7"
-image_tag       = "latest"
+
+# image_tag is intentionally NOT pinned here. The deploy pipeline passes the
+# commit short-SHA so every revision is traceable to a build, and so that a new
+# image actually produces a new revision -- re-pushing a moving tag like
+# "latest" leaves the template unchanged and the old build serving.
 
 # ---------------------------------------------------------------------------
 # ⚠️ ANCHOR RACE WARNING — read before setting audit-publisher-key

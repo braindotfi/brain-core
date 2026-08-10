@@ -58,8 +58,11 @@ jobs:
         run: |
           SHA="${{ inputs.sha }}"
           if [ -z "$SHA" ]; then SHA="${{ github.sha }}"; fi
+          # Short form is the image tag. It must match what terraform asks for,
+          # or the apply references a tag that was never pushed.
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "deploying $SHA"
+          echo "tag=$(echo "$SHA" | cut -c1-8)" >> "$GITHUB_OUTPUT"
+          echo "deploying $SHA (tag $(echo "$SHA" | cut -c1-8))"
 
       - uses: actions/checkout@v4
         with:
@@ -79,7 +82,7 @@ jobs:
       - name: Build and push images
         if: ${{ inputs.build_images }}
         env:
-          TAG: ${{ steps.resolve.outputs.sha }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
           az acr build --registry "$ACR" --image "brain-api:latest" --image "brain-api:${TAG}" --file Dockerfile .
@@ -104,7 +107,13 @@ jobs:
           set -euo pipefail
           terraform init -backend-config=backend-production.hcl -input=false
           # operator_ip is deliberately unset: CI has no stable egress address.
-          terraform plan -var-file=production.tfvars -input=false -no-color -out=tfplan
+          # image_tag is SHA-pinned, not "latest". Pushing a new :latest does
+          # NOT roll a Container Apps revision -- revisions are created when the
+          # template changes, and an unchanged image reference is an unchanged
+          # template. A moving tag would silently leave the old build serving.
+          terraform plan -var-file=production.tfvars \
+            -var="image_tag=${{ steps.resolve.outputs.tag }}" \
+            -input=false -no-color -out=tfplan
           terraform apply -input=false -no-color tfplan
 
       # Order is load-bearing and not enforceable by Terraform, which can only
