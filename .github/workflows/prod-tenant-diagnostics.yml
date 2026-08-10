@@ -223,6 +223,57 @@ jobs:
            ORDER BY p.created_at DESC, p.id DESC
            LIMIT 50;
 
+          \echo 'Collections cleanup post-apply verification'
+          WITH collections_rows AS (
+            SELECT p.id,
+                   p.status,
+                   p.superseded_by,
+                   p.superseded_at,
+                   p.action->>'invoice_id' AS invoice_id
+              FROM proposals p
+             WHERE p.tenant_id = :'tenant_id'
+               AND p.proposing_agent = 'collections'
+               AND p.action->>'type' = 'collections'
+          )
+          SELECT invoice_id,
+                 status,
+                 COUNT(*) AS proposal_count,
+                 ARRAY_AGG(id ORDER BY id) AS proposal_ids
+            FROM collections_rows
+           GROUP BY invoice_id, status
+           ORDER BY invoice_id, status;
+
+          \echo 'three deterministic samples of superseded Collections proposals with audit events'
+          SELECT p.id AS proposal_id,
+                 p.status,
+                 p.superseded_by,
+                 p.superseded_at,
+                 ae.id AS audit_event_id,
+                 ae.created_at AS audit_created_at,
+                 ae.actor AS audit_actor,
+                 ae.action AS audit_action,
+                 ae.inputs->>'retained_proposal_id' AS audit_retained_proposal_id
+            FROM proposals p
+            LEFT JOIN LATERAL (
+              SELECT e.id,
+                     e.created_at,
+                     e.actor,
+                     e.action,
+                     e.inputs
+                FROM audit_events e
+               WHERE e.tenant_id = p.tenant_id
+                 AND e.action = 'agent.action.superseded'
+                 AND e.inputs->>'proposal_id' = p.id
+               ORDER BY e.created_at DESC, e.id DESC
+               LIMIT 1
+            ) ae ON TRUE
+           WHERE p.tenant_id = :'tenant_id'
+             AND p.proposing_agent = 'collections'
+             AND p.status = 'superseded'
+             AND p.superseded_by IS NOT NULL
+           ORDER BY md5(p.id)
+           LIMIT 3;
+
           \echo 'reconciliation proposal and correlated policy decision details'
           WITH reconciliation_proposals AS (
             SELECT p.id,
