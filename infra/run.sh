@@ -19,7 +19,10 @@ esac
 # "dial tcp 169.254.169.254:80: connect: connection refused".
 if [ -n "${IDENTITY_ENDPOINT:-}" ]; then
   export ARM_MSI_ENDPOINT="$IDENTITY_ENDPOINT"
-  echo "==> using Container Apps identity endpoint"
+  # ...and the endpoint only speaks 2019-08-01. The authorizer defaults to
+  # IMDS's 2018-02-01, which this endpoint rejects with UnsupportedApiVersion.
+  export ARM_MSI_API_VERSION="${ARM_MSI_API_VERSION:-2019-08-01}"
+  echo "==> using Container Apps identity endpoint (api-version ${ARM_MSI_API_VERSION})"
 else
   echo "==> WARNING: IDENTITY_ENDPOINT unset; falling back to IMDS (will fail here)" >&2
 fi
