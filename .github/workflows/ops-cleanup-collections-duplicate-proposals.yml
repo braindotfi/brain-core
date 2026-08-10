@@ -1,0 +1,78 @@
+name: ops-cleanup-collections-duplicate-proposals
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "report is read-only. apply supersedes older duplicate pending Collections proposals."
+        required: true
+        type: choice
+        options: [report, apply]
+        default: report
+      confirmation:
+        description: "Required for apply: SUPERSEDE_DUPLICATE_COLLECTIONS_PROPOSALS"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: report or supersede duplicate Collections proposals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: production-collections-proposal-cleanup
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      MODE: ${{ inputs.mode }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate fixed cleanup mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" != "report" && "$MODE" != "apply" ]]; then
+            echo "mode must be report or apply"
+            exit 1
+          fi
+          if [[ "$MODE" == "apply" && "$CONFIRMATION" != "SUPERSEDE_DUPLICATE_COLLECTIONS_PROPOSALS" ]]; then
+            echo "apply requires confirmation=SUPERSEDE_DUPLICATE_COLLECTIONS_PROPOSALS"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed cleanup through the production API image
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="scripts/ops/cleanup-collections-duplicate-proposals.mjs"
+          scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:~/brain-core/$script"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "MODE='$MODE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+          args=()
+          if [[ "$MODE" == "apply" ]]; then
+            args+=(--apply)
+          fi
+          docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml \
+            run --rm --no-deps \
+            -v ~/brain-core/scripts/ops/cleanup-collections-duplicate-proposals.mjs:/app/scripts/ops/cleanup-collections-duplicate-proposals.mjs:ro \
+            api node scripts/ops/cleanup-collections-duplicate-proposals.mjs "${args[@]}"
+          REMOTE

@@ -100,8 +100,8 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
       pool,
       audit,
       evaluatePolicy: async () => ({
-        outcome: "allow",
-        matched_rule_id: "test_allow",
+        outcome: "confirm",
+        matched_rule_id: "test_confirm",
         required_approvers: [],
         trace: [],
         policy_version: 1,
@@ -169,7 +169,7 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
     expect(proposalsB.proposals).toHaveLength(1);
     expect(proposalsA.proposals[0]).toMatchObject({
       type: "collections",
-      status: "approved",
+      status: "pending",
       risk_band: "elevated",
       confidence: expect.any(Number),
       mode: "propose",
@@ -250,6 +250,34 @@ suite("collections overdue scanner integration (requires DATABASE_URL)", () => {
       },
     );
     expect((await listProposals(pool, ctx, { type: "collections" })).proposals).toHaveLength(5);
+  });
+
+  it("refreshes one pending proposal when the daily sweep revisits the same overdue invoice", async () => {
+    const tenant = newTenantId();
+    const counterparty = newCounterpartyId();
+    const invoice = newInvoiceId();
+    await seedTenant(pool, tenant, counterparty, invoice, "Refresh Co");
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      { now: new Date("2026-07-19T00:00:00.000Z"), cooldownMs: 86_400_000 },
+    );
+    const ctx: ServiceCallContext = { tenantId: tenant, actor: "test" };
+    const first = await listProposals(pool, ctx, { type: "collections" });
+    expect(first.proposals).toHaveLength(1);
+    expect(first.proposals[0]?.status).toBe("pending");
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      { now: new Date("2026-07-20T00:01:00.000Z"), cooldownMs: 86_400_000 },
+    );
+    const second = await listProposals(pool, ctx, { type: "collections" });
+    expect(second.proposals).toHaveLength(1);
+    expect(second.proposals[0]?.id).toBe(first.proposals[0]?.id);
+    expect(second.proposals[0]?.details).toMatchObject({
+      invoice_id: invoice,
+      days_overdue: 19,
+    });
   });
 
   it("applies a per-tenant cap so one tenant cannot monopolize a cycle", async () => {

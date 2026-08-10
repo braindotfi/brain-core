@@ -217,6 +217,69 @@ describe("AgentService.propose", () => {
     });
   });
 
+  it("refreshes the pending Collections proposal for an invoice instead of inserting another", async () => {
+    const queries: string[] = [];
+    let inserted = false;
+    let proposal = makeProposalRow({
+      proposing_agent: "collections",
+      status: "pending",
+      action: { type: "collections", invoice_id: "inv_123", days_overdue: 18 },
+    });
+    const deps = makeDeps("confirm", (sql, values) => {
+      queries.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+        return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("INSERT INTO proposals")) {
+        inserted = true;
+        proposal = {
+          ...proposal,
+          id: String(values[0]),
+          action: JSON.parse(String(values[3])),
+        };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      if (sql.startsWith("UPDATE proposals")) {
+        proposal = { ...proposal, action: JSON.parse(String(values[1])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const svc = new AgentService(deps);
+
+    const first = await svc.propose(ctx, "collections", {
+      action: { type: "collections", invoice_id: "inv_123", days_overdue: 18 },
+    });
+    const second = await svc.propose(ctx, "collections", {
+      action: { type: "collections", invoice_id: "inv_123", days_overdue: 19 },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+    expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(1);
+    expect(proposal.action).toMatchObject({ invoice_id: "inv_123", days_overdue: 19 });
+    expect((deps.audit as InMemoryAuditEmitter).events).toEqual(
+      expect.arrayContaining([expect.objectContaining({ action: "agent.action.refreshed" })]),
+    );
+  });
+
+  it("does not apply the Collections invoice refresh path to another agent", async () => {
+    const queries: string[] = [];
+    const deps = makeDeps("confirm", (sql) => {
+      queries.push(sql);
+      return { rows: [makeProposalRow({ status: "pending" })], rowCount: 1 };
+    });
+    const svc = new AgentService(deps);
+
+    await svc.propose(ctx, "cash_forecast", {
+      action: { type: "cash_forecast", invoice_id: "inv_123" },
+    });
+
+    expect(queries.some((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(false);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+  });
+
   it("returns a proposal with the full action and timestamps", async () => {
     const svc = new AgentService(makeDeps("allow"));
     const action = { kind: "flag_anomaly", tx_id: "tx_abc", reason: "duplicate" };
