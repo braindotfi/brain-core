@@ -13,7 +13,7 @@ See `Brain_MVP_Architecture.md` §2 for the stack choices,
 | `main.tf` | Resource group, identity, Key Vault, Postgres, Redis, Storage, ACR, Container Apps + Jobs |
 | `network.tf` | VNet, subnets, private DNS, Redis private endpoint |
 | `secrets.tf` | Key Vault secret surface (role passwords, role URLs, app secrets) |
-| `frontdoor.tf` | Front Door profile/endpoint/origin/route — gated on `enable_frontdoor` |
+| `frontdoor.tf` | Front Door profile/endpoint/origin/route. Gated on `enable_frontdoor` |
 | `variables.tf` | Sizing and configuration knobs |
 | `production.tfvars` | Production values (no secrets) |
 | `backend-production.hcl` | Remote-state backend config |
@@ -30,7 +30,7 @@ See `Brain_MVP_Architecture.md` §2 for the stack choices,
 
 
 > **Not eastus.** Postgres Flexible Server provisioning is restricted for this
-> subscription in eastus — `az postgres flexible-server list-skus -l eastus` returns
+> subscription in eastus. `az postgres flexible-server list-skus -l eastus` returns
 > zero supported server editions with *"Provisioning is restricted in this region"*.
 > canadacentral was chosen over centralindia because it supports zone-redundant HA.
 
@@ -42,9 +42,9 @@ Never in git. Everything reads from Azure Key Vault via managed identity.
 
 - **16 Postgres role passwords** (`db-password-*`) consumed by `db-roles.sql`
 - **15 role connection URLs** (`database-url`, `brain-*-db-url`) consumed by the app
-- **Generated app secrets** — `auth-cookie-secret`, `brain-agents-inbound-secret`,
+- **Generated app secrets**. `auth-cookie-secret`, `brain-agents-inbound-secret`,
   `brain-api-key-pepper`, `brain-demo-provision-secret`, `brain-service-token-secret`
-- **Storage key** — `azure-blob-account-key`
+- **Storage key**. `azure-blob-account-key`
 
 ### Operator-supplied secrets
 
@@ -65,7 +65,7 @@ az keyvault secret set --vault-name brain-production-kv \
 ```
 
 > ⚠️ Leaving `audit-publisher-key` as a placeholder keeps the anchor publisher
-> inert. That is the safe default while the legacy VM is still anchoring — two
+> inert. That is the safe default while the legacy VM is still anchoring. Two
 > publishers on one `BrainAuditAnchor` race and burn gas on
 > `RootAlreadyPublished`. Set it only after the VM worker is stopped.
 
@@ -90,7 +90,7 @@ terraform apply -var-file=production.tfvars -var="operator_ip=$(curl -s ifconfig
 `operator_ip` is required: the Key Vault is deny-by-default and Terraform writes
 secrets over its data plane. Remove the exception once CI owns rotation.
 
-No local Terraform install is needed — run it in Docker:
+No local Terraform install is needed. Run it in Docker:
 
 ```bash
 docker run --rm -v "$PWD:/infra" -w /infra hashicorp/terraform:1.13 validate
