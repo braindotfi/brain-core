@@ -1,0 +1,165 @@
+# Brain production deploy to managed Azure (brain-production-rg, canadacentral).
+#
+# Separate from promote-prod.yml, which deploys the legacy single VM over SSH.
+# Both exist while the VM is still authoritative; this one becomes the only
+# production path once DNS moves. Do not merge them -- they target different
+# infrastructure with different failure modes.
+#
+# Auth is workload identity federation: no client secret is stored anywhere.
+# The federated credential is bound to `environment:production`, so Azure will
+# only mint a token for a run that a human has already approved through the
+# environment's required-reviewers gate. The approval is part of the
+# credential, not merely a workflow step.
+name: deploy-azure-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full commit SHA to deploy. Blank deploys the current main."
+        required: false
+        type: string
+        default: ""
+      build_images:
+        description: "Build and push images before applying. Skip for an infra-only change."
+        required: false
+        type: boolean
+        default: true
+      run_migrations:
+        description: "Run baseline -> migrate -> db-roles after apply."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write # OIDC token for azure/login
+  contents: read
+
+env:
+  ACR: brainproductionacr
+  RG: brain-production-rg
+  API_APP: brain-production-api
+
+jobs:
+  deploy:
+    name: deploy production (Azure)
+    runs-on: ubuntu-latest
+    environment: production
+    # Single slot: never run two production applies at once. Terraform's state
+    # lock would reject the second anyway, but failing here is cleaner than
+    # failing halfway through an apply.
+    concurrency:
+      group: deploy-azure-prod
+      cancel-in-progress: false # never cancel a deploy mid-flight
+
+    steps:
+      - name: Resolve SHA
+        id: resolve
+        run: |
+          SHA="${{ inputs.sha }}"
+          if [ -z "$SHA" ]; then SHA="${{ github.sha }}"; fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "deploying $SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # A CI checkout has no node_modules, so the repo root is already a clean
+      # build context. (Locally it is not -- az packs the context with a Python
+      # walker that dies on Windows MAX_PATH inside node_modules/.pnpm, which is
+      # why the local path uses `git archive` instead.)
+      - name: Build and push images
+        if: ${{ inputs.build_images }}
+        env:
+          TAG: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          az acr build --registry "$ACR" --image "brain-api:latest" --image "brain-api:${TAG}" --file Dockerfile .
+          az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" --file Dockerfile services/agents
+          az acr build --registry "$ACR" --image "brain-db-roles:latest" --image "brain-db-roles:${TAG}" --file db-roles.Dockerfile infra
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      # ARM_USE_OIDC lets the azurerm provider and the azurerm backend reuse the
+      # same federated token azure/login obtained. No client secret exists.
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          terraform init -backend-config=backend-production.hcl -input=false
+          # operator_ip is deliberately unset: CI has no stable egress address.
+          terraform plan -var-file=production.tfvars -input=false -no-color -out=tfplan
+          terraform apply -input=false -no-color tfplan
+
+      # Order is load-bearing and not enforceable by Terraform, which can only
+      # order resource CREATION, never job EXECUTION:
+      #   baseline -> migrate -> db-roles
+      # db-roles.sql grants by looping over tables that already exist, so
+      # running it before migrate silently leaves the canonical and ledger
+      # projector roles ungranted -- surfacing in production as 42501 every
+      # ~10s rather than as a failed job.
+      - name: Run database jobs
+        if: ${{ inputs.run_migrations }}
+        run: |
+          set -euo pipefail
+
+          run_job() {
+            local job="$1"
+            echo "::group::$job"
+            local exec_name
+            exec_name=$(az containerapp job start -n "$job" -g "$RG" --query name -o tsv)
+            echo "execution: $exec_name"
+            local status=""
+            for _ in $(seq 1 60); do
+              status=$(az containerapp job execution show -n "$job" -g "$RG" \
+                --job-execution-name "$exec_name" --query properties.status -o tsv 2>/dev/null || echo "")
+              case "$status" in
+                Succeeded) echo "$job: Succeeded"; echo "::endgroup::"; return 0 ;;
+                Failed|Degraded) echo "::error::$job failed ($status)"; echo "::endgroup::"; return 1 ;;
+              esac
+              sleep 10
+            done
+            echo "::error::$job timed out (last status: $status)"
+            echo "::endgroup::"
+            return 1
+          }
+
+          run_job brain-production-baseline
+          run_job brain-production-migrate
+          run_job brain-production-db-roles
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          FQDN=$(az containerapp show -n "$API_APP" -g "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "api: https://$FQDN"
+          for i in $(seq 1 30); do
+            code=$(curl -s -m 20 -o /tmp/health.json -w "%{http_code}" "https://$FQDN/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "health OK: $(cat /tmp/health.json)"
+              # Fail the deploy if a healthy response reports the wrong build.
+              grep -q '"ok":true' /tmp/health.json
+              exit 0
+            fi
+            echo "attempt $i: HTTP $code"
+            sleep 10
+          done
+          echo "::error::health check never returned 200"
+          exit 1

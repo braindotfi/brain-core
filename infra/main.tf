@@ -65,7 +65,7 @@ resource "azurerm_key_vault" "main" {
   network_acls {
     bypass                     = "AzureServices"
     default_action             = var.key_vault_network_default_action
-    ip_rules                   = concat([var.operator_ip], var.operator_extra_ip_ranges)
+    ip_rules                   = var.operator_ip == null ? var.operator_extra_ip_ranges : concat([var.operator_ip], var.operator_extra_ip_ranges)
     virtual_network_subnet_ids = [azurerm_subnet.apps.id]
   }
 }
@@ -226,7 +226,7 @@ resource "azurerm_storage_account" "raw" {
   network_rules {
     default_action             = "Deny"
     bypass                     = ["AzureServices"]
-    ip_rules                   = [split("/", var.operator_ip)[0]]
+    ip_rules                   = var.operator_ip == null ? [] : [split("/", var.operator_ip)[0]]
     virtual_network_subnet_ids = [azurerm_subnet.apps.id]
   }
 }
@@ -869,6 +869,81 @@ resource "azurerm_container_app_job" "migrate" {
       env {
         name        = "DATABASE_URL"
         secret_name = "database-url"
+      }
+    }
+  }
+}
+
+# One-off bootstrap for managed Postgres, declared rather than run as an
+# `az containerapp job start --image --command` override.
+#
+# The override form REPLACES the whole container spec, silently dropping every
+# env var and secret -- which is exactly how the first attempt failed (psql fell
+# back to a local socket with no PGHOST). Declaring it keeps the env attached
+# and makes the step reproducible for the next environment.
+#
+# Idempotent: the script asserts pgcrypto is in `public` and inserts the
+# brain_migrations row ON CONFLICT DO NOTHING. Safe to run on an already-
+# bootstrapped database. MUST run BEFORE migrate on a fresh Azure database --
+# see infra/baseline-0049.sh for why the migration cannot apply there.
+resource "azurerm_container_app_job" "baseline" {
+  name                         = "${local.name_prefix}-baseline"
+  resource_group_name          = azurerm_resource_group.primary.name
+  location                     = azurerm_resource_group.primary.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  workload_profile_name        = "Consumption"
+  replica_timeout_in_seconds   = 600
+  replica_retry_limit          = 0
+  tags                         = local.tags
+
+  manual_trigger_config {
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.services.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.services.id
+  }
+
+  secret {
+    name                = "pg-admin-password"
+    identity            = azurerm_user_assigned_identity.services.id
+    key_vault_secret_id = azurerm_key_vault_secret.pg_admin.versionless_id
+  }
+
+  template {
+    container {
+      name    = "baseline"
+      image   = "${azurerm_container_registry.main.login_server}/brain-db-roles:${var.image_tag}"
+      cpu     = 0.5
+      memory  = "1.0Gi"
+      command = ["/baseline-0049.sh"]
+
+      env {
+        name  = "PGHOST"
+        value = azurerm_postgresql_flexible_server.main.fqdn
+      }
+      env {
+        name  = "PGUSER"
+        value = azurerm_postgresql_flexible_server.main.administrator_login
+      }
+      env {
+        name  = "PGDATABASE"
+        value = azurerm_postgresql_flexible_server_database.brain.name
+      }
+      env {
+        name  = "PGSSLMODE"
+        value = "require"
+      }
+      env {
+        name        = "PGPASSWORD"
+        secret_name = "pg-admin-password"
       }
     }
   }

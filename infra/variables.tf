@@ -63,18 +63,19 @@ variable "vnet_address_space" {
 
 variable "operator_ip" {
   description = <<-EOT
-    Public IP (CIDR, e.g. "203.0.113.4/32") of the machine running `terraform
-    apply`, added as a Key Vault network exception.
+    Public IP (CIDR) of the machine running apply, added as a Key Vault
+    network exception.
 
-    REQUIRED: the vault is deny-by-default and Terraform writes secrets into it
-    over the data plane. Without this, apply fails right after the vault is
-    created. Remove the exception once secrets are seeded and CI takes over.
+    Optional, and normally left unset. It only matters when
+    key_vault_network_default_action is "Deny"; with the vault open it is
+    inert. CI has no stable egress address, so the pipeline never sets it.
   EOT
   type        = string
+  default     = null
 
   validation {
-    condition     = can(cidrhost(var.operator_ip, 0))
-    error_message = "operator_ip must be a CIDR, e.g. 203.0.113.4/32."
+    condition     = var.operator_ip == null || can(cidrhost(var.operator_ip, 0))
+    error_message = "operator_ip must be a CIDR, e.g. 203.0.113.4/32, or null."
   }
 }
 
