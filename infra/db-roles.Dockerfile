@@ -15,9 +15,7 @@ FROM pgvector/pgvector:pg16
 
 COPY db-roles.sql /db-roles.sql
 COPY db-roles-entrypoint.sh /db-roles-entrypoint.sh
-# One-off maintenance script, run via a job command override.
-COPY baseline-0049.sh /baseline-0049.sh
 
-RUN chmod +x /db-roles-entrypoint.sh /baseline-0049.sh
+RUN chmod +x /db-roles-entrypoint.sh
 
 ENTRYPOINT ["/db-roles-entrypoint.sh"]

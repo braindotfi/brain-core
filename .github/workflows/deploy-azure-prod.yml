@@ -26,7 +26,7 @@ on:
         type: boolean
         default: true
       run_migrations:
-        description: "Run baseline -> migrate -> db-roles after apply."
+        description: "Run migrate -> db-roles after apply."
         required: false
         type: boolean
         default: true
@@ -118,7 +118,7 @@ jobs:
 
       # Order is load-bearing and not enforceable by Terraform, which can only
       # order resource CREATION, never job EXECUTION:
-      #   baseline -> migrate -> db-roles
+      #   migrate -> db-roles
       # db-roles.sql grants by looping over tables that already exist, so
       # running it before migrate silently leaves the canonical and ledger
       # projector roles ungranted -- surfacing in production as 42501 every
@@ -149,7 +149,6 @@ jobs:
             return 1
           }
 
-          run_job brain-production-baseline
           run_job brain-production-migrate
           run_job brain-production-db-roles
 
