@@ -4,7 +4,7 @@
  *
  * Usage:
  *   brain-migrate up       — apply all pending migrations
- *   brain-migrate status   — print applied/pending/drifted per migration
+ *   brain-migrate status   — print applied/baselined/pending/drifted per migration
  *
  * DATABASE_URL is required.
  *
@@ -35,8 +35,9 @@ async function main(): Promise<number> {
   try {
     switch (cmd) {
       case "up": {
-        const { applied, skipped } = await applyAll(client, migrations);
+        const { applied, skipped, baselined } = await applyAll(client, migrations);
         for (const m of applied) process.stdout.write(`applied: ${m.key}\n`);
+        for (const m of baselined) process.stdout.write(`baselined: ${m.key}\n`);
         for (const m of skipped) process.stdout.write(`skipped: ${m.key}\n`);
         return 0;
       }
@@ -44,7 +45,7 @@ async function main(): Promise<number> {
         const s = await status(client, migrations);
         let drifted = 0;
         for (const { migration, state } of s) {
-          process.stdout.write(`${state.padEnd(8)} ${migration.key}\n`);
+          process.stdout.write(`${state.padEnd(9)} ${migration.key}\n`);
           if (state === "drifted") drifted += 1;
         }
         return drifted > 0 ? 3 : 0;

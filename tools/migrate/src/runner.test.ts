@@ -1,5 +1,9 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type { DiscoveredMigration } from "./discover.js";
+import type { MigrationBaseline } from "./baselines.js";
+import { MIGRATION_BASELINES } from "./baselines.js";
+import { discoverMigrations, type DiscoveredMigration } from "./discover.js";
 import { applyAll, contentSha, ensureBookkeeping, status } from "./runner.js";
 
 /** Record every statement the runner issues; let the test reply to SELECTs. */
@@ -203,5 +207,184 @@ describe("status", () => {
       m("wiki", "0001_entities.sql", "-- new"),
     ]);
     expect(result.map((r) => r.state)).toEqual(["applied", "drifted", "pending"]);
+  });
+});
+
+describe("applyAll baselines", () => {
+  const baselineMigration = m(
+    "ledger",
+    "0099_unsupported_here.sql",
+    "ALTER SOMETHING UNSUPPORTED;",
+  );
+  const baseline: MigrationBaseline = {
+    key: baselineMigration.key,
+    reason: "test fixture: statement unsupported on some platform",
+    guard: "SELECT EXISTS (SELECT 1 FROM guard_probe) AS ok",
+  };
+
+  it("baselines a pending migration when the guard is TRUE, without running its SQL", async () => {
+    const log: string[] = [];
+    const calls: Array<{ text: string; values?: ReadonlyArray<unknown> }> = [];
+    const client = {
+      query: vi.fn(async (text: string, values?: ReadonlyArray<unknown>) => {
+        const trimmed = text.trim();
+        log.push(trimmed.split("\n")[0]!.trim());
+        calls.push({ text: trimmed, values });
+        if (trimmed.startsWith("SELECT key, service, name, sequence")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (trimmed === baseline.guard.trim()) {
+          return { rows: [{ ok: true }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    const result = await applyAll(client, [baselineMigration], {
+      appliedBy: "test-user",
+      baselines: [baseline],
+    });
+
+    expect(result.baselined.map((x) => x.key)).toEqual([baselineMigration.key]);
+    expect(result.applied).toEqual([]);
+    expect(result.skipped).toEqual([]);
+
+    // The migration's own SQL must never be sent to the database.
+    expect(log).not.toContain(baselineMigration.sql);
+
+    const insertCall = calls.find((c) => c.text.startsWith("INSERT INTO brain_migrations"));
+    expect(insertCall).toBeDefined();
+    expect(insertCall!.values).toEqual([
+      baselineMigration.key,
+      baselineMigration.service,
+      baselineMigration.name,
+      baselineMigration.sequence,
+      contentSha(baselineMigration.sql),
+      "test-user",
+    ]);
+  });
+
+  it("falls through to applying the migration normally when the guard is FALSE", async () => {
+    const log: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const trimmed = text.trim();
+        log.push(trimmed.split("\n")[0]!.trim());
+        if (trimmed.startsWith("SELECT key, service, name, sequence")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (trimmed === baseline.guard.trim()) {
+          return { rows: [{ ok: false }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    const result = await applyAll(client, [baselineMigration], { baselines: [baseline] });
+
+    expect(result.applied.map((x) => x.key)).toEqual([baselineMigration.key]);
+    expect(result.baselined).toEqual([]);
+    expect(log).toContain(baselineMigration.sql);
+  });
+
+  it("still skips an already-applied migration with a matching hash, without consulting the guard", async () => {
+    let guardCalled = false;
+    const appliedRow = {
+      key: baselineMigration.key,
+      service: baselineMigration.service,
+      name: baselineMigration.name,
+      sequence: baselineMigration.sequence,
+      content_sha: contentSha(baselineMigration.sql),
+      applied_at: new Date(),
+      applied_by: "prev",
+    };
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const trimmed = text.trim();
+        if (trimmed.startsWith("SELECT key, service, name, sequence")) {
+          return { rows: [appliedRow], rowCount: 1 };
+        }
+        if (trimmed === baseline.guard.trim()) {
+          guardCalled = true;
+          return { rows: [{ ok: true }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    const result = await applyAll(client, [baselineMigration], { baselines: [baseline] });
+
+    expect(result.skipped.map((x) => x.key)).toEqual([baselineMigration.key]);
+    expect(result.baselined).toEqual([]);
+    expect(result.applied).toEqual([]);
+    expect(guardCalled).toBe(false);
+  });
+
+  it("still throws on hash drift for an already-applied migration with a baseline entry", async () => {
+    const appliedRow = {
+      key: baselineMigration.key,
+      service: baselineMigration.service,
+      name: baselineMigration.name,
+      sequence: baselineMigration.sequence,
+      content_sha: contentSha("original content"),
+      applied_at: new Date(),
+      applied_by: "prev",
+    };
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const trimmed = text.trim();
+        if (trimmed.startsWith("SELECT key, service, name, sequence")) {
+          return { rows: [appliedRow], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    await expect(
+      applyAll(client, [m(baselineMigration.service, baselineMigration.name, "MUTATED content")], {
+        baselines: [baseline],
+      }),
+    ).rejects.toThrow(/different content hash/);
+  });
+});
+
+describe("status baselines", () => {
+  it("reports baselined for a pending migration whose guard currently passes", async () => {
+    const baselineMigration = m(
+      "ledger",
+      "0099_unsupported_here.sql",
+      "ALTER SOMETHING UNSUPPORTED;",
+    );
+    const baseline: MigrationBaseline = {
+      key: baselineMigration.key,
+      reason: "test fixture",
+      guard: "SELECT EXISTS (SELECT 1 FROM guard_probe) AS ok",
+    };
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const trimmed = text.trim();
+        if (trimmed.startsWith("SELECT key, service, name, sequence")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (trimmed === baseline.guard.trim()) {
+          return { rows: [{ ok: true }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    const result = await status(client, [baselineMigration], { baselines: [baseline] });
+    expect(result.map((r) => r.state)).toEqual(["baselined"]);
+  });
+});
+
+describe("MIGRATION_BASELINES", () => {
+  it("declares only keys that match an actual discovered migration", async () => {
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    const discovered = await discoverMigrations(repoRoot);
+    const discoveredKeys = new Set(discovered.map((d) => d.key));
+    for (const baseline of MIGRATION_BASELINES) {
+      expect(discoveredKeys.has(baseline.key)).toBe(true);
+    }
   });
 });
