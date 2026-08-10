@@ -199,8 +199,169 @@ async function reportEvidence(pool) {
           AND g.invoice_id = s.invoice_id
         ORDER BY s.created_at ASC, s.id ASC`,
     );
+    const { rows: dataQualitySummaryRows } = await pool.query(
+      `WITH scoped AS (
+         SELECT p.tenant_id,
+                p.action->>'invoice_id' AS invoice_id,
+                p.id AS proposal_id,
+                p.status AS proposal_status,
+                p.created_at,
+                p.action,
+                row_number() OVER (
+                  PARTITION BY p.tenant_id, p.action->>'invoice_id'
+                  ORDER BY p.created_at DESC, p.id DESC
+                ) AS position,
+                count(*) OVER (PARTITION BY p.tenant_id, p.action->>'invoice_id') AS group_size
+           FROM proposals p
+          WHERE p.proposing_agent = 'collections'
+            AND p.status = 'pending'
+            AND p.action->>'type' = 'collections'
+            AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+       ), retained AS (
+         SELECT s.*,
+                i.id AS ledger_invoice_id,
+                i.status AS ledger_invoice_status,
+                i.due_date AS invoice_due_date,
+                CASE
+                  WHEN s.action->>'days_overdue' ~ '^[0-9]+$'
+                    THEN (s.action->>'days_overdue')::int
+                  ELSE NULL
+                END AS stored_days_overdue,
+                CASE
+                  WHEN i.due_date IS NOT NULL
+                    THEN greatest(0, current_date - i.due_date::date)
+                  ELSE NULL
+                END AS calculated_days_overdue
+           FROM scoped s
+           LEFT JOIN ledger_invoices i
+             ON i.owner_id = s.tenant_id
+            AND i.id = s.invoice_id
+          WHERE s.position = 1
+       ), classified AS (
+         SELECT *,
+                CASE
+                  WHEN ledger_invoice_id IS NULL THEN 'missing_invoice'
+                  WHEN invoice_due_date IS NULL THEN 'null_due_date'
+                  WHEN stored_days_overdue IS NULL THEN 'non_numeric_days_overdue'
+                  WHEN stored_days_overdue <> calculated_days_overdue THEN 'days_overdue_mismatch'
+                  ELSE 'current'
+                END AS data_quality_state
+           FROM retained
+       )
+       SELECT count(*) FILTER (WHERE data_quality_state = 'missing_invoice')::int
+                AS missing_invoice_count,
+              count(*) FILTER (WHERE data_quality_state = 'null_due_date')::int
+                AS null_due_date_count,
+              count(*) FILTER (WHERE data_quality_state = 'days_overdue_mismatch')::int
+                AS days_overdue_mismatch_count,
+              count(*) FILTER (WHERE data_quality_state = 'days_overdue_mismatch' AND group_size = 1)::int
+                AS singleton_days_overdue_mismatch_count,
+              count(*) FILTER (WHERE data_quality_state = 'days_overdue_mismatch' AND group_size > 1)::int
+                AS duplicate_days_overdue_mismatch_count,
+              count(*) FILTER (
+                WHERE data_quality_state = 'days_overdue_mismatch'
+                  AND stored_days_overdue < calculated_days_overdue
+              )::int AS stored_days_lower_count,
+              count(*) FILTER (
+                WHERE data_quality_state = 'days_overdue_mismatch'
+                  AND stored_days_overdue > calculated_days_overdue
+              )::int AS stored_days_higher_count,
+              max(abs(stored_days_overdue - calculated_days_overdue)) FILTER (
+                WHERE data_quality_state = 'days_overdue_mismatch'
+              )::int AS max_days_difference
+         FROM classified`,
+    );
+    const { rows: missingDueExamples } = await pool.query(
+      `WITH scoped AS (
+         SELECT p.tenant_id,
+                p.action->>'invoice_id' AS invoice_id,
+                p.id AS proposal_id,
+                p.status AS proposal_status,
+                p.created_at,
+                row_number() OVER (
+                  PARTITION BY p.tenant_id, p.action->>'invoice_id'
+                  ORDER BY p.created_at DESC, p.id DESC
+                ) AS position
+           FROM proposals p
+          WHERE p.proposing_agent = 'collections'
+            AND p.status = 'pending'
+            AND p.action->>'type' = 'collections'
+            AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+       )
+       SELECT s.tenant_id,
+              s.invoice_id,
+              s.proposal_id,
+              s.proposal_status,
+              s.created_at AS proposal_created_at,
+              i.id AS ledger_invoice_id,
+              i.status AS ledger_invoice_status,
+              i.due_date AS ledger_invoice_due_date
+         FROM scoped s
+         LEFT JOIN ledger_invoices i
+           ON i.owner_id = s.tenant_id
+          AND i.id = s.invoice_id
+        WHERE s.position = 1
+          AND i.due_date IS NULL
+        ORDER BY s.tenant_id, s.invoice_id, s.proposal_id
+        LIMIT 5`,
+    );
+    const { rows: mismatchExamples } = await pool.query(
+      `WITH scoped AS (
+         SELECT p.tenant_id,
+                p.action->>'invoice_id' AS invoice_id,
+                p.id AS proposal_id,
+                p.created_at,
+                p.action,
+                row_number() OVER (
+                  PARTITION BY p.tenant_id, p.action->>'invoice_id'
+                  ORDER BY p.created_at DESC, p.id DESC
+                ) AS position,
+                count(*) OVER (PARTITION BY p.tenant_id, p.action->>'invoice_id') AS group_size
+           FROM proposals p
+          WHERE p.proposing_agent = 'collections'
+            AND p.status = 'pending'
+            AND p.action->>'type' = 'collections'
+            AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+       ), retained AS (
+         SELECT s.*,
+                i.due_date AS ledger_invoice_due_date,
+                CASE
+                  WHEN s.action->>'days_overdue' ~ '^[0-9]+$'
+                    THEN (s.action->>'days_overdue')::int
+                  ELSE NULL
+                END AS stored_days_overdue,
+                greatest(0, current_date - i.due_date::date)::int AS calculated_days_overdue
+           FROM scoped s
+           JOIN ledger_invoices i
+             ON i.owner_id = s.tenant_id
+            AND i.id = s.invoice_id
+          WHERE s.position = 1
+       )
+       SELECT tenant_id,
+              invoice_id,
+              proposal_id,
+              created_at AS proposal_created_at,
+              group_size,
+              ledger_invoice_due_date,
+              stored_days_overdue,
+              calculated_days_overdue,
+              (stored_days_overdue - calculated_days_overdue)::int AS difference_days
+         FROM retained
+        WHERE stored_days_overdue IS NOT NULL
+          AND stored_days_overdue <> calculated_days_overdue
+        ORDER BY abs(stored_days_overdue - calculated_days_overdue) DESC,
+                 tenant_id,
+                 invoice_id
+        LIMIT 5`,
+    );
     await pool.query("COMMIT");
-    return { summary: summaryRows[0] ?? {}, largest_group_rows: largestGroupRows };
+    return {
+      summary: summaryRows[0] ?? {},
+      largest_group_rows: largestGroupRows,
+      data_quality_summary: dataQualitySummaryRows[0] ?? {},
+      missing_due_examples: missingDueExamples,
+      days_overdue_mismatch_examples: mismatchExamples,
+    };
   } catch (error) {
     await pool.query("ROLLBACK").catch(() => undefined);
     throw error;
