@@ -869,6 +869,16 @@ resource "azurerm_role_assignment" "terraform_state_blob" {
   principal_id         = azurerm_user_assigned_identity.terraform.principal_id
 }
 
+# The registry identity must be one the job actually holds. Pointing it at the
+# shared services identity while the job only carries the terraform identity
+# leaves the revision unable to pull, which surfaces as an opaque
+# "Failed to provision revision ... Error details: ." with no cause given.
+resource "azurerm_role_assignment" "terraform_acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.terraform.principal_id
+}
+
 resource "azurerm_container_app_job" "terraform" {
   name                         = "${local.name_prefix}-terraform"
   resource_group_name          = azurerm_resource_group.primary.name
@@ -891,7 +901,7 @@ resource "azurerm_container_app_job" "terraform" {
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.services.id
+    identity = azurerm_user_assigned_identity.terraform.id
   }
 
   template {
