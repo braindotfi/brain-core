@@ -963,6 +963,15 @@ role already existed, but the historical VM env files had never received its
 password. Before a promote that adds a compose-required secret, run a
 pre-promote required-secret presence check for both environments.
 
+MinIO root credentials are also consumed by the API and worker as their
+S3-compatible object-store credentials. If `.env.staging` or `.env.prod`
+changes either `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`, run the
+production-gated `ops-reconcile-minio-credentials.yml` workflow for that
+environment before accepting uploads. It recreates MinIO with the configured
+credentials, verifies bucket access through `minio-setup`, and proves the real
+`/v1/raw/ingest` path with an ephemeral demo tenant. Recreating API or worker
+alone does not update MinIO's running root credentials.
+
 Every staging deploy and production promote runs
 `scripts/check-required-compose-secrets.sh` on the VM after syncing compose
 files but before rollback tagging, image pull, migrations, or compose recreate.
