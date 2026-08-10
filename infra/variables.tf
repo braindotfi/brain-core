@@ -180,30 +180,20 @@ variable "key_vault_network_default_action" {
   description = <<-EOT
     Key Vault network ACL default action: "Allow" or "Deny".
 
-    Currently "Allow", deliberately, and this is a real trade-off worth
-    understanding rather than a default nobody chose:
+    "Deny" is only workable because the vault has a PRIVATE ENDPOINT and
+    Terraform runs INSIDE the VNet, as the brain-production-terraform Container
+    App Job. Terraform reads every azurerm_key_vault_secret during refresh, so
+    running it from a public runner against a closed vault fails part-way
+    through an apply.
 
-    WHY: the operator is behind carrier-grade NAT that hands out addresses from
-    at least two unrelated pools (152.58.44.x and 157.20.86.x observed minutes
-    apart, from the SAME machine, mid-apply). No allowlist tracks that. GitHub
-    Actions runners are likewise dynamic, so "Deny" would break the CI that is
-    about to own deploys. The failure mode is not a clean refusal either -- it
-    is a half-finished apply, which is worse than no firewall.
-
-    WHAT STILL PROTECTS SECRETS: RBAC authorization is enabled, so every read
-    and write requires an Entra identity holding an explicit data-plane role
-    (Key Vault Secrets User / Officer / Administrator). Network position grants
-    nothing on its own. Soft-delete (90d) and purge protection remain on.
-
-    WHAT IS LOST: defence-in-depth. A leaked credential can be used from
-    anywhere rather than only from an allowlisted network.
-
-    DURABLE FIX: a private endpoint for the vault plus deploys running inside
-    the VNet (or self-hosted runners), after which "Deny" becomes meaningful
-    and this flips back with no other change.
+    RECOVERY: if the in-VNet runner is broken and you are locked out, reopen the
+    vault from the CONTROL plane, which is not IP-restricted:
+      az keyvault update -n brain-production-kv -g brain-production-rg \
+        --default-action Allow
+    then set this back to "Deny" once the runner works again.
   EOT
   type        = string
-  default     = "Allow"
+  default     = "Deny"
 
   validation {
     condition     = contains(["Allow", "Deny"], var.key_vault_network_default_action)
@@ -226,6 +216,19 @@ variable "operator_extra_ip_ranges" {
   EOT
   type        = list(string)
   default     = []
+}
+
+variable "tfstate_storage_account_id" {
+  description = <<-EOT
+    Resource id of the remote-state storage account, so the in-VNet Terraform
+    runner can be granted Storage Blob Data Contributor on it.
+
+    Hard-coded rather than discovered: the state account lives in a different
+    resource group created by infra/bootstrap, and a data source for it would
+    make this stack depend on reading a resource it does not own.
+  EOT
+  type        = string
+  default     = "/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-tfstate-rg/providers/Microsoft.Storage/storageAccounts/brainfitfstate"
 }
 
 variable "operator_object_id" {

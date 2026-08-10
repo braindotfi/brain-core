@@ -20,7 +20,10 @@ operator_object_id = "6ddc7121-6306-4061-9031-470410ad6a10"
 # Observed operator egress: 152.58.44.154 (WSL) and 152.58.45.33 (Windows az)
 # within minutes of each other -- same Jio CGNAT pool. /22 covers 152.58.44-47.
 # Defence-in-depth only; RBAC is the real gate. Set to [] once CI writes secrets.
-operator_extra_ip_ranges = ["152.58.44.0/22"]
+# Empty: the vault is reached over its private endpoint now, so no public
+# allowlist is needed. Only used if key_vault_network_default_action is
+# temporarily flipped to Allow for recovery.
+operator_extra_ip_ranges = []
 
 # Right-sized production (chosen 2026-08-10). See variables.tf for the
 # reasoning behind each default; these are the explicit production values.

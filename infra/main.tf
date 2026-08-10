@@ -814,6 +814,120 @@ resource "azurerm_container_app" "auth" {
 }
 
 # ---------------------------------------------------------------------------
+# Terraform runner -- deploys from INSIDE the VNet.
+#
+# The Key Vault denies public traffic and is reachable only over its private
+# endpoint, so whatever runs Terraform has to be on this VNet. A GitHub runner
+# cannot be. This job can: it lives in the VNet-injected Container Apps
+# environment, and CI starts it through the ARM control plane, which is not
+# IP-restricted.
+#
+# It authenticates with its OWN managed identity, not the shared services one.
+# The services identity is mounted into api/worker/auth/agents, and Terraform
+# needs Contributor plus role-assignment rights -- granting those to the
+# identity the API runs as would let a compromised API rewrite the
+# infrastructure it runs on.
+#
+# ⚠️ SELF-REFERENTIAL: this job is itself managed by the Terraform it runs.
+# A change to the job definition has to be applied by the previous version of
+# the job. If a change ever breaks it, reopen the vault from the control plane
+# (see key_vault_network_default_action) and apply from a workstation once.
+# ---------------------------------------------------------------------------
+resource "azurerm_user_assigned_identity" "terraform" {
+  name                = "${local.name_prefix}-terraform"
+  resource_group_name = azurerm_resource_group.primary.name
+  location            = azurerm_resource_group.primary.location
+  tags                = local.tags
+}
+
+resource "azurerm_role_assignment" "terraform_contributor" {
+  scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.terraform.principal_id
+}
+
+# Narrower than User Access Administrator: manages role assignments and nothing
+# else. Needed because this stack creates its own role assignments.
+resource "azurerm_role_assignment" "terraform_rbac_admin" {
+  scope                            = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
+  role_definition_name             = "Role Based Access Control Administrator"
+  principal_id                     = azurerm_user_assigned_identity.terraform.principal_id
+  skip_service_principal_aad_check = true
+}
+
+# Data-plane rights on the vault it must read during refresh.
+resource "azurerm_role_assignment" "terraform_kv_admin" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Administrator"
+  principal_id         = azurerm_user_assigned_identity.terraform.principal_id
+}
+
+# Remote state lives in a different resource group, so this is scoped there.
+resource "azurerm_role_assignment" "terraform_state_blob" {
+  scope                = var.tfstate_storage_account_id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.terraform.principal_id
+}
+
+resource "azurerm_container_app_job" "terraform" {
+  name                         = "${local.name_prefix}-terraform"
+  resource_group_name          = azurerm_resource_group.primary.name
+  location                     = azurerm_resource_group.primary.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  workload_profile_name        = "Consumption"
+  replica_timeout_in_seconds   = 3600
+  replica_retry_limit          = 0
+  tags                         = local.tags
+
+  manual_trigger_config {
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.terraform.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.services.id
+  }
+
+  template {
+    container {
+      name   = "terraform"
+      image  = "${azurerm_container_registry.main.login_server}/brain-terraform:${var.image_tag}"
+      cpu    = 1.0
+      memory = "2.0Gi"
+
+      # Managed-identity auth: no client id/secret, no federated token needed
+      # once execution is inside the VNet.
+      env {
+        name  = "ARM_USE_MSI"
+        value = "true"
+      }
+      env {
+        name  = "ARM_CLIENT_ID"
+        value = azurerm_user_assigned_identity.terraform.client_id
+      }
+      env {
+        name  = "ARM_TENANT_ID"
+        value = data.azurerm_client_config.current.tenant_id
+      }
+      env {
+        name  = "ARM_SUBSCRIPTION_ID"
+        value = data.azurerm_client_config.current.subscription_id
+      }
+      env {
+        name  = "TF_IMAGE_TAG"
+        value = var.image_tag
+      }
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
 # One-shot jobs (blocker #5)
 #
 # ORDER IS LOAD-BEARING: migrate MUST run before db-roles. db-roles.sql grants

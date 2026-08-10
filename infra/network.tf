@@ -138,3 +138,50 @@ resource "azurerm_private_endpoint" "redis" {
     private_dns_zone_ids = [azurerm_private_dns_zone.redis.id]
   }
 }
+
+# ---------------------------------------------------------------------------
+# Private DNS + endpoint -- Key Vault
+#
+# This is what lets the vault's network ACL default to Deny. Terraform must read
+# every azurerm_key_vault_secret during refresh, so a closed vault is only
+# workable if the thing running Terraform sits inside this VNet -- which is why
+# it runs as the brain-production-terraform Container App Job rather than
+# directly on a CI runner.
+#
+# Note the zone is privatelink.vaultcore.azure.net, NOT vault.azure.net.
+# ---------------------------------------------------------------------------
+
+resource "azurerm_private_dns_zone" "keyvault" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.primary.name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "keyvault" {
+  name                  = "${local.name_prefix}-kv-link"
+  resource_group_name   = azurerm_resource_group.primary.name
+  private_dns_zone_name = azurerm_private_dns_zone.keyvault.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+  tags                  = local.tags
+}
+
+resource "azurerm_private_endpoint" "keyvault" {
+  name                = "${local.name_prefix}-kv-pe"
+  resource_group_name = azurerm_resource_group.primary.name
+  location            = azurerm_resource_group.primary.location
+  subnet_id           = azurerm_subnet.private_endpoints.id
+  tags                = local.tags
+
+  private_service_connection {
+    name                           = "${local.name_prefix}-kv-psc"
+    private_connection_resource_id = azurerm_key_vault.main.id
+    subresource_names              = ["vault"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "keyvault"
+    private_dns_zone_ids = [azurerm_private_dns_zone.keyvault.id]
+  }
+}
