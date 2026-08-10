@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PROPOSAL_TYPES, resolvePublicProposalType, type ProposalType } from "./read-model.js";
+import {
+  PROPOSAL_TYPES,
+  decisionsForProposal,
+  resolvePublicProposalType,
+  type ProposalType,
+} from "./read-model.js";
 
 describe("proposal read model type resolver", () => {
   it("maps every public proposal type directly", () => {
@@ -53,5 +58,11 @@ describe("proposal read model type resolver", () => {
       }),
     ).toBe("treasury");
     expect(resolvePublicProposalType({ actionType: "ach_outbound" })).toBeNull();
+  });
+});
+
+describe("proposal read model decisions", () => {
+  it("does not expose a decision for a superseded proposal", () => {
+    expect(decisionsForProposal("collections", "propose", "superseded")).toEqual([]);
   });
 });

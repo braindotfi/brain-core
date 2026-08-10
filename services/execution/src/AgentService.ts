@@ -32,9 +32,12 @@ import type { Pool } from "pg";
 import type { AgentAuthority } from "@brain/schemas";
 import {
   findProposal,
+  findPendingCollectionsProposalForInvoice,
   insertProposal,
   listAgents,
+  lockCollectionsProposalForInvoice,
   findAgent,
+  refreshCollectionsProposal,
   insertAgent,
   markAgentRegistered,
   transitionProposal,
@@ -100,6 +103,12 @@ function outcomeToStatus(
   }
 }
 
+function collectionsInvoiceId(agentId: string, action: Record<string, unknown>): string | null {
+  if (agentId !== "collections") return null;
+  const invoiceId = action["invoice_id"];
+  return typeof invoiceId === "string" && invoiceId.length > 0 ? invoiceId : null;
+}
+
 export class AgentService implements IAgentService {
   public constructor(private readonly deps: AgentServiceDeps) {}
 
@@ -109,7 +118,7 @@ export class AgentService implements IAgentService {
     input: ProposalInput,
   ): Promise<ProposalRecord> {
     const authority = (await this.deps.resolveAgentAuthority?.(ctx, agentId)) ?? "notify_only";
-    const action = {
+    const action: Record<string, unknown> = {
       ...input.action,
       kind: input.action["kind"] ?? "agent_action",
       mode: authority === "notify_only" ? "notify_only" : "propose",
@@ -119,7 +128,35 @@ export class AgentService implements IAgentService {
     const status = outcomeToStatus(policyResult.outcome, authority);
     const id = newProposalId();
 
+    const invoiceId = collectionsInvoiceId(agentId, action);
+    let proposalId = id;
+    let refreshed = false;
+    let previousAction: Record<string, unknown> | null = null;
+
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      if (invoiceId !== null) {
+        await lockCollectionsProposalForInvoice(c, ctx.tenantId, invoiceId);
+        const existing = await findPendingCollectionsProposalForInvoice(c, invoiceId);
+        if (existing !== null) {
+          previousAction = existing.action;
+          await refreshCollectionsProposal(c, existing, {
+            action,
+            policyVersion: policyResult.policy_version,
+            policyDecision:
+              policyResult.outcome === "confirm"
+                ? "confirm"
+                : policyResult.outcome === "reject"
+                  ? "reject"
+                  : "allow",
+            policyTrace: policyResult.trace as never,
+            requiredApprovers: policyResult.required_approvers,
+            status,
+          });
+          proposalId = existing.id;
+          refreshed = true;
+          return;
+        }
+      }
       await insertProposal(c, {
         id,
         tenantId: ctx.tenantId,
@@ -142,25 +179,36 @@ export class AgentService implements IAgentService {
       tenantId: ctx.tenantId,
       layer: "agent",
       actor: agentId,
-      action: "agent.action.proposed",
+      action: refreshed ? "agent.action.refreshed" : "agent.action.proposed",
       ...(policyResult.matched_rule_id !== null
         ? { policyCheckId: policyResult.matched_rule_id }
         : {}),
       outcome: policyResult.outcome,
-      inputs: { action_kind: String(action["kind"] ?? "agent_action"), proposal_id: id },
+      inputs: {
+        action_kind: String(action["kind"] ?? "agent_action"),
+        proposal_id: proposalId,
+        ...(invoiceId !== null ? { invoice_id: invoiceId } : {}),
+      },
       outputs: {
         status,
         outcome: policyResult.outcome,
         matched_rule_id: policyResult.matched_rule_id,
         required_approvers: policyResult.required_approvers,
+        ...(refreshed
+          ? {
+              refreshed: true,
+              previous_days_overdue: previousAction?.["days_overdue"] ?? null,
+              days_overdue: action["days_overdue"] ?? null,
+            }
+          : {}),
       },
     });
 
     return {
-      id,
+      id: proposalId,
       proposing_agent_id: agentId,
       action,
-      policy_decision_id: id,
+      policy_decision_id: proposalId,
       status,
       approvers_signed: [],
       created_at: new Date().toISOString(),

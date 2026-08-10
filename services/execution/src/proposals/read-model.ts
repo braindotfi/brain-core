@@ -178,6 +178,7 @@ const STATUSES = [
   "failed",
   "cancelled",
   "undone",
+  "superseded",
   "unknown",
 ] as const;
 const STATUS_SET: ReadonlySet<string> = new Set(STATUSES);
@@ -531,7 +532,7 @@ function serializeProposalRow(row: RawProposalRow): ProposalReadItem {
     row.source_kind === "payment_intent" ? row.action_type : firstString(action, ["type"]);
   const policy = policySummary(row, action);
   const details = proposalDetails(row);
-  const availableDecisions = decisionsForProposal(proposalType, row.mode);
+  const availableDecisions = decisionsForProposal(proposalType, row.mode, row.status);
   const presentation = proposalPresentation({
     row,
     proposalType,
@@ -912,7 +913,12 @@ function confidenceBand(confidence: number | null): string | null {
   return "low";
 }
 
-function decisionsForProposal(type: ProposalType, mode: ProposalMode): ProposalDecisionAction[] {
+export function decisionsForProposal(
+  type: ProposalType,
+  mode: ProposalMode,
+  status: string,
+): ProposalDecisionAction[] {
+  if (status === "superseded") return [];
   if (type === "compliance" || mode === "notify_only") {
     return [
       {

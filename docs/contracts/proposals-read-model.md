@@ -78,6 +78,10 @@ The same object now also includes:
 | `5_policy`   | Same policy summary exposed at top level.                                                                        |
 | `6_propose`  | Status, mode, recommendation, and available decision ids.                                                        |
 
+`superseded` is a terminal status. It marks an unresolved proposal replaced by
+a newer proposal for the same underlying entity. Clients must not present a
+decision control for a superseded proposal.
+
 ## Type Mapping
 
 The read model resolves public type deterministically:

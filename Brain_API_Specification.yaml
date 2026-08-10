@@ -7870,6 +7870,7 @@ components:
         - failed
         - cancelled
         - undone
+        - superseded
         - unknown
 
     ProposalDecision:

@@ -83,6 +83,83 @@ export async function findProposalByDedupKey(
   return rows[0] ?? null;
 }
 
+const COLLECTIONS_PROPOSAL_LOCK_NAMESPACE = 0x434f4c4c; // "COLL"
+
+/**
+ * Serialize Collections proposal refreshes for one invoice. The partial index
+ * added for this query makes the normal lookup cheap; the advisory lock closes
+ * the read-then-insert race without imposing a uniqueness constraint on legacy
+ * rows that the guarded production cleanup still needs to repair.
+ */
+export async function lockCollectionsProposalForInvoice(
+  client: TenantScopedClient,
+  tenantId: string,
+  invoiceId: string,
+): Promise<void> {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(${COLLECTIONS_PROPOSAL_LOCK_NAMESPACE}, hashtext($1))`,
+    [`${tenantId}:collections:${invoiceId}`],
+  );
+}
+
+/** Find the single actionable Collections proposal for an invoice, if one exists. */
+export async function findPendingCollectionsProposalForInvoice(
+  client: TenantScopedClient,
+  invoiceId: string,
+): Promise<ProposalRow | null> {
+  const { rows } = await client.query<ProposalRow>(
+    `SELECT *
+      FROM proposals
+      WHERE proposing_agent = 'collections'
+        AND status = 'pending'
+        AND action->>'type' = 'collections'
+        AND action->>'invoice_id' = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [invoiceId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Refresh a pending Collections proposal in place after a later overdue sweep. */
+export async function refreshCollectionsProposal(
+  client: TenantScopedClient,
+  existing: ProposalRow,
+  input: Omit<InsertProposalInput, "id" | "tenantId" | "proposingAgent">,
+): Promise<ProposalRow> {
+  if (existing.status !== input.status) {
+    assertProposalTransition(existing.status, input.status);
+  }
+  const { rows } = await client.query<ProposalRow>(
+    `UPDATE proposals
+        SET action = $2,
+            policy_version = $3,
+            policy_decision = $4,
+            policy_trace = $5,
+            required_approvers = $6,
+            status = $7,
+            updated_at = now()
+      WHERE id = $1
+        AND status = 'pending'
+      RETURNING *`,
+    [
+      existing.id,
+      JSON.stringify(input.action),
+      input.policyVersion,
+      input.policyDecision,
+      JSON.stringify(input.policyTrace),
+      input.requiredApprovers,
+      input.status,
+    ],
+  );
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error(`collections proposal ${existing.id} stopped being pending during refresh`);
+  }
+  return row;
+}
+
 export async function findProposal(
   client: TenantScopedClient,
   id: string,

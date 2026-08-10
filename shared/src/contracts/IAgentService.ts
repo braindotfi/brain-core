@@ -67,6 +67,7 @@ export interface ProposalRecord {
     | "executed"
     | "failed"
     | "undone"
+    | "superseded"
     | "unknown";
   approvers_signed: string[];
   created_at: string;

@@ -260,6 +260,10 @@ Done
   workflows fail to human review, not silent rejection. The policy VM still
   default-denies unmatched rules; `PolicyService.evaluateLegacy` converts only
   scoped high-risk proposal fallthroughs to `confirm` with a signer requirement.
+- Collections Agent proposals are deduped per `invoice_id`: an overdue sweep
+  must never leave more than one unresolved proposal open for the same invoice.
+  Later sweeps refresh the pending row, while the guarded production cleanup
+  marks historical duplicates `superseded` with an audit link to the retained row.
 - Every persisted `agent_runs` terminal `missing_evidence` or `notify_only`
   outcome emits `agent.run.missing_evidence` or `agent.run.notify_only` through
   the audit emitter. The event carries the run id, trigger, resolved action,

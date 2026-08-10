@@ -21,15 +21,17 @@ const PROP: ProposalState[] = [
   "executed",
   "failed",
   "undone",
+  "superseded",
   "unknown",
 ];
 const EXEC: ExecutionState[] = ["dispatched", "in_flight", "completed", "failed"];
 const AGENT: AgentState[] = ["pending_onchain", "active", "revoked", "failed", "quarantined"];
 
 describe("§8.1 proposal", () => {
-  it("pending → approved | rejected", () => {
+  it("pending → approved | rejected | superseded", () => {
     expect(isValidProposalTransition("pending", "approved")).toBe(true);
     expect(isValidProposalTransition("pending", "rejected")).toBe(true);
+    expect(isValidProposalTransition("pending", "superseded")).toBe(true);
     expect(isValidProposalTransition("pending", "executed")).toBe(false);
   });
   it("approved → executed | rejected", () => {
@@ -41,6 +43,9 @@ describe("§8.1 proposal", () => {
   });
   it("terminal state failed has no outgoing edges", () => {
     for (const to of PROP) expect(isValidProposalTransition("failed", to)).toBe(false);
+  });
+  it("terminal state superseded has no outgoing edges", () => {
+    for (const to of PROP) expect(isValidProposalTransition("superseded", to)).toBe(false);
   });
   it("property: no self-transitions", () => {
     fc.assert(

@@ -4134,7 +4134,7 @@ export interface components {
          *     refetch and never assume success.
          * @enum {string}
          */
-        ProposalStatus: "proposed" | "pending" | "pending_approval" | "awaiting_second_approval" | "approved" | "acknowledged" | "reconciling" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "undone" | "unknown";
+        ProposalStatus: "proposed" | "pending" | "pending_approval" | "awaiting_second_approval" | "approved" | "acknowledged" | "reconciling" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "undone" | "superseded" | "unknown";
         /** @enum {string} */
         ProposalDecision: "approve" | "reject" | "acknowledge" | "undo";
         ProposalDecisionResult: {
