@@ -303,10 +303,12 @@ variable "enable_frontdoor" {
   description = <<-EOT
     Provision Front Door (profile + endpoint + origin + route).
 
-    Default false: DNS is deferred, and until a hostname points at it Front Door
-    is ~$35/mo of unreachable infrastructure. The Container Apps ingress FQDN
-    already serves HTTPS with a managed certificate, which is enough to verify
-    the stack. Flip to true when the DNS cutover is scheduled.
+    Default false, but production turns it on: it is the only thing in this
+    environment that can serve mcp.brain.fi. That hostname needs `/` rewritten to
+    `/v1/agents/mcp` and Container Apps ingress cannot rewrite paths. ~$35/mo.
+
+    api.brain.fi and auth.brain.fi do not go through it -- they CNAME straight at
+    their Container Apps, which already terminate HTTPS with managed certs.
   EOT
   type        = bool
   default     = false
@@ -316,6 +318,20 @@ variable "frontdoor_sku_name" {
   description = "Front Door SKU. Premium adds WAF + private origins; Standard is sufficient without them."
   type        = string
   default     = "Standard_AzureFrontDoor"
+}
+
+variable "frontdoor_mcp_custom_domain" {
+  description = <<-EOT
+    Hostname to bind to the Front Door mcp route. Empty (default) means no custom
+    domain: the *.azurefd.net endpoint serves the rewrite and is fully testable.
+
+    Set to "mcp.brain.fi" ~24h before the DNS cutover, apply, publish the
+    _dnsauth.mcp TXT record from the frontdoor_mcp_domain_validation_token output,
+    and wait for the managed certificate. Front Door validates from the TXT alone,
+    so this happens while the A record still points at the VM. Only then move DNS.
+  EOT
+  type        = string
+  default     = ""
 }
 
 # ---------------------------------------------------------------------------
@@ -332,6 +348,19 @@ variable "image_tag" {
   description = "Image tag pulled from ACR for api/agents/worker."
   type        = string
   default     = "latest"
+}
+
+variable "terraform_image_tag" {
+  description = <<-EOT
+    Tag for the in-VNet runner image (brain-terraform), which carries the baked
+    Terraform config. Empty (default) means "same as image_tag" -- correct for a
+    normal deploy where everything is built at one SHA.
+
+    Set it for an infra-only change, so the runner picks up the new config
+    without repointing api/agents at images that were never built.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "audit_anchor_from_block" {

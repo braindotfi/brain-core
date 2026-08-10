@@ -37,8 +37,11 @@ log_retention_days       = 90
 api_min_replicas = 2
 api_max_replicas = 6
 
-# Off until the DNS cutover is scheduled.
-enable_frontdoor = false
+# On: this is mcp.brain.fi's only possible home here (Container Apps ingress
+# cannot rewrite `/` to `/v1/agents/mcp`). The custom domain stays empty until
+# the cutover is scheduled -- the *.azurefd.net endpoint is testable without it.
+enable_frontdoor            = true
+frontdoor_mcp_custom_domain = ""
 
 # ---------------------------------------------------------------------------
 # Chain — Base Sepolia.

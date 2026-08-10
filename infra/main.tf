@@ -307,6 +307,11 @@ locals {
   api_image    = "${azurerm_container_registry.main.login_server}/brain-api:${var.image_tag}"
   agents_image = "${azurerm_container_registry.main.login_server}/brain-agents:${var.image_tag}"
 
+  # Empty means "same tag as the app images" -- the normal full deploy. Set it
+  # only for an infra-only change, where the runner image moves and the app
+  # images must not. See the container_app_job.terraform image comment.
+  terraform_image_tag = var.terraform_image_tag != "" ? var.terraform_image_tag : var.image_tag
+
   agents_fqdn = "${local.name_prefix}-agents.internal.${azurerm_container_app_environment.main.default_domain}"
 
   # Every Key Vault secret mounted into api/worker, keyed by the in-app secret
@@ -920,8 +925,14 @@ resource "azurerm_container_app_job" "terraform" {
 
   template {
     container {
-      name   = "terraform"
-      image  = "${azurerm_container_registry.main.login_server}/brain-terraform:${var.image_tag}"
+      name = "terraform"
+      # Deliberately NOT var.image_tag. The runner's image carries the baked
+      # Terraform config, so an infra-only change has a new runner image while
+      # the app images stay where they are. Sharing one tag made that
+      # undeployable: the apply would reset the job to the previous image, and
+      # the next `plan` -- running the OLD baked config -- would propose
+      # destroying whatever the change had just created.
+      image  = "${azurerm_container_registry.main.login_server}/brain-terraform:${local.terraform_image_tag}"
       cpu    = 1.0
       memory = "2.0Gi"
 
@@ -953,6 +964,13 @@ resource "azurerm_container_app_job" "terraform" {
       env {
         name  = "TF_IMAGE_TAG"
         value = var.image_tag
+      }
+      # Persisted so a plain `az containerapp job start` (no --env-vars) is
+      # self-consistent: run.sh feeds this straight back as terraform_image_tag,
+      # so the runner does not plan a change to its own image.
+      env {
+        name  = "TF_TERRAFORM_IMAGE_TAG"
+        value = local.terraform_image_tag
       }
     }
   }

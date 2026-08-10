@@ -13,6 +13,12 @@ esac
 
 : "${TF_IMAGE_TAG:?TF_IMAGE_TAG is required so the apply pins the images it deploys}"
 
+# The tag of THIS image. Empty means "same as TF_IMAGE_TAG"; it differs only for
+# an infra-only change, where the runner moves and the app images do not. The
+# job template persists it, so a plain `job start` does not plan a change to the
+# runner's own image.
+TF_TERRAFORM_IMAGE_TAG="${TF_TERRAFORM_IMAGE_TAG:-}"
+
 # Auth is the brain-terraform service principal, not managed identity: the
 # azurerm state backend pins MSI api-version 2018-02-01 and the Container Apps
 # identity endpoint only serves 2019-08-01. ARM_CLIENT_SECRET arrives as a
@@ -24,9 +30,10 @@ cd /infra
 echo "==> terraform init"
 terraform init -backend-config=backend-production.hcl -input=false
 
-echo "==> terraform plan (image_tag=${TF_IMAGE_TAG})"
+echo "==> terraform plan (image_tag=${TF_IMAGE_TAG}, terraform_image_tag=${TF_TERRAFORM_IMAGE_TAG:-<same>})"
 terraform plan -var-file=production.tfvars \
   -var="image_tag=${TF_IMAGE_TAG}" \
+  -var="terraform_image_tag=${TF_TERRAFORM_IMAGE_TAG}" \
   -input=false -no-color -out=/tmp/tfplan
 
 if [ "$ACTION" = "apply" ]; then
