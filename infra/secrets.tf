@@ -128,6 +128,7 @@ locals {
     "brain-session-key",   # BRAIN_SESSION_KEY -- funded EVM key
     "openai-api-key",      # external credential
     "brain-api-token",     # agents -> API bearer token
+    "terraform-client-secret", # in-VNet runner auth; see the runner job
     "email-endpoint",      # auth service hard-exits without these two
     "email-api-key",
     "email-from",

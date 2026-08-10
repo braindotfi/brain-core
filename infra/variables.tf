@@ -218,6 +218,21 @@ variable "operator_extra_ip_ranges" {
   default     = []
 }
 
+variable "terraform_client_id" {
+  description = <<-EOT
+    Application (client) id the in-VNet Terraform runner authenticates as.
+
+    This is the brain-terraform service principal, NOT the runner's managed
+    identity. Managed identity does not work here: the azurerm STATE BACKEND's
+    authorizer requests tokens at api-version 2018-02-01, and the Container Apps
+    identity endpoint only speaks 2019-08-01. ARM_MSI_API_VERSION fixes the
+    provider but the backend ignores it, so `terraform init` fails before
+    anything else runs.
+  EOT
+  type        = string
+  default     = "110019c2-6fef-4e1e-8f9d-67c9da234640"
+}
+
 variable "tfstate_storage_account_id" {
   description = <<-EOT
     Resource id of the remote-state storage account, so the in-VNet Terraform

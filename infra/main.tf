@@ -904,6 +904,15 @@ resource "azurerm_container_app_job" "terraform" {
     identity = azurerm_user_assigned_identity.terraform.id
   }
 
+  # Resolved by the job's managed identity at container start, over the vault's
+  # private endpoint -- so the secret never leaves the VNet and is never passed
+  # on a command line.
+  secret {
+    name                = "terraform-client-secret"
+    identity            = azurerm_user_assigned_identity.terraform.id
+    key_vault_secret_id = azurerm_key_vault_secret.operator_supplied["terraform-client-secret"].versionless_id
+  }
+
   template {
     container {
       name   = "terraform"
@@ -911,15 +920,22 @@ resource "azurerm_container_app_job" "terraform" {
       cpu    = 1.0
       memory = "2.0Gi"
 
-      # Managed-identity auth: no client id/secret, no federated token needed
-      # once execution is inside the VNet.
-      env {
-        name  = "ARM_USE_MSI"
-        value = "true"
-      }
+      # Service-principal auth, NOT managed identity. The azurerm state backend
+      # requests MSI tokens at api-version 2018-02-01; the Container Apps
+      # identity endpoint only serves 2019-08-01 and rejects it, and the backend
+      # ignores ARM_MSI_API_VERSION. `terraform init` therefore fails before the
+      # provider is ever configured.
+      #
+      # The security goal is still met: what closes the Key Vault is running
+      # INSIDE the VNet, not which credential is used. The runner's managed
+      # identity is still what fetches this secret and pulls the image.
       env {
         name  = "ARM_CLIENT_ID"
-        value = azurerm_user_assigned_identity.terraform.client_id
+        value = var.terraform_client_id
+      }
+      env {
+        name        = "ARM_CLIENT_SECRET"
+        secret_name = "terraform-client-secret"
       }
       env {
         name  = "ARM_TENANT_ID"
