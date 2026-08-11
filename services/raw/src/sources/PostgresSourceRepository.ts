@@ -9,7 +9,12 @@
  */
 
 import type { Pool } from "pg";
-import { decryptCredentials, encryptCredentials, withTenantScope } from "@brain/shared";
+import {
+  decryptCredentials,
+  encryptCredentials,
+  withTenantScope,
+  type CredentialKeyProvider,
+} from "@brain/shared";
 import type { SourceRecord, SourceStatus, SourceSyncJobRecord, SourceType } from "./types.js";
 import type {
   ListFilter,
@@ -24,6 +29,12 @@ export interface PostgresSourceRepositoryDeps {
   readonly credentialKey?: Buffer;
   /** Label for the key (used for rotation tracking). Stored alongside ciphertext. */
   readonly credentialKeyId?: string;
+  /**
+   * Resolves historical key ids for rows whose `credential_key_id` differs
+   * from the active key (post-rotation). Absent in dev/env-var setups where
+   * only one key ever exists.
+   */
+  readonly credentialKeyProvider?: CredentialKeyProvider;
 }
 
 /**
@@ -217,8 +228,8 @@ export class PostgresSourceRepository
     if (this.deps.credentialKey === undefined) return null;
 
     const { rows } = await withTenantScope(this.deps.pool, tenantId, (c) =>
-      c.query<{ encrypted_credentials: Buffer | null }>(
-        `SELECT encrypted_credentials
+      c.query<{ encrypted_credentials: Buffer | null; credential_key_id: string | null }>(
+        `SELECT encrypted_credentials, credential_key_id
            FROM raw_sources
           WHERE id = $1 AND tenant_id = current_setting('app.tenant_id', true)
           LIMIT 1`,
@@ -227,6 +238,19 @@ export class PostgresSourceRepository
     );
     const row = rows[0];
     if (row === undefined || row.encrypted_credentials === null) return null;
+
+    const storedKeyId = row.credential_key_id ?? null;
+    if (storedKeyId !== null && storedKeyId !== this.deps.credentialKeyId) {
+      if (this.deps.credentialKeyProvider === undefined) {
+        throw new Error(
+          `PostgresSourceRepository: source ${id} was encrypted under key id ` +
+            `'${storedKeyId}' but the active key is '${this.deps.credentialKeyId}' and no ` +
+            "credentialKeyProvider is wired to resolve the historical key.",
+        );
+      }
+      const historicalKey = await this.deps.credentialKeyProvider.loadById(storedKeyId);
+      return decryptCredentials(row.encrypted_credentials, historicalKey);
+    }
     return decryptCredentials(row.encrypted_credentials, this.deps.credentialKey);
   }
 

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
+import { encryptCredentials } from "@brain/shared";
 import {
   SLACK_BOT_SCOPES,
   mintSlackInstallState,
@@ -80,6 +81,23 @@ describe("Slack installation credential storage", () => {
     await expect(store.getTokenForTenant(TENANT_ID)).resolves.toBe("xoxb-secret-token");
   });
 
+  it("resolves a historical key id via credentialKeyProvider on rotation", async () => {
+    const oldKey = randomBytes(32);
+    const activeKey = randomBytes(32);
+    const { ciphertext } = encryptCredentials({ bot_token: "xoxb-old-token" }, oldKey, "old-v1");
+    const pool = fakeReadonlyPool(ciphertext, "old-v1");
+    const store = new PostgresSlackInstallationStore(
+      pool,
+      { key: activeKey, keyId: "active-v2" }, // active key differs from the row's stored id
+      {
+        source: "azure-key-vault",
+        load: async () => undefined,
+        loadById: async (keyId: string) => (keyId === "old-v1" ? oldKey : Buffer.alloc(32)),
+      },
+    );
+    await expect(store.getTokenForTenant(TENANT_ID)).resolves.toBe("xoxb-old-token");
+  });
+
   it("fails closed when no installation or fallback token exists", async () => {
     const provider = new SlackInstallationTokenProvider({
       async getTokenForTenant() {
@@ -92,6 +110,38 @@ describe("Slack installation credential storage", () => {
     );
   });
 });
+
+/** Single-row read-only pool for a token stored under `keyId`. */
+function fakeReadonlyPool(ciphertext: Buffer, keyId: string): Pool {
+  const client = {
+    async query(text: string) {
+      if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text) || text.includes("set_config")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (text.includes("FROM surface_slack_installations")) {
+        return {
+          rows: [
+            {
+              tenant_id: TENANT_ID,
+              team_id: "T_1",
+              bot_token_encrypted: ciphertext,
+              credential_key_id: keyId,
+              bot_user_id: "B_1",
+              scopes: [SLACK_BOT_SCOPES[0]],
+              installed_by: "user_1",
+              installed_at: new Date(),
+              status: "active",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return { connect: async () => client } as unknown as Pool;
+}
 
 function fakePool(captured: { ciphertext?: Buffer | undefined }): Pool {
   const client = {

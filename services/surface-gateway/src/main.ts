@@ -75,6 +75,7 @@ async function main(): Promise<void> {
     envVarKey: cfg.BRAIN_SOURCE_CREDENTIAL_KEY,
     envKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
     nodeEnv: cfg.NODE_ENV,
+    allowUnencrypted: cfg.BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS,
   });
   const sourceCredential = await credentialKeyProvider.load();
   const { services, proposals } = buildSurfaceGatewayServices({
@@ -83,7 +84,11 @@ async function main(): Promise<void> {
     resolverPool,
     audit,
   });
-  const slackInstallations = new PostgresSlackInstallationStore(surfacePool, sourceCredential);
+  const slackInstallations = new PostgresSlackInstallationStore(
+    surfacePool,
+    sourceCredential,
+    credentialKeyProvider,
+  );
   const emailOnboarding = new PostgresEmailOnboardingStore(surfacePool, cfg.EMAIL_FROM);
   const teamsReferences = new PostgresTeamsConversationReferenceStore(surfacePool);
   const teamsInstallations = new PostgresTeamsInstallationStore(surfacePool);

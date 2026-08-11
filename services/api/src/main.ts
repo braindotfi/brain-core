@@ -628,10 +628,12 @@ async function main(): Promise<void> {
     envVarKey: cfg.BRAIN_SOURCE_CREDENTIAL_KEY,
     envKeyId: cfg.BRAIN_SOURCE_CREDENTIAL_KEY_ID,
     nodeEnv: cfg.NODE_ENV,
+    allowUnencrypted: cfg.BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS,
   });
   const sourceCredential = await credentialKeyProvider.load();
   const postgresSourceRepo = new PostgresSourceRepository({
     pool,
+    credentialKeyProvider,
     ...(sourceCredential !== undefined
       ? {
           credentialKey: sourceCredential.key,
