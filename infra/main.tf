@@ -14,7 +14,7 @@
 #   - Container Registry + Container Apps environment (VNet-injected)
 #   - Container Apps: api (public ingress), worker (no ingress), agents (internal)
 #   - Container App Jobs: migrate, db-roles
-#   - Front Door (frontdoor.tf, off until DNS cutover)
+#   - Front Door (frontdoor.tf) -- fronts mcp.brain.fi only, for the path rewrite
 
 locals {
   name_prefix = "brain-${var.environment}"
@@ -428,6 +428,22 @@ locals {
     # them in production; they are only meaningful while chain is Sepolia.
     BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED  = tostring(var.enable_service_token)
     BRAIN_DEMO_PROVISION_TESTNET_ATTESTED = tostring(var.enable_demo_provision)
+
+    # DefaultAzureCredential looks for a SYSTEM-assigned identity unless it is
+    # told which user-assigned one to use, and this stack only ever attaches a
+    # user-assigned identity. Without this, the Key Vault fetch below fails
+    # with "Unable to load the proper Managed Identity" and the api crash-loops
+    # at boot. Applies to every container that carries the services identity.
+    AZURE_CLIENT_ID = azurerm_user_assigned_identity.services.client_id
+
+    # Source-credential encryption (Key Vault path). These are plain env vars,
+    # not Container Apps secrets: the app fetches the key itself from Key
+    # Vault via its managed identity (already granted Key Vault Secrets User).
+    # Mounting the key's VALUE like the other secrets would land it on the
+    # env-var path (BRAIN_SOURCE_CREDENTIAL_KEY), which throws at boot in
+    # production -- only the vault URL + secret NAME travel as env vars.
+    BRAIN_AZURE_KEY_VAULT_URL              = azurerm_key_vault.main.vault_uri
+    BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME = azurerm_key_vault_secret.source_credential_key.name
   }
 }
 

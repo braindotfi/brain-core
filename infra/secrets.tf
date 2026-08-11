@@ -177,6 +177,27 @@ resource "azurerm_key_vault_secret" "blob_account_key" {
 }
 
 # ---------------------------------------------------------------------------
+# Source-credential encryption key (BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME)
+#
+# The app authenticates to Key Vault itself via its managed identity and
+# fetches this secret by name -- it is not mounted as a Container Apps secret
+# like the ones above. See the comment on BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME
+# in main.tf's common_env for why.
+# ---------------------------------------------------------------------------
+
+resource "random_bytes" "source_credential_key" {
+  length = 32
+}
+
+resource "azurerm_key_vault_secret" "source_credential_key" {
+  name         = "source-credential-key"
+  value        = random_bytes.source_credential_key.base64
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_role_assignment.operator_kv_admin]
+}
+
+# ---------------------------------------------------------------------------
 # Convenience: the exact `psql -v` arguments the db-roles job must pass.
 # Consumed by the db-roles Container App Job in main.tf.
 # ---------------------------------------------------------------------------
