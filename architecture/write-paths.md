@@ -109,10 +109,10 @@ Agents create PaymentIntent rows in the Ledger as proposals for financial action
 
 #### Audit
 
-| Writer           | Path                                      | Notes                       |
-| ---------------- | ----------------------------------------- | --------------------------- |
-| Every layer      | `audit_events` append-only writes         | Every material state change |
-| Anchor publisher | `audit_anchors` per published Merkle root | Hourly cadence              |
+| Writer           | Path                                      | Notes                                                                                                                                           |
+| ---------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every layer      | `audit_events` append-only writes         | Every material state change                                                                                                                     |
+| Anchor publisher | `audit_anchors` per published Merkle root | Up to 50 on-chain tenant roots per cycle; closes at the root threshold or one-hour maximum wait. Demo and sandbox tenants remain database-only. |
 
 ### What Is Not Allowed
 

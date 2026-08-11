@@ -4,12 +4,14 @@ description: Why every claim Brain makes is verifiable.
 
 # Proof
 
-Every meaningful event Brain records is hashed, chained, and periodically
-anchored on Base Sepolia. Brain's API and off-chain services are production
-available. The on-chain contract is unaudited, Base Sepolia only, and not
-deployed on Base mainnet. A counterparty, auditor, or end user can verify that
-a specific event happened, at a specific time, with a specific decision,
-**without trusting Brain**.
+Every meaningful event Brain records is hashed and chained. Production tenant
+roots are periodically anchored on Base Sepolia; demo and sandbox tenants keep
+an append-only database hash chain and are not published on-chain. Brain's API
+and off-chain services are production available. The on-chain contract is
+unaudited, Base Sepolia only, and not deployed on Base mainnet. A counterparty,
+auditor, or end user can verify that a specific production-tenant event
+happened, at a specific time, with a specific decision, **without trusting
+Brain**.
 
 ### Two Layers of Proof
 
@@ -49,11 +51,17 @@ To rewrite history, you'd have to regenerate every subsequent hash. And you'd st
 
 ### On-Chain Anchors
 
-Brain batches audit events into a Merkle tree per tenant and submits roots on
-the configured publisher cycle. The default interval is one hour, but an event
-is anchored only when its audit status records a confirmed on-chain
-transaction. There is no severity-accelerated anchoring path. Once published,
-a tenant-root pair cannot be published again.
+Brain batches audit events into a Merkle tree per tenant and submits up to 50
+eligible tenant roots in one publisher cycle. A cycle closes when it reaches
+that root count or one hour of waiting, whichever comes first. An event is
+anchored only when its audit status records a confirmed on-chain transaction.
+There is no severity-accelerated anchoring path. Once published, a tenant-root
+pair cannot be published again. Demo and sandbox tenant roots remain
+database-only and are excluded from those cycles.
+
+Five Base Sepolia production batches measured on 2026-08-11 consumed a weighted
+47,575 gas per tenant root. This is an observed operational measurement, not a
+fixed gas or cost guarantee.
 
 ```typescript
 const proof = await brain.proof(actionId);

@@ -2,6 +2,12 @@
 
 Query audit events, pull a Merkle inclusion proof, verify a proof independently, walk the full history for any Ledger entity, export, and pull the canonical **Proof** for an action. All event payloads land in the append-only hash chain. Production tenant roots are batch-anchored to `BrainAuditAnchor` on Base Sepolia; demo and sandbox tenants remain database-hash-chain-only and are not published on-chain.
 
+The publisher closes a production batch after 50 eligible tenant roots or one
+hour of waiting, whichever comes first. These are configurable operational
+limits. Five Base Sepolia production batches measured on 2026-08-11 consumed a
+weighted 47,575 gas per tenant root; this is an observed measurement, not a
+fixed gas or cost guarantee.
+
 | Operation                           | Endpoint                                        |
 | ----------------------------------- | ----------------------------------------------- |
 | Get the latest anchor               | `GET  /v1/audit/anchor/latest`                  |
