@@ -11,7 +11,7 @@
   "dependencies": {
     "@brain/execution": "workspace:*",
     "@brain/shared": "workspace:*",
-    "viem": "^2.21.0"
+    "viem": "^2.55.11"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -29,6 +29,6 @@
     "@brain/shared": "workspace:*",
     "fastify": "^5.11.0",
     "pg": "^8.22.0",
-    "viem": "^2.21.32"
+    "viem": "^2.55.11"
   }
 }

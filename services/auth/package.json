@@ -26,7 +26,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "fastify": "^5.11.0",
     "pg": "^8.22.0",
-    "viem": "^2.21.0",
+    "viem": "^2.55.11",
     "zod": "^3.23.8"
   },
   "devDependencies": {
