@@ -38,6 +38,7 @@ jobs:
           smoke_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' ROOT_COUNT='$ROOT_COUNT' MAX_WAIT_SECONDS='$MAX_WAIT_SECONDS' bash -s" <<'REMOTE'
           set -euo pipefail
+          trap 'echo "anchor_smoke_failure_line=${LINENO}" >&2' ERR
 
           cd ~/brain-core
           set -a
@@ -48,11 +49,7 @@ jobs:
             exit 1
           fi
 
-          api_commit="$(curl -fsS "$API_BASE/health" | docker exec -i brain-prod-api node -e '
-            let body = "";
-            process.stdin.on("data", (chunk) => { body += chunk; });
-            process.stdin.on("end", () => { process.stdout.write(JSON.parse(body).commit ?? ""); });
-          ')"
+          api_commit="$(curl -fsS "$API_BASE/health" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit", ""), end="")')"
           worker_sha="$(docker exec brain-prod-worker printenv GIT_SHA)"
           echo "staging_api_commit=$api_commit"
           echo "staging_worker_git_sha=$worker_sha"
@@ -60,61 +57,67 @@ jobs:
 
           create_tenant() {
             local mode="$1"
-            docker exec brain-prod-api node -e '
-              const { randomUUID } = require("node:crypto");
-              const mode = process.argv[1];
-              const suffix = randomUUID().replace(/-/g, "");
-              process.stdout.write(JSON.stringify({
-                company_name: `Anchor cycle smoke ${mode}`,
-                founder: {
-                  email: `anchor-cycle-${mode}+${suffix}@brain.invalid`,
-                  display_name: "Anchor Cycle Smoke",
-                },
-                founder_external_ref: `anchor-cycle-smoke:${mode}:${suffix}`,
-                demo_seed: mode === "demo",
-              }));
-            ' "$mode"
+            local suffix demo_seed
+            suffix="${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
+            if [[ "$mode" == "demo" ]]; then
+              demo_seed=true
+            else
+              demo_seed=false
+            fi
+            printf '{"company_name":"Anchor cycle smoke %s","founder":{"email":"anchor-cycle-%s+%s@brain.invalid","display_name":"Anchor Cycle Smoke"},"founder_external_ref":"anchor-cycle-smoke:%s:%s","demo_seed":%s}' \
+              "$mode" "$mode" "$suffix" "$mode" "$suffix" "$demo_seed"
           }
 
           create_response() {
             local payload="$1"
-            printf '%s' "$payload" | curl -fsS --retry 2 --connect-timeout 10 --max-time 120 \
+            local response_file status
+            response_file="$(mktemp)"
+            status="$(printf '%s' "$payload" | curl -sS --retry 2 --connect-timeout 10 --max-time 120 \
               -X POST "$API_BASE/v1/tenants" \
               -H "Content-Type: application/json" \
               -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
-              --data-binary @-
+              --data-binary @- \
+              --output "$response_file" \
+              --write-out '%{http_code}' || true)"
+            if [[ "$status" != "201" ]]; then
+              rm -f "$response_file"
+              echo "tenant_create_http_status=${status:-transport_error}" >&2
+              return 1
+            fi
+            cat "$response_file"
+            rm -f "$response_file"
           }
 
           parse_response_field() {
             local field="$1"
-            docker exec -i brain-prod-api node -e '
-              const field = process.argv[1];
-              let body = "";
-              process.stdin.on("data", (chunk) => { body += chunk; });
-              process.stdin.on("end", () => {
-                const parsed = JSON.parse(body);
-                const value = field === "session_token" ? parsed.session?.token : parsed[field];
-                if (typeof value !== "string" || value.length === 0) process.exit(1);
-                process.stdout.write(value);
-              });
-            ' "$field"
+            python3 -c 'import json,sys; field=sys.argv[1]; payload=json.load(sys.stdin); value=payload.get("session",{}).get("token") if field=="session_token" else payload.get(field); isinstance(value,str) and bool(value) or sys.exit(1); print(value,end="")' "$field"
           }
 
-          demo_response="$(create_response "$(create_tenant demo)")"
+          echo "anchor_smoke_phase=demo_tenant_create"
+          demo_payload="$(create_tenant demo)"
+          echo "anchor_smoke_phase=demo_tenant_request"
+          demo_response_file="$(mktemp)"
+          demo_create_status="$(printf '%s' "$demo_payload" | curl -sS --retry 2 --connect-timeout 10 --max-time 120 \
+            -X POST "$API_BASE/v1/tenants" \
+            -H "Content-Type: application/json" \
+            -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+            --data-binary @- \
+            --output "$demo_response_file" \
+            --write-out '%{http_code}' || true)"
+          echo "demo_tenant_create_http_status=${demo_create_status:-transport_error}"
+          if [[ "$demo_create_status" != "201" ]]; then
+            rm -f "$demo_response_file"
+            exit 1
+          fi
+          demo_response="$(cat "$demo_response_file")"
+          rm -f "$demo_response_file"
           demo_tenant_id="$(printf '%s' "$demo_response" | parse_response_field tenant_id)"
           demo_session_token="$(printf '%s' "$demo_response" | parse_response_field session_token)"
           demo_anchor="$(curl -fsS --retry 2 --connect-timeout 10 --max-time 30 \
             "$API_BASE/v1/audit/anchor/latest" \
             -H "Authorization: Bearer ${demo_session_token}")"
-          printf '%s' "$demo_anchor" | docker exec -i brain-prod-api node -e '
-            let body = "";
-            process.stdin.on("data", (chunk) => { body += chunk; });
-            process.stdin.on("end", () => {
-              const parsed = JSON.parse(body);
-              if (parsed.anchoring_mode !== "db_only" || parsed.guarantee !== "database_hash_chain") process.exit(1);
-            });
-          '
-          demo_anchor_rows="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
+          printf '%s' "$demo_anchor" | python3 -c 'import json,sys; payload=json.load(sys.stdin); payload.get("anchoring_mode")=="db_only" and payload.get("guarantee")=="database_hash_chain" or sys.exit(1)'
+          demo_anchor_rows="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
             -c "SELECT COUNT(*) FROM audit_anchors WHERE tenant_id = '${demo_tenant_id}';")"
           if [[ "$demo_anchor_rows" != "0" ]]; then
             echo "Expected no audit_anchors row for DB-only demo tenant $demo_tenant_id, found $demo_anchor_rows" >&2
@@ -128,7 +131,8 @@ jobs:
           started_epoch="$(date +%s)"
           tenant_ids=()
           for _ in $(seq 1 "$ROOT_COUNT"); do
-            response="$(create_response "$(create_tenant onchain)")"
+            tenant_payload="$(create_tenant onchain)"
+            response="$(create_response "$tenant_payload")"
             tenant_id="$(printf '%s' "$response" | parse_response_field tenant_id)"
             if [[ ! "$tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
               echo "Invalid smoke tenant id: $tenant_id" >&2
@@ -136,10 +140,11 @@ jobs:
             fi
             tenant_ids+=("$tenant_id")
           done
-          ids_sql="'$(IFS="','"; echo "${tenant_ids[*]}")'"
+          ids_sql="$(printf "'%s'," "${tenant_ids[@]}")"
+          ids_sql="${ids_sql%,}"
           echo "onchain_smoke_tenant_count=${#tenant_ids[@]}"
 
-          created_event_count="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
+          created_event_count="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
             -c "SELECT COUNT(*) FROM audit_events WHERE tenant_id IN (${ids_sql}) AND action = 'tenant.created';")"
           if [[ "$created_event_count" != "$ROOT_COUNT" ]]; then
             echo "Expected $ROOT_COUNT tenant.created events, found $created_event_count" >&2
@@ -148,7 +153,7 @@ jobs:
 
           anchored_summary=""
           for _ in $(seq 1 30); do
-            anchored_summary="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
+            anchored_summary="$(docker exec brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
               -c "SELECT COUNT(*) FILTER (WHERE onchain_tx_hash IS NOT NULL), COUNT(DISTINCT onchain_tx_hash), COALESCE(MAX(EXTRACT(EPOCH FROM (created_at - to_timestamp(${started_epoch})))::bigint), 0) FROM audit_anchors WHERE tenant_id IN (${ids_sql});")"
             IFS='|' read -r anchored_count tx_count elapsed_seconds <<< "$anchored_summary"
             if [[ "$anchored_count" == "$ROOT_COUNT" && "$tx_count" == "1" ]]; then
