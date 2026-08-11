@@ -32,6 +32,11 @@ on:
         required: false
         type: boolean
         default: false
+      ingestion_lineage:
+        description: "When true, print fixed raw-to-canonical-to-ledger lineage for the tenant"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,6 +59,7 @@ jobs:
       WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
       PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
+      INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
     steps:
       - name: Validate tenant id
         shell: bash
@@ -76,6 +82,10 @@ jobs:
             echo "wiki_question_search must be 160 characters or less"
             exit 1
           fi
+          if [[ "$INGESTION_LINEAGE" != "true" && "$INGESTION_LINEAGE" != "false" ]]; then
+            echo "ingestion_lineage must be true or false"
+            exit 1
+          fi
 
       - name: Configure SSH
         shell: bash
@@ -93,7 +103,7 @@ jobs:
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -117,6 +127,10 @@ jobs:
           done
           if [[ ${#WIKI_QUESTION_SEARCH} -gt 160 ]]; then
             echo "wiki_question_search failed remote validation"
+            exit 1
+          fi
+          if [[ "$INGESTION_LINEAGE" != "true" && "$INGESTION_LINEAGE" != "false" ]]; then
+            echo "ingestion_lineage failed remote validation"
             exit 1
           fi
 
@@ -587,6 +601,215 @@ jobs:
           COMMIT;
           SQL
           echo "::endgroup::"
+
+          if [[ "$INGESTION_LINEAGE" == "true" ]]; then
+            echo "::group::ingestion lineage"
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'raw artifacts and projection status'
+            SELECT ra.id AS raw_artifact_id,
+                   ra.ingested_at,
+                   ra.source_type,
+                   ra.mime_type,
+                   ra.bytes,
+                   to_jsonb(ra)->>'source_schema' AS source_schema,
+                   to_jsonb(ra)->>'object_type' AS object_type,
+                   to_jsonb(ra)->>'external_id' AS external_id,
+                   to_jsonb(ra)->>'operation' AS operation,
+                   to_jsonb(ra)->>'effective_at' AS effective_at,
+                   to_jsonb(ra)->>'observed_at' AS observed_at,
+                   to_jsonb(ra)->>'original_source' AS original_source,
+                   to_jsonb(ra)->>'source_id' AS source_id,
+                   to_jsonb(ra)->>'source_version' AS source_version,
+                   to_jsonb(ra)->>'idempotency_key' AS idempotency_key,
+                   ra.source_ref,
+                   to_jsonb(ra)->>'projection_status' AS projection_status,
+                   to_jsonb(ra)->>'projection_status_updated_at' AS projection_status_updated_at,
+                   COUNT(rp.id) AS parsed_row_count
+              FROM raw_artifacts ra
+              LEFT JOIN raw_parsed rp
+                ON rp.tenant_id = ra.tenant_id
+               AND rp.raw_artifact_id = ra.id
+             WHERE ra.tenant_id = :'tenant_id'
+             GROUP BY ra.id
+             ORDER BY ra.ingested_at ASC, ra.id ASC;
+
+            \echo 'parsed extraction payloads'
+            SELECT rp.id AS raw_parsed_id,
+                   rp.raw_artifact_id,
+                   rp.parser,
+                   rp.parser_version,
+                   rp.confidence,
+                   rp.extracted_at,
+                   rp.extracted AS extracted_payload
+              FROM raw_parsed rp
+             WHERE rp.tenant_id = :'tenant_id'
+             ORDER BY rp.extracted_at ASC, rp.id ASC;
+
+            \echo 'raw interpretation outcomes'
+            SELECT ril.raw_artifact_id,
+                   ril.source_schema,
+                   ril.parsed_id,
+                   ril.error,
+                   ril.attempt_count,
+                   ril.next_attempt_at,
+                   ril.interpreted_at
+              FROM raw_interpretation_log ril
+             WHERE ril.tenant_id = :'tenant_id'
+             ORDER BY ril.interpreted_at ASC, ril.raw_artifact_id ASC;
+
+            \echo 'document extraction job outcomes'
+            SELECT ej.id AS extraction_job_id,
+                   ej.raw_id AS raw_artifact_id,
+                   ej.status,
+                   ej.parsed_id,
+                   ej.confidence,
+                   ej.error,
+                   ej.attempt_count,
+                   ej.next_attempt_at,
+                   ej.requested_by,
+                   ej.started_at,
+                   ej.finished_at,
+                   ej.created_at,
+                   ej.updated_at
+              FROM extraction_jobs ej
+             WHERE ej.tenant_id = :'tenant_id'
+             ORDER BY ej.created_at ASC, ej.id ASC;
+
+            \echo 'canonical projection log'
+            SELECT cpl.raw_parsed_id,
+                   rp.raw_artifact_id,
+                   cpl.projector,
+                   cpl.domain,
+                   cpl.records_written,
+                   cpl.error,
+                   to_jsonb(cpl)->>'quarantined' AS quarantined,
+                   cpl.parsed_extracted_at,
+                   cpl.projected_at
+              FROM canonical_projection_log cpl
+              LEFT JOIN raw_parsed rp
+                ON rp.tenant_id = cpl.tenant_id
+               AND rp.id = cpl.raw_parsed_id
+             WHERE cpl.tenant_id = :'tenant_id'
+             ORDER BY cpl.projected_at ASC, cpl.raw_parsed_id ASC;
+
+            \echo 'canonical counterparties'
+            SELECT id,
+                   source_system,
+                   source_natural_key,
+                   name,
+                   type,
+                   provenance,
+                   confidence,
+                   source_ids,
+                   evidence_ids,
+                   extensions,
+                   created_at,
+                   updated_at
+              FROM canonical_counterparty
+             WHERE tenant_id = :'tenant_id'
+             ORDER BY source_system, source_natural_key, id;
+
+            \echo 'canonical obligations'
+            SELECT id,
+                   source_system,
+                   source_natural_key,
+                   direction,
+                   type,
+                   canonical_counterparty_id,
+                   counterparty_source_key,
+                   amount,
+                   currency,
+                   issue_date,
+                   due_date,
+                   status,
+                   provenance,
+                   confidence,
+                   source_ids,
+                   evidence_ids,
+                   extensions,
+                   created_at,
+                   updated_at
+              FROM canonical_obligation
+             WHERE tenant_id = :'tenant_id'
+             ORDER BY source_system, source_natural_key, id;
+
+            \echo 'ledger counterparties'
+            SELECT lc.id,
+                   lc.name,
+                   lc.type,
+                   lc.provenance,
+                   lc.confidence,
+                   lc.source_ids,
+                   lc.evidence_ids,
+                   to_jsonb(lc)->'metadata' AS metadata,
+                   lc.created_at,
+                   lc.updated_at
+              FROM ledger_counterparties lc
+             WHERE lc.owner_id = :'tenant_id'
+             ORDER BY lc.name, lc.id;
+
+            \echo 'ledger invoices'
+            SELECT li.id,
+                   li.invoice_number,
+                   li.counterparty_id,
+                   lc.name AS counterparty_name,
+                   li.amount_due,
+                   li.amount_paid,
+                   li.currency,
+                   li.issue_date,
+                   li.due_date,
+                   li.status,
+                   li.provenance,
+                   li.confidence,
+                   li.source_ids,
+                   li.evidence_ids,
+                   to_jsonb(li)->'metadata' AS metadata,
+                   li.created_at,
+                   li.updated_at
+              FROM ledger_invoices li
+              LEFT JOIN ledger_counterparties lc
+                ON lc.owner_id = li.owner_id
+               AND lc.id = li.counterparty_id
+             WHERE li.owner_id = :'tenant_id'
+             ORDER BY li.issue_date, li.invoice_number, li.id;
+
+            \echo 'ledger obligations'
+            SELECT lo.id,
+                   lo.type,
+                   to_jsonb(lo)->>'direction' AS direction,
+                   lo.counterparty_id,
+                   lc.name AS counterparty_name,
+                   lo.amount_due,
+                   lo.minimum_due,
+                   lo.currency,
+                   lo.due_date,
+                   lo.status,
+                   lo.provenance,
+                   lo.confidence,
+                   lo.source_ids,
+                   lo.evidence_ids,
+                   to_jsonb(lo)->'metadata' AS metadata,
+                   lo.created_at,
+                   lo.updated_at
+              FROM ledger_obligations lo
+              LEFT JOIN ledger_counterparties lc
+                ON lc.owner_id = lo.owner_id
+               AND lc.id = lo.counterparty_id
+             WHERE lo.owner_id = :'tenant_id'
+             ORDER BY lo.due_date, lo.id;
+
+            COMMIT;
+            SQL
+            echo "::endgroup::"
+          fi
 
           if [[ "$PROPOSAL_READ_MODEL_SMOKE" == "true" ]]; then
             echo "::group::proposal read-model HTTP smoke"
