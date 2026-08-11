@@ -87,20 +87,26 @@ jobs:
             process.stdin.on("data", (chunk) => { body += chunk; });
             process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.tenant_id); });
           ')"
-          smoke_token="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+          smoke_session_token="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
             let body = "";
             process.stdin.on("data", (chunk) => { body += chunk; });
             process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.session.token); });
           ')"
+          smoke_agent_token="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.agent.token); });
+          ')"
           [[ "$smoke_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]] || exit 1
-          [[ -n "$smoke_token" ]] || exit 1
+          [[ -n "$smoke_session_token" ]] || exit 1
+          [[ -n "$smoke_agent_token" ]] || exit 1
           printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id"
 
           upload_fixture() {
             local filename="$1" object_type="$2" response
             response="$(curl -fsS --connect-timeout 10 --max-time 90 \
               -X POST "$API_BASE/v1/raw/ingest" \
-              -H "Authorization: Bearer ${smoke_token}" \
+              -H "Authorization: Bearer ${smoke_agent_token}" \
               -F 'source_type=csv_upload' \
               -F "object_type=${object_type}" \
               -F "source_ref={\"fixture_origin\":\"brain_core_staging_smoke\"}" \
@@ -132,13 +138,13 @@ jobs:
             printf 'fixture=%s object_type=%s raw_id=%s\n' "${filenames[$index]}" "${object_types[$index]}" "$raw_id"
             curl -fsS --connect-timeout 10 --max-time 90 \
               -X POST "$API_BASE/v1/raw/$raw_id/extract" \
-              -H "Authorization: Bearer ${smoke_token}" >/dev/null
+              -H "Authorization: Bearer ${smoke_agent_token}" >/dev/null
           done
 
           for attempt in $(seq 1 72); do
             complete=0
             for index in "${!filenames[@]}"; do
-              artifact="$(curl -fsS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_token}" "$API_BASE/v1/raw/${raw_ids[$index]}")"
+              artifact="$(curl -fsS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_agent_token}" "$API_BASE/v1/raw/${raw_ids[$index]}")"
               projection_status="$(read_field "$artifact" projection_status)"
               printf 'fixture=%s raw_id=%s projection_status=%s\n' "${filenames[$index]}" "${raw_ids[$index]}" "$projection_status"
               if [[ "$projection_status" == 'projected' ]]; then
@@ -153,10 +159,10 @@ jobs:
           done
 
           payables="$(curl -fsS --connect-timeout 10 --max-time 30 \
-            -H "Authorization: Bearer ${smoke_token}" \
+            -H "Authorization: Bearer ${smoke_session_token}" \
             "$API_BASE/v1/ledger/obligations?direction=payable&type=invoice&status=due&limit=500")"
           invoices="$(curl -fsS --connect-timeout 10 --max-time 30 \
-            -H "Authorization: Bearer ${smoke_token}" \
+            -H "Authorization: Bearer ${smoke_session_token}" \
             "$API_BASE/v1/ledger/invoices?limit=500")"
           PAYABLES="$payables" INVOICES="$invoices" docker exec -i -e PAYABLES -e INVOICES brain-prod-api node -e '
             const payables = JSON.parse(process.env.PAYABLES).obligations;
