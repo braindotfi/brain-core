@@ -20,7 +20,7 @@ dependencies = [
   # CSV/plain text need only the stdlib; XLSX via openpyxl; text-layer PDFs
   # via pypdf. Image and scanned PDF OCR uses the OpenAI vision model.
   "openpyxl>=3.1.0",
-  "pypdf>=6.14.2",  # Includes the available fixes for PDF parsing denial-of-service advisories.
+  "pypdf>=6.15.0",  # Includes the available fixes for PDF parsing denial-of-service advisories.
 ]
 
 [project.optional-dependencies]
