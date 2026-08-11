@@ -81,7 +81,7 @@ function appPool(
       ) {
         return Promise.resolve({ rows: [], rowCount: 0 });
       }
-      if (sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via)")) {
+      if (sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)")) {
         const [tenantId] = values as [string];
         tenants.set(tenantId, "production");
         return Promise.resolve({ rows: [], rowCount: 1 });
@@ -304,9 +304,13 @@ describe("production tenancy routes", () => {
       expect(body.agent.scopes).not.toContain("payment_intent:execute");
       expect(
         appDb.calls.some((c) =>
-          c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via)"),
+          c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
         ),
       ).toBe(true);
+      const tenantInsert = appDb.calls.find((c) =>
+        c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
+      );
+      expect(tenantInsert?.values?.[1]).toBe("onchain");
       expect(
         appDb.calls.some(
           (c) =>
@@ -429,6 +433,10 @@ describe("production tenancy routes", () => {
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(appDb.tenants.get(body.tenant_id)).toBe("production");
+      const tenantInsert = appDb.calls.find((c) =>
+        c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
+      );
+      expect(tenantInsert?.values?.[1]).toBe("db_only");
       expect(demoSeeder).toHaveBeenCalledWith({
         tenantId: body.tenant_id,
         actor: expect.stringMatching(/^user_/),

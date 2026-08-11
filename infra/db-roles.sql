@@ -256,17 +256,20 @@ GRANT INSERT ON ledger_counterparty_payment_instructions TO brain_ledger_project
 -- money-path (ledger_*) grants at all.
 GRANT SELECT, INSERT, UPDATE ON execution_outbox TO brain_execution_worker;
 
--- brain_audit_verifier: read audit_events; scan and heal audit_anchors;
+-- brain_audit_verifier: read audit events and tenant anchor modes; scan and heal audit anchors;
 -- advance the verifier cursor; append findings. No UPDATE/DELETE on findings,
 -- so a detected break is un-erasable.
 GRANT SELECT ON audit_events TO brain_audit_verifier;
+GRANT SELECT ON tenants TO brain_audit_verifier;
 GRANT SELECT, UPDATE ON audit_anchors TO brain_audit_verifier;
 GRANT SELECT, INSERT, UPDATE ON audit_verifier_checkpoint TO brain_audit_verifier;
 GRANT SELECT, INSERT ON audit_integrity_findings TO brain_audit_verifier;
 
--- brain_audit_publisher: cross-tenant audit_events enumeration only (the
+-- brain_audit_publisher: cross-tenant audit events and tenant anchor-mode
+-- enumeration only (the
 -- per-tenant publish runs on brain_app under RLS).
 GRANT SELECT ON audit_events TO brain_audit_publisher;
+GRANT SELECT ON tenants TO brain_audit_publisher;
 -- The scheduled publisher derives each tenant's next window from
 -- MAX(period_end) over its own anchors, so coverage survives a restart
 -- instead of always re-deriving a fixed "last intervalMs" window.

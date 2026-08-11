@@ -2124,9 +2124,14 @@
           "required_scope": "audit:read",
           "enforcement": "route_scope_check_enforced",
           "request_shape": "no params",
-          "response_shape": "200 latest anchor",
+          "response_shape": "200 { anchoring_mode: onchain|db_only, guarantee: base_sepolia|database_hash_chain, latest anchor fields nullable for db_only }",
           "example_request": "GET /v1/audit/anchor/latest",
-          "example_response": { "id": "anchor_example", "event_count": 1 },
+          "example_response": {
+            "anchoring_mode": "onchain",
+            "guarantee": "base_sepolia",
+            "id": "anchor_example",
+            "event_count": 1
+          },
           "openapi": "documented:/audit/anchor/latest"
         },
         {

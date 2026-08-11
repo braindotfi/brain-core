@@ -597,6 +597,18 @@ const envSchema = z.object({
     .positive()
     .default(60 * 60 * 1000),
   /**
+   * Number of accumulated tenant roots that closes an anchor cycle early.
+   * Defaults to the on-chain contract batch cap.
+   */
+  AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS: z.coerce.number().int().positive().max(50).default(50),
+  /**
+   * Maximum latency for an eligible tenant root. Falls back to the legacy
+   * AUDIT_ANCHOR_INTERVAL_MS when not explicitly configured.
+   */
+  AUDIT_ANCHOR_MAX_WAIT_MS: z.coerce.number().int().positive().optional(),
+  /** Polling granularity for evaluating the root-count and max-wait trigger. */
+  AUDIT_ANCHOR_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  /**
    * Contract deploy block floor for AnchorPublished scans. When unset, the
    * reader uses a bounded lookback window and logs a warning instead of
    * scanning from genesis.
@@ -611,9 +623,9 @@ const envSchema = z.object({
    * read as covered while the wallet drained to a standstill for six days
    * (2026-07-30 to 2026-08-05).
    *
-   * The default is ~0.05 ETH: roughly ten full 50-entry `anchorBatch` cycles at
-   * the 3 gwei fee floor with the x2 gas safety factor, i.e. hours of runway
-   * rather than minutes. It is a warning threshold, never a fence — nothing
+   * The default is ~0.05 ETH: roughly forty full 50-entry `anchorBatch` cycles
+   * at the 0.5 gwei fee floor with the x2 gas safety factor, i.e. hours of
+   * runway rather than minutes. It is a warning threshold, never a fence; nothing
    * stops broadcasting because of it.
    */
   AUDIT_ANCHOR_WALLET_BALANCE_ALERT_WEI: z.coerce

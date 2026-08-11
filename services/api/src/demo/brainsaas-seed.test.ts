@@ -177,12 +177,13 @@ describe("seedBrainSaasDemo", () => {
     await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
 
     const tenantUpsert = scopedCalls.find((c) =>
-      c.sql.includes("INSERT INTO tenants (id, kind, default_ap_account_id)"),
+      c.sql.includes("INSERT INTO tenants (id, kind, audit_anchor_mode, default_ap_account_id)"),
     );
     expect(tenantUpsert).toBeDefined();
     expect(tenantUpsert?.sql).toContain("ON CONFLICT (id) DO UPDATE");
     expect(tenantUpsert?.sql).toContain("SET default_ap_account_id");
     expect(tenantUpsert?.sql).not.toContain("SET kind");
+    expect(tenantUpsert?.sql).toContain("audit_anchor_mode = 'db_only'");
   });
 
   it("marks unapproved vendors high-risk with no settlement alias", async () => {
@@ -345,7 +346,7 @@ describe("seedBrainSaasDemo", () => {
     const result = await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
 
     const tenantUpsert = scopedCalls.find((c) =>
-      c.sql.includes("INSERT INTO tenants (id, kind, default_ap_account_id)"),
+      c.sql.includes("INSERT INTO tenants (id, kind, audit_anchor_mode, default_ap_account_id)"),
     );
     expect(tenantUpsert).toBeDefined();
     expect(tenantUpsert!.values).toEqual([TENANT, "acct_brainsaas_operating"]);

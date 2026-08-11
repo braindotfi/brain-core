@@ -180,8 +180,8 @@ async function planBatch(input: {
     return { rows: input.rows, unpublishedRows, estimatedCostWei: 0n };
   }
 
-  let maxPriorityFeePerGas = gweiFloor("BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI", "1.5");
-  let maxFeePerGas = gweiFloor("BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI", "3");
+  let maxPriorityFeePerGas = gweiFloor("BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI", "0.05");
+  let maxFeePerGas = gweiFloor("BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI", "0.5");
   try {
     const est = await input.publicClient.estimateFeesPerGas();
     if (est.maxPriorityFeePerGas > maxPriorityFeePerGas) {

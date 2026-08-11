@@ -141,6 +141,7 @@ export const BRAIN_ERROR_CODES = [
   "audit_event_not_found",
   "audit_proof_invalid",
   "audit_anchor_not_yet_published",
+  "audit_anchor_db_only",
   "audit_no_events",
   // An idempotency key was reused for an event whose logical payload differs
   // from the one already persisted under that key (doc A P1.2).
@@ -343,6 +344,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   agent_proposal_invalid_state: 409, // alias of execution_proposal_invalid_state (409)
   agent_idempotency_conflict: 409, // alias of execution_idempotency_conflict (409)
   audit_anchor_not_yet_published: 409,
+  audit_anchor_db_only: 409,
   signup_email_taken: 409,
   signup_token_invalid: 400,
   auth_invalid_credentials: 401,

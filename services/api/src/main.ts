@@ -211,12 +211,14 @@ import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.
 import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
+import { anchorCycleReason } from "./anchor-cycle.js";
 
 import {
   registerAuditRoutes,
   registerWebhookRoutes,
   classifyAnchorBatchOutcome,
   createPendingAnchor,
+  findAuditAnchoringMode,
   nextAnchorWindow,
   publishAnchor,
   publishPendingAnchorBatch,
@@ -2638,22 +2640,21 @@ async function main(): Promise<void> {
             },
           );
 
-          // POST /v1/demo/provision-run/:tenantId/anchor — server-side anchor
-          // trigger for the BrainSaaS playground (see demo/anchor-route.ts). Same
-          // shared-secret fence as provision-run; anchors the run's audit log
-          // on-chain immediately so the demo does not wait for the hourly
-          // background publisher. Only meaningful when the broadcaster is wired.
+          // POST /v1/demo/provision-run/:tenantId/anchor exists for an explicit
+          // DB-only response to legacy playground callers. Demo data is never
+          // published on-chain.
           await registerDemoProvisionAnchorRoute(v1, {
             provisionSecret,
-            // Use the app pool (brain_app, FORCE RLS), NOT a BYPASSRLS pool:
-            // publishAnchor -> withTenantScope(tenantId) sets app.tenant_id and
-            // relies on RLS to scope listEventsForAnchor to this tenant. A
-            // BYPASSRLS pool would silently anchor EVERY tenant's events under
-            // this one demo tenant. Same pool the /audit/anchor/publish route uses.
             publish:
               anchorBroadcaster === undefined
                 ? undefined
                 : (input) => publishAnchor(pool, anchorBroadcaster, input),
+            isDbOnly: (tenantId) =>
+              withTenantScope(
+                pool,
+                tenantId,
+                async (client) => (await findAuditAnchoringMode(client)) === "db_only",
+              ),
           });
         }
 
@@ -2743,7 +2744,8 @@ async function main(): Promise<void> {
                 // never auto-promoted to LIVE_AGENTS. Defense in depth for the
                 // no-execute ceiling, even if a scope ever leaked.
                 const tenantInsert = await c.query(
-                  `INSERT INTO tenants (id, kind, sandbox, created_via) VALUES ($1, 'demo', TRUE, 'self_serve')
+                  `INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)
+                   VALUES ($1, 'demo', TRUE, 'self_serve', 'db_only')
                      ON CONFLICT (id) DO NOTHING`,
                   [tenantId],
                 );
@@ -3187,10 +3189,12 @@ async function main(): Promise<void> {
   let anchorTimer: NodeJS.Timeout | undefined;
   let anchorShutdown = false;
 
-  // The scheduled cross-tenant anchor publisher is part of the "audit" worker
-  // group (the demo trigger endpoint, when HTTP is on, drives runAnchor too).
+  // The scheduled cross-tenant anchor publisher is part of the audit worker.
+  // Demo/sandbox rows are explicitly db_only and excluded before a cycle can
+  // create a pending on-chain anchor.
   if (composition.workers.has("audit") && anchorBroadcaster !== undefined) {
-    const intervalMs = cfg.AUDIT_ANCHOR_INTERVAL_MS;
+    const maxWaitMs = cfg.AUDIT_ANCHOR_MAX_WAIT_MS ?? cfg.AUDIT_ANCHOR_INTERVAL_MS;
+    const checkIntervalMs = cfg.AUDIT_ANCHOR_CHECK_INTERVAL_MS;
     let anchorRunning = false;
     // A cycle that attempts work and publishes nothing is the outage signature
     // (see classifyAnchorBatchOutcome). Counting consecutive zero-yield batches
@@ -3225,20 +3229,24 @@ async function main(): Promise<void> {
       const now = new Date();
       try {
         const pending = await auditVerifierPool.query<AuditAnchorRow>(
-          `SELECT id, tenant_id, merkle_root, event_count, period_start, period_end,
-                  onchain_tx_hash, onchain_block_number, onchain_status, created_at
-             FROM audit_anchors
-            WHERE onchain_tx_hash IS NULL
-              AND onchain_status = 'pending'
-            ORDER BY created_at ASC
+          `SELECT a.id, a.tenant_id, a.merkle_root, a.event_count, a.period_start, a.period_end,
+                  a.onchain_tx_hash, a.onchain_block_number, a.onchain_status, a.created_at
+             FROM audit_anchors a
+             JOIN tenants t ON t.id = a.tenant_id
+            WHERE a.onchain_tx_hash IS NULL
+              AND a.onchain_status = 'pending'
+              AND t.audit_anchor_mode = 'onchain'
+            ORDER BY a.created_at ASC
             LIMIT $1`,
           [cfg.AUDIT_ANCHOR_BATCH_SIZE],
         );
         const pendingDepth = await auditVerifierPool.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count
-             FROM audit_anchors
-            WHERE onchain_tx_hash IS NULL
-              AND onchain_status = 'pending'`,
+             FROM audit_anchors a
+             JOIN tenants t ON t.id = a.tenant_id
+            WHERE a.onchain_tx_hash IS NULL
+              AND a.onchain_status = 'pending'
+              AND t.audit_anchor_mode = 'onchain'`,
         );
         metrics.gauge(
           "brain.audit.anchor.pending_backlog_depth",
@@ -3287,13 +3295,15 @@ async function main(): Promise<void> {
                   MIN(e.created_at) AS oldest_unanchored,
                   a.covered_to
              FROM audit_events e
+             JOIN tenants t ON t.id = e.tenant_id
              LEFT JOIN (
                SELECT tenant_id, MAX(period_end) AS covered_to
                  FROM audit_anchors
                 WHERE onchain_status <> 'reverted'
                 GROUP BY tenant_id
              ) a ON a.tenant_id = e.tenant_id
-            WHERE a.covered_to IS NULL OR e.created_at > a.covered_to
+            WHERE t.audit_anchor_mode = 'onchain'
+              AND (a.covered_to IS NULL OR e.created_at > a.covered_to)
             GROUP BY e.tenant_id, a.covered_to`,
         );
 
@@ -3398,8 +3408,72 @@ async function main(): Promise<void> {
         log.error({ err }, "anchor tenant query failed");
       } finally {
         anchorRunning = false;
+      }
+    };
+
+    const runAnchorCycle = async (): Promise<void> => {
+      try {
+        const [pending, eligible] = await Promise.all([
+          auditVerifierPool.query<{ count: string; oldest_pending: Date | null }>(
+            `SELECT COUNT(*)::text AS count, MIN(a.created_at) AS oldest_pending
+               FROM audit_anchors a
+               JOIN tenants t ON t.id = a.tenant_id
+              WHERE a.onchain_tx_hash IS NULL
+                AND a.onchain_status = 'pending'
+                AND t.audit_anchor_mode = 'onchain'`,
+          ),
+          auditPublisherPool.query<{ count: string; oldest_eligible: Date | null }>(
+            `WITH coverage AS (
+               SELECT tenant_id, MAX(period_end) AS covered_to
+                 FROM audit_anchors
+                WHERE onchain_status <> 'reverted'
+                GROUP BY tenant_id
+             ), eligible AS (
+               SELECT e.tenant_id, MIN(e.created_at) AS oldest_unanchored
+                 FROM audit_events e
+                 JOIN tenants t ON t.id = e.tenant_id
+                 LEFT JOIN coverage c ON c.tenant_id = e.tenant_id
+                WHERE t.audit_anchor_mode = 'onchain'
+                  AND (c.covered_to IS NULL OR e.created_at > c.covered_to)
+                GROUP BY e.tenant_id
+             )
+             SELECT COUNT(*)::text AS count, MIN(oldest_unanchored) AS oldest_eligible
+               FROM eligible`,
+          ),
+        ]);
+        const pendingRootCount = Number(pending.rows[0]?.count ?? 0);
+        const eligibleRootCount = Number(eligible.rows[0]?.count ?? 0);
+        metrics.gauge(
+          "brain.audit.anchor.accumulated_tenant_roots",
+          pendingRootCount + eligibleRootCount,
+        );
+        const reason = anchorCycleReason({
+          pendingRootCount,
+          eligibleRootCount,
+          oldestPendingAt: pending.rows[0]?.oldest_pending ?? null,
+          oldestEligibleAt: eligible.rows[0]?.oldest_eligible ?? null,
+          triggerTenantRoots: cfg.AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS,
+          maxWaitMs,
+          now: new Date(),
+        });
+        if (reason !== null) {
+          log.info(
+            {
+              reason,
+              pendingRootCount,
+              eligibleRootCount,
+              triggerTenantRoots: cfg.AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS,
+              maxWaitMs,
+            },
+            "anchor cycle closing",
+          );
+          await runAnchor();
+        }
+      } catch (err) {
+        log.error({ err }, "anchor cycle trigger query failed");
+      } finally {
         if (!anchorShutdown) {
-          anchorTimer = setTimeout(() => void runAnchor(), intervalMs);
+          anchorTimer = setTimeout(() => void runAnchorCycle(), checkIntervalMs);
         }
       }
     };
@@ -3407,11 +3481,20 @@ async function main(): Promise<void> {
     // Expose for the demo trigger endpoint.
     triggerAnchor = runAnchor;
 
-    // In demo mode, fire the first anchor after 10s so it's immediate for
-    // demo operators; production uses the full intervalMs delay.
-    const firstRunMs = cfg.BRAIN_DEMO_MODE ? 10_000 : intervalMs;
-    anchorTimer = setTimeout(() => void runAnchor(), firstRunMs);
-    log.info({ intervalMs, firstRunMs }, "anchor publisher started");
+    // Poll the adaptive trigger rather than publishing on a fixed cadence.
+    // Demo tenants are db_only, so the shorter demo boot delay is only a
+    // prompt no-work check and cannot submit demo data on-chain.
+    const firstCheckMs = cfg.BRAIN_DEMO_MODE ? 10_000 : checkIntervalMs;
+    anchorTimer = setTimeout(() => void runAnchorCycle(), firstCheckMs);
+    log.info(
+      {
+        triggerTenantRoots: cfg.AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS,
+        maxWaitMs,
+        checkIntervalMs,
+        firstCheckMs,
+      },
+      "adaptive anchor publisher started",
+    );
   }
 
   // -- Agent-route worker (Phase 1) -----------------------------------

@@ -3317,8 +3317,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the latest on-chain anchor for the current tenant
-         * @description Requires `audit:read`.
+         * Get the current tenant's audit anchoring status
+         * @description Requires `audit:read`. `anchoring_mode=onchain` returns the latest
+         *     Base Sepolia anchor. Demo and sandbox tenants return
+         *     `anchoring_mode=db_only`: their append-only database hash chain is
+         *     retained, but no audit root is published on-chain.
          */
         get: operations["getLatestAnchor"];
         put?: never;
@@ -3344,7 +3347,8 @@ export interface paths {
          *     broadcaster is configured for this deployment — if not
          *     configured, this path does not exist (404 route not found, not a
          *     Brain error envelope). Per-tenant 60-second cooldown between
-         *     publishes.
+         *     publishes. Database-hash-chain-only demo and sandbox tenants are
+         *     rejected with `409 audit_anchor_db_only`.
          */
         post: operations["publishAnchor"];
         delete?: never;
@@ -11090,20 +11094,24 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Anchor record */
+            /** @description On-chain anchor record or a database-hash-chain-only status */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        id?: string;
-                        merkle_root?: string;
-                        event_count?: number;
+                        /** @enum {string} */
+                        anchoring_mode: "onchain" | "db_only";
+                        /** @enum {string} */
+                        guarantee: "base_sepolia" | "database_hash_chain";
+                        id?: string | null;
+                        merkle_root?: string | null;
+                        event_count?: number | null;
                         /** Format: date-time */
-                        period_start?: string;
+                        period_start?: string | null;
                         /** Format: date-time */
-                        period_end?: string;
+                        period_end?: string | null;
                         onchain_tx_hash?: string | null;
                         onchain_block_number?: number | null;
                     };
@@ -11147,6 +11155,15 @@ export interface operations {
             };
             /** @description No audit events in the last 24 hours. Error code `audit_no_events`. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Demo or sandbox tenant is database-hash-chain-only. Error code `audit_anchor_db_only`. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

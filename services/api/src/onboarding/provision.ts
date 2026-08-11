@@ -159,7 +159,7 @@ export async function provisionTenant(
   try {
     await withTenantScope(pool, tenantId, async (c: TenantScopedClient) => {
       await c.query(
-        "INSERT INTO tenants (id, sandbox, created_via) VALUES ($1, TRUE, 'self_serve')",
+        "INSERT INTO tenants (id, sandbox, created_via, audit_anchor_mode) VALUES ($1, TRUE, 'self_serve', 'db_only')",
         [tenantId],
       );
       await c.query(

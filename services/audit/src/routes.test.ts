@@ -270,6 +270,79 @@ describe("GET /audit/events query-param validation (F-2)", () => {
   });
 });
 
+describe("GET /audit/anchor/latest anchoring mode", () => {
+  const tenantId = newTenantId();
+
+  async function buildApp(mode: "onchain" | "db_only") {
+    const app = Fastify();
+    await app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      (req as unknown as { principal: unknown }).principal = {
+        tenantId,
+        id: "user_1",
+        type: "user",
+        scopes: ["audit:read"],
+      };
+    });
+    const anchor = {
+      id: "anc_1",
+      tenant_id: tenantId,
+      merkle_root: Buffer.alloc(32, 1),
+      event_count: 3,
+      period_start: new Date("2026-08-11T00:00:00Z"),
+      period_end: new Date("2026-08-11T01:00:00Z"),
+      onchain_tx_hash: Buffer.alloc(32, 2),
+      onchain_block_number: "123",
+      onchain_status: "confirmed",
+      created_at: new Date("2026-08-11T01:00:00Z"),
+    };
+    const client = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("SELECT audit_anchor_mode")) {
+          return { rows: [{ audit_anchor_mode: mode }], rowCount: 1 };
+        }
+        if (text.includes("FROM audit_anchors")) return { rows: [anchor], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    await registerAuditRoutes(app, { pool, audit: new InMemoryAuditEmitter() });
+    return app;
+  }
+
+  it("returns an explicit database-hash-chain-only status for demo tenants", async () => {
+    const app = await buildApp("db_only");
+    try {
+      const res = await app.inject({ method: "GET", url: "/audit/anchor/latest" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        anchoring_mode: "db_only",
+        guarantee: "database_hash_chain",
+        merkle_root: null,
+        onchain_tx_hash: null,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("retains the per-tenant Base Sepolia status for onchain tenants", async () => {
+    const app = await buildApp("onchain");
+    try {
+      const res = await app.inject({ method: "GET", url: "/audit/anchor/latest" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        anchoring_mode: "onchain",
+        guarantee: "base_sepolia",
+        event_count: 3,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe("POST /audit/export (declared stub)", () => {
   const tenantId = newTenantId();
 

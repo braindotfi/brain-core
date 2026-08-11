@@ -115,14 +115,14 @@ check(
 
 const demoSeed = read("services/api/src/demo/brainsaas-seed.ts");
 const demoTenantInsertIndex = demoSeed.indexOf(
-  "INSERT INTO tenants (id, kind, default_ap_account_id)",
+  "INSERT INTO tenants (id, kind, audit_anchor_mode, default_ap_account_id)",
 );
 const demoBootstrapIndex = demoSeed.indexOf("insertBootstrapAdminMember", demoTenantInsertIndex);
 check(
   "demo provisioning creates member for user session principal",
   demoTenantInsertIndex >= 0 &&
     demoBootstrapIndex > demoTenantInsertIndex &&
-    demoSeed.includes("VALUES ($1, 'demo', $2)") &&
+    demoSeed.includes("VALUES ($1, 'demo', 'db_only', $2)") &&
     demoSeed.includes("memberId: actor") &&
     !demoSeed.includes("memberId: agentId"),
   "demo provision-run must create a bootstrap member for the user session, never the agent",
@@ -296,10 +296,19 @@ check(
 check(
   "production tenant creation stamps production and rejects demo-fence auth",
   productionTenancy.includes('"/tenants"') &&
-    productionTenancy.includes("INSERT INTO tenants (id, kind, sandbox, created_via)") &&
-    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin')") &&
+    productionTenancy.includes(
+      "INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)",
+    ) &&
+    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin', $2)") &&
     productionTenancy.includes('request.headers["x-demo-provision-auth"]'),
   "POST /v1/tenants must create tenant.kind production and reject demo provision credentials",
+);
+check(
+  "audit publisher excludes db-only tenant roots before on-chain batching",
+  apiMain.includes("t.audit_anchor_mode = 'onchain'") &&
+    apiMain.includes("AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS") &&
+    apiMain.includes("AUDIT_ANCHOR_MAX_WAIT_MS"),
+  "the on-chain scheduler must exclude db_only tenants and close cycles by root threshold or max wait",
 );
 const productionTenantRouteStart = productionTenancy.indexOf('"/tenants"');
 const productionTenantAgentStart = productionTenancy.indexOf(

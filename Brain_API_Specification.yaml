@@ -6601,22 +6601,29 @@ paths:
   /audit/anchor/latest:
     get:
       tags: [Audit]
-      summary: Get the latest on-chain anchor for the current tenant
-      description: Requires `audit:read`.
+      summary: Get the current tenant's audit anchoring status
+      description: |
+        Requires `audit:read`. `anchoring_mode=onchain` returns the latest
+        Base Sepolia anchor. Demo and sandbox tenants return
+        `anchoring_mode=db_only`: their append-only database hash chain is
+        retained, but no audit root is published on-chain.
       operationId: getLatestAnchor
       responses:
         '200':
-          description: Anchor record
+          description: On-chain anchor record or a database-hash-chain-only status
           content:
             application/json:
               schema:
                 type: object
+                required: [anchoring_mode, guarantee]
                 properties:
-                  id: { type: string }
-                  merkle_root: { type: string }
-                  event_count: { type: integer }
-                  period_start: { type: string, format: date-time }
-                  period_end: { type: string, format: date-time }
+                  anchoring_mode: { type: string, enum: [onchain, db_only] }
+                  guarantee: { type: string, enum: [base_sepolia, database_hash_chain] }
+                  id: { type: [string, "null"] }
+                  merkle_root: { type: [string, "null"] }
+                  event_count: { type: [integer, "null"] }
+                  period_start: { type: [string, "null"], format: date-time }
+                  period_end: { type: [string, "null"], format: date-time }
                   onchain_tx_hash: { type: [string, "null"] }
                   onchain_block_number: { type: [integer, "null"] }
 
@@ -6636,7 +6643,8 @@ paths:
         broadcaster is configured for this deployment — if not
         configured, this path does not exist (404 route not found, not a
         Brain error envelope). Per-tenant 60-second cooldown between
-        publishes.
+        publishes. Database-hash-chain-only demo and sandbox tenants are
+        rejected with `409 audit_anchor_db_only`.
       operationId: publishAnchor
       responses:
         '200':
@@ -6653,6 +6661,11 @@ paths:
                   basescan_url: { type: [string, "null"] }
         '404':
           description: No audit events in the last 24 hours. Error code `audit_no_events`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Demo or sandbox tenant is database-hash-chain-only. Error code `audit_anchor_db_only`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

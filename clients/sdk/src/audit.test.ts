@@ -170,6 +170,8 @@ describe("Brain.audit", () => {
 
   it("anchor.latest returns the camelCased anchor record", async () => {
     const { fetch, calls } = mockFetch(200, {
+      anchoring_mode: "onchain",
+      guarantee: "base_sepolia",
       merkle_root: "0xroot",
       event_count: 1000,
       period_start: "2026-05-01T00:00:00Z",
@@ -182,6 +184,8 @@ describe("Brain.audit", () => {
     const anchor = await brain.audit.anchor.latest();
 
     expect(anchor).toEqual({
+      anchoringMode: "onchain",
+      guarantee: "base_sepolia",
       merkleRoot: "0xroot",
       eventCount: 1000,
       periodStart: "2026-05-01T00:00:00Z",
@@ -190,6 +194,28 @@ describe("Brain.audit", () => {
       onchainBlockNumber: 42,
     });
     expect(calls[0]?.url).toContain("/audit/anchor/latest");
+  });
+
+  it("anchor.latest exposes the database-hash-chain-only demo guarantee", async () => {
+    const { fetch } = mockFetch(200, {
+      anchoring_mode: "db_only",
+      guarantee: "database_hash_chain",
+      id: null,
+      merkle_root: null,
+      event_count: null,
+      period_start: null,
+      period_end: null,
+      onchain_tx_hash: null,
+      onchain_block_number: null,
+    });
+    const brain = new Brain({ token: "k", fetch });
+
+    await expect(brain.audit.anchor.latest()).resolves.toMatchObject({
+      anchoringMode: "db_only",
+      guarantee: "database_hash_chain",
+      merkleRoot: null,
+      onchainTxHash: undefined,
+    });
   });
 });
 
