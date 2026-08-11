@@ -303,4 +303,37 @@ describe("PostgresSourceRepository — resolveCredentials", () => {
     });
     expect(await repo.resolveCredentials(TENANT, "missing")).toBeNull();
   });
+
+  it("resolves a historical key id via credentialKeyProvider when it differs from the active key", async () => {
+    const oldKey = Buffer.alloc(32, 9);
+    const creds = { access_token: "under-old-key" };
+    const { ciphertext } = encryptCredentials(creds, oldKey, "old-key-v1");
+    const repo = new PostgresSourceRepository({
+      pool: fakePool(() => ({
+        rows: [{ encrypted_credentials: ciphertext, credential_key_id: "old-key-v1" }],
+      })).pool,
+      credentialKey: KEY, // active key, NOT the one this row was encrypted under
+      credentialKeyId: KEY_ID,
+      credentialKeyProvider: {
+        source: "azure-key-vault",
+        load: async () => undefined,
+        loadById: async (keyId: string) => (keyId === "old-key-v1" ? oldKey : Buffer.alloc(32)),
+      },
+    });
+    expect(await repo.resolveCredentials(TENANT, "src_1")).toEqual(creds);
+  });
+
+  it("throws when the stored key id differs from the active key and no provider is wired", async () => {
+    const { ciphertext } = encryptCredentials({ x: 1 }, KEY, "old-key-v1");
+    const repo = new PostgresSourceRepository({
+      pool: fakePool(() => ({
+        rows: [{ encrypted_credentials: ciphertext, credential_key_id: "old-key-v1" }],
+      })).pool,
+      credentialKey: KEY,
+      credentialKeyId: KEY_ID,
+    });
+    await expect(repo.resolveCredentials(TENANT, "src_1")).rejects.toThrow(
+      /encrypted under key id 'old-key-v1'.*active key is 'test-key-v1'/,
+    );
+  });
 });

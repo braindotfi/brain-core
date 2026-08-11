@@ -65,9 +65,13 @@ contracts/foundry.lock
 crash.log
 crash.*.log
 *.tfvars
+# Plan files embed generated secrets in plaintext -- never commit them.
+tfplan
+*.tfplan
 *.tfvars.json
 !terraform.tfvars.example
 !infra/poc.tfvars
+!infra/production.tfvars
 
 # IDE / editor
 .vscode/

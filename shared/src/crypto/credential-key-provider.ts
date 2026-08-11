@@ -9,12 +9,20 @@
  *      both set → KMS path. Production must take this branch.
  *   2. `BRAIN_SOURCE_CREDENTIAL_KEY` set → env-var path. Forbidden in
  *      production (boot throws via {@link decodeEnvCredentialKey}).
- *   3. Nothing set → no-encryption mode. Forbidden in production; the caller
- *      decides whether to allow it elsewhere.
+ *   3. Nothing set → no-encryption mode. Forbidden in production unless
+ *      `allowUnencrypted` is explicitly set (see `buildCredentialKeyProvider`).
  *
- * Today the KMS provider is a documented throw — wiring `@azure/keyvault-keys`
- * + `@azure/identity` is the remaining mechanical step. The seam exists so
- * that wiring is a single-file change rather than a boot-path rewrite.
+ * Both providers are fully implemented: the KMS path authenticates via
+ * `DefaultAzureCredential` and reads a base64-encoded 32-byte key from a Key
+ * Vault secret.
+ *
+ * Rotation semantics: a stored ciphertext's `credential_key_id` is the Key
+ * Vault secret VERSION it was encrypted under, not a static name. Rotating
+ * the secret creates a new version and the active version moves forward, but
+ * old ciphertext still names its original version. Decrypting it later must
+ * resolve that specific historical version rather than assume the active
+ * key — that is what `loadById` is for; the Key Vault secret's own version
+ * history IS the keyring, no separate keyring config exists.
  */
 
 import { SecretClient } from "@azure/keyvault-secrets";
@@ -29,6 +37,12 @@ export interface CredentialKey {
 export interface CredentialKeyProvider {
   /** Returns the active credential key, or undefined if no key is configured. */
   load(): Promise<CredentialKey | undefined>;
+  /**
+   * Resolves the key material for a historical key id (as stored on a row's
+   * `credential_key_id`), so ciphertext written under a previous key stays
+   * decryptable after rotation.
+   */
+  loadById(keyId: string): Promise<Buffer>;
   /** Human-readable description of the active provider, for the boot capability log. */
   readonly source: "azure-key-vault" | "env-var" | "none";
 }
@@ -44,6 +58,13 @@ export interface CredentialKeyProviderOptions {
   envKeyId: string;
   /** `process.env.NODE_ENV`. Controls the env-var-in-prod fence. */
   nodeEnv: string | undefined;
+  /**
+   * Explicit operator opt-out from the production credential-encryption fence
+   * (`BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS=true`). When false (default),
+   * a resolved `none` provider in production throws at boot instead of
+   * silently running without encryption.
+   */
+  allowUnencrypted: boolean;
 }
 
 class EnvCredentialKeyProvider implements CredentialKeyProvider {
@@ -57,12 +78,34 @@ class EnvCredentialKeyProvider implements CredentialKeyProvider {
     if (key === undefined) return undefined;
     return { key, keyId: this.opts.envKeyId };
   }
+  public async loadById(keyId: string): Promise<Buffer> {
+    if (keyId !== this.opts.envKeyId) {
+      throw new Error(
+        `credential-key-provider: env-var provider has no key for id '${keyId}' ` +
+          `(active id is '${this.opts.envKeyId}'); historical key ids are only ` +
+          "resolvable via the Azure Key Vault provider",
+      );
+    }
+    const key = decodeEnvCredentialKey({
+      envVarKey: this.opts.envVarKey,
+      nodeEnv: this.opts.nodeEnv,
+    });
+    if (key === undefined) {
+      throw new Error("credential-key-provider: env-var provider has no key configured");
+    }
+    return key;
+  }
 }
 
 class NoneCredentialKeyProvider implements CredentialKeyProvider {
   public readonly source = "none" as const;
   public async load(): Promise<undefined> {
     return undefined;
+  }
+  public async loadById(keyId: string): Promise<Buffer> {
+    throw new Error(
+      `credential-key-provider: no key provider configured; cannot resolve key id '${keyId}'`,
+    );
   }
 }
 
@@ -83,6 +126,9 @@ class NoneCredentialKeyProvider implements CredentialKeyProvider {
 class AzureKeyVaultCredentialKeyProvider implements CredentialKeyProvider {
   public readonly source = "azure-key-vault" as const;
   private readonly client: SecretClient;
+  // Historical key ids resolved via loadById(), cached so a rotation does not
+  // mean a Key Vault round-trip on every decrypt of old ciphertext.
+  private readonly byId = new Map<string, Buffer>();
   public constructor(
     vaultUrl: string,
     private readonly secretName: string,
@@ -105,6 +151,24 @@ class AzureKeyVaultCredentialKeyProvider implements CredentialKeyProvider {
     const keyId = secret.properties.version ?? this.secretName;
     return { key, keyId };
   }
+  public async loadById(keyId: string): Promise<Buffer> {
+    const cached = this.byId.get(keyId);
+    if (cached !== undefined) return cached;
+    const secret = await this.client.getSecret(this.secretName, { version: keyId });
+    if (secret.value === undefined) {
+      throw new Error(
+        `credential-key-provider: Key Vault secret '${this.secretName}' version '${keyId}' has no value`,
+      );
+    }
+    const key = Buffer.from(secret.value, "base64");
+    if (key.length !== 32) {
+      throw new Error(
+        `credential-key-provider: Key Vault secret '${this.secretName}' version '${keyId}' decodes to ${key.length} bytes; expected 32 (AES-256)`,
+      );
+    }
+    this.byId.set(keyId, key);
+    return key;
+  }
 }
 
 /**
@@ -124,6 +188,14 @@ export function buildCredentialKeyProvider(
   }
   if (opts.envVarKey !== undefined) {
     return new EnvCredentialKeyProvider(opts);
+  }
+  if (opts.nodeEnv === "production" && !opts.allowUnencrypted) {
+    throw new Error(
+      "credential-key-provider: no source-credential key configured in NODE_ENV=production. " +
+        "Set BRAIN_AZURE_KEY_VAULT_URL + BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME, or set " +
+        "BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS=true to explicitly opt out (source " +
+        "credentials will not be stored).",
+    );
   }
   return new NoneCredentialKeyProvider();
 }

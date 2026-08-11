@@ -825,7 +825,9 @@ const envSchema = z.object({
   /**
    * Base64-encoded 32-byte AES-256-GCM key used to encrypt Plaid access_tokens
    * and other per-source secrets at rest. Staging/dev: set this env var.
-   * Production: key must come from Azure Key Vault (env-var path is a TODO).
+   * Production: this path throws at boot (see decodeEnvCredentialKey) — the
+   * Key Vault path (BRAIN_AZURE_KEY_VAULT_URL + BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME)
+   * is implemented and is what production must use.
    * Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
    */
   BRAIN_SOURCE_CREDENTIAL_KEY: z
@@ -840,6 +842,17 @@ const envSchema = z.object({
    * the boot path selects the Key Vault provider over the env-var path.
    */
   BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: optionalNonEmptyString(),
+  /**
+   * Explicit operator opt-out from the production credential-encryption boot
+   * fence in buildCredentialKeyProvider. Needed only by the legacy VM
+   * deployment, which cannot reach the closed Azure Key Vault. Setting this
+   * means source credentials cannot be stored at all (inserts with
+   * credential material are refused, not silently stored unencrypted).
+   */
+  BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default("false"),
 
   // ---- x402 settlement rail ----
   /** Coinbase/facilitator URL for the x402 HTTP settlement protocol. Presence enables X402BaseRail at boot. */

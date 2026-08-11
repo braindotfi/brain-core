@@ -16,6 +16,7 @@ import {
   encryptCredentials,
   withTenantScope,
   type CredentialKey,
+  type CredentialKeyProvider,
   type TenantScopedClient,
 } from "@brain/shared";
 import type { DecisionStore, ProposalStore, TenantIdentityStore } from "@brain/core";
@@ -362,6 +363,7 @@ export class PostgresSlackInstallationStore {
   public constructor(
     private readonly pool: Pool,
     private readonly credentialKey?: CredentialKey | undefined,
+    private readonly credentialKeyProvider?: CredentialKeyProvider | undefined,
   ) {}
 
   public async upsertInstallation(input: {
@@ -421,6 +423,29 @@ export class PostgresSlackInstallationStore {
     });
     if (row === null) return null;
     return this.decryptToken(row);
+  }
+
+  private async decryptToken(row: SlackInstallationRow): Promise<string> {
+    const credential = this.requiredCredential();
+    const key =
+      row.credential_key_id !== credential.keyId
+        ? await this.resolveHistoricalKey(row.credential_key_id)
+        : credential.key;
+    const decrypted = decryptCredentials(row.bot_token_encrypted, key);
+    if (!isSlackTokenPayload(decrypted)) throw new Error("slack_token_payload_invalid");
+    return decrypted.bot_token;
+  }
+
+  private async resolveHistoricalKey(storedKeyId: string): Promise<Buffer> {
+    const credential = this.requiredCredential();
+    if (this.credentialKeyProvider === undefined) {
+      throw new Error(
+        `PostgresSlackInstallationStore: token was encrypted under key id '${storedKeyId}' ` +
+          `but the active key is '${credential.keyId}' and no credentialKeyProvider is wired ` +
+          "to resolve the historical key.",
+      );
+    }
+    return this.credentialKeyProvider.loadById(storedKeyId);
   }
 
   public async getInstallationForTenantTeam(input: {
@@ -501,13 +526,6 @@ export class PostgresSlackInstallationStore {
       );
       return rows[0] !== undefined;
     });
-  }
-
-  private decryptToken(row: SlackInstallationRow): string {
-    const credential = this.requiredCredential();
-    const decrypted = decryptCredentials(row.bot_token_encrypted, credential.key);
-    if (!isSlackTokenPayload(decrypted)) throw new Error("slack_token_payload_invalid");
-    return decrypted.bot_token;
   }
 
   private requiredCredential(): CredentialKey {

@@ -21,10 +21,21 @@
  * error rather than silently re-running. That is how we enforce §10.5's
  * "migrations are forward-compatible for at least one version" — operators
  * can't mutate an applied migration in place.
+ *
+ * Declared baselines (see ./baselines.ts): a pending migration with a
+ * baseline entry whose guard SQL currently returns TRUE is recorded as
+ * applied, using its real content hash, without running its SQL. This exists
+ * only for migrations whose desired end state already holds on a given
+ * database but whose own SQL cannot run there (see baselines.ts's header for
+ * when adding one is legitimate). A migration that already has a
+ * `brain_migrations` row is completely unaffected by baselines: the existing
+ * hash-match/skip or hash-drift/throw behavior runs exactly as before, and
+ * the guard is never even consulted.
  */
 
 import { createHash } from "node:crypto";
 import type { Client, PoolClient } from "pg";
+import { MIGRATION_BASELINES, type MigrationBaseline } from "./baselines.js";
 import type { DiscoveredMigration } from "./discover.js";
 
 export interface MigrationRecord {
@@ -40,6 +51,7 @@ export interface MigrationRecord {
 export interface RunResult {
   applied: DiscoveredMigration[];
   skipped: DiscoveredMigration[];
+  baselined: DiscoveredMigration[];
 }
 
 /**
@@ -106,8 +118,27 @@ export async function listApplied(client: RunnerClient): Promise<Map<string, Mig
 }
 
 /**
- * Apply pending migrations. Returns the ones applied and the ones skipped
- * (already present with matching content hash).
+ * Runs a baseline guard and reports whether it proved the migration's end
+ * state already holds. A query error is treated as FALSE, never as license
+ * to baseline, so the caller falls through to applying the migration for
+ * real.
+ */
+async function checkBaselineGuard(
+  client: RunnerClient,
+  baseline: MigrationBaseline,
+): Promise<boolean> {
+  try {
+    const { rows } = await client.query<{ ok: boolean }>(baseline.guard);
+    return rows[0]?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Apply pending migrations. Returns the ones applied, the ones skipped
+ * (already present with matching content hash), and the ones baselined (see
+ * ./baselines.ts).
  *
  * If a discovered migration's content hash does NOT match the stored one,
  * the runner throws — a human must reconcile before forward progress.
@@ -115,9 +146,10 @@ export async function listApplied(client: RunnerClient): Promise<Map<string, Mig
 export async function applyAll(
   client: RunnerClient & Pick<PoolClient, "query"> & Partial<Pick<Client, "connect">>,
   discovered: ReadonlyArray<DiscoveredMigration>,
-  options: { appliedBy?: string } = {},
+  options: { appliedBy?: string; baselines?: ReadonlyArray<MigrationBaseline> } = {},
 ): Promise<RunResult> {
   const appliedBy = options.appliedBy ?? process.env.USER ?? "unknown";
+  const baselineByKey = new Map((options.baselines ?? MIGRATION_BASELINES).map((b) => [b.key, b]));
 
   // Serialize the whole apply pass behind a session advisory lock. Migrations
   // include global DDL (role/grant) that races under concurrent runners; the
@@ -127,7 +159,7 @@ export async function applyAll(
     await ensureBookkeeping(client);
     const applied = await listApplied(client);
 
-    const result: RunResult = { applied: [], skipped: [] };
+    const result: RunResult = { applied: [], skipped: [], baselined: [] };
 
     for (const m of discovered) {
       const seen = applied.get(m.key);
@@ -141,6 +173,37 @@ export async function applyAll(
         }
         result.skipped.push(m);
         continue;
+      }
+
+      const baseline = baselineByKey.get(m.key);
+      if (baseline !== undefined) {
+        let guardOk = false;
+        await client.query("BEGIN");
+        try {
+          guardOk = await checkBaselineGuard(client, baseline);
+          if (guardOk) {
+            await client.query(
+              `INSERT INTO brain_migrations
+                 (key, service, name, sequence, content_sha, applied_by)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [m.key, m.service, m.name, m.sequence, sha, appliedBy],
+            );
+          }
+          await client.query(guardOk ? "COMMIT" : "ROLLBACK");
+        } catch {
+          guardOk = false;
+          try {
+            await client.query("ROLLBACK");
+          } catch {
+            /* swallow */
+          }
+        }
+        if (guardOk) {
+          result.baselined.push(m);
+          continue;
+        }
+        // Guard returned FALSE or errored: fall through to applying the
+        // migration normally below, so an unproven database fails loudly.
       }
 
       await client.query("BEGIN");
@@ -182,15 +245,36 @@ export async function applyAll(
 export async function status(
   client: RunnerClient,
   discovered: ReadonlyArray<DiscoveredMigration>,
-): Promise<Array<{ migration: DiscoveredMigration; state: "pending" | "applied" | "drifted" }>> {
+  options: { baselines?: ReadonlyArray<MigrationBaseline> } = {},
+): Promise<
+  Array<{
+    migration: DiscoveredMigration;
+    state: "pending" | "applied" | "drifted" | "baselined";
+  }>
+> {
   await ensureBookkeeping(client);
   const applied = await listApplied(client);
-  return discovered.map((m) => {
+  const baselineByKey = new Map((options.baselines ?? MIGRATION_BASELINES).map((b) => [b.key, b]));
+
+  const results: Array<{
+    migration: DiscoveredMigration;
+    state: "pending" | "applied" | "drifted" | "baselined";
+  }> = [];
+  for (const m of discovered) {
     const seen = applied.get(m.key);
-    if (seen === undefined) return { migration: m, state: "pending" as const };
+    if (seen === undefined) {
+      const baseline = baselineByKey.get(m.key);
+      if (baseline !== undefined && (await checkBaselineGuard(client, baseline))) {
+        results.push({ migration: m, state: "baselined" });
+        continue;
+      }
+      results.push({ migration: m, state: "pending" });
+      continue;
+    }
     const match = bufferEquals(seen.content_sha, contentSha(m.sql));
-    return { migration: m, state: match ? ("applied" as const) : ("drifted" as const) };
-  });
+    results.push({ migration: m, state: match ? "applied" : "drifted" });
+  }
+  return results;
 }
 
 function bufferEquals(a: Buffer | ReadonlyArray<number> | Uint8Array, b: Buffer): boolean {

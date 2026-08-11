@@ -1,0 +1,11 @@
+# infra/ is a build context for two images (db-roles, terraform runner) and also
+# holds .terraform provider plugins (~540MB), tfstate and plan files. State and
+# plan files contain secrets in plaintext and must never enter an image.
+# Whitelist only what the images copy.
+*
+!db-roles.sql
+!db-roles-entrypoint.sh
+!run.sh
+!*.tf
+!*.tfvars
+!backend-production.hcl

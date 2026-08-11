@@ -1,49 +1,116 @@
 # Brain Infrastructure
 
-Terraform configuration for Brain's Azure stack. Full resources land in stage-8.
+Terraform configuration for Brain's Azure stack.
 
-See `Brain_MVP_Architecture.md` §2 for the stack choices and
-`Brain_Engineering_Standards.md` §10 for deployment + secrets policy.
+See `Brain_MVP_Architecture.md` §2 for the stack choices,
+`Brain_Engineering_Standards.md` §10 for deployment + secrets policy, and
+`docs/diligence/diagrams/production-cutover-topology.mmd` for the topology.
+
+## Layout
+
+| File | Purpose |
+| ---- | ------- |
+| `main.tf` | Resource group, identity, Key Vault, Postgres, Redis, Storage, ACR, Container Apps + Jobs |
+| `network.tf` | VNet, subnets, private DNS, Redis private endpoint |
+| `secrets.tf` | Key Vault secret surface (role passwords, role URLs, app secrets) |
+| `frontdoor.tf` | Front Door profile/endpoint/origin/route. Gated on `enable_frontdoor` |
+| `variables.tf` | Sizing and configuration knobs |
+| `production.tfvars` | Production values (no secrets) |
+| `backend-production.hcl` | Remote-state backend config |
+| `bootstrap/` | One-time: creates the storage account holding remote state |
+| `db-roles.sql` | Least-privilege roles + FORCE RLS sweep |
+| `db-roles.Dockerfile` + `db-roles-entrypoint.sh` | Image for the db-roles job |
 
 ## Environments
 
-| Environment | Region         | Purpose                               |
-| ----------- | -------------- | ------------------------------------- |
-| staging     | eastus         | Plaid sandbox, Base Sepolia           |
-| production  | eastus + westus3 | Plaid prod, Base mainnet (post-audit) |
+| Environment | Region  | Purpose                                |
+| ----------- | ------- | -------------------------------------- |
+| staging     | canadacentral | Plaid sandbox, Base Sepolia      |
+| production  | canadacentral | Plaid prod, Base Sepolia (mainnet post-audit, ADR-0007) |
+
+
+> **Not eastus.** Postgres Flexible Server provisioning is restricted for this
+> subscription in eastus. `az postgres flexible-server list-skus -l eastus` returns
+> zero supported server editions with *"Provisioning is restricted in this region"*.
+> canadacentral was chosen over centralindia because it supports zone-redundant HA.
 
 ## Secrets
 
 Never in git. Everything reads from Azure Key Vault via managed identity.
-Rotation schedule documented in `infra/secrets.md` (to land in stage-8).
 
-The agents Container App requires these Key Vault secrets in both staging and
-production before applying the default stack:
+`secrets.tf` provisions the full surface:
 
-| Secret name                   | Used by      | Purpose                                 |
-| ----------------------------- | ------------ | --------------------------------------- |
-| `openai-api-key`              | agents       | OpenAI client for extraction agents     |
-| `brain-agents-inbound-secret` | api, agents  | HMAC secret for API to agents requests  |
-| `brain-api-token`             | agents       | Agents outbound calls to the Brain API  |
+- **16 Postgres role passwords** (`db-password-*`) consumed by `db-roles.sql`
+- **15 role connection URLs** (`database-url`, `brain-*-db-url`) consumed by the app
+- **Generated app secrets**. `auth-cookie-secret`, `brain-agents-inbound-secret`,
+  `brain-api-key-pepper`, `brain-demo-provision-secret`, `brain-service-token-secret`
+- **Storage key**. `azure-blob-account-key`
 
-Terraform reads the names from `openai_api_key_secret_name`,
-`brain_agents_inbound_secret_name`, and `brain_api_token_secret_name` so
-environments can override naming without putting secret values in git. The API
-app gets `DOCUMENT_EXTRACT_AGENT_URL` pointing at the internal agents Container
-App FQDN when `agents` is included in `var.services`.
+### Operator-supplied secrets
+
+These are created as **placeholders** and must be set out of band. Terraform
+ignores changes to their values, so it will never revert them.
+
+| Secret | Why it is not generated |
+| ------ | ----------------------- |
+| `auth-sign-key` | Structured JWK; regenerating invalidates every issued token |
+| `audit-publisher-key` | EVM private key controlling real funds |
+| `brain-session-key` | EVM private key controlling real funds |
+| `openai-api-key` | External credential |
+| `brain-api-token` | Minted by `tools/dev-token` against `auth-sign-key` |
+
+```bash
+az keyvault secret set --vault-name brain-production-kv \
+  --name auth-sign-key --file ./auth-sign-key.json
+```
+
+> ⚠️ Leaving `audit-publisher-key` as a placeholder keeps the anchor publisher
+> inert. That is the safe default while the legacy VM is still anchoring. Two
+> publishers on one `BrainAuditAnchor` race and burn gas on
+> `RootAlreadyPublished`. Set it only after the VM worker is stopped.
 
 ## Commands
 
+One-time, to create the remote-state storage account:
+
 ```bash
-cd infra
-terraform init
-terraform validate
-terraform plan  -var="environment=staging"
-terraform apply -var="environment=staging"
+cd infra/bootstrap
+terraform init && terraform apply
 ```
 
-Production plans require a manual approval step in the GitHub Actions
-workflow (see `.github/workflows/main.yml`, stage-8).
+Then the main stack:
+
+```bash
+cd infra
+terraform init -backend-config=backend-production.hcl
+terraform plan  -var-file=production.tfvars -var="operator_ip=$(curl -s ifconfig.me)/32"
+terraform apply -var-file=production.tfvars -var="operator_ip=$(curl -s ifconfig.me)/32"
+```
+
+`operator_ip` is required: the Key Vault is deny-by-default and Terraform writes
+secrets over its data plane. Remove the exception once CI owns rotation.
+
+No local Terraform install is needed. Run it in Docker:
+
+```bash
+docker run --rm -v "$PWD:/infra" -w /infra hashicorp/terraform:1.13 validate
+```
+
+Production applies require a manual approval step in the GitHub Actions
+workflow (see `.github/workflows/main.yml`).
+
+## Post-apply order (load-bearing)
+
+```bash
+az containerapp job start -n brain-production-migrate  -g brain-production-rg
+# wait for completion, THEN
+az containerapp job start -n brain-production-db-roles -g brain-production-rg
+```
+
+**`migrate` must run before `db-roles`.** `db-roles.sql` grants by looping over
+tables that already exist; running it first silently leaves the canonical and
+ledger projector roles without grants, which surfaces in production as
+`42501: permission denied` every ~10 seconds rather than as a failed job.
 
 ## pgBouncer rollout plan (P2.3)
 
