@@ -73,7 +73,7 @@
     "siwe": "^2.3.2",
     "ulid": "^3.0.2",
     "viem": "^2.21.0",
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@scalar/api-reference": "1.62.9",
