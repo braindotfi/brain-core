@@ -99,8 +99,6 @@ jobs:
           # environment variable. This remains read-only and avoids a VM write.
           node_script_b64="$(base64 -w0 <<'NODE'
           (async () => {
-          const { keccak256, toBytes } = require("viem");
-
           const dbInput = await new Promise((resolve, reject) => {
             let input = "";
             process.stdin.setEncoding("utf8");
@@ -190,11 +188,17 @@ jobs:
                 contract_address: log.address.toLowerCase(),
               }));
           }
-          const key = (tenantHash, root) => `${tenantHash.toLowerCase()}:${root.toLowerCase()}`;
-          const dbByPair = new Map();
+          // `merkle_root` is cryptographic output and the reconciliation is
+          // only safe when it maps to exactly one confirmed DB anchor. The
+          // production runtime image intentionally omits `viem`, so this uses
+          // the root rather than recreating the tenant-id Keccak hash here.
+          const dbByRoot = new Map();
           for (const row of dbRows) {
-            const tenantHash = keccak256(toBytes(row.tenant_id)).toLowerCase();
-            dbByPair.set(key(tenantHash, `0x${row.merkle_root}`), {
+            const root = `0x${row.merkle_root}`.toLowerCase();
+            if (dbByRoot.has(root)) {
+              throw new Error(`ambiguous database correlation for Merkle root ${root}`);
+            }
+            dbByRoot.set(root, {
               tenant_id: row.tenant_id,
               transaction_hash: row.transaction_hash.toLowerCase(),
               contract_address: row.contract_address?.toLowerCase() ?? null,
@@ -216,12 +220,11 @@ jobs:
             if (!transaction || !receipt) throw new Error(`missing transaction or receipt for ${item.hash}`);
             const pairs = decodeAnchorBatch(transaction.input);
             const emitted = eventPairs(receipt);
-            const emittedKeys = new Set(emitted.map((pair) => key(pair.tenant_id_hash, pair.merkle_root)));
+            const emittedRoots = new Set(emitted.map((pair) => pair.merkle_root));
             const contractAddress = transaction.to?.toLowerCase() ?? null;
             const pairDetails = pairs.map((pair) => {
-              const pairKey = key(pair.tenant_id_hash, pair.merkle_root);
-              const db = dbByPair.get(pairKey) ?? null;
-              const emittedOnchain = emittedKeys.has(pairKey);
+              const db = dbByRoot.get(pair.merkle_root) ?? null;
+              const emittedOnchain = emittedRoots.has(pair.merkle_root);
               let classification;
               if (!emittedOnchain) {
                 classification = db === null
