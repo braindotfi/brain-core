@@ -16,6 +16,7 @@ import { newTenantId } from "@brain/shared";
 import { poolProofBuilder } from "./routes.js";
 
 const EVENT_HASH = createHash("sha256").update("before").digest(); // 32-byte leaf
+const CREATED_EVENT_HASH = createHash("sha256").update("created").digest(); // 32-byte leaf
 const TENANT = newTenantId();
 
 function makeFakePool(rowsFor: (sql: string) => unknown[]): Pool {
@@ -64,8 +65,21 @@ function rowsForExecuted(sql: string): unknown[] {
     ];
   }
   if (sql.includes("FROM policies")) return [{ content_hash: "deadbeef" }];
-  if (sql.includes("FROM audit_events") && sql.includes("inputs->>'payment_intent_id'")) {
+  if (sql.includes("FROM audit_events") && sql.includes("payment_intent_id")) {
+    const creationEvent = {
+      id: "evt_created",
+      action: "payment_intent.created",
+      layer: "agent",
+      outputs: { payment_intent_id: "pi_ACTION", status: "pending_approval" },
+      event_hash: CREATED_EVENT_HASH,
+      prev_event_hash: null,
+      created_at: new Date("2026-01-01T00:00:00Z"),
+    };
+    // Creation stores its payment intent reference in outputs. Returning this
+    // row only when the query searches outputs catches an inputs-only regression.
+    const creationRows = sql.includes("outputs->>'payment_intent_id'") ? [creationEvent] : [];
     return [
+      ...creationRows,
       {
         id: "evt_before",
         action: "payment_intent.execute.before",
@@ -125,7 +139,7 @@ describe("poolProofBuilder", () => {
     expect(proof.ledger_snapshot_hash).toBe("snap123");
     expect(proof.gate_checks).toHaveLength(1);
     expect(proof.evidence[0]?.raw_parsed_id).toBe("prs_1");
-    expect(proof.audit_events[0]?.id).toBe("evt_before");
+    expect(proof.audit_events.map((event) => event.id)).toEqual(["evt_created", "evt_before"]);
     expect(proof.behavior_hash).toBe("bb".repeat(32));
     // Single-event window: a real (domain-separated) Merkle root. The path is
     // one element, not empty — every tree carries the synthetic leaf-count leaf

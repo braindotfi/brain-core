@@ -127,7 +127,8 @@ export async function fetchProofSources(
   }>(
     `SELECT id, action, layer, outputs, event_hash, prev_event_hash, created_at
        FROM audit_events
-      WHERE inputs->>'payment_intent_id' = $1
+      WHERE outputs->>'payment_intent_id' = $1
+         OR inputs->>'payment_intent_id' = $1
       ORDER BY created_at ASC`,
     [actionId],
   );
