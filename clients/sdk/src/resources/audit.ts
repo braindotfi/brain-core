@@ -47,10 +47,12 @@ export interface ExportAuditJob {
 }
 
 export interface AnchorRecord {
-  merkleRoot: string | undefined;
-  eventCount: number | undefined;
-  periodStart: string | undefined;
-  periodEnd: string | undefined;
+  anchoringMode: "onchain" | "db_only";
+  guarantee: "base_sepolia" | "database_hash_chain";
+  merkleRoot: string | null | undefined;
+  eventCount: number | null | undefined;
+  periodStart: string | null | undefined;
+  periodEnd: string | null | undefined;
   onchainTxHash: string | undefined;
   onchainBlockNumber: number | undefined;
 }
@@ -125,6 +127,8 @@ export class AnchorResource {
     const { data, error, response } = await this.http.GET("/audit/anchor/latest");
     const body = unwrap(data, error, response.status);
     return {
+      anchoringMode: body.anchoring_mode,
+      guarantee: body.guarantee,
       merkleRoot: body.merkle_root,
       eventCount: body.event_count,
       periodStart: body.period_start,

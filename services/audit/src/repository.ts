@@ -162,6 +162,7 @@ export async function listEventsForAnchor(
  *               the publisher loop and the reconciler must not retry it.
  */
 export type AnchorOnchainStatus = "pending" | "confirmed" | "reverted";
+export type AuditAnchoringMode = "onchain" | "db_only";
 
 export interface AuditAnchorRow {
   id: string;
@@ -218,6 +219,20 @@ export async function findLatestAnchor(client: TenantScopedClient): Promise<Audi
     `SELECT * FROM audit_anchors ORDER BY period_end DESC LIMIT 1`,
   );
   return rows[0] ?? null;
+}
+
+/**
+ * Returns the tenant's explicit anchoring guarantee. A missing row is treated
+ * as onchain for backward compatibility with pre-migration test fixtures; all
+ * runtime-created demo and sandbox tenants are written as db_only.
+ */
+export async function findAuditAnchoringMode(
+  client: TenantScopedClient,
+): Promise<AuditAnchoringMode> {
+  const { rows } = await client.query<{ audit_anchor_mode: AuditAnchoringMode | null }>(
+    `SELECT audit_anchor_mode FROM tenants LIMIT 1`,
+  );
+  return rows[0]?.audit_anchor_mode === "db_only" ? "db_only" : "onchain";
 }
 
 /**

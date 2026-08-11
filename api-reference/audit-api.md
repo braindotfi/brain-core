@@ -1,6 +1,6 @@
 # Audit API
 
-Query audit events, pull a Merkle inclusion proof, verify a proof independently, walk the full history for any Ledger entity, export, and pull the canonical **Proof** for an action. All event payloads land in the append-only hash chain and are batch-anchored to `BrainAuditAnchor` on Base.
+Query audit events, pull a Merkle inclusion proof, verify a proof independently, walk the full history for any Ledger entity, export, and pull the canonical **Proof** for an action. All event payloads land in the append-only hash chain. Production tenant roots are batch-anchored to `BrainAuditAnchor` on Base Sepolia; demo and sandbox tenants remain database-hash-chain-only and are not published on-chain.
 
 | Operation                           | Endpoint                                        |
 | ----------------------------------- | ----------------------------------------------- |
@@ -21,6 +21,8 @@ Authorization: Bearer <token>
 
 ```json
 {
+  "anchoring_mode": "onchain",
+  "guarantee": "base_sepolia",
   "merkle_root": "0xabc...",
   "event_count": 4127,
   "period_start": "2026-05-28T11:00:00Z",
@@ -29,6 +31,11 @@ Authorization: Bearer <token>
   "onchain_block_number": 8829110
 }
 ```
+
+For a demo or sandbox tenant, this endpoint returns `200` with
+`"anchoring_mode": "db_only"` and `"guarantee": "database_hash_chain"`.
+Its anchor fields are `null`: the tenant keeps an append-only database hash
+chain, but no root is submitted to Base Sepolia.
 
 ### Walk an Entity's History
 

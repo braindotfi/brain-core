@@ -6,6 +6,15 @@ hidden: true
 
 User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Internal refactors, performance work, and bug fixes that don't change behaviour are omitted unless they affect integrators.
 
+### v0.5.19 (adaptive audit anchoring)
+
+- **Demo and sandbox tenant audit chains stay database-only.**
+  `GET /v1/audit/anchor/latest` now exposes `anchoring_mode` and `guarantee`
+  so clients can distinguish `database_hash_chain` from a Base Sepolia anchor.
+- **On-chain anchor batches close on tenant-root count or maximum wait.** The
+  publisher uses the configured threshold or latency bound, whichever happens
+  first.
+
 ### v0.5.18 (obligation scenario filtering)
 
 - **`GET /v1/ledger/obligations` now supports `scenario=ap|ar`.** The filter

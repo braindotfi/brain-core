@@ -4,6 +4,7 @@ import {
   SUPPORTED_AUDIT_ENTITY_TYPES,
   findEventsByEntity,
   findEvent,
+  findAuditAnchoringMode,
   findLatestAnchor,
   findAnchorByRoot,
   insertAnchor,
@@ -220,6 +221,18 @@ describe("findLatestAnchor", () => {
     const { client, log } = fakeClient();
     await findLatestAnchor(client);
     expect(log[0]!.sql).toMatch(/ORDER BY period_end DESC/);
+  });
+});
+
+describe("findAuditAnchoringMode", () => {
+  it("returns db_only only for the explicit tenant mode", async () => {
+    const { client } = fakeClient([{ audit_anchor_mode: "db_only" }]);
+    await expect(findAuditAnchoringMode(client)).resolves.toBe("db_only");
+  });
+
+  it("defaults absent legacy rows to onchain", async () => {
+    const { client } = fakeClient([]);
+    await expect(findAuditAnchoringMode(client)).resolves.toBe("onchain");
   });
 });
 

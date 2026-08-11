@@ -30,7 +30,11 @@ export {
   type PublishPendingAnchorBatchSummary,
   type PublishOptions,
 } from "./publisher.js";
-export type { AuditAnchorRow } from "./repository.js";
+export {
+  findAuditAnchoringMode,
+  type AuditAnchorRow,
+  type AuditAnchoringMode,
+} from "./repository.js";
 export { registerAuditRoutes } from "./routes.js";
 export { registerWebhookRoutes, type WebhookRouteDeps } from "./webhook-routes.js";
 export {

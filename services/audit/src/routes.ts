@@ -18,6 +18,7 @@ import { buildTree, makeProof, verifyProof } from "./merkle.js";
 import { publishAnchor } from "./publisher.js";
 import {
   findAnchorForEvent,
+  findAuditAnchoringMode,
   findEvent,
   findEventsByEntity,
   findLatestAnchor,
@@ -195,12 +196,32 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
   app.get("/audit/anchor/latest", async (request, reply) => {
     const principal = requirePrincipal(request);
     requireScope(principal.scopes, READ);
-    const anchor = await withTenantScope(deps.pool, principal.tenantId, (c) => findLatestAnchor(c));
+    const result = await withTenantScope(deps.pool, principal.tenantId, async (c) => ({
+      mode: await findAuditAnchoringMode(c),
+      anchor: await findLatestAnchor(c),
+    }));
+    if (result.mode === "db_only") {
+      reply.status(200);
+      return {
+        anchoring_mode: "db_only",
+        guarantee: "database_hash_chain",
+        id: null,
+        merkle_root: null,
+        event_count: null,
+        period_start: null,
+        period_end: null,
+        onchain_tx_hash: null,
+        onchain_block_number: null,
+      };
+    }
+    const anchor = result.anchor;
     if (anchor === null) {
       throw brainError("audit_anchor_not_yet_published", "no anchor published yet");
     }
     reply.status(200);
     return {
+      anchoring_mode: "onchain",
+      guarantee: "base_sepolia",
       id: anchor.id,
       merkle_root: anchor.merkle_root.toString("hex"),
       event_count: anchor.event_count,
@@ -221,6 +242,17 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
     app.post("/audit/anchor/publish", async (request, reply) => {
       const principal = requirePrincipal(request);
       requireScope(principal.scopes, "audit:admin" as Scope);
+
+      const anchoringMode = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        findAuditAnchoringMode(c),
+      );
+      if (anchoringMode === "db_only") {
+        throw brainError(
+          "audit_anchor_db_only",
+          "this tenant retains a database hash chain and is not eligible for on-chain anchoring",
+          { statusOverride: 409 },
+        );
+      }
 
       // The anchor row itself is the durable cooldown source, not in-process
       // state. An in-process Map resets on every restart (bypassable across a

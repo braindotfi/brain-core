@@ -157,7 +157,10 @@ Missing from Terraform (full list from `.env.example`):
 | `BRAIN_DEMO_MODE`                                       | Demo mode toggle absent                                         |
 | `WIKI_LLM_MODEL`, `WIKI_EMBED_MODEL`                    | Wiki uses defaults (gpt-4o-mini). Tolerable                     |
 | `PLAID_ENV`                                             | Plaid uses wrong environment                                    |
-| `AUDIT_ANCHOR_INTERVAL_MS`                              | Anchor cadence uses hardcoded default                           |
+| `AUDIT_ANCHOR_INTERVAL_MS`                              | Legacy fallback for anchor maximum wait; defaults to one hour   |
+| `AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS`                     | Close an anchor cycle early at this logical-root count (50)     |
+| `AUDIT_ANCHOR_MAX_WAIT_MS`                              | Maximum wait before closing a partial anchor cycle              |
+| `AUDIT_ANCHOR_CHECK_INTERVAL_MS`                        | Polling granularity for adaptive anchor-cycle conditions        |
 | `PRIVILEGED_DATABASE_URL`                               | All BYPASSRLS paths use the single DATABASE_URL (not split yet) |
 
 A staging deployment with only these 4 variables will boot but all authentication will fail immediately.

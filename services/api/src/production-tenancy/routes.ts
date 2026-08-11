@@ -202,9 +202,9 @@ export async function registerProductionTenancyRoutes(
     try {
       agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
         await client.query(
-          `INSERT INTO tenants (id, kind, sandbox, created_via)
-             VALUES ($1, 'production', FALSE, 'admin')`,
-          [tenantId],
+          `INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)
+             VALUES ($1, 'production', FALSE, 'admin', $2)`,
+          [tenantId, demoSeedRequested ? "db_only" : "onchain"],
         );
         await client.query(
           `INSERT INTO users (id, tenant_id, email, role)

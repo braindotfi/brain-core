@@ -25,12 +25,14 @@ async function buildApp(deps: {
   publish?: AnchorPublishFn | undefined;
   provisionSecret?: string;
   cooldownMs?: number;
+  isDbOnly?: (tenantId: string) => Promise<boolean>;
 }) {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
   await registerDemoProvisionAnchorRoute(app, {
     provisionSecret: deps.provisionSecret ?? SECRET,
     publish: "publish" in deps ? deps.publish : async () => sampleAnchor(),
+    ...(deps.isDbOnly !== undefined ? { isDbOnly: deps.isDbOnly } : {}),
     ...(deps.cooldownMs !== undefined ? { cooldownMs: deps.cooldownMs } : {}),
   });
   return app;
@@ -125,6 +127,19 @@ describe("POST /v1/demo/provision-run/:tenantId/anchor", () => {
       const r = await inject(app, TENANT, SECRET);
       expect(r.statusCode).toBe(503);
       expect((r.json() as { error: { code: string } }).error.code).toBe("audit_anchor_unavailable");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps demo tenants database-hash-chain-only without calling the broadcaster", async () => {
+    const publish = vi.fn<AnchorPublishFn>(async () => sampleAnchor());
+    const app = await buildApp({ publish, isDbOnly: async () => true });
+    try {
+      const r = await inject(app, TENANT, SECRET);
+      expect(r.statusCode).toBe(409);
+      expect((r.json() as { error: { code: string } }).error.code).toBe("audit_anchor_db_only");
+      expect(publish).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

@@ -19,7 +19,8 @@ import type { MetricsEmitter } from "@brain/shared";
  * a maxPriorityFeePerGas too low to mine; the publisher then re-broadcasts at
  * the same price and the node rejects each with "replacement transaction
  * underpriced", so the anchor never lands. Floor the fees to a sane minimum
- * (and take the max with the network estimate). Overridable via env.
+ * (and take the max with the network estimate). Production runs a 0.05 / 0.5
+ * gwei floor, which remains configurable for network conditions.
  */
 function gweiFloor(envName: string, defaultGwei: string): bigint {
   const raw = process.env[envName];
@@ -258,8 +259,8 @@ export function createViemAnchorBroadcaster(
     maxFeePerGas: bigint;
     maxPriorityFeePerGas: bigint;
   }> {
-    const minPriority = gweiFloor("BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI", "1.5");
-    const minMaxFee = gweiFloor("BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI", "3");
+    const minPriority = gweiFloor("BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI", "0.05");
+    const minMaxFee = gweiFloor("BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI", "0.5");
     let maxPriorityFeePerGas = minPriority;
     let maxFeePerGas = minMaxFee;
     try {

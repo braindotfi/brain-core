@@ -1,10 +1,9 @@
 /**
- * POST /v1/demo/provision-run/:tenantId/anchor — server-side anchor trigger
- * for the BrainSaaS "Brain Playground".
+ * POST /v1/demo/provision-run/:tenantId/anchor is a legacy playground route.
  *
- * After a demo run completes, the playground SERVER (never the browser) calls
- * this to anchor that run's audit log on-chain immediately, instead of waiting
- * for the hourly background publisher.
+ * Demo and sandbox tenants retain their audit history in the database hash
+ * chain only. The route returns an explicit conflict for those tenants rather
+ * than implying that a demo record will receive an on-chain anchor.
  *
  * Auth posture: the same shared X-Demo-Provision-Auth secret as provision-run,
  * NOT an audit:admin token scope. Batch-10 C-1 deliberately strips audit:admin
@@ -42,10 +41,10 @@ export interface AnchorPublishResult {
 }
 
 /**
- * Anchors a tenant's recent audit events and returns the resulting row, or
+ * Publishes a non-demo tenant's recent audit events and returns the resulting row, or
  * null when the tenant has no events in the window. Injected so tests can run
  * without a live DB / RPC; main.ts binds it to
- * `publishAnchor(privilegedPool, broadcaster, ...)`.
+ * `publishAnchor(appPool, broadcaster, ...)`.
  */
 export type AnchorPublishFn = (input: PublishOptions) => Promise<AnchorPublishResult | null>;
 
@@ -58,6 +57,8 @@ export interface DemoProvisionAnchorRouteDeps {
    * then answers 503 rather than failing deep in the publisher.
    */
   publish: AnchorPublishFn | undefined;
+  /** Demo and sandbox tenants are database-hash-chain only, never on-chain. */
+  isDbOnly?: (tenantId: string) => Promise<boolean>;
   /** Per-tenant cooldown window. Defaults to 60s (mirrors /audit/anchor/publish). */
   cooldownMs?: number;
 }
@@ -117,6 +118,15 @@ export async function registerDemoProvisionAnchorRoute(
       if (!tenantId.startsWith("tnt_")) {
         reply.status(400);
         return errorEnvelope("auth_tenant_mismatch", "malformed tenant id", requestId);
+      }
+
+      if ((await deps.isDbOnly?.(tenantId)) === true) {
+        reply.status(409);
+        return errorEnvelope(
+          "audit_anchor_db_only",
+          "demo tenants retain a database hash chain and are not eligible for on-chain anchoring",
+          requestId,
+        );
       }
 
       if (deps.publish === undefined) {

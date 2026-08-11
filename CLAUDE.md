@@ -587,10 +587,29 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   The scheduler first creates each tenant's one-row anchor record under
   tenant-scoped RLS, then broadcasts bounded batches of up to
   `AUDIT_ANCHOR_BATCH_SIZE` rows, default 50, so a normal cycle is one on-chain
-  tx instead of one tx per tenant. Metrics include
+  tx instead of one tx per tenant. Five Base Sepolia transactions measured on
+  2026-08-11 consumed a weighted 47,575 gas per tenant root, preserving the
+  per-tenant `_published` SSTORE and `AnchorPublished` event required for
+  tenant-level on-chain lookup. Metrics include
   `brain.audit.anchor.pending_backlog_depth`, `brain.audit.anchor.batch_size`,
   and `brain.audit.anchor.batch_tx.count`. Mainnet anchoring remains fenced
   until the additive batch function completes external audit.
+- Audit anchoring is explicit per tenant through `tenants.audit_anchor_mode`.
+  Production tenants use `onchain`; demo and sandbox tenants use `db_only` and
+  retain the append-only database hash chain without publishing roots to Base
+  Sepolia. The scheduled publisher, retry queue, and on-demand publish routes
+  all reject `db_only` from on-chain work. `GET /v1/audit/anchor/latest`
+  returns `anchoring_mode` and `guarantee`, so clients must display database
+  hash-chain status distinctly from an on-chain anchor.
+- The publisher closes an on-chain cycle when accumulated logical tenant roots
+  reach `AUDIT_ANCHOR_TRIGGER_TENANT_ROOTS` (default 50) or the oldest pending
+  or eligible root reaches `AUDIT_ANCHOR_MAX_WAIT_MS` (defaulting to the legacy
+  `AUDIT_ANCHOR_INTERVAL_MS`, one hour), whichever comes first. It evaluates
+  those conditions every `AUDIT_ANCHOR_CHECK_INTERVAL_MS` (default 60 seconds).
+  `BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI=0.05` and
+  `BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI=0.5` are the durable Base Sepolia anchor fee
+  floors; the broadcaster still takes the maximum of those floors and the
+  network estimate.
 - `reverted` is a per-ROW terminal status and only genuinely applies to the
   single-anchor path (`publishPendingAnchor`), where one row is one
   transaction. Every reachable `anchorBatch` revert reason (`NotPublisher`,
