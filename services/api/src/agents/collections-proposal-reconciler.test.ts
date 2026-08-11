@@ -240,6 +240,167 @@ describe("runCollectionsProposalReconcileCycle", () => {
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]?.tenantId).toBe(tenantA);
   });
+
+  it("reconciles rows that need work even when far more than one batch's worth of already-current rows sit ahead of them in created_at order", async () => {
+    // Regression for the scan-window starvation bug: the work list is
+    // filtered in SQL, so `current` rows never occupy a batch slot at all,
+    // regardless of how they sort by created_at.
+    const tenantId = newTenantId();
+    const baseCreatedAt = new Date("2026-01-01T00:00:00.000Z");
+
+    const currentProposals: FakeProposal[] = [];
+    const currentInvoices: FakeInvoice[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      const invoiceId = newInvoiceId();
+      const createdAt = new Date(baseCreatedAt.getTime() + i * 60_000);
+      currentProposals.push(
+        collectionsProposal(
+          { tenant_id: tenantId, invoice_id: invoiceId, days_overdue: 19 },
+          { created_at: createdAt, updated_at: createdAt },
+        ),
+      );
+      currentInvoices.push({
+        id: invoiceId,
+        owner_id: tenantId,
+        status: "sent",
+        amount_due: 900,
+        amount_paid: 0,
+        due_date: "2026-07-01T00:00:00.000Z",
+      });
+    }
+
+    const needsWorkProposals = [newInvoiceId(), newInvoiceId()].map((invoiceId, i) =>
+      collectionsProposal(
+        { tenant_id: tenantId, invoice_id: invoiceId, days_overdue: 20 },
+        {
+          created_at: new Date(baseCreatedAt.getTime() + (61 + i) * 60_000),
+          updated_at: new Date(baseCreatedAt.getTime() + (61 + i) * 60_000),
+        },
+      ),
+    );
+
+    const { appPool, tenantDiscoveryPool, proposals } = fakeDb(
+      [...currentProposals, ...needsWorkProposals],
+      currentInvoices,
+    );
+    const audit = new InMemoryAuditEmitter();
+
+    await runCollectionsProposalReconcileCycle(
+      { tenantDiscoveryPool, appPool, evaluatePolicy: CONFIRM_POLICY, audit },
+      { now: new Date("2026-07-20T00:00:00.000Z") },
+    );
+
+    for (const p of needsWorkProposals) {
+      expect(proposals.find((r) => r.id === p.id)?.status).toBe("superseded");
+    }
+    for (const p of currentProposals) {
+      expect(proposals.find((r) => r.id === p.id)?.status).toBe("pending");
+    }
+    expect(audit.events).toHaveLength(2);
+  });
+
+  it("treats an invoice whose due date moved into the future as non_collectible instead of refreshing it to a fabricated 1 day overdue", async () => {
+    const tenantId = newTenantId();
+    const invoiceId = newInvoiceId();
+    const proposal = collectionsProposal({
+      tenant_id: tenantId,
+      invoice_id: invoiceId,
+      days_overdue: 10,
+    });
+    const invoice: FakeInvoice = {
+      id: invoiceId,
+      owner_id: tenantId,
+      status: "sent",
+      amount_due: 900,
+      amount_paid: 0,
+      // Corrected or renegotiated term: now in the future relative to `now`.
+      due_date: "2026-08-01T00:00:00.000Z",
+    };
+    const { appPool, tenantDiscoveryPool, proposals } = fakeDb([proposal], [invoice]);
+    const audit = new InMemoryAuditEmitter();
+    const before = { ...proposal, action: { ...proposal.action } };
+
+    await runCollectionsProposalReconcileCycle(
+      { tenantDiscoveryPool, appPool, evaluatePolicy: CONFIRM_POLICY, audit },
+      { now: new Date("2026-07-20T00:00:00.000Z") },
+    );
+
+    expect(proposals[0]).toMatchObject({ status: before.status, action: before.action });
+    expect(audit.events).toHaveLength(0);
+  });
+
+  it("warns and reports a dropped count when a tenant's work list exceeds the per-tenant batch cap", async () => {
+    const tenantId = newTenantId();
+    const invoiceIds = [newInvoiceId(), newInvoiceId(), newInvoiceId()];
+    const proposals = invoiceIds.map((invoiceId, i) =>
+      collectionsProposal({ tenant_id: tenantId, invoice_id: invoiceId, days_overdue: 20 + i }),
+    );
+    // No matching invoices: every one of these needs a supersede, so all
+    // three match the work-list filter regardless of ordering.
+    const { appPool, tenantDiscoveryPool } = fakeDb(proposals, []);
+    const metrics = new MockMetrics();
+    const warn = vi.fn();
+
+    await runCollectionsProposalReconcileCycle(
+      {
+        tenantDiscoveryPool,
+        appPool,
+        evaluatePolicy: CONFIRM_POLICY,
+        metrics,
+        log: { error: vi.fn(), warn },
+      },
+      { now: new Date("2026-07-20T00:00:00.000Z"), perTenantBatchSize: 2 },
+    );
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId, totalMatching: 3, omittedCount: 1 }),
+      "collections proposal reconciler hit per-tenant batch cap",
+    );
+    expect(
+      metrics.calls.some(
+        (call) =>
+          call.name === "brain.collections.reconcile.dropped.count" &&
+          call.tags?.reason === "batch_cap",
+      ),
+    ).toBe(true);
+  });
+
+  it("touches only updated_at, not action or status, when a refresh would leave a proposal out of pending, so it rotates to the back of the work list", async () => {
+    const tenantId = newTenantId();
+    const invoiceId = newInvoiceId();
+    const proposal = collectionsProposal({
+      tenant_id: tenantId,
+      invoice_id: invoiceId,
+      days_overdue: 10,
+    });
+    const invoice: FakeInvoice = {
+      id: invoiceId,
+      owner_id: tenantId,
+      status: "sent",
+      amount_due: 900,
+      amount_paid: 0,
+      due_date: "2026-06-01T00:00:00.000Z",
+    };
+    const { appPool, tenantDiscoveryPool, proposals } = fakeDb([proposal], [invoice]);
+    const before = { ...proposal, action: { ...proposal.action }, updated_at: proposal.updated_at };
+    const allowPolicy: AgentServiceDeps["evaluatePolicy"] = async () => ({
+      outcome: "allow",
+      matched_rule_id: "test_allow",
+      required_approvers: [],
+      trace: [],
+      policy_version: 3,
+    });
+
+    await runCollectionsProposalReconcileCycle(
+      { tenantDiscoveryPool, appPool, evaluatePolicy: allowPolicy },
+      { now: new Date("2026-07-20T00:00:00.000Z") },
+    );
+
+    const row = proposals.find((p) => p.id === proposal.id);
+    expect(row?.status).toBe("pending");
+    expect(row?.action).toEqual(before.action);
+    expect(row?.updated_at.getTime()).toBeGreaterThan(before.updated_at.getTime());
+  });
 });
 
 function collectionsProposal(
@@ -327,14 +488,48 @@ function fakeDb(
           if (text.includes("pg_advisory_xact_lock")) {
             return { rows: [], rowCount: 0 };
           }
-          if (text.includes("ORDER BY created_at ASC, id ASC")) {
+          if (text.includes("LEFT JOIN ledger_invoices")) {
+            // Work list: only rows that actually need action (invoice
+            // missing, or collectible + overdue + drifted days_overdue).
             const limit = Number(values[0]);
-            const rows = proposals
+            const now = new Date(String(values[1]));
+            const matching = proposals
               .filter((p) => p.tenant_id === tenantId && isPendingCollections(p))
-              .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
-              .slice(0, limit)
-              .map((p) => ({ invoice_id: p.action["invoice_id"] as string }));
+              .filter((p) => {
+                const invoiceId = p.action["invoice_id"];
+                const inv = invoices.find((i) => i.id === invoiceId && i.owner_id === tenantId);
+                return needsCollectionsWork(p.action, inv, now);
+              })
+              .sort((a, b) => {
+                const byUpdatedAt = a.updated_at.getTime() - b.updated_at.getTime();
+                return byUpdatedAt !== 0 ? byUpdatedAt : a.id.localeCompare(b.id);
+              });
+            const totalMatching = matching.length;
+            const rows = matching.slice(0, limit).map((p) => ({
+              invoice_id: p.action["invoice_id"] as string,
+              total_matching: totalMatching,
+            }));
             return { rows, rowCount: rows.length };
+          }
+          if (text.includes("JOIN ledger_invoices")) {
+            // Non-collectible aggregate: invoice exists but isn't actionable.
+            const now = new Date(String(values[0]));
+            const count = proposals
+              .filter((p) => p.tenant_id === tenantId && isPendingCollections(p))
+              .filter((p) => {
+                const inv = invoices.find(
+                  (i) => i.id === p.action["invoice_id"] && i.owner_id === tenantId,
+                );
+                return inv !== undefined && isNonCollectibleInvoice(inv, now);
+              }).length;
+            return { rows: [{ count }], rowCount: 1 };
+          }
+          if (text.includes("SET updated_at = $2 WHERE id = $1")) {
+            const id = String(values[0]);
+            const row = proposals.find((p) => p.id === id && p.status === "pending");
+            if (row === undefined) return { rows: [], rowCount: 0 };
+            row.updated_at = new Date(String(values[1]));
+            return { rows: [row], rowCount: 1 };
           }
           if (text.includes("FOR UPDATE")) {
             const invoiceId = String(values[0]);
@@ -354,18 +549,22 @@ function fakeDb(
             const now = new Date(String(values[1]));
             const inv = invoices.find((i) => i.id === invoiceId && i.owner_id === tenantId);
             if (inv === undefined) return { rows: [], rowCount: 0 };
-            const calculated =
-              inv.due_date === null
-                ? null
-                : Math.max(
-                    Math.floor((now.getTime() - new Date(inv.due_date).getTime()) / 86_400_000),
-                    1,
-                  );
+            const isOverdue =
+              inv.due_date !== null && new Date(inv.due_date).getTime() < now.getTime();
+            const calculated = isOverdue
+              ? Math.max(
+                  Math.floor(
+                    (now.getTime() - new Date(inv.due_date as string).getTime()) / 86_400_000,
+                  ),
+                  1,
+                )
+              : null;
             return {
               rows: [
                 {
                   status: inv.status,
                   collectible_by_amount: inv.amount_paid < inv.amount_due,
+                  due_date: inv.due_date,
                   calculated_days_overdue: calculated,
                 },
               ],
@@ -424,4 +623,30 @@ function isPendingCollections(p: FakeProposal): boolean {
     typeof p.action["invoice_id"] === "string" &&
     p.action["invoice_id"] !== ""
   );
+}
+
+const NON_COLLECTIBLE_STATUSES = new Set(["paid", "cancelled", "disputed"]);
+
+function isNonCollectibleInvoice(inv: FakeInvoice, now: Date): boolean {
+  if (NON_COLLECTIBLE_STATUSES.has(inv.status)) return true;
+  if (inv.amount_paid >= inv.amount_due) return true;
+  if (inv.due_date !== null && new Date(inv.due_date).getTime() >= now.getTime()) return true;
+  return false;
+}
+
+/** Mirrors the reconciler's work-list SQL: needs action only when the
+ *  invoice is missing, or is collectible, overdue, and drifted. */
+function needsCollectionsWork(
+  action: Record<string, unknown>,
+  inv: FakeInvoice | undefined,
+  now: Date,
+): boolean {
+  if (inv === undefined) return true;
+  if (isNonCollectibleInvoice(inv, now)) return false;
+  if (inv.due_date === null) return false;
+  const computed = Math.max(
+    Math.floor((now.getTime() - new Date(inv.due_date).getTime()) / 86_400_000),
+    1,
+  );
+  return action["days_overdue"] !== computed;
 }

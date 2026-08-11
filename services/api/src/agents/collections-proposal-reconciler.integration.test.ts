@@ -291,6 +291,43 @@ suite("collections proposal reconciler integration (requires DATABASE_URL)", () 
     expect(audit.events.filter((event) => event.tenantId === tenant)).toHaveLength(0);
   });
 
+  it("treats an invoice whose due date moved into the future as non_collectible, not drift", async () => {
+    const tenant = newTenantId();
+    const counterparty = newCounterpartyId();
+    const invoice = newInvoiceId();
+    await seedTenant(pool, tenant, counterparty, invoice, "Future Co");
+
+    await runCollectionsOverdueScanCycle(
+      { scanPool: pool, appPool: pool, runService },
+      { now: FIXED_NOW, cooldownMs: 86_400_000 },
+    );
+    const ctx: ServiceCallContext = { tenantId: tenant, actor: "test" };
+    const before = await listProposals(pool, ctx, { type: "collections" });
+    expect(before.proposals).toHaveLength(1);
+    expect(before.proposals[0]?.details).toMatchObject({ days_overdue: 18 });
+
+    // Corrected or renegotiated term: due date moves into the future
+    // relative to the reconciler's `now`, so it is no longer overdue.
+    await withTenantScope(pool, tenant, async (client) => {
+      await client.query(`UPDATE ledger_invoices SET due_date = $2::timestamptz WHERE id = $1`, [
+        invoice,
+        new Date(FIXED_NOW.getTime() + 10 * 86_400_000).toISOString(),
+      ]);
+    });
+
+    const audit = new InMemoryAuditEmitter();
+    await runCollectionsProposalReconcileCycle(
+      { tenantDiscoveryPool: pool, appPool: pool, evaluatePolicy, audit },
+      { now: FIXED_NOW },
+    );
+
+    const after = await listProposals(pool, ctx, { type: "collections" });
+    expect(after.proposals).toHaveLength(1);
+    expect(after.proposals[0]?.status).toBe("pending");
+    expect(after.proposals[0]?.details).toEqual(before.proposals[0]?.details);
+    expect(audit.events.filter((event) => event.tenantId === tenant)).toHaveLength(0);
+  });
+
   it("never touches a non-pending collections proposal", async () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();

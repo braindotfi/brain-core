@@ -288,8 +288,19 @@ Done
   `days_overdue` has drifted is refreshed in place through the shared
   `refreshCollectionsActionDaysOverdue` helper and re-evaluated policy. The
   reconciler deliberately supersedes only when the invoice row is missing
-  entirely; a paid, cancelled, or disputed invoice is a separate product
-  decision and is only counted, not acted on.
+  entirely; a paid, cancelled, or disputed invoice, or one whose due date
+  moved into the future (a corrected or renegotiated term, not drift), is a
+  separate product decision and is only counted, not acted on. The per-tenant
+  batch is a work list, not a scan window: the "needs action" filter (invoice
+  missing, or collectible and overdue and drifted) runs in the tenant-scoped
+  SQL itself, ordered `updated_at ASC, id ASC`, so `current` and
+  `non_collectible` rows never occupy a batch slot and the reconciler cannot
+  starve behind them the way the batch's own motivating bug (943 pending rows
+  for one tenant) would otherwise recreate. A row the reconciler skips because
+  refreshing it would leave a non-`pending` status
+  (`policy_outcome_not_pending`) still gets an `updated_at` touch with no
+  content change, so it rotates to the back of the work list instead of
+  reappearing at the front every cycle.
 - Every persisted `agent_runs` terminal `missing_evidence` or `notify_only`
   outcome emits `agent.run.missing_evidence` or `agent.run.notify_only` through
   the audit emitter. The event carries the run id, trigger, resolved action,

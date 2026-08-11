@@ -36,6 +36,13 @@ import { refreshCollectionsActionDaysOverdue } from "@brain/internal-agents";
  * This worker fixes both from the proposal side instead: enumerate pending
  * Collections proposals directly and reconcile each one against the current
  * `ledger_invoices` row, independent of whether an agent run ever succeeds.
+ *
+ * The per-tenant batch is a WORK LIST, not a scan window: the "does this row
+ * need action" filter (invoice missing, or collectible + overdue + drifted
+ * `days_overdue`) runs in the tenant-scoped SQL itself, so `current` and
+ * `non_collectible` rows never occupy a batch slot. Every selected row leaves
+ * the work list once processed, so the batch cap bounds work per cycle
+ * without starving anything behind it.
  */
 
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
@@ -47,6 +54,8 @@ const RECONCILER_ACTOR = "collections_proposal_reconciler";
 // as settled/closed (`collections-overdue-scanner.ts`'s `status NOT IN (...)`
 // filter). Kept local rather than shared: this is the ONLY place a
 // non-collectible invoice is observed without acting on it (see module doc).
+// The literal `'paid', 'cancelled', 'disputed'` list is duplicated in the
+// work-list and non-collectible-count SQL below; keep all three in sync.
 const NON_COLLECTIBLE_STATUSES = new Set(["paid", "cancelled", "disputed"]);
 
 export interface CollectionsProposalReconcilerDeps {
@@ -111,10 +120,43 @@ export async function runCollectionsProposalReconcileCycle(
   const skippedByReason = new Map<string, number>();
 
   for (const tenantId of tenantIds) {
-    const invoiceIds = await withTenantScope(deps.appPool, tenantId, (client) =>
-      listPendingCollectionsInvoiceIds(client, perTenantBatchSize),
+    const workList = await withTenantScope(deps.appPool, tenantId, (client) =>
+      listCollectionsWorkList(client, perTenantBatchSize, now),
     );
-    for (const invoiceId of invoiceIds) {
+    if (workList.totalMatching > workList.invoiceIds.length) {
+      const omittedCount = workList.totalMatching - workList.invoiceIds.length;
+      deps.log?.warn(
+        {
+          tenantId,
+          perTenantBatchSize,
+          totalMatching: workList.totalMatching,
+          omittedCount,
+        },
+        "collections proposal reconciler hit per-tenant batch cap",
+      );
+      deps.metrics?.increment(
+        "brain.collections.reconcile.dropped.count",
+        { reason: "batch_cap" },
+        omittedCount,
+      );
+    }
+
+    // Rows that already resolved to non_collectible no longer enter the work
+    // list at all, so count them with one cheap aggregate instead of a
+    // per-row lock/re-verify cycle.
+    const nonCollectibleForTenant = await withTenantScope(deps.appPool, tenantId, (client) =>
+      countNonCollectiblePendingCollectionsProposals(client, now),
+    );
+    if (nonCollectibleForTenant > 0) {
+      nonCollectible += nonCollectibleForTenant;
+      deps.metrics?.increment(
+        "brain.collections.reconcile.non_collectible.count",
+        undefined,
+        nonCollectibleForTenant,
+      );
+    }
+
+    for (const invoiceId of workList.invoiceIds) {
       const outcome = await reconcileOne(deps, tenantId, invoiceId, now);
       switch (outcome.kind) {
         case "superseded":
@@ -126,6 +168,10 @@ export async function runCollectionsProposalReconcileCycle(
           deps.metrics?.increment("brain.collections.reconcile.refreshed.count");
           break;
         case "non_collectible":
+          // Rare here: the work list is unlocked and can be stale, so a row
+          // it selected may have resolved to non_collectible by the time the
+          // advisory lock is taken. The aggregate above already counts the
+          // steady-state case.
           nonCollectible += 1;
           deps.metrics?.increment("brain.collections.reconcile.non_collectible.count");
           break;
@@ -185,8 +231,14 @@ async function reconcileOne(
       // do not act on it.
       return { kind: "non_collectible" };
     }
-    if (invoice.calculated_days_overdue === null) {
+    if (invoice.due_date === null) {
       return { kind: "skipped", reason: "missing_due_date" };
+    }
+    if (invoice.calculated_days_overdue === null) {
+      // due_date is set but is not in the past: a corrected or renegotiated
+      // term, not drift. Not overdue means not collections-actionable;
+      // count it, do not refresh it to a fabricated "1 day overdue".
+      return { kind: "non_collectible" };
     }
     const storedDaysOverdue = readStoredDaysOverdue(proposal.action);
     if (storedDaysOverdue === invoice.calculated_days_overdue) {
@@ -252,7 +304,14 @@ async function refreshProposal(
   if (status !== "pending") {
     // A background sweep must never force a proposal out of pending; that
     // is a decision for the request path (approve/reject), not a reconciler.
-    // Leave the row untouched and surface it instead.
+    // Leave action/status/policy untouched and surface it instead. This is
+    // the one outcome that can keep matching the work-list's drift filter
+    // cycle over cycle, so bump only `updated_at` (a content-preserving
+    // "examined at" touch) to push it to the back of the work list's
+    // `updated_at ASC` order. That bounds its impact to at most one batch
+    // slot per cycle per such row, rotating the rest of a saturated tenant's
+    // work list forward instead of resubmitting this row every time.
+    await touchProposalReconcileAttempt(client, proposal.id, now);
     deps.log?.warn(
       {
         tenantId,
@@ -309,9 +368,24 @@ function readStoredDaysOverdue(action: Record<string, unknown>): number | null {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
+/** Content-preserving "examined at" bump for a row the reconciler cannot
+ *  write for real (see `refreshProposal`'s `policy_outcome_not_pending`
+ *  path). Only `updated_at` moves; action/status/policy are untouched. */
+async function touchProposalReconcileAttempt(
+  client: TenantScopedClient,
+  proposalId: string,
+  now: Date,
+): Promise<void> {
+  await client.query(`UPDATE proposals SET updated_at = $2 WHERE id = $1 AND status = 'pending'`, [
+    proposalId,
+    now.toISOString(),
+  ]);
+}
+
 interface InvoiceReconcileRow {
   readonly status: string;
   readonly collectible_by_amount: boolean;
+  readonly due_date: string | null;
   readonly calculated_days_overdue: number | null;
 }
 
@@ -319,6 +393,11 @@ function isCollectible(invoice: InvoiceReconcileRow): boolean {
   return !NON_COLLECTIBLE_STATUSES.has(invoice.status) && invoice.collectible_by_amount;
 }
 
+/** Guarded the same way the overdue scanner's own selection query is
+ *  (`due_date < now`): `calculated_days_overdue` is only computed when the
+ *  invoice is actually overdue, so a due date corrected or renegotiated into
+ *  the future never floors to a fabricated "1 day overdue" (see
+ *  `reconcileOne`'s `calculated_days_overdue === null` branch). */
 async function findInvoiceForReconcile(
   client: TenantScopedClient,
   invoiceId: string,
@@ -327,8 +406,9 @@ async function findInvoiceForReconcile(
   const { rows } = await client.query<InvoiceReconcileRow>(
     `SELECT status,
             (amount_paid < amount_due) AS collectible_by_amount,
+            due_date::text AS due_date,
             CASE
-              WHEN due_date IS NOT NULL
+              WHEN due_date IS NOT NULL AND due_date < $2::timestamptz
                 THEN GREATEST(FLOOR(EXTRACT(EPOCH FROM ($2::timestamptz - due_date)) / 86400), 1)::int
               ELSE NULL
             END AS calculated_days_overdue
@@ -358,20 +438,98 @@ async function listTenantsWithPendingCollectionsProposals(
   return rows.map((row) => row.tenant_id);
 }
 
-async function listPendingCollectionsInvoiceIds(
+interface CollectionsWorkList {
+  readonly invoiceIds: string[];
+  /** Total rows matching the work-list filter before the LIMIT, so the
+   *  caller can detect and warn on a saturated per-tenant batch. */
+  readonly totalMatching: number;
+}
+
+/** The work list: only pending Collections proposals that actually need
+ *  action (invoice missing, or collectible + overdue + drifted
+ *  `days_overdue`). `reconcileOne` re-verifies every row under the advisory
+ *  lock regardless; this is an unlocked pre-filter, not the source of truth.
+ *
+ *  Ordered `updated_at ASC NULLS FIRST, id ASC` (not `created_at`) so a row
+ *  this cycle actually wrote moves to the back next cycle; a row that
+ *  matches every cycle but is never written (`policy_outcome_not_pending`,
+ *  see `refreshProposal`) is explicitly touched there to get the same
+ *  rotation, bounding it to one batch slot per cycle instead of
+ *  monopolizing the front of the list forever. */
+async function listCollectionsWorkList(
   client: TenantScopedClient,
   limit: number,
-): Promise<string[]> {
-  const { rows } = await client.query<{ invoice_id: string }>(
-    `SELECT action->>'invoice_id' AS invoice_id
-       FROM proposals
-      WHERE proposing_agent = 'collections'
-        AND status = 'pending'
-        AND action->>'type' = 'collections'
-        AND NULLIF(action->>'invoice_id', '') IS NOT NULL
-      ORDER BY created_at ASC, id ASC
+  now: Date,
+): Promise<CollectionsWorkList> {
+  const { rows } = await client.query<{
+    invoice_id: string;
+    total_matching: number | string;
+  }>(
+    `SELECT p.action->>'invoice_id' AS invoice_id,
+            COUNT(*) OVER() AS total_matching
+       FROM proposals p
+       LEFT JOIN ledger_invoices i ON i.id = p.action->>'invoice_id'
+      WHERE p.proposing_agent = 'collections'
+        AND p.status = 'pending'
+        AND p.action->>'type' = 'collections'
+        AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+        AND (
+          i.id IS NULL
+          OR (
+            i.status NOT IN ('paid', 'cancelled', 'disputed')
+            AND i.amount_paid < i.amount_due
+            AND i.due_date IS NOT NULL
+            AND i.due_date < $2::timestamptz
+            AND (p.action->'days_overdue') IS DISTINCT FROM to_jsonb(
+              GREATEST(FLOOR(EXTRACT(EPOCH FROM ($2::timestamptz - i.due_date)) / 86400), 1)::int
+            )
+          )
+        )
+      ORDER BY p.updated_at ASC NULLS FIRST, p.id ASC
       LIMIT $1`,
-    [limit],
+    [limit, now.toISOString()],
   );
-  return rows.map((row) => row.invoice_id);
+  return {
+    invoiceIds: rows.map((row) => row.invoice_id),
+    totalMatching: rows.length > 0 ? normalizeCount(rows[0]?.total_matching, rows.length) : 0,
+  };
+}
+
+/** Cheap per-tenant aggregate for proposals whose invoice exists but is not
+ *  actionable (paid/cancelled/disputed/fully paid, or no longer overdue).
+ *  These never enter the work list, so they are counted here instead of
+ *  per row. Deliberately excludes invoices with a null `due_date`: those
+ *  never enter the work list either (nothing computable to drift-check),
+ *  so they are neither counted as non-collectible nor reconciled; that is
+ *  an accepted, unchanged-from-before gap for a case with no test coverage
+ *  today, not a new regression from this fix. */
+async function countNonCollectiblePendingCollectionsProposals(
+  client: TenantScopedClient,
+  now: Date,
+): Promise<number> {
+  const { rows } = await client.query<{ count: number | string }>(
+    `SELECT COUNT(*) AS count
+       FROM proposals p
+       JOIN ledger_invoices i ON i.id = p.action->>'invoice_id'
+      WHERE p.proposing_agent = 'collections'
+        AND p.status = 'pending'
+        AND p.action->>'type' = 'collections'
+        AND NULLIF(p.action->>'invoice_id', '') IS NOT NULL
+        AND (
+          i.status IN ('paid', 'cancelled', 'disputed')
+          OR i.amount_paid >= i.amount_due
+          OR (i.due_date IS NOT NULL AND i.due_date >= $1::timestamptz)
+        )`,
+    [now.toISOString()],
+  );
+  return normalizeCount(rows[0]?.count, 0);
+}
+
+function normalizeCount(value: number | string | undefined, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
