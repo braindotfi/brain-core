@@ -15,6 +15,7 @@ on:
           - contextless-payroll-obligation-audit
           - tenant-identity-lookup
           - wiki-question-trace
+          - anchor-reconciliation-correlation
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -73,8 +74,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, or wiki-question-trace"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, or anchor-reconciliation-correlation"
             exit 1
           fi
 
@@ -361,6 +362,82 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "wiki-question-trace" ]]; then
             run_wiki_question_trace
+            exit 0
+          fi
+
+          run_anchor_reconciliation_correlation() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'fixed production-unlinked anchorBatch transaction correlation'
+            WITH expected(tx_hash, emitted_pair_count) AS (
+              VALUES
+                ('5855c68d4c9fb5a5ab63a22bb1df23923980e60990b2a4b653f6d6ae87344a54', 5),
+                ('d9dd5f7c383601bddb2df0dea94c2091d0b4385920e0b1e1282ea888c1493f27', 5),
+                ('308231e39ec033a1c1b5bb7c276e69dfb037a76e571b82eda85661e6b91c76ef', 5),
+                ('d0b060133c81b7a76b06092cc0883782e34208bdd4efe452028f0ef45740ec0d', 3),
+                ('7fc6d48bca78b2e88416a4c1756832c66fb3e210e28d14e8ed6ee39fe3318c3b', 5),
+                ('dc591e08bf8ffb0dcc55b2f05396eddcdc407c298cb3a363ce7b731ba069c20e', 3),
+                ('7e1f3525abd503bcdcab255e7e74bf1e3c7639b9fafc6b17b4e8742a05fc00b0', 3),
+                ('7c5cabd1b6fe2c266e5394f4af064ea66d47dc4bfcd5b0a0b4a6c903431a8c5c', 4)
+            ), matched AS (
+              SELECT e.tx_hash,
+                     e.emitted_pair_count,
+                     a.id,
+                     a.tenant_id,
+                     a.merkle_root,
+                     a.onchain_status,
+                     a.period_start,
+                     a.period_end,
+                     a.created_at
+                FROM expected e
+                LEFT JOIN audit_anchors a
+                  ON a.onchain_tx_hash = decode(e.tx_hash, 'hex')
+            )
+            SELECT tx_hash,
+                   emitted_pair_count,
+                   COUNT(id) AS staging_anchor_rows,
+                   COUNT(DISTINCT tenant_id) AS staging_tenant_count,
+                   MIN(created_at) AS oldest_staging_anchor_row,
+                   MAX(created_at) AS newest_staging_anchor_row
+              FROM matched
+             GROUP BY tx_hash, emitted_pair_count
+             ORDER BY tx_hash;
+
+            \echo 'matched staging anchor rows'
+            WITH expected(tx_hash) AS (
+              VALUES
+                ('5855c68d4c9fb5a5ab63a22bb1df23923980e60990b2a4b653f6d6ae87344a54'),
+                ('d9dd5f7c383601bddb2df0dea94c2091d0b4385920e0b1e1282ea888c1493f27'),
+                ('308231e39ec033a1c1b5bb7c276e69dfb037a76e571b82eda85661e6b91c76ef'),
+                ('d0b060133c81b7a76b06092cc0883782e34208bdd4efe452028f0ef45740ec0d'),
+                ('7fc6d48bca78b2e88416a4c1756832c66fb3e210e28d14e8ed6ee39fe3318c3b'),
+                ('dc591e08bf8ffb0dcc55b2f05396eddcdc407c298cb3a363ce7b731ba069c20e'),
+                ('7e1f3525abd503bcdcab255e7e74bf1e3c7639b9fafc6b17b4e8742a05fc00b0'),
+                ('7c5cabd1b6fe2c266e5394f4af064ea66d47dc4bfcd5b0a0b4a6c903431a8c5c')
+            )
+            SELECT e.tx_hash,
+                   a.id AS anchor_id,
+                   a.tenant_id,
+                   encode(a.merkle_root, 'hex') AS merkle_root,
+                   a.onchain_status,
+                   a.period_start,
+                   a.period_end,
+                   a.created_at
+              FROM expected e
+              JOIN audit_anchors a
+                ON a.onchain_tx_hash = decode(e.tx_hash, 'hex')
+             ORDER BY e.tx_hash, a.tenant_id, a.id;
+
+            COMMIT;
+          SQL
+          }
+
+          if [[ "$DIAGNOSTIC" == "anchor-reconciliation-correlation" ]]; then
+            run_anchor_reconciliation_correlation
             exit 0
           fi
 
