@@ -113,9 +113,13 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
+          # az acr build resolves --file relative to the REPO ROOT, not to the
+          # context argument. Naming it "Dockerfile" while passing a subdirectory
+          # context pairs that context with the root Node image, which then fails
+          # on a COPY of a file the subdirectory does not contain.
           az acr build --registry "$ACR" --image "brain-api:latest" --image "brain-api:${TAG}" --file Dockerfile .
-          az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" --file Dockerfile services/agents
-          az acr build --registry "$ACR" --image "brain-db-roles:latest" --image "brain-db-roles:${TAG}" --file db-roles.Dockerfile infra
+          az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" --file services/agents/Dockerfile services/agents
+          az acr build --registry "$ACR" --image "brain-db-roles:latest" --image "brain-db-roles:${TAG}" --file infra/db-roles.Dockerfile infra
 
       # Unconditional, and deliberately not part of the step above: this image
       # CARRIES THE TERRAFORM CONFIG (infra/*.tf is COPYed in, there is no repo
