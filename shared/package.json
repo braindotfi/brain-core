@@ -28,7 +28,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@azure/identity": "^4.13.1",
