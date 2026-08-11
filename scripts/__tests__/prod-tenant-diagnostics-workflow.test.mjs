@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,4 +22,19 @@ test("ingestion lineage diagnostic is fixed-shape and read-only", () => {
   assert.match(workflow, /ledger obligations/);
   assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
+});
+
+test("remote diagnostics script has valid Bash heredoc structure", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+  const remoteScriptMatch = workflow.match(/<<'REMOTE'\n([\s\S]*?)\n          REMOTE\n/);
+
+  assert.ok(remoteScriptMatch, "expected the fixed remote diagnostics script");
+  const remoteScript = remoteScriptMatch[1]
+    .split("\n")
+    .map((line) => line.replace(/^          /, ""))
+    .join("\n");
+
+  assert.doesNotThrow(() => {
+    execFileSync("bash", ["-n"], { input: remoteScript, stdio: "pipe" });
+  });
 });
