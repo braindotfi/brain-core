@@ -86,8 +86,8 @@
     "@brain/policy": "workspace:*",
     "@brain/shared": "workspace:*",
     "@eslint/js": "^9.39.4",
-    "@redocly/cli": "2.43.3",
-    "@types/node": "^24.0.0",
+    "@redocly/cli": "2.46.0",
+    "@types/node": "^26.2.0",
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
     "@vitest/coverage-v8": "^4.1.8",
@@ -98,7 +98,7 @@
     "prettier": "^3.3.3",
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
-    "viem": "^2.21.0",
+    "viem": "^2.55.11",
     "vite": "6.4.3",
     "vitest": "^4.1.8"
   }

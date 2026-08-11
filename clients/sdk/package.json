@@ -50,7 +50,7 @@
     "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
-    "@types/node": "^22.7.0",
+    "@types/node": "^26.2.0",
     "openapi-typescript": "^7.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
