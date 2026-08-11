@@ -807,7 +807,7 @@ jobs:
              ORDER BY lo.due_date, lo.id;
 
             COMMIT;
-            SQL
+          SQL
             echo "::endgroup::"
           fi
 
