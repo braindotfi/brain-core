@@ -86,7 +86,12 @@ function rowToRecord(row: AgentRow): AgentRecord {
   };
 }
 
-function outcomeToStatus(
+/**
+ * Map a policy outcome to a proposal status. Exported: reused by the
+ * Collections proposal reconciler, which re-evaluates policy for a refreshed
+ * action outside of `propose()` and must apply the identical mapping.
+ */
+export function outcomeToStatus(
   outcome: "allow" | "confirm" | "reject",
   authority: AgentAuthority,
 ): ProposalRecord["status"] {
@@ -142,12 +147,7 @@ export class AgentService implements IAgentService {
           await refreshCollectionsProposal(c, existing, {
             action,
             policyVersion: policyResult.policy_version,
-            policyDecision:
-              policyResult.outcome === "confirm"
-                ? "confirm"
-                : policyResult.outcome === "reject"
-                  ? "reject"
-                  : "allow",
+            policyDecision: policyResult.outcome,
             policyTrace: policyResult.trace as never,
             requiredApprovers: policyResult.required_approvers,
             status,
@@ -163,12 +163,7 @@ export class AgentService implements IAgentService {
         proposingAgent: agentId,
         action,
         policyVersion: policyResult.policy_version,
-        policyDecision:
-          policyResult.outcome === "confirm"
-            ? "confirm"
-            : policyResult.outcome === "reject"
-              ? "reject"
-              : "allow",
+        policyDecision: policyResult.outcome,
         policyTrace: policyResult.trace as never,
         requiredApprovers: policyResult.required_approvers,
         status,

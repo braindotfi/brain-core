@@ -39,53 +39,97 @@ function buildCollectionsProposal(input: HandlerInput): ProposedAction {
   const agingTier = readString(input.context.aging_tier) || agingTierFor(daysOverdue);
   const counterpartyName = readString(input.context.counterparty_name, counterpartyId);
   const invoiceNumber = readString(input.context.invoice_number, displayInvoiceId(invoiceId));
-  const recommendation = recommendationFor(daysOverdue, input.action);
-  const nextEscalationDate = addDaysIso(input.now ?? new Date(), recommendation.nextEscalationDays);
   const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
+
+  const base: Record<string, unknown> = {
+    type: "collections",
+    kind: "agent_action",
+    invoice_id: invoiceId,
+    counterparty_id: counterpartyId,
+    counterparty_name: counterpartyName,
+    invoice_number: invoiceNumber,
+    amount_due: amount,
+    currency,
+    due_date: dueDate,
+    confidence,
+    evidence_score: input.evidence.evidence_score,
+    risk_level: input.definition?.risk_level ?? null,
+    agent_id: input.definition?.agent_key ?? "collections",
+    agent_role: input.definition?.agent_key ?? "collections",
+    evidence_refs: evidenceRefsForAction(input.evidence.items),
+    missing_required_evidence: [...input.evidence.missing_required_evidence],
+    critical_missing: input.evidence.critical_missing,
+    mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
+  };
 
   return {
     channel: "agent",
-    action: {
-      type: "collections",
-      kind: "agent_action",
-      invoice_id: invoiceId,
-      counterparty_id: counterpartyId,
-      counterparty_name: counterpartyName,
-      invoice_number: invoiceNumber,
-      amount_due: amount,
+    action: refreshCollectionsActionDaysOverdue(base, {
+      daysOverdue,
+      agingTier,
+      requestedAction: input.action,
+      ...(input.now !== undefined ? { now: input.now } : {}),
+    }),
+  };
+}
+
+export interface RefreshCollectionsActionDaysOverdueInput {
+  readonly daysOverdue: number;
+  readonly agingTier?: string;
+  readonly now?: Date;
+  /**
+   * Tie-break for the boundary cases in `recommendationFor` (e.g. a manually
+   * requested "escalate"). Defaults to the action's own current
+   * `recommended_action` so a background refresh cannot silently downgrade a
+   * previously escalated proposal.
+   */
+  readonly requestedAction?: string;
+}
+
+/**
+ * Recompute the days-overdue-derived fields of a Collections action in place,
+ * leaving every evidence-derived and identity field (confidence, evidence
+ * refs, invoice/counterparty identity, mode, etc.) untouched. Shared by the
+ * initial proposal build and the Collections proposal reconciliation worker
+ * so the two paths cannot diverge (#535).
+ */
+export function refreshCollectionsActionDaysOverdue(
+  existingAction: Record<string, unknown>,
+  input: RefreshCollectionsActionDaysOverdueInput,
+): Record<string, unknown> {
+  const daysOverdue = input.daysOverdue;
+  const agingTier = input.agingTier ?? agingTierFor(daysOverdue);
+  const counterpartyName = readString(existingAction.counterparty_name);
+  const invoiceNumber = readString(existingAction.invoice_number);
+  const amount = readString(existingAction.amount_due);
+  const currency = readString(existingAction.currency);
+  const requestedAction = input.requestedAction ?? readString(existingAction.recommended_action);
+  const recommendation = recommendationFor(daysOverdue, requestedAction);
+  const nextEscalationDate = addDaysIso(input.now ?? new Date(), recommendation.nextEscalationDays);
+
+  return {
+    ...existingAction,
+    days_overdue: daysOverdue,
+    aging_tier: agingTier,
+    recommended_action: recommendation.recommendedAction,
+    escalation_tier: recommendation.escalationTier,
+    ranked_recommendations: rankedRecommendations(daysOverdue, recommendation.recommendedAction),
+    recommended_tone: recommendation.tone,
+    draft_message: draftMessage({
+      counterpartyName,
+      invoiceNumber,
+      amount,
       currency,
-      due_date: dueDate,
-      days_overdue: daysOverdue,
-      aging_tier: agingTier,
-      recommended_action: recommendation.recommendedAction,
-      escalation_tier: recommendation.escalationTier,
-      ranked_recommendations: rankedRecommendations(daysOverdue, recommendation.recommendedAction),
-      recommended_tone: recommendation.tone,
-      draft_message: draftMessage({
-        counterpartyName,
-        invoiceNumber,
-        amount,
-        currency,
-        daysOverdue,
-        tone: recommendation.tone,
-      }),
-      next_escalation_date: nextEscalationDate,
-      narrative:
-        `${counterpartyName} has ${amount} ${currency} outstanding on invoice ${invoiceNumber}, ` +
-        `${daysOverdue} days overdue. Recommend ${recommendationNarrativeAction(recommendation.recommendedAction)} ` +
-        `with ${recommendation.tone} tone at the ${escalationTierLabel(recommendation.escalationTier)}.`,
-      summary: `${amount} ${currency} receivable is ${daysOverdue} days overdue for ${counterpartyName}.`,
-      risk_band: recommendation.riskBand,
-      confidence,
-      evidence_score: input.evidence.evidence_score,
-      risk_level: input.definition?.risk_level ?? null,
-      agent_id: input.definition?.agent_key ?? "collections",
-      agent_role: input.definition?.agent_key ?? "collections",
-      evidence_refs: evidenceRefsForAction(input.evidence.items),
-      missing_required_evidence: [...input.evidence.missing_required_evidence],
-      critical_missing: input.evidence.critical_missing,
-      mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
-    },
+      daysOverdue,
+      tone: recommendation.tone,
+    }),
+    next_escalation_date: nextEscalationDate,
+    narrative:
+      `${counterpartyName} has ${amount} ${currency} outstanding on invoice ${invoiceNumber}, ` +
+      `${daysOverdue} days overdue. Recommend ${recommendationNarrativeAction(recommendation.recommendedAction)} ` +
+      `with ${recommendation.tone} tone at the ${escalationTierLabel(recommendation.escalationTier)}.`,
+    summary: `${amount} ${currency} receivable is ${daysOverdue} days overdue for ${counterpartyName}.`,
+    risk_band: recommendation.riskBand,
   };
 }
 

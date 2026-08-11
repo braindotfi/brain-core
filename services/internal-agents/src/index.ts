@@ -19,3 +19,10 @@ export {
 } from "./registry.js";
 export * from "./registration.js";
 export { scopesForAgentRole } from "./agent-role-scopes.js";
+// Collections proposal reconciliation (#535): shared with the reconciler
+// worker so a background days_overdue refresh cannot diverge from build-time
+// recommendation logic.
+export {
+  refreshCollectionsActionDaysOverdue,
+  type RefreshCollectionsActionDaysOverdueInput,
+} from "./collections/handler.js";

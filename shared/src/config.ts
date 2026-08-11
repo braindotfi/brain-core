@@ -648,6 +648,16 @@ const envSchema = z.object({
     .positive()
     .default(24 * 60 * 60 * 1000),
 
+  // ---- Collections proposal reconciler (#534/#535) ----
+  // Refreshes/supersedes pending Collections proposals from the proposal
+  // side, independent of the overdue scanner's cooldown-gated agent runs.
+  BRAIN_COLLECTIONS_RECONCILE_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 60 * 1000),
+  BRAIN_COLLECTIONS_RECONCILE_PER_TENANT_BATCH_SIZE: z.coerce.number().int().positive().default(50),
+
   // ---- Reconciliation unreconciled transaction scanner ----
   BRAIN_RECONCILIATION_SCAN_INTERVAL_MS: z.coerce
     .number()

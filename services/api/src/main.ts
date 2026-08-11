@@ -110,6 +110,7 @@ import { registerAssistantQuestionsRoute } from "./assistant/questions-route.js"
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
+import { startCollectionsProposalReconciler } from "./agents/collections-proposal-reconciler.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startComplianceScanner } from "./agents/compliance-scanner.js";
 import { startDisputeScanner } from "./agents/dispute-scanner.js";
@@ -2974,6 +2975,31 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Collections proposal reconciler (#534/#535): proposal freshness cannot
+  // depend on a successful agent run, so this reconciles pending Collections
+  // proposals directly against ledger_invoices. Tenant discovery is
+  // cross-tenant on the BYPASSRLS tenant-deletion pool (mirrors
+  // startWikiRegenerationWorker); every read/write is tenant-scoped on the
+  // brain_app pool, which holds SELECT/UPDATE on proposals and SELECT on
+  // ledger_invoices (infra/db-roles.sql). The ledger projector role does
+  // NOT have a proposals grant, so it must never be used here.
+  const collectionsProposalReconciler = composition.workers.has("ledger")
+    ? startCollectionsProposalReconciler(
+        {
+          tenantDiscoveryPool: tenantDeletionPool,
+          appPool: pool,
+          evaluatePolicy: evaluateLegacyPolicy,
+          audit,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_COLLECTIONS_RECONCILE_INTERVAL_MS,
+          perTenantBatchSize: cfg.BRAIN_COLLECTIONS_RECONCILE_PER_TENANT_BATCH_SIZE,
+        },
+      )
+    : undefined;
+
   // Reconciliation scanner (BC-1/BC-2): cross-tenant unreconciled transaction
   // enumeration on the ledger worker pool, then tenant-scoped AgentRunService proposals.
   const reconciliationUnreconciledScanner = composition.workers.has("ledger")
@@ -3620,6 +3646,7 @@ async function main(): Promise<void> {
           ledgerAccountTransactionProjectionWorker,
           wikiRegenerationWorker,
           collectionsOverdueScanner,
+          collectionsProposalReconciler,
           reconciliationUnreconciledScanner,
           cashForecastScanner,
           treasuryScanner,
