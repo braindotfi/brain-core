@@ -8,7 +8,7 @@ import {
   newUserId,
 } from "@brain/shared";
 import { ingestOne } from "./ingest.js";
-import { UPLOAD_DOCUMENT_SCHEMA } from "../interpreters/upload.js";
+import { CUSTOMER_ASSERTED_CSV_PARSER, UPLOAD_DOCUMENT_SCHEMA } from "../interpreters/upload.js";
 
 function makeFakePool(
   options: {
@@ -324,6 +324,9 @@ describe("ingestOne", () => {
     expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
     expect(result.extractionJob).not.toBeNull();
     expect(client.jobs).toHaveLength(1);
+    expect(client.parsedChecks).toEqual([
+      [expect.any(String), ["document_records_upload_v1", CUSTOMER_ASSERTED_CSV_PARSER], ["1.0.3"]],
+    ]);
   });
 
   it("dedups by envelope idempotency_key before inserting", async () => {

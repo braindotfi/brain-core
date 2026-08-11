@@ -50,6 +50,8 @@ import {
   BANK_STATEMENT_UPLOAD_PROJECTOR,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
   DOCUMENT_RECORDS_UPLOAD_PROJECTOR,
+  CUSTOMER_ASSERTED_CSV_PARSER,
+  CUSTOMER_ASSERTED_CSV_PROJECTOR,
   FINCH_LEDGER_PARSER,
   FINCH_LEDGER_PROJECTOR,
   PLAID_LEDGER_PARSER,
@@ -58,6 +60,7 @@ import {
   STRIPE_LEDGER_PROJECTOR,
   projectBankStatementUploadLedger,
   projectDocumentRecordsUploadLedger,
+  projectCustomerAssertedCsvLedger,
   projectFinchLedger,
   projectPlaidLedger,
   projectStripeLedger,
@@ -108,6 +111,13 @@ const CONNECTOR_LEDGER_PASSES = [
     projector: DOCUMENT_RECORDS_UPLOAD_PROJECTOR,
     objectType: "document_records_upload",
     project: projectDocumentRecordsUploadLedger,
+  },
+  {
+    parser: CUSTOMER_ASSERTED_CSV_PARSER,
+    projector: CUSTOMER_ASSERTED_CSV_PROJECTOR,
+    objectType: "customer_asserted_csv",
+    project: projectCustomerAssertedCsvLedger,
+    provenance: "customer_asserted",
   },
 ] as const;
 
@@ -686,8 +696,10 @@ function isUploadProjector(projector: string): boolean {
   return (
     projector === BANK_STATEMENT_UPLOAD_PROJECTOR ||
     projector === DOCUMENT_RECORDS_UPLOAD_PROJECTOR ||
+    projector === CUSTOMER_ASSERTED_CSV_PROJECTOR ||
     projector === BANK_STATEMENT_UPLOAD_PARSER ||
-    projector === DOCUMENT_RECORDS_UPLOAD_PARSER
+    projector === DOCUMENT_RECORDS_UPLOAD_PARSER ||
+    projector === CUSTOMER_ASSERTED_CSV_PARSER
   );
 }
 
@@ -761,7 +773,7 @@ async function runConnectorLedgerPasses(
 
     for (const row of rows) {
       const common: ProjectionCommon = {
-        provenance: "extracted",
+        provenance: "provenance" in pass ? pass.provenance : "extracted",
         confidence: row.confidence,
         sourceIds: [row.raw_artifact_id],
         evidenceIds: [row.id],

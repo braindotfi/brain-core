@@ -1727,7 +1727,14 @@ paths:
                 object_type:
                   type: string
                   maxLength: 128
-                  description: Provider object type the payload describes (e.g. invoice)
+                  description: >
+                    Provider object type the payload describes (e.g. invoice). For
+                    source_type=csv_upload, supported deterministic schemas require
+                    one of counterparties, payables_invoices, receivables_invoices,
+                    payroll_runs, or tax_obligations. CSV uploads with another or
+                    omitted object_type are rejected unless they match the legacy
+                    AR-aging or payroll-register document formats; they never fall
+                    through to LLM extraction.
                 external_id:
                   type: string
                   maxLength: 256
@@ -1776,6 +1783,10 @@ paths:
                 object_type:
                   type: string
                   maxLength: 128
+                  description: >
+                    Provider object type the payload describes. For source_type=csv_upload,
+                    use counterparties, payables_invoices, receivables_invoices,
+                    payroll_runs, or tax_obligations for deterministic CSV projection.
                 external_id:
                   type: string
                   maxLength: 256
@@ -8534,10 +8545,13 @@ components:
       allOf:
         - $ref: '#/components/schemas/LedgerCommonFields'
         - type: object
-          required: [id, owner_id, invoice_number, counterparty_id, amount_due, currency, issue_date, status, metadata]
+          required: [id, owner_id, invoice_number, counterparty_id, counterparty_name, amount_due, currency, issue_date, status, metadata]
           properties:
             invoice_number: { type: string }
             counterparty_id: { type: string }
+            counterparty_name:
+              type: [string, "null"]
+              description: Resolved display name for counterparty_id when the linked counterparty exists.
             amount_due: { type: string }
             amount_paid: { type: [string, "null"] }
             currency: { type: string, pattern: '^[A-Z]{3}$' }

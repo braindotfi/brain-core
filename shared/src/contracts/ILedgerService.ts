@@ -189,6 +189,8 @@ export interface Transfer extends LedgerCommonFields {
 export interface Invoice extends LedgerCommonFields {
   invoice_number: string;
   counterparty_id: string;
+  /** Resolved display name for counterparty_id when the linked row exists. */
+  counterparty_name: string | null;
   amount_due: DecimalString;
   amount_paid: DecimalString;
   currency: Currency;

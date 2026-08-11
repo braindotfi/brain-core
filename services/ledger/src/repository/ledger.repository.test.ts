@@ -185,6 +185,14 @@ describe("listInvoices", () => {
     expect(_log[0]!.sql).toContain("counterparty_id = $2");
     expect(_log[0]!.values).toEqual(["open", "cp_1", 15]);
   });
+
+  it("joins the linked counterparty to return its display name", async () => {
+    const { _log, ...client } = fakeClient();
+    await listInvoices(client, { limit: 15 });
+    expect(_log[0]!.sql).toContain("cp.name AS counterparty_name");
+    expect(_log[0]!.sql).toContain("LEFT JOIN ledger_counterparties cp");
+    expect(_log[0]!.sql).toContain("cp.id = li.counterparty_id");
+  });
 });
 
 // ---- counterparties ----

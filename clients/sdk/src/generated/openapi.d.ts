@@ -4580,6 +4580,8 @@ export interface components {
         Invoice: components["schemas"]["LedgerCommonFields"] & {
             invoice_number: string;
             counterparty_id: string;
+            /** @description Resolved display name for counterparty_id when the linked counterparty exists. */
+            counterparty_name: string | null;
             amount_due: string;
             amount_paid?: string | null;
             currency: string;
@@ -6200,7 +6202,7 @@ export interface operations {
                     mime_type?: string;
                     /** @description Declared payload schema tag (e.g. acme_bank.transactions.v1). Stored verbatim, never parsed at intake. An unknown schema still ingests and waits for a parser. */
                     source_schema?: string;
-                    /** @description Provider object type the payload describes (e.g. invoice) */
+                    /** @description Provider object type the payload describes (e.g. invoice). For source_type=csv_upload, supported deterministic schemas require one of counterparties, payables_invoices, receivables_invoices, payroll_runs, or tax_obligations. CSV uploads with another or omitted object_type are rejected unless they match the legacy AR-aging or payroll-register document formats; they never fall through to LLM extraction. */
                     object_type?: string;
                     /** @description Provider-side id of the described object */
                     external_id?: string;
@@ -6236,6 +6238,7 @@ export interface operations {
                     auth_header?: string;
                     /** @description Declared payload schema tag (e.g. acme_bank.transactions.v1). Stored verbatim, never parsed at intake. */
                     source_schema?: string;
+                    /** @description Provider object type the payload describes. For source_type=csv_upload, use counterparties, payables_invoices, receivables_invoices, payroll_runs, or tax_obligations for deterministic CSV projection. */
                     object_type?: string;
                     external_id?: string;
                     /** @enum {string} */

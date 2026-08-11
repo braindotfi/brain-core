@@ -776,6 +776,53 @@ describe("upload document interpreters", () => {
     ]);
   });
 
+  it("parses declared customer-asserted payable CSV rows without inferring AR direction", () => {
+    const out = uploadDocumentInterpreter(
+      Buffer.from(
+        [
+          "invoice_id,counterparty_id,amount,currency,issued_date,due_date,status,paid_date",
+          "INV-VCS-2227,vnd_vertex_cloud,9150.00,USD,2026-07-01,2026-07-31,open,",
+        ].join("\n"),
+      ),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        objectType: "payables_invoices",
+        mimeType: "text/csv",
+      }),
+    );
+
+    expect(out).toMatchObject({ parser: "customer_asserted_csv_v1", confidence: 1 });
+    expect(out!.extracted).toMatchObject({
+      object_type: "customer_asserted_csv",
+      record_type: "payables_invoices",
+      records: [
+        expect.objectContaining({
+          invoice_id: "INV-VCS-2227",
+          counterparty_id: "vnd_vertex_cloud",
+        }),
+      ],
+    });
+  });
+
+  it("rejects invoice-shaped CSV rows without an explicit AP or AR record type", () => {
+    expect(() =>
+      uploadDocumentInterpreter(
+        Buffer.from(
+          [
+            "invoice_id,counterparty_id,amount,currency,issued_date,due_date,status",
+            "INV-VCS-2227,vnd_vertex_cloud,9150.00,USD,2026-07-01,2026-07-31,open",
+          ].join("\n"),
+        ),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/CSV uploads require a supported declared object_type/);
+  });
+
   it("parses quoted and bucket-style AR aging rows with low confidence", () => {
     const csv = [
       "Customer,Invoice Ref,Current,31-60,Currency,Status",
@@ -1028,7 +1075,7 @@ describe("upload document interpreters", () => {
           mimeType: "text/csv",
         }),
       ),
-    ).toThrow(/did not match AR aging or payroll register headers/);
+    ).toThrow(/CSV uploads require a supported declared object_type/);
   });
 
   it("throws on empty upload spreadsheets so interpretation failures are logged", () => {

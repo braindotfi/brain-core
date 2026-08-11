@@ -1,5 +1,5 @@
 import type { ProjectionCommon } from "./merge-accounting.js";
-import type { CounterpartyUpsert, ObligationUpsert } from "./merge-apar.js";
+import type { CounterpartyType, CounterpartyUpsert, ObligationUpsert } from "./merge-apar.js";
 import { normalizeName } from "./merge-apar.js";
 
 export const PLAID_LEDGER_PARSER = "plaid_tx_v1" as const;
@@ -7,12 +7,14 @@ export const STRIPE_LEDGER_PARSER = "stripe_v1" as const;
 export const FINCH_LEDGER_PARSER = "finch_payroll_v1" as const;
 export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1" as const;
 export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1" as const;
+export const CUSTOMER_ASSERTED_CSV_PARSER = "customer_asserted_csv_v1" as const;
 
 export const PLAID_LEDGER_PROJECTOR = "plaid_canonical_ledger_v1" as const;
 export const STRIPE_LEDGER_PROJECTOR = "stripe_canonical_ledger_v1" as const;
 export const FINCH_LEDGER_PROJECTOR = "finch_canonical_ledger_v1" as const;
 export const BANK_STATEMENT_UPLOAD_PROJECTOR = "bank_statement_upload_canonical_v1" as const;
 export const DOCUMENT_RECORDS_UPLOAD_PROJECTOR = "document_records_upload_canonical_v1" as const;
+export const CUSTOMER_ASSERTED_CSV_PROJECTOR = "customer_asserted_csv_canonical_v1" as const;
 
 export interface CanonicalAccountUpsert {
   sourceSystem: string;
@@ -55,6 +57,16 @@ export type ConnectorLedgerProjection =
 
 export interface ConnectorProjectionDiagnostics {
   skippedRows: Record<string, number>;
+}
+
+function canonicalCounterpartyType(value: string | null): CounterpartyType | null {
+  if (value === "vendor" || value === "customer" || value === "other") return value;
+  if (value === "employee" || value === "merchant") return value;
+  // Ledger supports tax_authority but canonical AP/AR currently stores only
+  // its smaller type set. Retain the entity and original declared type rather
+  // than dropping the counterparty link for a tax obligation.
+  if (value === "tax_authority") return "other";
+  return null;
 }
 
 function skipped(diag: ConnectorProjectionDiagnostics | undefined, reason: string): void {
@@ -737,6 +749,225 @@ function projectPayrollRegister(
         common: sourceCommon,
       },
     });
+  }
+  return out;
+}
+
+/**
+ * Deterministic projection for explicit customer-asserted CSV schemas. The
+ * caller's envelope identifies the record type, so invoice direction never
+ * comes from filename, row text, or a generative document extractor.
+ */
+export function projectCustomerAssertedCsvLedger(
+  extracted: unknown,
+  common: ProjectionCommon,
+  diag?: ConnectorProjectionDiagnostics,
+): ConnectorLedgerProjection[] {
+  const payload = asRecord(extracted);
+  const recordType = str(payload?.["record_type"]);
+  const records = Array.isArray(payload?.["records"]) ? payload!["records"] : [];
+  if (payload === null || recordType === null) {
+    throw new Error("customer_asserted CSV payload is malformed");
+  }
+  const sourceSystem = "customer_asserted_csv";
+  const sourceCommon: ProjectionCommon = {
+    ...common,
+    provenance: "customer_asserted",
+    confidence: 1,
+  };
+  const out: ConnectorLedgerProjection[] = [];
+
+  for (const raw of records) {
+    const row = asRecord(raw);
+    if (row === null) {
+      skipped(diag, "customer_asserted_csv_row_not_object");
+      continue;
+    }
+    if (recordType === "counterparties") {
+      const id = str(row["counterparty_id"]);
+      const name = str(row["name"]);
+      const declaredType = str(row["type"]);
+      const type = canonicalCounterpartyType(declaredType);
+      if (id === null || name === null || type === null) {
+        skipped(diag, "customer_asserted_counterparty_missing_required_field");
+        continue;
+      }
+      out.push({
+        kind: "counterparty",
+        input: {
+          sourceSystem,
+          sourceNaturalKey: id,
+          name,
+          normalizedName: normalizeName(name) || null,
+          type,
+          email: str(row["email"]),
+          extensions: {
+            customer_asserted_csv: {
+              category: str(row["category"]),
+              first_seen: str(row["first_seen"]),
+              declared_type: declaredType,
+            },
+          },
+          common: sourceCommon,
+        },
+      });
+      continue;
+    }
+
+    if (recordType === "payables_invoices" || recordType === "receivables_invoices") {
+      const id = str(row["invoice_id"]);
+      const counterpartyKey = str(row["counterparty_id"]);
+      const amount = decimal(row["amount"]);
+      const dueDate = str(row["due_date"]);
+      if (id === null || counterpartyKey === null || amount === null || dueDate === null) {
+        skipped(diag, "customer_asserted_invoice_missing_required_field");
+        continue;
+      }
+      const direction = recordType === "payables_invoices" ? "payable" : "receivable";
+      out.push({
+        kind: "obligation",
+        input: {
+          sourceSystem,
+          sourceNaturalKey: id,
+          direction,
+          type: "invoice",
+          counterpartySourceKey: counterpartyKey,
+          amount,
+          currency: currency(row["currency"]),
+          issueDate: str(row["issued_date"]),
+          dueDate,
+          status: str(row["status"]) ?? "open",
+          extensions: {
+            customer_asserted_csv: { record_type: recordType, paid_date: str(row["paid_date"]) },
+          },
+          common: sourceCommon,
+        },
+      });
+      const paidDate = str(row["paid_date"]);
+      if (paidDate !== null) {
+        out.push({
+          kind: "transaction",
+          input: {
+            sourceSystem,
+            sourceNaturalKey: `payment:${id}`,
+            accountSourceKey: null,
+            counterpartySourceKey: counterpartyKey,
+            amount,
+            currency: currency(row["currency"]),
+            direction: direction === "payable" ? "outflow" : "inflow",
+            transactionDate: paidDate,
+            postedDate: paidDate,
+            status: "posted",
+            descriptionRaw: id,
+            descriptionNormalized: id,
+            reconciliationStatus: "unreconciled",
+            extensions: { customer_asserted_csv: { record_type: recordType, invoice_id: id } },
+            common: sourceCommon,
+          },
+        });
+      }
+      continue;
+    }
+
+    if (recordType === "payroll_runs") {
+      const id = str(row["run_id"]);
+      const amount = decimal(row["gross_amount"]);
+      const paidDate = str(row["paid_date"]);
+      const scheduledDate = str(row["scheduled_date"]);
+      if (id === null || amount === null) {
+        skipped(diag, "customer_asserted_payroll_missing_required_field");
+        continue;
+      }
+      const counterpartyKey = "payroll";
+      out.push({
+        kind: "counterparty",
+        input: {
+          sourceSystem,
+          sourceNaturalKey: counterpartyKey,
+          name: "Payroll",
+          normalizedName: "payroll",
+          type: "other",
+          email: null,
+          extensions: { customer_asserted_csv: { source_kind: "payroll_runs" } },
+          common: sourceCommon,
+        },
+      });
+      if (scheduledDate !== null) {
+        out.push({
+          kind: "obligation",
+          input: {
+            sourceSystem,
+            sourceNaturalKey: `payroll:${id}`,
+            direction: "payable",
+            type: "payroll",
+            counterpartySourceKey: counterpartyKey,
+            amount,
+            currency: currency(row["currency"]),
+            issueDate: null,
+            dueDate: scheduledDate,
+            status: str(row["status"]) ?? "upcoming",
+            extensions: { customer_asserted_csv: { record_type: recordType, run_id: id } },
+            common: sourceCommon,
+          },
+        });
+      }
+      if (paidDate !== null) {
+        out.push({
+          kind: "transaction",
+          input: {
+            sourceSystem,
+            sourceNaturalKey: `payroll_payment:${id}`,
+            accountSourceKey: null,
+            counterpartySourceKey: counterpartyKey,
+            amount,
+            currency: currency(row["currency"]),
+            direction: "outflow",
+            transactionDate: paidDate,
+            postedDate: paidDate,
+            status: "posted",
+            descriptionRaw: `Payroll ${id}`,
+            descriptionNormalized: `Payroll ${id}`,
+            reconciliationStatus: "unreconciled",
+            extensions: { customer_asserted_csv: { record_type: recordType, run_id: id } },
+            common: sourceCommon,
+          },
+        });
+      }
+      continue;
+    }
+
+    if (recordType === "tax_obligations") {
+      const id = str(row["obligation_id"]);
+      const counterpartyKey = str(row["counterparty_id"]);
+      const amount = decimal(row["amount"]);
+      const dueDate = str(row["due_date"]);
+      if (id === null || counterpartyKey === null || amount === null || dueDate === null) {
+        skipped(diag, "customer_asserted_tax_missing_required_field");
+        continue;
+      }
+      out.push({
+        kind: "obligation",
+        input: {
+          sourceSystem,
+          sourceNaturalKey: id,
+          direction: "payable",
+          type: "tax",
+          counterpartySourceKey: counterpartyKey,
+          amount,
+          currency: currency(row["currency"]),
+          issueDate: null,
+          dueDate,
+          status: str(row["status"]) ?? "open",
+          extensions: {
+            customer_asserted_csv: {
+              record_type: recordType,
+              description: str(row["description"]),
+            },
+          },
+          common: sourceCommon,
+        },
+      });
+    }
   }
   return out;
 }

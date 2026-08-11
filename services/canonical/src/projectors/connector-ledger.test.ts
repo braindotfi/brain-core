@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LEDGER_OBLIGATION_TYPES } from "@brain/shared";
 import {
   projectBankStatementUploadLedger,
+  projectCustomerAssertedCsvLedger,
   projectDocumentRecordsUploadLedger,
   projectFinchLedger,
   projectPlaidLedger,
@@ -587,5 +588,126 @@ describe("connector ledger canonical projectors", () => {
 
     expect(out).toEqual([]);
     expect(diag.skippedRows).toEqual({ payroll_register_obligation_missing_required_field: 1 });
+  });
+
+  it("projects declared payable and receivable CSV rows with explicit directions", () => {
+    const payable = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "payables_invoices",
+        records: [
+          {
+            invoice_id: "INV-VCS-2227",
+            counterparty_id: "vnd_vertex_cloud",
+            amount: "9150.00",
+            currency: "USD",
+            issued_date: "2026-07-01",
+            due_date: "2026-07-31",
+            status: "open",
+          },
+        ],
+      },
+      common,
+    );
+    const receivable = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "receivables_invoices",
+        records: [
+          {
+            invoice_id: "AR-100",
+            counterparty_id: "cus_orbit",
+            amount: "12000.00",
+            currency: "USD",
+            issued_date: "2026-07-01",
+            due_date: "2026-07-31",
+            status: "open",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(payable).toEqual([
+      expect.objectContaining({
+        kind: "obligation",
+        input: expect.objectContaining({
+          sourceSystem: "customer_asserted_csv",
+          sourceNaturalKey: "INV-VCS-2227",
+          counterpartySourceKey: "vnd_vertex_cloud",
+          direction: "payable",
+          dueDate: "2026-07-31",
+        }),
+      }),
+    ]);
+    expect(receivable).toEqual([
+      expect.objectContaining({
+        kind: "obligation",
+        input: expect.objectContaining({
+          sourceNaturalKey: "AR-100",
+          counterpartySourceKey: "cus_orbit",
+          direction: "receivable",
+        }),
+      }),
+    ]);
+  });
+
+  it("never turns a counterparty first_seen field into a ledger obligation date", () => {
+    const out = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "counterparties",
+        records: [
+          {
+            counterparty_id: "vnd_vertex_cloud",
+            name: "Vertex Cloud Systems",
+            type: "vendor",
+            first_seen: "2026-01-04",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      kind: "counterparty",
+      input: {
+        sourceNaturalKey: "vnd_vertex_cloud",
+        extensions: { customer_asserted_csv: { first_seen: "2026-01-04" } },
+      },
+    });
+    expect(out.some((projection) => projection.kind === "obligation")).toBe(false);
+  });
+
+  it("retains tax authorities as named canonical counterparties", () => {
+    const out = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "counterparties",
+        records: [
+          {
+            counterparty_id: "tax_irs",
+            name: "Internal Revenue Service",
+            type: "tax_authority",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(out).toEqual([
+      expect.objectContaining({
+        kind: "counterparty",
+        input: expect.objectContaining({
+          sourceNaturalKey: "tax_irs",
+          name: "Internal Revenue Service",
+          type: "other",
+          extensions: {
+            customer_asserted_csv: expect.objectContaining({ declared_type: "tax_authority" }),
+          },
+        }),
+      }),
+    ]);
   });
 });

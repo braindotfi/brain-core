@@ -365,7 +365,16 @@ async function tryInProcessUploadExtraction(
       mimeType: input.artifact.mime_type,
     });
   } catch (err) {
-    if (isBrainError(err) && err.code === "raw_source_unsupported") return null;
+    // CSV is structured input. A schema mismatch must fail terminally rather
+    // than be handed to the document LLM, which cannot safely infer whether
+    // identically-shaped invoice rows are AP or AR.
+    if (
+      isBrainError(err) &&
+      err.code === "raw_source_unsupported" &&
+      supportedUploadSourceType(input.artifact) !== "csv_upload"
+    ) {
+      return null;
+    }
     throw err;
   }
   if (output === null) return null;

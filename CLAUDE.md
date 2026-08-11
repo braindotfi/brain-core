@@ -744,7 +744,17 @@ Pending Dmitriy sign-off
   When tokens are hidden and ESP credentials are missing, API boot fails before
   routes are registered.
 - The document extraction agent keeps deterministic text extraction first for
-  CSV, plain text, XLSX, and text-layer PDFs. Image uploads and scanned PDFs
+  CSV, plain text, XLSX, and text-layer PDFs. Customer-asserted CSV uploads
+  declare one of `counterparties`, `payables_invoices`,
+  `receivables_invoices`, `payroll_runs`, or `tax_obligations` through the Raw
+  envelope `object_type`; those rows are parsed and canonically projected with
+  `customer_asserted` provenance. Invoice direction comes only from that
+  declared type, never from a filename or inferred content. Unsupported or
+  undeclared CSV schemas fail with `raw_source_unsupported` and never fall
+  through to the LLM extractor. The staging-only
+  `staging-customer-asserted-csv-smoke.yml` workflow provisions an isolated
+  tenant and verifies all five schemas, AP of `$74,620.25`, AR of `$76,200.00`,
+  and resolved invoice counterparty names. Image uploads and scanned PDFs
   fall back to OCR through `OPENAI_OCR_MODEL` (default `gpt-4o`) with a 10 MB
   input guard, a 5 page PDF guard, and a fail-closed blank-OCR check. OCR-derived
   parsed evidence remains `agent_contributed` and is capped at confidence `0.5`.
