@@ -236,6 +236,7 @@ export {
 } from "./rails/session-keys.js";
 export {
   redact,
+  assertNoForbiddenFields,
   DEFAULT_AGENT_TRACE_POLICY,
   type RedactionPolicy,
   type RedactionRule,

@@ -79,6 +79,16 @@ export const DEFAULT_AGENT_TRACE_POLICY: RedactionPolicy = {
   defaults: { unmatched: "preserve" },
 };
 
+/**
+ * Throw if `payload` contains any field the policy marks `forbid`. The redacted
+ * clone is discarded: this is an assertion, not a transform, for durable stores
+ * that must never hold a credential (see OutboxService.enqueue). Uses an empty
+ * tenant hash key because no output is kept.
+ */
+export function assertNoForbiddenFields(policy: RedactionPolicy, payload: unknown): void {
+  redact(policy, payload, { tenantHashKey: "" });
+}
+
 export interface RedactOptions {
   /**
    * Per-tenant key for recoverable hashing. In production this is derived from

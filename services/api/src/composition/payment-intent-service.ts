@@ -123,12 +123,6 @@ export interface BuildPaymentIntentServiceDeps {
       currency: string;
     },
   ) => Promise<OnchainDispatchParams | null>;
-  sourceCredentialResolver?: {
-    resolve(
-      ctx: ServiceCallContext,
-      sourceAccountId: string,
-    ): Promise<{ credentials: object; source_type: string } | null>;
-  };
   metrics?: MetricsEmitter;
   /**
    * Optional: agent-router routing enqueue. When wired, a rejected payment
@@ -179,9 +173,6 @@ export function buildPaymentIntentService(
       : {}),
     ...(deps.resolveOnchainParams !== undefined
       ? { resolveOnchainParams: deps.resolveOnchainParams }
-      : {}),
-    ...(deps.sourceCredentialResolver !== undefined
-      ? { sourceCredentialResolver: deps.sourceCredentialResolver }
       : {}),
     ...(deps.metrics !== undefined ? { metrics: deps.metrics } : {}),
     ...(deps.enqueue !== undefined ? { enqueue: deps.enqueue } : {}),
