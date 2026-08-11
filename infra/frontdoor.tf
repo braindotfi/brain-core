@@ -81,7 +81,7 @@ resource "azurerm_cdn_frontdoor_route" "api" {
 }
 
 # ---------------------------------------------------------------------------
-# mcp.brain.fi — the path rewrite Container Apps ingress cannot do
+# mcp.brain.fi -- the path rewrite Container Apps ingress cannot do
 #
 # Same origin as the api route above (mcp IS the api app); a separate endpoint
 # so the rewrite rule set applies only to mcp traffic and never to api.brain.fi.
