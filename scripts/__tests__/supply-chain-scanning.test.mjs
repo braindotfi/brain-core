@@ -95,5 +95,5 @@ test("every temporary Trivy exception has a reason and expiry", () => {
 test("agents image removes healthcheck-only curl and uses the patched PDF parser", () => {
   assert.doesNotMatch(agentsDockerfile, /apt-get install.*curl/s);
   assert.match(agentsDockerfile, /CMD python -c/);
-  assert.match(agentsProject, /"pypdf>=6\.14\.2"/);
+  assert.match(agentsProject, /"pypdf>=6\.15\.0"/);
 });

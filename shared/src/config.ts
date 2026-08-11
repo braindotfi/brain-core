@@ -278,7 +278,7 @@ const envSchema = z.object({
   SLACK_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   SLACK_SIGNING_SECRET: optionalNonEmptyString(),
   SLACK_BOT_TOKEN: optionalNonEmptyString(),
   SLACK_CLIENT_ID: optionalNonEmptyString(),
@@ -287,13 +287,13 @@ const envSchema = z.object({
   TEAMS_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   TEAMS_APP_ID: optionalNonEmptyString(),
   TEAMS_APP_PASSWORD: optionalNonEmptyString(),
   EMAIL_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   EMAIL_APPROVAL_BASE_URL: optionalNonEmptyString(),
   EMAIL_TOKEN_SECRET: optionalNonEmptyString(),
   EMAIL_ENDPOINT: optionalNonEmptyString(),
@@ -306,7 +306,7 @@ const envSchema = z.object({
   BRAIN_SURFACE_SMOKE_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   BRAIN_SURFACE_SMOKE_SECRET: optionalNonEmptyString(),
 
   // ---- CORS ----
@@ -333,7 +333,7 @@ const envSchema = z.object({
   BRAIN_DEMO_MODE: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
 
   /**
    * Set to "true" to expose POST /v1/demo/provision-run, the BrainSaaS
@@ -357,7 +357,7 @@ const envSchema = z.object({
   BRAIN_DEMO_PROVISION_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   /**
    * Required when BRAIN_DEMO_PROVISION_ENABLED=true in NODE_ENV=production.
    * The operator's explicit attestation that this stack is a testnet "prod"
@@ -399,7 +399,7 @@ const envSchema = z.object({
   BRAIN_SERVICE_TOKEN_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   /**
    * Required when BRAIN_SERVICE_TOKEN_ENABLED=true in NODE_ENV=production.
    * Operator's explicit attestation that this stack is a testnet "prod"
@@ -424,7 +424,7 @@ const envSchema = z.object({
   BRAIN_API_KEY_AUTH_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   BRAIN_API_KEY_PEPPER: optionalNonEmptyString(),
   BRAIN_API_KEY_RATE_LIMIT: z.coerce.number().int().positive().default(600),
   BRAIN_API_KEY_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
@@ -438,13 +438,13 @@ const envSchema = z.object({
   BRAIN_SELF_SERVE_SIGNUP: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
 
   // ---- Money-path policy gates ----
   BRAIN_FIAT_HUMAN_APPROVAL_FLOOR_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("true"),
+    .default(true),
   /**
    * Feature gate for section 6 counterparty trust enforcement. Default off until the
    * staged impact report and focused gate re-audit complete.
@@ -452,11 +452,11 @@ const envSchema = z.object({
   BRAIN_TRUST_GATE_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
   /**
    * Emergency rollback switch for policy-activation lint enforcement (H-18):
    * when true, POST /policy/:tenant_id/sign rejects activation on ANY
@@ -467,7 +467,7 @@ const envSchema = z.object({
   BRAIN_POLICY_LINT_REJECT: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("true"),
+    .default(true),
 
   // ---- Plaid (consumed by tools/plaid-sandbox and Raw webhook verifier) ----
   PLAID_CLIENT_ID: optionalNonEmptyString(),
@@ -819,7 +819,7 @@ const envSchema = z.object({
   S3_FORCE_PATH_STYLE: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
 
   // ---- Source credential encryption ----
   /**
@@ -852,7 +852,7 @@ const envSchema = z.object({
   BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
-    .default("false"),
+    .default(false),
 
   // ---- x402 settlement rail ----
   /** Coinbase/facilitator URL for the x402 HTTP settlement protocol. Presence enables X402BaseRail at boot. */

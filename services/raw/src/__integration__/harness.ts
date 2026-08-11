@@ -28,7 +28,7 @@ import {
   verifyWithKey,
   type Principal,
 } from "@brain/shared";
-import { SignJWT, exportJWK, generateKeyPair, type KeyLike } from "jose";
+import { SignJWT, exportJWK, generateKeyPair } from "jose";
 import { buildRawApp } from "../server.js";
 import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/index.js";
 
@@ -132,7 +132,7 @@ export async function buildHarness(): Promise<Harness | null> {
   });
   // Monkey-patch verify to use the local key. Keeps the harness hermetic.
   verifier.verify = async (token) =>
-    verifyWithKey(token, async () => publicKey as KeyLike, {
+    verifyWithKey(token, async () => publicKey, {
       jwksUrl: "",
       issuer: "https://auth.brain.fi",
       audience: "brain-api",

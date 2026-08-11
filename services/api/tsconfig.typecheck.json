@@ -4,9 +4,8 @@
     "composite": false,
     "incremental": false,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@brain/api": ["src/index.ts"],
+      "@brain/api": ["./src/index.ts"],
       "@brain/shared": ["../shared/src/index.ts"],
       "@brain/shared/*": ["../shared/src/*.ts"]
     }

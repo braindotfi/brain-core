@@ -32,7 +32,7 @@
     "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@azure/storage-blob": "^12.25.0",
@@ -49,22 +49,22 @@
     "@brain/surfaces": "workspace:*",
     "@brain/wiki": "workspace:*",
     "@fastify/cors": "^11.3.0",
-    "@fastify/helmet": "^13.0.2",
+    "@fastify/helmet": "^13.1.0",
     "@fastify/multipart": "^9.0.1",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^6.0.1",
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "@opentelemetry/resources": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "bullmq": "^6.0.5",
     "fastify": "^5.11.0",
-    "fastify-plugin": "^5.0.1",
+    "fastify-plugin": "^6.0.0",
     "hot-shots": "^10.2.1",
     "ioredis": "^6.0.0",
-    "jose": "^5.9.3",
+    "jose": "^6.2.8",
     "openai": "^4.68.0",
     "pg": "^8.22.0",
     "plaid": "^45.0.0",
@@ -72,17 +72,17 @@
     "pino-pretty": "^11.2.2",
     "siwe": "^2.3.2",
     "ulid": "^3.0.2",
-    "viem": "^2.21.0",
-    "zod": "^3.23.8"
+    "viem": "^2.55.11",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@scalar/api-reference": "1.62.9",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.11.10",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.12.0",
     "tsx": "^4.23.1",
-    "typescript": "^5.6.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
 }

@@ -32,9 +32,9 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.11.10",
-    "typescript": "^5.6.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.12.0",
