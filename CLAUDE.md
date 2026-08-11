@@ -641,10 +641,14 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   or eligible root reaches `AUDIT_ANCHOR_MAX_WAIT_MS` (defaulting to the legacy
   `AUDIT_ANCHOR_INTERVAL_MS`, one hour), whichever comes first. It evaluates
   those conditions every `AUDIT_ANCHOR_CHECK_INTERVAL_MS` (default 60 seconds).
-  `BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI=0.05` and
-  `BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI=0.5` are the durable Base Sepolia anchor fee
-  floors; the broadcaster still takes the maximum of those floors and the
-  network estimate.
+  `BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI=0.025` and
+  `BRAIN_ONCHAIN_MIN_MAX_FEE_GWEI=0.20` are the durable Base Sepolia anchor fee
+  floors. They were lowered on 2026-08-11 after receipts showed the prior
+  0.05 gwei priority floor, rather than observed 0.006 to 0.021 gwei network
+  conditions, was setting the normal 0.055 gwei effective price. The priority
+  floor retains margin above the observed reward range; the broadcaster still
+  takes the maximum of these floors and the network estimate, so they do not
+  cap fees during a real spike.
 - `reverted` is a per-ROW terminal status and only genuinely applies to the
   single-anchor path (`publishPendingAnchor`), where one row is one
   transaction. Every reachable `anchorBatch` revert reason (`NotPublisher`,
