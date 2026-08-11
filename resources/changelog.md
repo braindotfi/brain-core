@@ -14,6 +14,9 @@ User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Inte
 - **On-chain anchor batches close on tenant-root count or maximum wait.** The
   publisher uses the configured threshold or latency bound, whichever happens
   first.
+- **Published batching measurement is available.** Five Base Sepolia production
+  batches measured on 2026-08-11 consumed a weighted 47,575 gas per tenant
+  root. This is an operational measurement, not a fixed gas or cost guarantee.
 
 ### v0.5.18 (obligation scenario filtering)
 

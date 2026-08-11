@@ -43,13 +43,28 @@ Tamper with `event_002` and `B` changes. `event_003` still references the old `B
 Events are batched into a per-tenant Merkle tree. Roots are anchored to Base
 Sepolia through `BrainAuditAnchor`.
 
-| Property                | Value                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **Publisher cycle**     | Configured bounded cycles. The default interval is one hour, but anchor status is the source of truth for each record. |
-| **Immediate anchoring** | No severity-accelerated path exists.                                                                                   |
-| **Anchor target**       | `BrainAuditAnchor` on Base Sepolia.                                                                                    |
-| **Anchor authority**    | The contract's `onlyPublisher` address. The current Base Sepolia publisher is a single EOA with two-step rotation.     |
-| **Replay guard**        | A tenant-root pair is published once. `anchorBatch` skips already-published pairs so batch retries are safe.           |
+| Property                | Value                                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Publisher cycle**     | A cycle closes when 50 eligible tenant roots accumulate or one hour elapses, whichever comes first. Both limits are configurable. |
+| **Immediate anchoring** | No severity-accelerated path exists.                                                                                              |
+| **Anchor target**       | `BrainAuditAnchor` on Base Sepolia.                                                                                               |
+| **Anchor authority**    | The contract's `onlyPublisher` address. The current Base Sepolia publisher is a single EOA with two-step rotation.                |
+| **Replay guard**        | A tenant-root pair is published once. `anchorBatch` skips already-published pairs so batch retries are safe.                      |
+
+`anchorBatch` keeps every tenant root individually queryable on-chain. Each
+published `(tenantId, root)` pair remains available through `isPublished` and
+the `AnchorPublished` event; batching does not replace tenant roots with a
+single outer root.
+
+Demo and sandbox tenants keep the same append-only database hash chain but are
+explicitly database-only. Their roots are excluded from Base Sepolia batches.
+`GET /v1/audit/anchor/latest` reports this as
+`anchoring_mode: "db_only"` and `guarantee: "database_hash_chain"` rather than
+an on-chain guarantee.
+
+Five Base Sepolia production batches measured on 2026-08-11 consumed a weighted
+47,575 gas per tenant root. This is an observed operational measurement, not a
+fixed gas or cost guarantee.
 
 [**→ BrainAuditAnchor smart contract**](../smart-contracts/brainauditanchor.md)
 
