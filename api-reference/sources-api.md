@@ -69,6 +69,38 @@ Limits: 50 MB per artifact. Errors: `400`, `401`, `403`, `413`, `415`, `429`.
 
 `plaid`, `stripe`, `finch`, and `merge_accounting` are reserved on this route: those source types are provider-authenticated only and may be created solely through their authenticated provider integration, so a caller cannot mint high-trust evidence by labeling an upload. Asserting any of them here returns `raw_source_reserved`.
 
+#### Structured CSV uploads
+
+`csv_upload` supports deterministic, customer-asserted CSV records when the
+ingestion envelope declares `object_type`. The supported values are
+`counterparties`, `payables_invoices`, `receivables_invoices`, `payroll_runs`,
+and `tax_obligations`.
+
+The object type is required because payable and receivable invoice files can
+have identical columns. Brain never infers their direction from filenames or
+row values. `payables_invoices` always projects payable obligations, while
+`receivables_invoices` always projects receivable obligations. A
+`counterparties` file creates only counterparties: fields such as `first_seen`
+remain reference metadata and cannot become transaction or due dates.
+Projected invoice reads include both `counterparty_id` and the resolved
+`counterparty_name` when the declared counterparty CSV has been ingested.
+
+```http
+POST /v1/raw/ingest
+Authorization: Bearer <token with raw:write>
+Content-Type: multipart/form-data
+
+source_type=csv_upload
+object_type=payables_invoices
+file=@payables_invoices.csv
+mime_type=text/csv
+```
+
+Required headers are validated per object type. A CSV with an unsupported or
+undeclared schema returns `422 raw_source_unsupported`; it is never sent to the
+LLM document extractor. Legacy AR-aging and payroll-register uploads remain
+supported by their existing deterministic parsers.
+
 ### Source Types
 
 The `source_type` you tag an ingested artifact with. Used for routing to the right parser.

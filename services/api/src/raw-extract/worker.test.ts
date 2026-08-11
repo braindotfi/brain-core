@@ -186,6 +186,31 @@ describe("runDocumentExtractionCycle", () => {
     expect(failed?.values?.[1]).toContain("dependency_unavailable");
   });
 
+  it("never sends an unsupported CSV upload to the external document extractor", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "csv_upload",
+        source_schema: "brain.upload.document.v1",
+        mime_type: "text/csv",
+      },
+    });
+    const client: DocumentExtractPort = { extract: vi.fn() };
+
+    await runDocumentExtractionCycle(
+      {
+        scanPool: scanPool(),
+        appPool: app.pool,
+        blob: blob("invoice_id,counterparty_id,amount\nINV-1,vnd-1,10"),
+        client,
+      },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).not.toHaveBeenCalled();
+    const failed = app.updates.find((u) => u.kind === "failed");
+    expect(failed?.values?.[1]).toContain("raw_source_unsupported");
+  });
+
   it("calls the extractor from the worker and caps recorded confidence at 0.5", async () => {
     const app = appPool({ artifact: EXTERNAL_AGENT_ARTIFACT });
     const audit = new InMemoryAuditEmitter();

@@ -80,6 +80,7 @@ interface CanonicalCounterpartyRow {
   confidence: number | null;
   source_ids: string[];
   evidence_ids: string[];
+  extensions: Record<string, unknown>;
 }
 
 interface CanonicalObligationRow {
@@ -172,14 +173,17 @@ export async function projectCanonicalCounterparty(
   tenantId: string,
   row: CanonicalCounterpartyRow,
 ): Promise<string> {
+  const customerAssertedCsv = record(row.extensions["customer_asserted_csv"]);
   const sourceKind =
-    row.type === "other" &&
+    str(customerAssertedCsv?.["source_kind"]) ??
+    (row.type === "other" &&
     row.source_system === "document_upload" &&
     row.source_natural_key.startsWith("payroll:")
       ? "payroll_register"
-      : undefined;
+      : undefined);
   const metadata = {
     canonical: { id: row.id, ...(row.email !== null ? { email: row.email } : {}) },
+    ...(customerAssertedCsv !== null ? { customer_asserted_csv: customerAssertedCsv } : {}),
     ...(sourceKind !== undefined ? { source_kind: sourceKind } : {}),
   };
   // Re-normalize with the LEDGER's normalizeName so the projected row's
@@ -300,7 +304,8 @@ export interface AparRebuildResult {
 }
 
 const SELECT_CANONICAL_COUNTERPARTY =
-  "id, tenant_id, source_system, source_natural_key, name, normalized_name, type, email, provenance, confidence, source_ids, evidence_ids";
+  "id, tenant_id, source_system, source_natural_key, name, normalized_name, type, email, provenance, confidence, source_ids, evidence_ids, " +
+  "COALESCE(extensions, '{}'::jsonb) AS extensions";
 const SELECT_CANONICAL_OBLIGATION =
   "id, tenant_id, source_natural_key, source_system, direction, type, canonical_counterparty_id, " +
   "counterparty_source_key, amount, currency, issue_date, due_date, status, " +

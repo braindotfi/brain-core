@@ -752,6 +752,7 @@ function serializeInvoice(row: InvoiceRow): Invoice {
     ...commonFields(row),
     invoice_number: row.invoice_number,
     counterparty_id: row.counterparty_id,
+    counterparty_name: row.counterparty_name,
     amount_due: row.amount_due,
     amount_paid: row.amount_paid,
     currency: row.currency,

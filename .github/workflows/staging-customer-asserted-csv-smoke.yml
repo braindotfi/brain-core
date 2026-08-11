@@ -1,0 +1,178 @@
+name: staging-customer-asserted-csv-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ingest declared customer-asserted CSV fixtures on staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      API_BASE: https://staging-api.brain.fi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Materialize CSV fixture bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_dir="$RUNNER_TEMP/brain-core-customer-asserted-csv-smoke"
+          node scripts/ops/write-staging-customer-asserted-csv-smoke-fixtures.mjs --output-dir "$fixture_dir"
+          echo "FIXTURE_DIR=$fixture_dir" >> "$GITHUB_ENV"
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload fixtures to staging VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_dir="/tmp/brain-core-customer-asserted-csv-smoke-${{ github.run_id }}"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "rm -rf '$remote_dir' && mkdir -p '$remote_dir'"
+          scp -i ~/.ssh/id_deploy "$FIXTURE_DIR"/* "azureuser@$VM_HOST:$remote_dir/"
+          echo "REMOTE_FIXTURE_DIR=$remote_dir" >> "$GITHUB_ENV"
+
+      - name: Provision, ingest, and verify isolated staging tenant
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' REMOTE_FIXTURE_DIR='$REMOTE_FIXTURE_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          trap 'rm -rf "$REMOTE_FIXTURE_DIR"' EXIT
+          cd ~/brain-core
+          set -a
+          . "./$VM_ENV_FILE"
+          set +a
+          : "${BRAIN_PLATFORM_SERVICE_SECRET:?BRAIN_PLATFORM_SERVICE_SECRET is required}"
+
+          create_payload="$(docker exec brain-prod-api node -e '
+            const { randomUUID } = require("node:crypto");
+            const suffix = randomUUID().replace(/-/g, "");
+            process.stdout.write(JSON.stringify({
+              company_name: "Core customer-asserted CSV smoke",
+              founder: { email: `core-csv-smoke+${suffix}@brain.invalid`, display_name: "Core CSV Smoke" },
+              founder_external_ref: `core-csv-smoke:${suffix}`,
+              demo_seed: false,
+            }));
+          ')"
+          create_response="$(printf '%s' "$create_payload" | curl -fsS --connect-timeout 10 --max-time 90 \
+            -X POST "$API_BASE/v1/tenants" \
+            -H 'Content-Type: application/json' \
+            -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" \
+            --data-binary @-)"
+          smoke_tenant_id="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.tenant_id); });
+          ')"
+          smoke_token="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
+            let body = "";
+            process.stdin.on("data", (chunk) => { body += chunk; });
+            process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.session.token); });
+          ')"
+          [[ "$smoke_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]] || exit 1
+          [[ -n "$smoke_token" ]] || exit 1
+          printf 'smoke_tenant_id=%s\n' "$smoke_tenant_id"
+
+          upload_fixture() {
+            local filename="$1" object_type="$2" response
+            response="$(curl -fsS --connect-timeout 10 --max-time 90 \
+              -X POST "$API_BASE/v1/raw/ingest" \
+              -H "Authorization: Bearer ${smoke_token}" \
+              -F 'source_type=csv_upload' \
+              -F "object_type=${object_type}" \
+              -F "source_ref={\"fixture_origin\":\"brain_core_staging_smoke\"}" \
+              -F 'mime_type=text/csv' \
+              -F "file=@${REMOTE_FIXTURE_DIR}/${filename};type=text/csv")"
+            printf '%s' "$response" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(value.raw_id); });
+            '
+          }
+
+          read_field() {
+            local json="$1" field="$2"
+            printf '%s' "$json" | FIELD="$field" docker exec -i -e FIELD brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => { const value = JSON.parse(body); process.stdout.write(String(value[process.env.FIELD] ?? "")); });
+            '
+          }
+
+          filenames=(counterparties.csv payables_invoices.csv receivables_invoices.csv payroll_runs.csv tax_obligations.csv)
+          object_types=(counterparties payables_invoices receivables_invoices payroll_runs tax_obligations)
+          raw_ids=()
+          for index in "${!filenames[@]}"; do
+            raw_id="$(upload_fixture "${filenames[$index]}" "${object_types[$index]}")"
+            [[ "$raw_id" =~ ^raw_[0-9A-HJKMNP-TV-Z]{26}$ ]] || exit 1
+            raw_ids+=("$raw_id")
+            printf 'fixture=%s object_type=%s raw_id=%s\n' "${filenames[$index]}" "${object_types[$index]}" "$raw_id"
+            curl -fsS --connect-timeout 10 --max-time 90 \
+              -X POST "$API_BASE/v1/raw/$raw_id/extract" \
+              -H "Authorization: Bearer ${smoke_token}" >/dev/null
+          done
+
+          for attempt in $(seq 1 72); do
+            complete=0
+            for index in "${!filenames[@]}"; do
+              artifact="$(curl -fsS --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${smoke_token}" "$API_BASE/v1/raw/${raw_ids[$index]}")"
+              projection_status="$(read_field "$artifact" projection_status)"
+              printf 'fixture=%s raw_id=%s projection_status=%s\n' "${filenames[$index]}" "${raw_ids[$index]}" "$projection_status"
+              if [[ "$projection_status" == 'projected' ]]; then
+                complete=$((complete + 1))
+              elif [[ "$projection_status" == 'projection_failed' ]]; then
+                exit 1
+              fi
+            done
+            [[ "$complete" -eq 5 ]] && break
+            [[ "$attempt" -eq 72 ]] && exit 1
+            sleep 10
+          done
+
+          payables="$(curl -fsS --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer ${smoke_token}" \
+            "$API_BASE/v1/ledger/obligations?direction=payable&type=invoice&status=due&limit=500")"
+          invoices="$(curl -fsS --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer ${smoke_token}" \
+            "$API_BASE/v1/ledger/invoices?limit=500")"
+          PAYABLES="$payables" INVOICES="$invoices" docker exec -i -e PAYABLES -e INVOICES brain-prod-api node -e '
+            const payables = JSON.parse(process.env.PAYABLES).obligations;
+            const invoices = JSON.parse(process.env.INVOICES).invoices;
+            const ap = payables.reduce((sum, row) => sum + Number(row.amount_due), 0);
+            const ar = invoices.filter((row) => row.status !== "paid").reduce((sum, row) => sum + Number(row.amount_due), 0);
+            const orbit = invoices.find((row) => row.invoice_number === "INV-OD-1045");
+            console.log(JSON.stringify({ ap, ar, open_payable_invoice_count: payables.length, open_ar_invoice_count: invoices.filter((row) => row.status !== "paid").length, orbit }, null, 2));
+            if (ap !== 74620.25 || ar !== 76200 || orbit?.counterparty_name !== "Orbit Dynamics LLC") process.exit(1);
+          '
+          REMOTE
+
+      - name: Report staging worker SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "docker exec brain-prod-worker printenv GIT_SHA")"
+          echo "staging_worker_git_sha=$worker_sha"

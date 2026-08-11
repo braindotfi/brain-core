@@ -180,7 +180,7 @@ async function handleMultipart(request: FastifyRequest, reply: FastifyReply, dep
     tenantId: request.principal!.tenantId,
     actor: request.principal!.id,
     sourceType: source_type,
-    sourceRef: source_ref ?? {},
+    sourceRef: { ...(source_ref ?? {}), ...(file.name.length > 0 ? { filename: file.name } : {}) },
     body: file.body,
     mimeType: mime_type ?? file.mime,
     envelope,

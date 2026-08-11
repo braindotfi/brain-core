@@ -18,12 +18,14 @@ describe("parser registry", () => {
         "doc_obligation_v1",
         "bank_statement_upload_v1",
         "document_records_upload_v1",
+        "customer_asserted_csv_v1",
       ]),
     );
     expect(extractorForParser("plaid_tx_v1")).toBeDefined();
     expect(extractorForParser("doc_obligation_v1")).toBeDefined();
     expect(extractorForParser("bank_statement_upload_v1")).toBeDefined();
     expect(extractorForParser("document_records_upload_v1")).toBeDefined();
+    expect(extractorForParser("customer_asserted_csv_v1")).toBeDefined();
   });
 
   it("returns undefined for an unregistered parser id", () => {

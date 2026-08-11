@@ -114,6 +114,21 @@ registerParser("document_records_upload_v1", async (_pool, _audit, _ctx, input) 
   return [];
 });
 
+// Customer-asserted CSV rows are normalized by the canonical projector. This
+// registration lets the Ledger normalize worker validate and acknowledge the
+// parsed artifact without reinterpreting its declared record type.
+registerParser("customer_asserted_csv_v1", async (_pool, _audit, _ctx, input) => {
+  const objectType = validateDocumentUploadPayload(input.payload, "customer_asserted_csv");
+  const recordType = input.payload["record_type"];
+  const records = input.payload["records"];
+  if (typeof recordType !== "string" || !Array.isArray(records)) {
+    throw new Error(
+      `${input.rawParsedId}: ${objectType} payload must contain record_type and records`,
+    );
+  }
+  return [];
+});
+
 function validateDocumentUploadPayload(
   payload: Record<string, unknown>,
   ...allowedObjectTypes: string[]

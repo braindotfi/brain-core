@@ -27,6 +27,7 @@ import {
 import type { IngestEnvelopeFields } from "../envelope.js";
 import {
   BANK_STATEMENT_UPLOAD_PARSER,
+  CUSTOMER_ASSERTED_CSV_PARSER,
   defaultSourceSchemaForUpload,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
   UPLOAD_DOCUMENT_SCHEMA,
@@ -199,7 +200,9 @@ function shouldAutoExtractDocument(input: IngestInput): boolean {
 
 function expectedUploadParsers(sourceType: string): readonly string[] {
   if (sourceType === "pdf_upload") return [BANK_STATEMENT_UPLOAD_PARSER];
-  if (sourceType === "csv_upload") return [DOCUMENT_RECORDS_UPLOAD_PARSER];
+  if (sourceType === "csv_upload") {
+    return [DOCUMENT_RECORDS_UPLOAD_PARSER, CUSTOMER_ASSERTED_CSV_PARSER];
+  }
   return [];
 }
 

@@ -5,6 +5,7 @@ import type { ArtifactInterpreter, InterpretedOutput } from "./registry.js";
 export const UPLOAD_DOCUMENT_SCHEMA = "brain.upload.document.v1";
 export const BANK_STATEMENT_UPLOAD_PARSER = "bank_statement_upload_v1";
 export const DOCUMENT_RECORDS_UPLOAD_PARSER = "document_records_upload_v1";
+export const CUSTOMER_ASSERTED_CSV_PARSER = "customer_asserted_csv_v1";
 export const UPLOAD_DOCUMENT_INTERPRETER_VERSION = "1.0.3";
 const DEFAULT_CURRENCY = "USD";
 const HEADER_SCAN_LIMIT = 10;
@@ -50,6 +51,7 @@ interface UploadContext {
   sourceType: string;
   sourceRef: Record<string, unknown>;
   mimeType?: string | null;
+  objectType?: string | null;
 }
 
 interface BankTransaction {
@@ -98,6 +100,7 @@ export const uploadDocumentInterpreter: ArtifactInterpreter = (bytes, ctx) => {
     sourceType: ctx.sourceType,
     sourceRef: ctx.sourceRef,
     mimeType: ctx.mimeType,
+    objectType: ctx.objectType,
   };
   if (ctx.sourceType === "pdf_upload") {
     return interpretPdfUpload(bytes, uploadCtx);
@@ -330,13 +333,108 @@ function interpretSpreadsheetUpload(bytes: Buffer, ctx: UploadContext): Interpre
       { statusOverride: 422, details: { headers: sheet.headers } },
     );
   }
+  const customerAsserted = customerAssertedCsvOutput(sheet, ctx);
+  if (customerAsserted !== null) return customerAsserted;
   if (looksLikePayroll(sheet)) return payrollOutput(sheet, ctx);
   if (looksLikeArAging(sheet)) return arAgingOutput(sheet);
   throw brainError(
     "raw_source_unsupported",
-    "spreadsheet upload did not match AR aging or payroll register headers",
+    "CSV uploads require a supported declared object_type or recognized AR aging or payroll register headers",
     { statusOverride: 422, details: { headers: sheet.headers } },
   );
+}
+
+type CustomerAssertedCsvType =
+  | "counterparties"
+  | "payables_invoices"
+  | "receivables_invoices"
+  | "payroll_runs"
+  | "tax_obligations";
+
+const CUSTOMER_ASSERTED_CSV_TYPES = new Set<CustomerAssertedCsvType>([
+  "counterparties",
+  "payables_invoices",
+  "receivables_invoices",
+  "payroll_runs",
+  "tax_obligations",
+]);
+
+function customerAssertedCsvOutput(
+  sheet: ParsedSpreadsheet,
+  ctx: UploadContext,
+): InterpretedOutput | null {
+  const recordType = ctx.objectType;
+  if (
+    typeof recordType !== "string" ||
+    !CUSTOMER_ASSERTED_CSV_TYPES.has(recordType as CustomerAssertedCsvType)
+  ) {
+    return null;
+  }
+
+  const requiredHeaders: Record<CustomerAssertedCsvType, readonly string[]> = {
+    counterparties: ["counterparty_id", "name", "type"],
+    payables_invoices: [
+      "invoice_id",
+      "counterparty_id",
+      "amount",
+      "currency",
+      "issued_date",
+      "due_date",
+      "status",
+    ],
+    receivables_invoices: [
+      "invoice_id",
+      "counterparty_id",
+      "amount",
+      "currency",
+      "issued_date",
+      "due_date",
+      "status",
+    ],
+    payroll_runs: ["run_id", "gross_amount", "currency", "status"],
+    tax_obligations: [
+      "obligation_id",
+      "counterparty_id",
+      "amount",
+      "currency",
+      "due_date",
+      "status",
+    ],
+  };
+  const missing = requiredHeaders[recordType as CustomerAssertedCsvType].filter(
+    (header) => !sheet.headers.includes(header),
+  );
+  if (missing.length > 0) {
+    throw brainError(
+      "raw_source_unsupported",
+      `customer_asserted CSV ${recordType} is missing required headers: ${missing.join(", ")}`,
+      { statusOverride: 422 },
+    );
+  }
+
+  const records = sheet.records.filter((record) => {
+    if (recordType === "counterparties")
+      return record["counterparty_id"] !== "" && record["name"] !== "";
+    if (recordType === "payroll_runs") return record["run_id"] !== "";
+    if (recordType === "tax_obligations") return record["obligation_id"] !== "";
+    return record["invoice_id"] !== "";
+  });
+  if (records.length === 0) {
+    throw brainError(
+      "raw_source_unsupported",
+      `customer_asserted CSV ${recordType} contained no valid rows`,
+      {
+        statusOverride: 422,
+      },
+    );
+  }
+
+  return {
+    parser: CUSTOMER_ASSERTED_CSV_PARSER,
+    parserVersion: UPLOAD_DOCUMENT_INTERPRETER_VERSION,
+    extracted: { object_type: "customer_asserted_csv", record_type: recordType, records },
+    confidence: 1,
+  };
 }
 
 function extractPdfText(bytes: Buffer): string {
@@ -1089,8 +1187,34 @@ function recordFromRow(headers: string[], row: string[]): SpreadsheetRecord {
 }
 
 function looksLikeArAging(sheet: ParsedSpreadsheet): boolean {
-  const joined = headerSearchText(sheet.rawHeaders.length > 0 ? sheet.rawHeaders : sheet.headers);
-  return keywordMatchCount(joined, AR_HEADER_KEYWORDS) > 0 && !looksLikePayroll(sheet);
+  const headers = new Set(sheet.headers);
+  const hasCounterpartyName = ["counterparty", "customer", "client", "name"].some((header) =>
+    headers.has(header),
+  );
+  const hasInvoice = [
+    "invoice_ref",
+    "invoice_no",
+    "invoice",
+    "invoice_number",
+    "inv",
+    "number",
+  ].some((header) => headers.has(header));
+  const hasAgingSignal = [
+    "aging_bucket",
+    "bucket",
+    "age_bucket",
+    "current",
+    "1_30",
+    "31_60",
+    "61_90",
+    "90",
+    "90_plus",
+    "total_due",
+    "open_amount",
+    "amount",
+    "balance",
+  ].some((header) => headers.has(header));
+  return hasCounterpartyName && hasInvoice && hasAgingSignal && !looksLikePayroll(sheet);
 }
 
 function looksLikePayroll(sheet: ParsedSpreadsheet): boolean {
