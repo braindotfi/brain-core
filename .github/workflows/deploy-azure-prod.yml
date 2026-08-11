@@ -10,6 +10,14 @@
 # only mint a token for a run that a human has already approved through the
 # environment's required-reviewers gate. The approval is part of the
 # credential, not merely a workflow step.
+#
+# ⚠️ TERRAFORM DOES NOT RUN HERE. It runs in the in-VNet Container App Job
+# `brain-production-terraform`, and this workflow only starts it and streams the
+# result back. The Key Vault sits behind a private endpoint with
+# `default_action = Deny`, and Terraform reads every azurerm_key_vault_secret
+# during refresh -- so a plan from a public GitHub runner cannot even refresh,
+# let alone apply. Starting the job goes through the ARM control plane, which is
+# not IP-restricted. Do not "simplify" this back into a local terraform apply.
 name: deploy-azure-prod
 
 on:
@@ -20,16 +28,27 @@ on:
         required: false
         type: string
         default: ""
+      terraform_action:
+        description: "plan = dry run, changes nothing. apply = execute."
+        required: false
+        type: choice
+        options: [apply, plan]
+        default: apply
       build_images:
-        description: "Build and push images before applying. Skip for an infra-only change."
+        description: "Build and push app images. Skip for an infra-only change; the app images then stay on whatever tag is already deployed."
         required: false
         type: boolean
         default: true
       run_migrations:
-        description: "Run migrate -> db-roles after apply."
+        description: "Run migrate -> db-roles after apply. Ignored for a plan."
         required: false
         type: boolean
         default: true
+      terraform_target:
+        description: "Optional space-separated -target addresses, to apply one change without sweeping in unrelated pending work."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   id-token: write # OIDC token for azure/login
@@ -39,6 +58,8 @@ env:
   ACR: brainproductionacr
   RG: brain-production-rg
   API_APP: brain-production-api
+  TF_JOB: brain-production-terraform
+  ENV_NAME: brain-production-env
 
 jobs:
   deploy:
@@ -75,11 +96,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Every containerapp command below lives in an az EXTENSION. The default
+      # install mode prompts, and a prompt on a non-interactive runner fails the
+      # step rather than installing -- so opt in explicitly instead of relying on
+      # whatever the hosted image happens to ship with.
+      - name: Allow az extension installs
+        run: az config set extension.use_dynamic_install=yes_without_prompt
+
       # A CI checkout has no node_modules, so the repo root is already a clean
       # build context. (Locally it is not -- az packs the context with a Python
       # walker that dies on Windows MAX_PATH inside node_modules/.pnpm, which is
       # why the local path uses `git archive` instead.)
-      - name: Build and push images
+      - name: Build and push app images
         if: ${{ inputs.build_images }}
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
@@ -89,32 +117,125 @@ jobs:
           az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" --file Dockerfile services/agents
           az acr build --registry "$ACR" --image "brain-db-roles:latest" --image "brain-db-roles:${TAG}" --file db-roles.Dockerfile infra
 
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.5
-          terraform_wrapper: false
-
-      # ARM_USE_OIDC lets the azurerm provider and the azurerm backend reuse the
-      # same federated token azure/login obtained. No client secret exists.
-      - name: Terraform apply
-        working-directory: infra
+      # Unconditional, and deliberately not part of the step above: this image
+      # CARRIES THE TERRAFORM CONFIG (infra/*.tf is COPYed in, there is no repo
+      # clone inside the VNet). An infra-only deploy skips the app images and
+      # still needs this one, or the runner would execute the previous commit's
+      # config while reporting the new SHA.
+      - name: Build and push the in-VNet runner image
         env:
-          ARM_USE_OIDC: "true"
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          terraform init -backend-config=backend-production.hcl -input=false
-          # operator_ip is deliberately unset: CI has no stable egress address.
-          # image_tag is SHA-pinned, not "latest". Pushing a new :latest does
-          # NOT roll a Container Apps revision -- revisions are created when the
-          # template changes, and an unchanged image reference is an unchanged
-          # template. A moving tag would silently leave the old build serving.
-          terraform plan -var-file=production.tfvars \
-            -var="image_tag=${{ steps.resolve.outputs.tag }}" \
-            -input=false -no-color -out=tfplan
-          terraform apply -input=false -no-color tfplan
+          az acr build --registry "$ACR" --image "brain-terraform:${TAG}" \
+            --file infra/terraform.Dockerfile infra
+
+      # image_tag is SHA-pinned, not "latest". Pushing a new :latest does NOT
+      # roll a Container Apps revision -- revisions are created when the template
+      # changes, and an unchanged image reference is an unchanged template. A
+      # moving tag would silently leave the old build serving.
+      #
+      # When app images were not built, read the tag that is actually deployed
+      # rather than assuming this SHA. Passing an unbuilt tag would point the
+      # apps at images that do not exist, and the revision fails to provision.
+      - name: Resolve app image tag
+        id: apptag
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.build_images }}" = "true" ]; then
+            APP_TAG="$TAG"
+          else
+            APP_TAG=$(az containerapp show -n "$API_APP" -g "$RG" \
+              --query "properties.template.containers[0].image" -o tsv | sed 's/.*://')
+            echo "infra-only deploy: app images stay on the deployed tag '$APP_TAG'"
+          fi
+          echo "tag=$APP_TAG" >> "$GITHUB_OUTPUT"
+
+      # ⚠️ `--env-vars` REPLACES the container spec, it does not merge. Anything
+      # not re-passed is dropped, including the Key Vault secret reference the
+      # runner authenticates with -- which surfaces as a confusing auth failure
+      # rather than a missing-variable error. So the existing env is read back
+      # from the job and replayed verbatim, with only the run-specific variables
+      # overridden. That also means a rotated secret name or a changed client id
+      # is picked up here automatically instead of drifting in this file.
+      - name: Terraform via the in-VNet runner
+        id: tf
+        env:
+          ACTION: ${{ inputs.terraform_action }}
+          APP_TAG: ${{ steps.apptag.outputs.tag }}
+          TF_TAG: ${{ steps.resolve.outputs.tag }}
+          TARGET: ${{ inputs.terraform_target }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t JOB_ENV < <(
+            az containerapp job show -n "$TF_JOB" -g "$RG" \
+              --query "properties.template.containers[0].env" -o json |
+            jq -r '
+              .[]
+              | select(.name | test("^(ACTION|TF_IMAGE_TAG|TF_TERRAFORM_IMAGE_TAG|TF_TARGET)$") | not)
+              | if .secretRef then "\(.name)=secretref:\(.secretRef)" else "\(.name)=\(.value)" end
+            '
+          )
+          if [ "${#JOB_ENV[@]}" -eq 0 ]; then
+            echo "::error::read no env back from $TF_JOB; refusing to start it with a stripped spec"
+            exit 1
+          fi
+
+          echo "action=$ACTION  image_tag=$APP_TAG  terraform_image_tag=$TF_TAG  target=${TARGET:-<all>}"
+
+          EXEC=$(az containerapp job start -n "$TF_JOB" -g "$RG" \
+            --image "${ACR}.azurecr.io/brain-terraform:${TF_TAG}" \
+            --env-vars "${JOB_ENV[@]}" \
+              "ACTION=${ACTION}" \
+              "TF_IMAGE_TAG=${APP_TAG}" \
+              "TF_TERRAFORM_IMAGE_TAG=${TF_TAG}" \
+              "TF_TARGET=${TARGET}" \
+            --query name -o tsv)
+          echo "execution: $EXEC"
+          echo "execution=$EXEC" >> "$GITHUB_OUTPUT"
+
+          # The job's replica timeout is 3600s; poll a little past it. A Front
+          # Door or Postgres change can legitimately run for tens of minutes.
+          STATUS=""
+          for _ in $(seq 1 190); do
+            STATUS=$(az containerapp job execution show -n "$TF_JOB" -g "$RG" \
+              --job-execution-name "$EXEC" --query properties.status -o tsv 2>/dev/null || echo "")
+            case "$STATUS" in
+              Succeeded) echo "terraform $ACTION: Succeeded"; exit 0 ;;
+              Failed|Degraded) echo "::error::terraform $ACTION failed ($STATUS)"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::terraform $ACTION timed out (last status: ${STATUS:-unknown})"
+          exit 1
+
+      # Always, and especially on failure: without this a failed apply reports a
+      # status and nothing else. `az containerapp job logs show` does NOT work
+      # here -- once the replica exits it answers "No replicas found" -- so the
+      # output has to come from Log Analytics. Best-effort: a missing log must
+      # not turn a good deploy red.
+      - name: Terraform runner output
+        if: ${{ always() && steps.tf.outputs.execution != '' }}
+        continue-on-error: true
+        env:
+          EXEC: ${{ steps.tf.outputs.execution }}
+        run: |
+          set -uo pipefail
+          az extension add -n log-analytics -y >/dev/null 2>&1 || true
+          WS=$(az containerapp env show -n "$ENV_NAME" -g "$RG" \
+            --query properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -o tsv)
+          echo "::group::terraform runner log ($EXEC)"
+          az monitor log-analytics query -w "$WS" --analytics-query \
+            "ContainerAppConsoleLogs_CL
+             | where ContainerGroupName_s startswith '${EXEC}'
+             | project TimeGenerated, Log_s
+             | order by TimeGenerated asc
+             | limit 5000" \
+            -o json | jq -r '.[].Log_s' || echo "(log query failed; job status above is authoritative)"
+          echo "::endgroup::"
 
       # Order is load-bearing and not enforceable by Terraform, which can only
       # order resource CREATION, never job EXECUTION:
@@ -124,7 +245,7 @@ jobs:
       # projector roles ungranted -- surfacing in production as 42501 every
       # ~10s rather than as a failed job.
       - name: Run database jobs
-        if: ${{ inputs.run_migrations }}
+        if: ${{ inputs.run_migrations && inputs.terraform_action == 'apply' }}
         run: |
           set -euo pipefail
 
@@ -153,6 +274,7 @@ jobs:
           run_job brain-production-db-roles
 
       - name: Health check
+        if: ${{ inputs.terraform_action == 'apply' }}
         run: |
           set -euo pipefail
           FQDN=$(az containerapp show -n "$API_APP" -g "$RG" \
