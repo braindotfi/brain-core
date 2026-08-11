@@ -175,8 +175,17 @@ export const CONNECTOR_DESCRIPTORS: ReadonlyArray<ConnectorDescriptor> = [
     format: ["document"],
     authentication: ["none"], // RBAC-scoped bearer auth on the route itself
     capabilities: NO_CAPABILITIES,
-    objectTypes: ["document", "ar_aging", "payroll_register"],
-    parserVersions: ["doc_obligation_v1", "document_records_upload_v1"],
+    objectTypes: [
+      "document",
+      "ar_aging",
+      "payroll_register",
+      "counterparties",
+      "payables_invoices",
+      "receivables_invoices",
+      "payroll_runs",
+      "tax_obligations",
+    ],
+    parserVersions: ["doc_obligation_v1", "document_records_upload_v1", "customer_asserted_csv_v1"],
   },
   {
     connectorType: "pdf_upload",
