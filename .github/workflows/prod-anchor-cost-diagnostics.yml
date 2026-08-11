@@ -1,0 +1,307 @@
+name: prod-anchor-cost-diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: measure fixed production anchor cost inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    concurrency:
+      group: prod-anchor-cost-diagnostics
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      # Production promote run 31454141796 deployed PR #540 at this time.
+      WINDOW_START: "2026-08-11T03:04:56Z"
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed read-only anchor cost diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "WINDOW_START='$WINDOW_START' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [[ ! "$WINDOW_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "fixed window start failed validation" >&2
+            exit 1
+          fi
+
+          echo '::group::runtime'
+          echo "window_start=$WINDOW_START"
+          echo "api_health=$(curl -fsS --max-time 10 https://api.brain.fi/health || true)"
+          echo "api_git_sha=$(docker exec brain-prod-api printenv GIT_SHA 2>/dev/null || true)"
+          echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA 2>/dev/null || true)"
+          echo '::endgroup::'
+
+          echo '::group::adaptive cycle close logs'
+          # Cycle reason is intentionally not persisted on audit_anchors. These
+          # structured worker logs are the source for observed close reasons.
+          docker logs --since "$WINDOW_START" brain-prod-worker 2>&1 \
+            | grep -F 'anchor cycle closing' \
+            | sed -E 's/(authorization|cookie|token|secret)":"[^"]*"/\1":"[REDACTED]"/gi' \
+            || true
+          echo '::endgroup::'
+
+          echo '::group::anchor database facts'
+          anchor_rows_json="$(docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 -v window_start="$WINDOW_START" <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          WITH anchor_rows AS (
+            SELECT a.id,
+                   a.tenant_id,
+                   '0x' || encode(a.onchain_tx_hash, 'hex') AS transaction_hash,
+                   a.created_at AS anchor_created_at,
+                   a.period_start,
+                   a.period_end,
+                   a.onchain_block_number,
+                   a.event_count,
+                   (
+                     SELECT MIN(e.created_at)
+                       FROM audit_events e
+                      WHERE e.tenant_id = a.tenant_id
+                        AND e.created_at >= a.period_start
+                        AND e.created_at <= a.period_end
+                   ) AS earliest_event_at
+              FROM audit_anchors a
+              JOIN tenants t ON t.id = a.tenant_id
+             WHERE a.created_at >= :'window_start'::timestamptz
+               AND a.onchain_status = 'confirmed'
+               AND a.onchain_tx_hash IS NOT NULL
+               AND t.audit_anchor_mode = 'onchain'
+          ), by_transaction AS (
+            SELECT transaction_hash,
+                   COUNT(*) AS tenant_roots,
+                   MIN(anchor_created_at) AS anchor_created_at,
+                   MIN(earliest_event_at) AS earliest_event_at,
+                   MIN(onchain_block_number) AS onchain_block_number,
+                   SUM(event_count) AS total_event_count
+              FROM anchor_rows
+             GROUP BY transaction_hash
+          )
+          SELECT COALESCE(
+                   json_agg(
+                     json_build_object(
+                       'transaction_hash', transaction_hash,
+                       'tenant_roots', tenant_roots,
+                       'anchor_created_at', anchor_created_at,
+                       'earliest_event_at', earliest_event_at,
+                       'onchain_block_number', onchain_block_number,
+                       'total_event_count', total_event_count,
+                       'close_latency_seconds', CASE
+                         WHEN earliest_event_at IS NULL THEN NULL
+                         ELSE EXTRACT(EPOCH FROM anchor_created_at - earliest_event_at)
+                       END
+                     ) ORDER BY anchor_created_at
+                   ),
+                   '[]'::json
+                 )
+            FROM by_transaction;
+          COMMIT;
+          SQL
+          )"
+          if [[ ! "$anchor_rows_json" =~ ^\[ ]]; then
+            echo "anchor receipt input was not a JSON array" >&2
+            exit 1
+          fi
+
+          docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -v window_start="$WINDOW_START" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo 'current non-demo onchain tenants'
+          SELECT COUNT(*) AS non_demo_onchain_tenants
+            FROM tenants
+           WHERE audit_anchor_mode = 'onchain'
+             AND COALESCE(sandbox, FALSE) = FALSE;
+
+          \echo 'confirmed root volume by day'
+          SELECT date_trunc('day', a.created_at) AS day,
+                 COUNT(*) AS tenant_roots,
+                 COUNT(DISTINCT a.onchain_tx_hash) AS transactions
+            FROM audit_anchors a
+            JOIN tenants t ON t.id = a.tenant_id
+           WHERE a.created_at >= :'window_start'::timestamptz
+             AND a.onchain_status = 'confirmed'
+             AND a.onchain_tx_hash IS NOT NULL
+             AND t.audit_anchor_mode = 'onchain'
+           GROUP BY 1
+           ORDER BY 1;
+
+          \echo 'confirmed root volume by week'
+          SELECT date_trunc('week', a.created_at) AS week,
+                 COUNT(*) AS tenant_roots,
+                 COUNT(DISTINCT a.onchain_tx_hash) AS transactions
+            FROM audit_anchors a
+            JOIN tenants t ON t.id = a.tenant_id
+           WHERE a.created_at >= :'window_start'::timestamptz
+             AND a.onchain_status = 'confirmed'
+             AND a.onchain_tx_hash IS NOT NULL
+             AND t.audit_anchor_mode = 'onchain'
+           GROUP BY 1
+           ORDER BY 1;
+
+          \echo 'current onchain pending root backlog'
+          SELECT COUNT(*) AS pending_onchain_roots,
+                 MIN(a.created_at) AS oldest_pending_created_at
+            FROM audit_anchors a
+            JOIN tenants t ON t.id = a.tenant_id
+           WHERE a.onchain_status = 'pending'
+             AND a.onchain_tx_hash IS NULL
+             AND t.audit_anchor_mode = 'onchain';
+
+          \echo 'demo and sandbox exclusion check since deploy'
+          SELECT COUNT(*) FILTER (WHERE a.id IS NOT NULL) AS db_only_anchor_rows,
+                 COUNT(DISTINCT t.id) FILTER (WHERE e.id IS NOT NULL) AS db_only_tenants_with_events,
+                 COUNT(e.id) AS db_only_events
+            FROM tenants t
+            LEFT JOIN audit_anchors a
+              ON a.tenant_id = t.id
+             AND a.created_at >= :'window_start'::timestamptz
+            LEFT JOIN audit_events e
+              ON e.tenant_id = t.id
+             AND e.created_at >= :'window_start'::timestamptz
+           WHERE t.audit_anchor_mode = 'db_only';
+
+          COMMIT;
+          SQL
+          printf '%s\n' "$anchor_rows_json"
+          echo '::endgroup::'
+
+          echo '::group::onchain receipts and live fee snapshot'
+          anchor_rows_b64="$(printf '%s' "$anchor_rows_json" | base64 | tr -d '\n')"
+          docker exec -i -e "ANCHOR_ROWS_B64=$anchor_rows_b64" brain-prod-api node - <<'NODE'
+          const rows = JSON.parse(Buffer.from(process.env.ANCHOR_ROWS_B64, "base64").toString("utf8"));
+          const rpcUrl = process.env.BASE_RPC_URL;
+          if (!rpcUrl) throw new Error("BASE_RPC_URL is not configured in the running API container");
+
+          let requestId = 0;
+          async function rpc(method, params) {
+            const response = await fetch(rpcUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+            });
+            if (!response.ok) throw new Error(`RPC ${method} returned HTTP ${response.status}`);
+            const payload = await response.json();
+            if (payload.error) throw new Error(`RPC ${method} failed: ${payload.error.message}`);
+            return payload.result;
+          }
+          const hex = (value) => (value == null ? null : BigInt(value));
+          const gwei = (value) => value == null ? null : Number(value) / 1e9;
+          const asNumber = (value) => value == null ? null : Number(value);
+          const percentile = (values, p) => {
+            const sorted = values.filter((value) => value != null).sort((a, b) => a - b);
+            if (sorted.length === 0) return null;
+            const position = (sorted.length - 1) * p;
+            const lower = Math.floor(position);
+            const upper = Math.ceil(position);
+            return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+          };
+          const summary = (values) => {
+            const filtered = values.filter((value) => value != null);
+            return filtered.length === 0 ? { count: 0 } : {
+              count: filtered.length,
+              min: Math.min(...filtered),
+              median: percentile(filtered, 0.5),
+              p90: percentile(filtered, 0.9),
+              max: Math.max(...filtered),
+            };
+          };
+
+          const detailed = [];
+          for (const row of rows) {
+            const [transaction, receipt] = await Promise.all([
+              rpc("eth_getTransactionByHash", [row.transaction_hash]),
+              rpc("eth_getTransactionReceipt", [row.transaction_hash]),
+            ]);
+            if (!transaction || !receipt) throw new Error(`missing transaction or receipt for ${row.transaction_hash}`);
+            const block = await rpc("eth_getBlockByNumber", [receipt.blockNumber, false]);
+            const gasUsed = hex(receipt.gasUsed);
+            const effectiveGasPrice = hex(receipt.effectiveGasPrice ?? transaction.gasPrice);
+            const l1Fee = hex(receipt.l1Fee ?? receipt.l1_fee);
+            const executionFeeWei = gasUsed * effectiveGasPrice;
+            const totalFeeWei = executionFeeWei + (l1Fee ?? 0n);
+            const roots = Number(row.tenant_roots);
+            const baseFee = hex(block?.baseFeePerGas);
+            const paidPriorityFee = baseFee !== null && effectiveGasPrice >= baseFee
+              ? effectiveGasPrice - baseFee
+              : null;
+            detailed.push({
+              ...row,
+              publisher_wallet: transaction.from,
+              transaction_status: receipt.status,
+              block_timestamp: block?.timestamp == null ? null : Number(BigInt(block.timestamp)),
+              gas_used: gasUsed.toString(),
+              gas_per_root: Number(gasUsed) / roots,
+              effective_gas_price_gwei: gwei(effectiveGasPrice),
+              max_fee_per_gas_gwei: gwei(hex(transaction.maxFeePerGas)),
+              max_priority_fee_per_gas_gwei: gwei(hex(transaction.maxPriorityFeePerGas)),
+              paid_priority_fee_gwei: gwei(paidPriorityFee),
+              l1_fee_available: l1Fee !== null,
+              l1_fee_wei: l1Fee?.toString() ?? null,
+              execution_fee_wei: executionFeeWei.toString(),
+              total_receipt_fee_wei: totalFeeWei.toString(),
+              total_receipt_fee_eth: Number(totalFeeWei) / 1e18,
+              inferred_cycle_reason: roots >= 50
+                ? "tenant_root_threshold"
+                : row.close_latency_seconds != null && Number(row.close_latency_seconds) >= 3600
+                  ? "max_wait_elapsed"
+                  : "unattributed_from_persisted_rows",
+            });
+          }
+
+          const [gasPrice, priorityFee, feeHistory] = await Promise.all([
+            rpc("eth_gasPrice", []),
+            rpc("eth_maxPriorityFeePerGas", []),
+            rpc("eth_feeHistory", ["0x14", "latest", [10, 50, 90]]),
+          ]);
+          const gasPerRoot = detailed.map((row) => row.gas_per_root);
+          const latency = detailed.map((row) => row.close_latency_seconds == null ? null : Number(row.close_latency_seconds));
+          const totalReceiptFeeWei = detailed.reduce((sum, row) => sum + BigInt(row.total_receipt_fee_wei), 0n);
+          console.log(JSON.stringify({
+            receipt_rows: detailed,
+            distributions: {
+              gas_per_root: summary(gasPerRoot),
+              close_latency_seconds: summary(latency),
+              roots_per_transaction: summary(detailed.map((row) => Number(row.tenant_roots))),
+              effective_gas_price_gwei: summary(detailed.map((row) => row.effective_gas_price_gwei)),
+            },
+            anchor_transaction_spend: {
+              transaction_count: detailed.length,
+              publisher_wallets: [...new Set(detailed.map((row) => row.publisher_wallet))],
+              total_receipt_fee_wei: totalReceiptFeeWei.toString(),
+              total_receipt_fee_eth: Number(totalReceiptFeeWei) / 1e18,
+              complete_l1_fee_coverage: detailed.every((row) => row.l1_fee_available),
+            },
+            live_fee_snapshot: {
+              gas_price_gwei: gwei(hex(gasPrice)),
+              max_priority_fee_gwei: gwei(hex(priorityFee)),
+              fee_history_base_fee_gwei: (feeHistory.baseFeePerGas ?? []).map((value) => gwei(hex(value))),
+              fee_history_reward_gwei: (feeHistory.reward ?? []).map((rewards) => rewards.map((value) => gwei(hex(value)))),
+            },
+          }, null, 2));
+          NODE
+          echo '::endgroup::'
+          REMOTE
