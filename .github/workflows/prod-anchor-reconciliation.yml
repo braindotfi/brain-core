@@ -135,7 +135,17 @@ jobs:
               const response = await fetch(next);
               if (!response.ok) throw new Error(`Blockscout transaction history returned HTTP ${response.status}`);
               const body = await response.json();
-              items.push(...(body.items ?? []));
+              const pageItems = body.items ?? [];
+              items.push(...pageItems);
+              // Blockscout orders this endpoint newest first. The diagnostic
+              // needs only its fixed post-deploy window, so stop as soon as a
+              // page crosses the lower bound instead of scanning old wallet
+              // history until the safety cap is hit.
+              const oldestTimestamp = Math.min(...pageItems.map((item) => Date.parse(item.timestamp)));
+              if (pageItems.length === 0 || oldestTimestamp < windowStart) {
+                next = null;
+                break;
+              }
               next = body.next_page_params === null || body.next_page_params === undefined
                 ? null
                 : `${base}?${new URLSearchParams(body.next_page_params)}`;
