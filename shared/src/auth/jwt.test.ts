@@ -1,4 +1,4 @@
-import { SignJWT, generateKeyPair, importJWK, exportJWK, type KeyLike } from "jose";
+import { SignJWT, generateKeyPair, importJWK, exportJWK, type CryptoKey } from "jose";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainError } from "../errors.js";
 import { newAgentId, newTenantId, newTokenId, newUserId } from "../ids.js";
@@ -11,7 +11,7 @@ import { projectPrincipal, verifyWithKey } from "./jwt.js";
  */
 async function makeKeyed(): Promise<{
   sign: (claims: Record<string, unknown>, opts?: { exp?: number }) => Promise<string>;
-  getKey: () => Promise<KeyLike>;
+  getKey: () => Promise<CryptoKey>;
 }> {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   return {

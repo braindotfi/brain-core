@@ -22,14 +22,14 @@
     "@types/pg": "^8.11.10",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.12.0",
-    "typescript": "^5.6.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   },
   "dependencies": {
     "@brain/shared": "workspace:*",
     "@fastify/multipart": "^9.0.1",
     "fastify": "^5.11.0",
-    "jose": "^5.9.3",
+    "jose": "^6.2.8",
     "pg": "^8.22.0",
     "plaid": "^45.0.0"
   }

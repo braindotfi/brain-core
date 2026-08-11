@@ -21,7 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { importJWK, jwtVerify, type JWK, type JWTVerifyGetKey, type KeyLike } from "jose";
+import { importJWK, jwtVerify, type JWK, type JWTVerifyGetKey } from "jose";
 import { brainError } from "../errors.js";
 
 export interface PlaidVerifyOptions {
@@ -67,7 +67,7 @@ export async function verifyPlaidWebhook(
   }
 
   const jwk = await opts.keyResolver(header.kid);
-  const key = (await importJWK(jwk, "ES256")) as KeyLike;
+  const key = await importJWK(jwk, "ES256");
   const getKey: JWTVerifyGetKey = async () => key;
 
   let payload: { request_body_sha256?: string; iat?: number };

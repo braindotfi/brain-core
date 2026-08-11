@@ -1842,7 +1842,7 @@ async function main(): Promise<void> {
 
   // Security plugins registered before routes.
   const corsOrigins = cfg.CORS_ALLOWED_ORIGINS.split(",")
-    .map((o) => o.trim())
+    .map((o: string) => o.trim())
     .filter(Boolean);
   await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
   // P1.4: strict CSP + security headers (was contentSecurityPolicy:false).

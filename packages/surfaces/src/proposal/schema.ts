@@ -57,7 +57,7 @@ export const RecommendedActionSchema = z.object({
   /** For example "netsuite", "quickbooks", "bank-portal", "email-send". */
   handoff: z.string().min(1),
   /** Opaque to Brain. Validated and consumed by the customer execution layer. */
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).default({}),
   /** Display-only monetary impact, for example recovered or at-risk amount. */
   amount: z.object({ currency: z.string().length(3), minorUnits: z.number().int() }).optional(),
 });
