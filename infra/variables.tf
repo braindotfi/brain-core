@@ -382,13 +382,13 @@ variable "onchain_min_max_fee_gwei" {
     reason, and do not set them so low that transactions stop being mined.
   EOT
   type        = string
-  default     = "0.5"
+  default     = "0.20"
 }
 
 variable "onchain_min_priority_fee_gwei" {
-  description = "Floor for maxPriorityFeePerGas. See onchain_min_max_fee_gwei."
+  description = "Floor for maxPriorityFeePerGas. Set above observed Base rewards while avoiding the prior normal-operation overpayment. See onchain_min_max_fee_gwei."
   type        = string
-  default     = "0.05"
+  default     = "0.025"
 }
 
 variable "enable_service_token" {
