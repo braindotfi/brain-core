@@ -4,9 +4,11 @@ Query audit events, pull a Merkle inclusion proof, verify a proof independently,
 
 The publisher closes a production batch after 50 eligible tenant roots or one
 hour of waiting, whichever comes first. These are configurable operational
-limits. Five Base Sepolia production batches measured on 2026-08-11 consumed a
-weighted 47,575 gas per tenant root; this is an observed measurement, not a
-fixed gas or cost guarantee.
+limits. Database-linked Base Sepolia production receipts measured on 2026-08-11
+across 36 transactions and 189 roots ranged from 47,325 to 73,620 gas per tenant
+root, with a weighted average of 51,474. This is an observed measurement, not a
+fixed gas or cost guarantee. It does not represent a full publisher-wallet cost
+guarantee while wallet-to-anchor reconciliation remains under investigation.
 
 | Operation                           | Endpoint                                        |
 | ----------------------------------- | ----------------------------------------------- |

@@ -59,9 +59,11 @@ There is no severity-accelerated anchoring path. Once published, a tenant-root
 pair cannot be published again. Demo and sandbox tenant roots remain
 database-only and are excluded from those cycles.
 
-Five Base Sepolia production batches measured on 2026-08-11 consumed a weighted
-47,575 gas per tenant root. This is an observed operational measurement, not a
-fixed gas or cost guarantee.
+Database-linked Base Sepolia production receipts measured on 2026-08-11 across
+36 transactions and 189 roots ranged from 47,325 to 73,620 gas per tenant root,
+with a weighted average of 51,474. This is an observed operational measurement,
+not a fixed gas or cost guarantee. It does not represent a full publisher-wallet
+cost guarantee while wallet-to-anchor reconciliation remains under investigation.
 
 ```typescript
 const proof = await brain.proof(actionId);
