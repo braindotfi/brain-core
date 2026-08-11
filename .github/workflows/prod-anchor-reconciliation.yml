@@ -94,15 +94,21 @@ jobs:
           fi
 
           echo '::group::onchain and database pair reconciliation'
-          db_anchors_b64="$(printf '%s' "$db_anchors_json" | base64 | tr -d '\n')"
-          docker exec -i \
-            -e "DB_ANCHORS_B64=$db_anchors_b64" \
-            -e "WINDOW_START=$WINDOW_START" \
-            -e "PUBLISHER_WALLET=$PUBLISHER_WALLET" \
-            brain-prod-api node - <<'NODE'
+          # The confirmed-anchor history can exceed the host argv/env limit.
+          # Stream it to the diagnostic over stdin instead of passing it as an
+          # environment variable. This remains read-only and avoids a VM write.
+          node_script_b64="$(base64 -w0 <<'NODE'
+          (async () => {
           const { keccak256, toBytes } = require("viem");
 
-          const dbRows = JSON.parse(Buffer.from(process.env.DB_ANCHORS_B64, "base64").toString("utf8"));
+          const dbInput = await new Promise((resolve, reject) => {
+            let input = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { input += chunk; });
+            process.stdin.on("end", () => resolve(input));
+            process.stdin.on("error", reject);
+          });
+          const dbRows = JSON.parse(dbInput);
           const rpcUrl = process.env.BASE_RPC_URL;
           if (!rpcUrl) throw new Error("BASE_RPC_URL is not configured in the running API container");
           const windowStart = Date.parse(process.env.WINDOW_START);
@@ -270,7 +276,16 @@ jobs:
             unlinked_pair_classification_counts: pairCounts,
             transactions: details,
           }, null, 2));
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
           NODE
+          )"
+          printf '%s' "$db_anchors_json" | docker exec -i \
+            -e "WINDOW_START=$WINDOW_START" \
+            -e "PUBLISHER_WALLET=$PUBLISHER_WALLET" \
+            brain-prod-api node -e "eval(Buffer.from('$node_script_b64', 'base64').toString('utf8'))"
           echo '::endgroup::'
           REMOTE
 
