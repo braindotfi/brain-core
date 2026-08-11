@@ -49,7 +49,7 @@
     "@brain/surfaces": "workspace:*",
     "@brain/wiki": "workspace:*",
     "@fastify/cors": "^11.3.0",
-    "@fastify/helmet": "^13.0.2",
+    "@fastify/helmet": "^13.1.0",
     "@fastify/multipart": "^9.0.1",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^6.0.1",

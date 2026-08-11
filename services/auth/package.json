@@ -22,7 +22,7 @@
     "@brain/mcp": "workspace:*",
     "@brain/shared": "workspace:*",
     "@brain/surfaces": "workspace:*",
-    "@fastify/helmet": "^13.0.2",
+    "@fastify/helmet": "^13.1.0",
     "@fastify/rate-limit": "^10.3.0",
     "fastify": "^5.11.0",
     "pg": "^8.22.0",
