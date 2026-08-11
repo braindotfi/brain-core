@@ -587,10 +587,13 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   The scheduler first creates each tenant's one-row anchor record under
   tenant-scoped RLS, then broadcasts bounded batches of up to
   `AUDIT_ANCHOR_BATCH_SIZE` rows, default 50, so a normal cycle is one on-chain
-  tx instead of one tx per tenant. Five Base Sepolia transactions measured on
-  2026-08-11 consumed a weighted 47,575 gas per tenant root, preserving the
-  per-tenant `_published` SSTORE and `AnchorPublished` event required for
-  tenant-level on-chain lookup. Metrics include
+  tx instead of one tx per tenant. Database-linked Base Sepolia receipts from
+  36 transactions and 189 roots measured on 2026-08-11 ranged from 47,325 to
+  73,620 gas per tenant root, with a weighted average of 51,474. This preserves
+  the per-tenant `_published` SSTORE and `AnchorPublished` event required for
+  tenant-level on-chain lookup. This receipt measurement is not a full
+  publisher-wallet cost guarantee while wallet-to-anchor reconciliation remains
+  under investigation. Metrics include
   `brain.audit.anchor.pending_backlog_depth`, `brain.audit.anchor.batch_size`,
   and `brain.audit.anchor.batch_tx.count`. Mainnet anchoring remains fenced
   until the additive batch function completes external audit.

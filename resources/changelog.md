@@ -14,9 +14,12 @@ User-visible changes to the Brain protocol, HTTP API, MCP surface, and SDK. Inte
 - **On-chain anchor batches close on tenant-root count or maximum wait.** The
   publisher uses the configured threshold or latency bound, whichever happens
   first.
-- **Published batching measurement is available.** Five Base Sepolia production
-  batches measured on 2026-08-11 consumed a weighted 47,575 gas per tenant
-  root. This is an operational measurement, not a fixed gas or cost guarantee.
+- **Published batching measurement is updated.** Database-linked Base Sepolia
+  receipts measured on 2026-08-11 across 36 transactions and 189 roots ranged
+  from 47,325 to 73,620 gas per tenant root, with a weighted average of 51,474.
+  This is an operational measurement, not a fixed gas or cost guarantee. It
+  does not represent a full publisher-wallet cost guarantee while
+  wallet-to-anchor reconciliation remains under investigation.
 
 ### v0.5.18 (obligation scenario filtering)
 
