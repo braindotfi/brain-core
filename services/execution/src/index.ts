@@ -190,6 +190,16 @@ export type {
 // Repository primitives exposed for boot-binary dependency wiring.
 export { findAgent, findUser, transitionAgent } from "./repository.js";
 export type { AgentRow, UserRow } from "./repository.js";
+// Collections proposal reconciliation (BC-1/#534/#535): the reconciler worker
+// re-enters the same lock + refresh primitives AgentService.propose() uses so
+// the two write paths cannot diverge.
+export {
+  lockCollectionsProposalForInvoice,
+  findPendingCollectionsProposalForInvoice,
+  refreshCollectionsProposal,
+} from "./repository.js";
+export type { ProposalRow } from "./repository.js";
+export { outcomeToStatus } from "./AgentService.js";
 // H-09 agent contribution hold.
 export {
   shouldQuarantineContribution,

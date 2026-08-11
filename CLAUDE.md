@@ -266,9 +266,41 @@ Done
   marks historical duplicates `superseded` with an audit link to the retained row.
   The authorized production cleanup run `31434998851` superseded 6,950 rows,
   left 943 pending Collections proposals, and left zero duplicate groups. Run
-  cleanup in `report` mode before any future apply. Follow-ups: stale pending
-  proposals with legacy `obl_` references (#534), and stale `days_overdue`
-  values after proposal creation (#535).
+  cleanup in `report` mode before any future apply.
+  Proposal freshness cannot depend on a successful agent run: the overdue
+  scanner claims a 24h `agent_trigger_cooldowns` row before calling
+  `AgentRunService.run`, and that run has several early terminal returns
+  after the cooldown is claimed but before `proposeAction` is reached
+  (missing handler, missing action, a shadowed `payment_intent`,
+  `bundle.critical_missing`, `executionMode` of `reject` or `notify_only`,
+  payload validation failure). Every one of those burns the cooldown without
+  refreshing the pending proposal, so a persistent condition (an agent stuck
+  in `notify_only`, or an invoice that is never in `ledger_invoices` at all)
+  freezes the proposal indefinitely while the underlying invoice keeps aging
+  (#534, #535). The Collections proposal reconciler
+  (`services/api/src/agents/collections-proposal-reconciler.ts`,
+  `BRAIN_COLLECTIONS_RECONCILE_*` config) fixes this from the proposal side:
+  it discovers tenants with pending Collections proposals through the
+  BYPASSRLS tenant-deletion pool, then reconciles each proposal against the
+  current `ledger_invoices` row through the tenant-scoped `brain_app` pool,
+  under the same advisory lock `AgentService.propose()` uses. A proposal
+  whose invoice row is absent is superseded; a proposal whose stored
+  `days_overdue` has drifted is refreshed in place through the shared
+  `refreshCollectionsActionDaysOverdue` helper and re-evaluated policy. The
+  reconciler deliberately supersedes only when the invoice row is missing
+  entirely; a paid, cancelled, or disputed invoice, or one whose due date
+  moved into the future (a corrected or renegotiated term, not drift), is a
+  separate product decision and is only counted, not acted on. The per-tenant
+  batch is a work list, not a scan window: the "needs action" filter (invoice
+  missing, or collectible and overdue and drifted) runs in the tenant-scoped
+  SQL itself, ordered `updated_at ASC, id ASC`, so `current` and
+  `non_collectible` rows never occupy a batch slot and the reconciler cannot
+  starve behind them the way the batch's own motivating bug (943 pending rows
+  for one tenant) would otherwise recreate. A row the reconciler skips because
+  refreshing it would leave a non-`pending` status
+  (`policy_outcome_not_pending`) still gets an `updated_at` touch with no
+  content change, so it rotates to the back of the work list instead of
+  reappearing at the front every cycle.
 - Every persisted `agent_runs` terminal `missing_evidence` or `notify_only`
   outcome emits `agent.run.missing_evidence` or `agent.run.notify_only` through
   the audit emitter. The event carries the run id, trigger, resolved action,
