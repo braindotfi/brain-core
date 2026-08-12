@@ -24,6 +24,21 @@ test("ingestion lineage diagnostic is fixed-shape and read-only", () => {
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
 
+test("trust-gate impact diagnostic is production-gated, fixed-shape, and read-only", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /trust_gate_impact:/);
+  assert.match(workflow, /trust_gate_impact must be true or false/);
+  assert.match(workflow, /trust_gate_impact is cross-tenant and requires tenant_id to be empty/);
+  assert.match(workflow, /environment: production/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(workflow, /JOIN tenants t ON t\.id = cp\.owner_id/);
+  assert.match(workflow, /non_demo_review_groups/);
+  assert.match(workflow, /demo_or_sandbox_groups/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+  assert.doesNotMatch(workflow, /arbitrary SQL/i);
+});
+
 test("remote diagnostics script has valid Bash heredoc structure", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
   const remoteScriptMatch = workflow.match(/<<'REMOTE'\n([\s\S]*?)\n          REMOTE\n/);
