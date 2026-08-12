@@ -201,6 +201,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{tenant_id}/onchain-signer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Designate the tenant's on-chain signer for tenant_signed agent attestations (RFC 0002 Phase C, increment 4)
+         * @description Owner JWT required (user principal only), gated on `policy:write`.
+         *     The path `tenant_id` must equal the authenticated principal's
+         *     tenant. This is an OFF-CHAIN designation only -- the address is not
+         *     seated as a BrainMCPAgentRegistry signer until
+         *     TenantSignedRegistrationRelayer's one-time bootstrap transaction
+         *     runs, driven by the first tenant_signed agent registration.
+         *
+         *     Two proofs are required before the address is stored: (1) it must
+         *     already be linked to this tenant via POST /v1/tenants/{tenant_id}/wallets
+         *     (wallet_identities answers "which principal is this wallet"; it does
+         *     not by itself authorize becoming a registry signer), and (2) the
+         *     request must carry a FRESH SIWX proof (a brand-new EIP-4361
+         *     signature, verified the same way sign-in verifies one, over the
+         *     exact address being designated) -- an old login session cannot
+         *     authorize a new designation. Registered only when self-serve
+         *     onboarding is enabled.
+         */
+        post: operations["designateOnchainSigner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants": {
         parameters: {
             query?: never;
@@ -1691,7 +1726,7 @@ export interface paths {
         get: operations["listAgents"];
         put?: never;
         /**
-         * Self-serve agent registration (RFC 0002 Phase C, increments 2-3)
+         * Self-serve agent registration (RFC 0002 Phase C, increments 2-4)
          * @description Requires execution:admin OR policy:write (a member-role admin token,
          *     or a tenant owner token, either one). The server mints agent_id and
          *     derives scope_hash from role; it never accepts either as input, and
@@ -1708,21 +1743,54 @@ export interface paths {
          *     check services/mcp/src/auth.ts enforces at request time, so a caller
          *     cannot self-declare tier 1 for a money-path role.
          *
-         *     attestation_mode tenant_signed and onchain_custodial both require
-         *     onchain_address. tenant_signed still returns 503 agent_rail_unavailable
-         *     unconditionally (RFC 0002 Phase C increment 4, not yet built).
-         *     onchain_custodial succeeds (201, state pending_onchain) once the
-         *     operator has configured the KMS custodial relayer
-         *     (BRAIN_AGENT_RELAYER_MODE=custodial); with no relayer configured it
-         *     also returns 503 agent_rail_unavailable. A pending_onchain custodial
-         *     agent is confirmed on-chain asynchronously by a background worker; see
-         *     docs/contracts/production-agents.md for the custodial disclosure.
+         *     attestation_mode tenant_signed (tier 2) and onchain_custodial (tier 3)
+         *     both require onchain_address (the AGENT's own address). Each succeeds
+         *     (201, state pending_onchain) only once a relayer supporting that mode
+         *     is configured (BRAIN_AGENT_RELAYER_MODE=custodial or =tenant_signed);
+         *     otherwise both return 503 agent_rail_unavailable. tenant_signed
+         *     additionally requires the tenant to have already designated its own
+         *     on-chain signer via POST /v1/tenants/{tenant_id}/onchain-signer, else
+         *     400 tenant_signer_not_designated -- its 201 response includes an
+         *     attestation payload the designated signer must sign next via POST
+         *     /agents/{agent_id}/attestation. onchain_custodial is refused with 409
+         *     onchain_custodial_signer_designated once the tenant has designated a
+         *     signer (a tenant that can sign for itself is never silently
+         *     downgraded to Brain custody). A pending_onchain agent of either
+         *     attested tier is confirmed on-chain asynchronously by the same
+         *     background worker; see docs/contracts/production-agents.md for both
+         *     tiers' custody disclosures.
          *
          *     Supports the Idempotency-Key header (docs/contracts/idempotency-correlation.md);
          *     a replayed key with the same body returns the original stored
          *     response instead of minting a second agent.
          */
         post: operations["createAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/attestation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit the tenant-signed attestation signature (RFC 0002 Phase C, increment 4, tier 2)
+         * @description Step 2 of tenant_signed registration. Accepts the signature the
+         *     tenant's designated on-chain signer produced over the EIP-712 payload
+         *     POST /agents returned. The signature is verified to recover to
+         *     tenants.onchain_signer_address BEFORE it is stored -- an
+         *     unverifiable signature is never persisted. Once stored, the existing
+         *     agent-registration-worker.ts confirms the agent on-chain exactly like
+         *     an onchain_custodial row. Requires execution:admin OR policy:write.
+         */
+        post: operations["submitAgentAttestation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4890,11 +4958,13 @@ export interface components {
             /**
              * @description RFC 0002 Phase C. none is the tier-1 unattested path (read-only
              *     scopes, no BrainMCPAgentRegistry record required). tenant_signed
-             *     and onchain_custodial both require on-chain attestation before
-             *     the agent is active. onchain_custodial lands pending_onchain and
-             *     is confirmed asynchronously by the KMS custodial relayer
-             *     (increment 3) when configured; tenant_signed still rejects with
-             *     agent_rail_unavailable until its relayer ships (increment 4).
+             *     (tier 2) and onchain_custodial (tier 3) both require on-chain
+             *     attestation before the agent is active and both land
+             *     pending_onchain, confirmed asynchronously by a background worker
+             *     once a matching relayer is configured (BRAIN_AGENT_RELAYER_MODE
+             *     custodial or tenant_signed). tenant_signed is customer-signed
+             *     attestations on a Brain-bootstrapped signer set, not
+             *     Brain-uninvolved: see docs/contracts/production-agents.md.
              * @enum {string}
              */
             attestation_mode: "none" | "tenant_signed" | "onchain_custodial";
@@ -4906,6 +4976,28 @@ export interface components {
              *     tenant holds its own key.
              */
             custodial?: boolean;
+            /**
+             * @description Present only on the POST /agents response, and only when
+             *     attestation_mode is tenant_signed and a tenant_signed-capable
+             *     relayer is configured. The EIP-712 payload the tenant's
+             *     designated on-chain signer must sign next, submitted via
+             *     POST /agents/{agent_id}/attestation.
+             */
+            attestation?: {
+                domain: {
+                    [key: string]: unknown;
+                };
+                types: {
+                    [key: string]: unknown;
+                };
+                /** @example AgentRegistration */
+                primaryType: string;
+                message: {
+                    [key: string]: unknown;
+                };
+                /** @description keccak256 EIP-712 digest of domain/types/primaryType/message. */
+                digest: string;
+            };
         };
         /** @enum {string} */
         AgentRunStatus: "routing" | "routed" | "no_match" | "unscoped" | "missing_handler" | "missing_action" | "missing_evidence" | "proposal_created" | "confirmation_required" | "executed" | "notify_only" | "rejected" | "failed" | "duplicate_skipped" | "paused" | "shadow_completed";
@@ -5475,6 +5567,80 @@ export interface operations {
             /**
              * @description Missing `policy:write` scope, or the path `tenant_id` does not
              *     match the authenticated tenant. Error code
+             *     `auth_scope_insufficient` or `auth_tenant_mismatch`.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    designateOnchainSigner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The address being designated. Must already be linked via POST /v1/tenants/{tenant_id}/wallets. */
+                    address: string;
+                    /** @description The EIP-4361 (SIWX) message, freshly signed over this address. */
+                    message: string;
+                    /** @description The EIP-4361 signature over `message`. */
+                    signature: string;
+                    /** @description Optional nonce session id from POST /auth/siwx/challenge. */
+                    session_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signer designated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id?: string;
+                        /** @description Lowercased */
+                        onchain_signer_address?: string;
+                    };
+                };
+            };
+            /**
+             * @description Malformed request, or the address is not already linked in
+             *     wallet_identities. Error codes `request_body_invalid`,
+             *     `onchain_signer_wallet_not_linked`.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The SIWX proof did not verify, or recovered a different address than requested. Error code `auth_siwx_invalid`. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description Not a user principal, missing `policy:write` scope, or the path
+             *     `tenant_id` does not match the authenticated tenant. Error code
              *     `auth_scope_insufficient` or `auth_tenant_mismatch`.
              */
             403: {
@@ -8538,8 +8704,63 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description attestation_mode is tenant_signed (always), or onchain_custodial with no relayer configured. Error code agent_rail_unavailable. */
+            /** @description onchain_custodial requested but the tenant already designated its own signer. Error code onchain_custodial_signer_designated. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description attestation_mode requires a relayer that is not configured for that mode. Error code agent_rail_unavailable. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    submitAgentAttestation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    signature: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signature verified and stored; on-chain confirmation is asynchronous. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Malformed signature, no designated signer, or a signature that does not recover to it. Error codes request_body_invalid, tenant_signer_not_designated, agent_attestation_signature_invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Agent not found for this tenant, or not awaiting a tenant-signed attestation. Error codes execution_agent_not_registered, agent_proposal_invalid_state. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

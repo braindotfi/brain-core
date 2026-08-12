@@ -1,16 +1,19 @@
 /**
  * Boot fence for the agent on-chain registration relayer (RFC 0002 Phase C,
- * increment 3).
+ * increments 3-4).
  *
  * BRAIN_AGENT_RELAYER_MODE="off" (the default) needs nothing: AgentService
  * gets UnconfiguredRegistrationRelayer and POST /agents keeps returning
- * agent_rail_unavailable for onchain_custodial, unchanged from before this
- * relayer existed.
+ * agent_rail_unavailable for both attested modes, unchanged from before
+ * either relayer existed.
  *
- * BRAIN_AGENT_RELAYER_MODE="custodial" requires all three of the signer key,
- * an RPC URL, and a registry address. In NODE_ENV=production, a missing one
- * throws at boot rather than silently leaving every onchain_custodial agent
- * stuck pending_onchain forever (same posture as the other rail boot fences:
+ * BRAIN_AGENT_RELAYER_MODE="custodial" or "tenant_signed" both require all
+ * three of the signer key, an RPC URL, and a registry address -- identical
+ * requirement, because tenant_signed still needs Brain's own key for its
+ * one-time initialAdmin bootstrap transaction (see
+ * TenantSignedRegistrationRelayer). In NODE_ENV=production, a missing one
+ * throws at boot rather than silently leaving every pending_onchain agent
+ * stuck forever (same posture as the other rail boot fences:
  * assertEscrowRailHasStateLoader, assertServiceTokenFences).
  *
  * Same altitude as those fences. Factored out for unit testability.
@@ -18,7 +21,7 @@
 
 export interface AgentRelayerFenceInput {
   nodeEnv: string | undefined;
-  mode: "off" | "custodial";
+  mode: "off" | "custodial" | "tenant_signed";
   privateKeyConfigured: boolean;
   rpcUrlConfigured: boolean;
   registryAddressConfigured: boolean;

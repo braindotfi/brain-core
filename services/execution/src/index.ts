@@ -29,6 +29,7 @@ export {
   type AgentRegistrationRelayer,
   type AgentRegistrationRequest,
   type AgentRegistrationResult,
+  type AttestationPayload,
   type AttestationRelayerMode,
 } from "./registration-relayer.js";
 // RFC 0002 Phase C, increment 3 — the custodial on-chain registration relayer
@@ -38,6 +39,12 @@ export {
   InsufficientRelayerFundsError,
   type KmsCustodialRegistrationRelayerOptions,
 } from "./relayers/kms-custodial.js";
+// RFC 0002 Phase C, increment 4 — the tenant-signed (tier 2) relayer.
+export {
+  TenantSignedRegistrationRelayer,
+  BrainSelfAttestationForbiddenError,
+  type TenantSignedRegistrationRelayerOptions,
+} from "./relayers/tenant-signed.js";
 export {
   startAgentRegistrationWorker,
   runAgentRegistrationCycle,

@@ -15,6 +15,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { recoverTypedDataAddress } from "viem";
 import {
   KNOWN_AGENT_ROLES,
   MCP_UNATTESTED_SCOPES,
@@ -41,10 +42,12 @@ import {
   insertAgent,
   insertProposal,
   listAgents,
+  storeTenantAttestationSignature,
   transitionProposal,
   type ProposalRow,
 } from "./repository.js";
 import type { ExecutionDeps } from "./deps.js";
+import type { AttestationRelayerMode } from "./registration-relayer.js";
 
 const PROPOSE: Scope = "execution:propose";
 const WRITE: Scope = "execution:write";
@@ -521,20 +524,59 @@ export async function registerExecutionRoutes(
             `onchain_address required for attestation_mode ${attestationMode}`,
           );
         }
-        // Clause 4 (RFC 0002 Phase C, increment 3): onchain_custodial is
-        // accepted once a CONFIGURED relayer is wired -- the agent lands
-        // pending_onchain and the background worker (agent-registration-worker.ts)
-        // drives confirmRegistration. tenant_signed still always throws until
-        // increment 4 builds that relayer; an unconfigured onchain_custodial
-        // relayer (or none injected at all) keeps the same
-        // agent_rail_unavailable this route has always returned, rather than
-        // landing a pending_onchain row nothing will ever confirm.
-        if (attestationMode !== "onchain_custodial" || deps.relayer?.configured !== true) {
+        // Clause 4 (RFC 0002 Phase C, increments 3-4): an attested mode is
+        // only accepted once a CONFIGURED relayer supporting THAT mode is
+        // wired -- the agent lands pending_onchain and the background worker
+        // (agent-registration-worker.ts) drives confirmRegistration. No
+        // relayer, or one that does not declare this mode in
+        // supportedModes, keeps the same agent_rail_unavailable this route
+        // has always returned, rather than landing a pending_onchain row
+        // nothing will ever confirm. Checked BEFORE the tenant-signer
+        // designation checks below so a deployment with no relayer at all
+        // reports the same agent_rail_unavailable regardless of whether the
+        // tenant has designated a signer.
+        if (
+          deps.relayer?.configured !== true ||
+          !deps.relayer.supportedModes.includes(attestationMode as AttestationRelayerMode)
+        ) {
           throw brainError(
             "agent_rail_unavailable",
             `attestation_mode ${attestationMode} requires the on-chain registration relayer, which is not yet available`,
             { details: { attestation_mode: attestationMode } },
           );
+        }
+
+        const tenantSignerAddress =
+          deps.resolveTenantOnchainSigner !== undefined
+            ? await deps.resolveTenantOnchainSigner(
+                { tenantId: principal.tenantId, actor: principal.id },
+                principal.tenantId,
+              )
+            : null;
+
+        if (attestationMode === "onchain_custodial") {
+          // Hard rule D: a tenant that has proven it can sign for itself must
+          // never be silently downgraded to Brain custody.
+          if (tenantSignerAddress !== null) {
+            throw brainError(
+              "onchain_custodial_signer_designated",
+              "this tenant has designated its own on-chain signer; use attestation_mode " +
+                "tenant_signed instead of onchain_custodial",
+              { details: { onchain_signer_address: tenantSignerAddress } },
+            );
+          }
+        } else {
+          // tenant_signed: the tenant must have already designated its
+          // signer (POST /v1/tenants/{tenant_id}/onchain-signer) -- there is
+          // otherwise no address for POST /agents/{id}/attestation to verify
+          // a signature against.
+          if (tenantSignerAddress === null) {
+            throw brainError(
+              "tenant_signer_not_designated",
+              "attestation_mode tenant_signed requires the tenant to first designate an " +
+                "on-chain signer via POST /v1/tenants/{tenant_id}/onchain-signer",
+            );
+          }
         }
       }
 
@@ -556,10 +598,27 @@ export async function registerExecutionRoutes(
         }),
       );
 
-      // true only for onchain_custodial, and only once clause 4 above let it
-      // through (a configured relayer). tenant_signed still always throws, so
-      // it never reaches this line until increment 4.
+      // true only for onchain_custodial, once clause 4 above let it through
+      // (a configured relayer, and no designated tenant signer blocking it).
       const custodial: boolean = (attestationMode as string) === "onchain_custodial";
+      // tenant_signed only, once clause 4 above let it through: the EIP-712
+      // payload + digest the tenant's designated signer must sign next, via
+      // POST /agents/{agent_id}/attestation. The agentId the digest covers
+      // did not exist until the insert above, which is exactly why this is
+      // two steps rather than one.
+      const relayer = deps.relayer;
+      // Called as relayer.buildAttestationPayload(...), not a detached
+      // function reference -- the method reads `this.registryAddress` /
+      // `this.chainId`, so extracting it first would lose that binding.
+      const attestation =
+        attestationMode === "tenant_signed" && relayer?.buildAttestationPayload !== undefined
+          ? relayer.buildAttestationPayload({
+              agentId,
+              tenantId: principal.tenantId,
+              onchainAddress: onchainAddress as string,
+              scopeHash,
+            })
+          : undefined;
       await deps.audit.emit({
         tenantId: principal.tenantId,
         layer: "execution",
@@ -570,7 +629,107 @@ export async function registerExecutionRoutes(
       });
 
       reply.status(201);
-      return { ...serializeAgent(row), custodial };
+      return {
+        ...serializeAgent(row),
+        custodial,
+        ...(attestation !== undefined ? { attestation } : {}),
+      };
+    },
+  );
+
+  // POST /agents/{agent_id}/attestation (RFC 0002 Phase C, increment 4) --
+  // step 2 of tier 2 (tenant_signed) registration. The tenant's designated
+  // signer signs the EIP-712 payload POST /agents returned, off-chain,
+  // through whatever wallet UI the integrator builds; this route accepts
+  // that signature, verifies it recovers to tenants.onchain_signer_address
+  // BEFORE storing anything, and then leaves the row for the existing
+  // agent-registration-worker.ts to confirm on-chain -- identical to how an
+  // onchain_custodial row is picked up.
+  app.post(
+    "/agents/:agent_id/attestation",
+    async (
+      request: FastifyRequest<{ Params: { agent_id: string }; Body: { signature?: string } }>,
+      reply,
+    ) => {
+      const principal = requirePrincipal(request);
+      requireAdminOrPolicyWrite(principal.scopes);
+
+      const agentId = request.params.agent_id;
+      const signature = request.body?.signature;
+      if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) {
+        throw brainError("request_body_invalid", "signature (0x-prefixed hex) is required");
+      }
+
+      const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        findAgent(c, agentId),
+      );
+      if (row === null) throw brainError("execution_agent_not_registered", "no such agent");
+      if (row.state !== "pending_onchain" || row.attestation_mode !== "tenant_signed") {
+        throw brainError(
+          "agent_proposal_invalid_state",
+          `agent ${agentId} is not awaiting a tenant-signed attestation`,
+        );
+      }
+
+      const tenantSignerAddress =
+        deps.resolveTenantOnchainSigner !== undefined
+          ? await deps.resolveTenantOnchainSigner(
+              { tenantId: principal.tenantId, actor: principal.id },
+              principal.tenantId,
+            )
+          : null;
+      if (tenantSignerAddress === null) {
+        throw brainError(
+          "tenant_signer_not_designated",
+          "this tenant has no designated on-chain signer to verify the attestation against",
+        );
+      }
+      const relayer = deps.relayer;
+      if (relayer?.buildAttestationPayload === undefined) {
+        throw brainError(
+          "agent_rail_unavailable",
+          "tenant-signed attestation verification is not available",
+        );
+      }
+
+      const payload = relayer.buildAttestationPayload({
+        agentId,
+        tenantId: principal.tenantId,
+        onchainAddress: row.onchain_address ?? "",
+        scopeHash: row.scope_hash !== null ? row.scope_hash.toString("hex") : "",
+      });
+      const recovered = await recoverTypedDataAddress({
+        domain: payload.domain,
+        types: payload.types,
+        primaryType: payload.primaryType,
+        message: payload.message,
+        signature: signature as `0x${string}`,
+      } as Parameters<typeof recoverTypedDataAddress>[0]);
+      if (recovered.toLowerCase() !== tenantSignerAddress.toLowerCase()) {
+        throw brainError(
+          "agent_attestation_signature_invalid",
+          "signature does not recover to the tenant's designated on-chain signer",
+        );
+      }
+
+      const updated = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        storeTenantAttestationSignature(c, agentId, tenantSignerAddress, signature),
+      );
+      if (updated === null) {
+        throw brainError("agent_proposal_invalid_state", "agent state changed concurrently");
+      }
+
+      await deps.audit.emit({
+        tenantId: principal.tenantId,
+        layer: "execution",
+        actor: principal.id,
+        action: "agent.tenant_attestation_submitted",
+        inputs: { agent_id: agentId },
+        outputs: { tenant_signer_address: updated.tenant_signer_address },
+      });
+
+      reply.status(202);
+      return { ...serializeAgent(updated), tenant_signer_address: updated.tenant_signer_address };
     },
   );
 

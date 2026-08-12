@@ -128,11 +128,14 @@ fi
 if is_enabled BRAIN_SURFACE_SMOKE_ENABLED; then
   add_requirement BRAIN_SURFACE_SMOKE_SECRET
 fi
-# RFC 0002 Phase C, increment 3: BRAIN_AGENT_RELAYER_MODE is an enum
-# ("off"/"custodial"), not a boolean, so it needs its own check rather than
-# is_enabled. Mirrors composition/agent-relayer-fence.ts's production boot
-# fence -- deliberately its OWN signer var, never AUDIT_PUBLISHER_KEY.
-if [[ "$(value_for BRAIN_AGENT_RELAYER_MODE)" == "custodial" ]]; then
+# RFC 0002 Phase C, increments 3-4: BRAIN_AGENT_RELAYER_MODE is an enum
+# ("off"/"custodial"/"tenant_signed"), not a boolean, so it needs its own
+# check rather than is_enabled. Both attested modes need the same signer key
+# -- tenant_signed still uses it for the one-time initialAdmin bootstrap tx.
+# Mirrors composition/agent-relayer-fence.ts's production boot fence --
+# deliberately its OWN signer var, never AUDIT_PUBLISHER_KEY.
+relayer_mode="$(value_for BRAIN_AGENT_RELAYER_MODE)"
+if [[ "$relayer_mode" == "custodial" || "$relayer_mode" == "tenant_signed" ]]; then
   add_requirement BRAIN_AGENT_RELAYER_PRIVATE_KEY
 fi
 

@@ -53,15 +53,49 @@ export interface AgentRegistrationResult {
   readonly alreadyRegistered?: boolean;
 }
 
+/**
+ * The EIP-712 payload a tenant-designated signer must sign for tier 2
+ * (`tenant_signed`), returned by `POST /agents` at creation time and by
+ * `AgentRegistrationRelayer.buildAttestationPayload` (increment 4). Pure/
+ * synchronous: no chain call, just domain + type + digest construction, so a
+ * caller can display or re-derive it without talking to the RPC.
+ */
+export interface AttestationPayload {
+  readonly domain: Record<string, unknown>;
+  readonly types: Record<string, unknown>;
+  readonly primaryType: string;
+  readonly message: Record<string, unknown>;
+  /** keccak256 EIP-712 digest of domain/types/primaryType/message -- what the tenant's wallet actually signs. */
+  readonly digest: string;
+}
+
 export interface AgentRegistrationRelayer {
   /** True only when a real on-chain signer/RPC is wired; false ⇒ fail-closed. */
   readonly configured: boolean;
+  /**
+   * Which attestation_mode(s) this relayer instance handles. A configured
+   * relayer still rejects (via submitRegistration) any request whose `mode`
+   * is not in this list -- this is the CHEAP pre-check POST /agents uses to
+   * decide whether to even attempt a request, without a network call.
+   */
+  readonly supportedModes: readonly AttestationRelayerMode[];
   /**
    * Submit the scope attestation and resolve with the tx hash once confirmed.
    * Rejects when unconfigured (the agent then stays `pending_onchain`), or
    * when `req.mode` is a mode this relayer does not implement.
    */
   submitRegistration(req: AgentRegistrationRequest): Promise<AgentRegistrationResult>;
+  /**
+   * Tier 2 only: build the EIP-712 payload + digest the tenant's designated
+   * signer must sign, without broadcasting anything. Absent on relayers that
+   * do not support "tenant_signed" (e.g. KmsCustodialRegistrationRelayer).
+   */
+  buildAttestationPayload?(input: {
+    agentId: string;
+    tenantId: string;
+    onchainAddress: string;
+    scopeHash: string;
+  }): AttestationPayload;
 }
 
 /**
@@ -72,12 +106,14 @@ export interface AgentRegistrationRelayer {
  */
 export class UnconfiguredRegistrationRelayer implements AgentRegistrationRelayer {
   public readonly configured = false;
+  public readonly supportedModes: readonly AttestationRelayerMode[] = [];
 
   public submitRegistration(_req: AgentRegistrationRequest): Promise<AgentRegistrationResult> {
     return Promise.reject(
       new Error(
         "agent on-chain registration relayer is not configured; agent stays pending_onchain " +
-          "(set BRAIN_AGENT_RELAYER_MODE=custodial plus the signer/RPC/registry config to enable it)",
+          "(set BRAIN_AGENT_RELAYER_MODE=custodial or tenant_signed plus the signer/RPC/registry " +
+          "config to enable it)",
       ),
     );
   }

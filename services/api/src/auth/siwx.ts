@@ -88,6 +88,76 @@ export interface SiwxOptions {
 
 const NONCE_KEY = (sessionId: string): string => `siwx:nonce:${sessionId}`;
 
+/**
+ * Verify a fresh EIP-4361 (SIWX) proof and return the lowercased recovered
+ * address. Factored out of the `/auth/siwx` route handler below so a second
+ * caller -- RFC 0002 Phase C's onchain-signer designation route -- can
+ * require the SAME proof-of-current-key-control without a second,
+ * independently-maintained nonce/signature verification path.
+ *
+ * When the caller supplied a `sessionId`, the stored nonce (minted by
+ * `POST /auth/siwx/challenge`) is required and consumed (single-use); when
+ * omitted, the message's own `nonce` field is trusted. Throws
+ * `request_body_invalid` for a malformed message/signature and
+ * `auth_siwx_invalid` for every verification failure (expired/missing
+ * session, malformed EIP-4361 payload, bad signature).
+ */
+export async function verifySiwxProof(
+  opts: { readonly domain: string; readonly redis: Redis },
+  input: { readonly message: unknown; readonly signature: unknown; readonly sessionId: unknown },
+): Promise<string> {
+  const { message, signature, sessionId } = input;
+  if (typeof message !== "string" || typeof signature !== "string") {
+    throw brainError("request_body_invalid", "message and signature are required strings");
+  }
+
+  // When the caller provided a session_id, look up the stored nonce
+  // and require the SIWX message to use it. When omitted, the
+  // message's own `nonce` field is trusted but the request is
+  // single-use per (address, nonce) tuple. We still consult the map
+  // to detect replays.
+  let expectedNonce: string | undefined;
+  if (typeof sessionId === "string") {
+    const stored = await opts.redis.getdel(NONCE_KEY(sessionId));
+    if (stored === null) {
+      throw brainError("auth_siwx_invalid", "SIWX session_id missing or expired");
+    }
+    expectedNonce = stored;
+  }
+
+  let parsed: SiweMessage;
+  try {
+    parsed = new SiweMessage(message);
+  } catch (cause) {
+    throw brainError("auth_siwx_invalid", "SIWX message is not a valid EIP-4361 payload", {
+      cause,
+    });
+  }
+
+  // siwe's `verify` *usually* returns `{success: false}` for bad
+  // signatures, but some failure modes (notably nonce mismatch on
+  // certain versions) cause it to throw `SiweInvalidMessageField`
+  // or a generic Error. Catch both so the route returns 401
+  // `auth_siwx_invalid` regardless of which path the library takes.
+  let verifyResult: Awaited<ReturnType<typeof parsed.verify>>;
+  try {
+    verifyResult = await parsed.verify({
+      signature,
+      domain: opts.domain,
+      ...(expectedNonce !== undefined ? { nonce: expectedNonce } : {}),
+    });
+  } catch (cause) {
+    throw brainError("auth_siwx_invalid", "SIWX signature did not verify", { cause });
+  }
+  if (!verifyResult.success) {
+    throw brainError("auth_siwx_invalid", "SIWX signature did not verify", {
+      cause: verifyResult.error,
+    });
+  }
+
+  return verifyResult.data.address.toLowerCase();
+}
+
 export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions): Promise<void> {
   const domain = opts.domain ?? "api.brain.fi";
   const tokenTtl = opts.tokenTtlSeconds ?? DEFAULT_AGENT_TTL_SECONDS;
@@ -155,59 +225,10 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
       }
 
       const body = req.body as Record<string, unknown>;
-      const message = body["message"];
-      const signature = body["signature"];
-      const sessionId = body["session_id"];
-
-      if (typeof message !== "string" || typeof signature !== "string") {
-        throw brainError("request_body_invalid", "message and signature are required strings");
-      }
-
-      // When the caller provided a session_id, look up the stored nonce
-      // and require the SIWX message to use it. When omitted, the
-      // message's own `nonce` field is trusted but the request is
-      // single-use per (address, nonce) tuple. We still consult the map
-      // to detect replays.
-      let expectedNonce: string | undefined;
-      if (typeof sessionId === "string") {
-        const stored = await opts.redis.getdel(NONCE_KEY(sessionId));
-        if (stored === null) {
-          throw brainError("auth_siwx_invalid", "SIWX session_id missing or expired");
-        }
-        expectedNonce = stored;
-      }
-
-      let parsed: SiweMessage;
-      try {
-        parsed = new SiweMessage(message);
-      } catch (cause) {
-        throw brainError("auth_siwx_invalid", "SIWX message is not a valid EIP-4361 payload", {
-          cause,
-        });
-      }
-
-      // siwe's `verify` *usually* returns `{success: false}` for bad
-      // signatures, but some failure modes (notably nonce mismatch on
-      // certain versions) cause it to throw `SiweInvalidMessageField`
-      // or a generic Error. Catch both so the route returns 401
-      // `auth_siwx_invalid` regardless of which path the library takes.
-      let verifyResult: Awaited<ReturnType<typeof parsed.verify>>;
-      try {
-        verifyResult = await parsed.verify({
-          signature,
-          domain,
-          ...(expectedNonce !== undefined ? { nonce: expectedNonce } : {}),
-        });
-      } catch (cause) {
-        throw brainError("auth_siwx_invalid", "SIWX signature did not verify", { cause });
-      }
-      if (!verifyResult.success) {
-        throw brainError("auth_siwx_invalid", "SIWX signature did not verify", {
-          cause: verifyResult.error,
-        });
-      }
-
-      const address = verifyResult.data.address.toLowerCase();
+      const address = await verifySiwxProof(
+        { domain, redis: opts.redis },
+        { message: body["message"], signature: body["signature"], sessionId: body["session_id"] },
+      );
 
       // RFC 0002 Phase D: a wallet linked to a HUMAN owner mints an owner JWT
       // (management/read/approve scopes — never propose/execute), so a tenant can

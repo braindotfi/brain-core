@@ -70,6 +70,7 @@ import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
+import { registerOnchainSignerRoutes } from "./onboarding/onchain-signer.js";
 import {
   ensureBffServiceAgent,
   ensureTenantBootstrapped,
@@ -207,6 +208,7 @@ import {
   unsupportedEvidenceKinds,
   UnconfiguredRegistrationRelayer,
   KmsCustodialRegistrationRelayer,
+  TenantSignedRegistrationRelayer,
   startAgentRegistrationWorker,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
@@ -297,6 +299,7 @@ import {
   makeSumActiveReservations,
   makeResolveEvidence,
   makeDetectDuplicates,
+  makeResolveTenantOnchainSigner,
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
@@ -1137,13 +1140,15 @@ async function main(): Promise<void> {
   });
   const rails: RailRegistry = railsBuild.rails;
 
-  // RFC 0002 Phase C, increment 3: the on-chain agent registration relayer.
-  // "off" (default) keeps the fail-closed UnconfiguredRegistrationRelayer, so
-  // POST /agents and AgentService.confirmRegistration behave exactly as they
-  // did before this relayer existed. Deliberately its OWN signer var
-  // (BRAIN_AGENT_RELAYER_PRIVATE_KEY), never AUDIT_PUBLISHER_KEY -- see that
-  // var's doc comment in shared/src/config.ts for why sharing must not be the
-  // default.
+  // RFC 0002 Phase C, increments 3-4: the on-chain agent registration
+  // relayer. "off" (default) keeps the fail-closed
+  // UnconfiguredRegistrationRelayer, so POST /agents and
+  // AgentService.confirmRegistration behave exactly as they did before
+  // either relayer existed. "custodial" and "tenant_signed" both use
+  // BRAIN_AGENT_RELAYER_PRIVATE_KEY -- deliberately its OWN var, never
+  // AUDIT_PUBLISHER_KEY -- see that var's doc comment in
+  // shared/src/config.ts for why sharing must not be the default. A
+  // deployment wires exactly one attested relayer at a time.
   const agentRegistrationRelayer =
     cfg.BRAIN_AGENT_RELAYER_MODE === "custodial"
       ? new KmsCustodialRegistrationRelayer({
@@ -1152,13 +1157,23 @@ async function main(): Promise<void> {
           registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
           audit,
         })
-      : new UnconfiguredRegistrationRelayer();
+      : cfg.BRAIN_AGENT_RELAYER_MODE === "tenant_signed"
+        ? new TenantSignedRegistrationRelayer({
+            privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
+            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+            audit,
+          })
+        : new UnconfiguredRegistrationRelayer();
+
+  const resolveTenantOnchainSigner = makeResolveTenantOnchainSigner(pool);
 
   const executionDeps: ExecutionDeps = {
     pool,
     audit,
     rails,
     relayer: agentRegistrationRelayer,
+    resolveTenantOnchainSigner,
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
@@ -2424,6 +2439,12 @@ async function main(): Promise<void> {
           );
           // Authenticated wallet-link route (owner JWT) → wallet_identities.
           await v1.register(async (child) => registerWalletRoutes(child, { pool }));
+          // RFC 0002 Phase C, increment 4: tenant on-chain signer designation
+          // (tier 2 prerequisite). Requires an address already linked via the
+          // wallet route just above, so it lives behind the same flag.
+          await v1.register(async (child) =>
+            registerOnchainSignerRoutes(child, { pool, audit, redis }),
+          );
         }
 
         if (cfg.BRAIN_DEMO_MODE) {

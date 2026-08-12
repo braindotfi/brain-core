@@ -292,7 +292,11 @@ describe("POST /agents - tier 2 (relayer not yet built) / tier 3 (custodial rela
 
   it("returns 201 pending_onchain for attestation_mode=onchain_custodial when the relayer is configured", async () => {
     const deps = agentInsertingDeps();
-    deps.relayer = { configured: true, submitRegistration: vi.fn() };
+    deps.relayer = {
+      configured: true,
+      supportedModes: ["onchain_custodial"],
+      submitRegistration: vi.fn(),
+    };
     const app = await buildApp(deps, ["execution:admin"]);
     const res = await app.inject({
       method: "POST",
@@ -313,7 +317,11 @@ describe("POST /agents - tier 2 (relayer not yet built) / tier 3 (custodial rela
 
   it("still returns agent_rail_unavailable for onchain_custodial when the relayer is configured=false", async () => {
     const deps = agentInsertingDeps();
-    deps.relayer = { configured: false, submitRegistration: vi.fn() };
+    deps.relayer = {
+      configured: false,
+      supportedModes: ["onchain_custodial"],
+      submitRegistration: vi.fn(),
+    };
     const app = await buildApp(deps, ["execution:admin"]);
     const res = await app.inject({
       method: "POST",
@@ -327,6 +335,121 @@ describe("POST /agents - tier 2 (relayer not yet built) / tier 3 (custodial rela
     });
     expect(res.statusCode).toBe(503);
     expect((res.json() as { error: { code: string } }).error.code).toBe("agent_rail_unavailable");
+    await app.close();
+  });
+});
+
+describe("POST /agents - tier 2 (tenant_signed relayer wired, increment 4)", () => {
+  const DESIGNATED_SIGNER = "0x" + "cd".repeat(20);
+
+  function tenantSignedRelayerDeps(opts: { designatedSigner?: string | null } = {}): ExecutionDeps {
+    const deps = agentInsertingDeps();
+    deps.relayer = {
+      configured: true,
+      supportedModes: ["tenant_signed"],
+      submitRegistration: vi.fn(),
+      buildAttestationPayload: vi.fn(() => ({
+        domain: { name: "Brain MCP Agent", version: "1", chainId: 84532, verifyingContract: "0x0" },
+        types: { AgentRegistration: [] },
+        primaryType: "AgentRegistration",
+        message: {},
+        digest: "0xdigest",
+      })),
+    };
+    deps.resolveTenantOnchainSigner = vi.fn(async () =>
+      opts.designatedSigner === undefined ? DESIGNATED_SIGNER : opts.designatedSigner,
+    );
+    return deps;
+  }
+
+  it("returns 201 pending_onchain with an attestation payload once the tenant has designated a signer", async () => {
+    const deps = tenantSignedRelayerDeps();
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Tenant Signed Agent",
+        attestation_mode: "tenant_signed",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as {
+      state: string;
+      custodial: boolean;
+      attestation?: { digest: string };
+    };
+    expect(body.state).toBe("pending_onchain");
+    expect(body.custodial).toBe(false);
+    expect(body.attestation?.digest).toBe("0xdigest");
+    await app.close();
+  });
+
+  it("rejects tenant_signed with tenant_signer_not_designated when the tenant has no designated signer", async () => {
+    const deps = tenantSignedRelayerDeps({ designatedSigner: null });
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Tenant Signed Agent",
+        attestation_mode: "tenant_signed",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      "tenant_signer_not_designated",
+    );
+    await app.close();
+  });
+
+  it("refuses onchain_custodial once the tenant has designated its own signer (hard rule D)", async () => {
+    const deps = tenantSignedRelayerDeps();
+    // Same deployment could still have a custodial-capable relayer wired in a
+    // real system; here it is enough that supportedModes covers custodial too.
+    deps.relayer = { ...deps.relayer!, supportedModes: ["onchain_custodial", "tenant_signed"] };
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Custodial Agent",
+        attestation_mode: "onchain_custodial",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      "onchain_custodial_signer_designated",
+    );
+    await app.close();
+  });
+
+  it("accepts onchain_custodial when the tenant has NOT designated a signer", async () => {
+    const deps = agentInsertingDeps();
+    deps.relayer = {
+      configured: true,
+      supportedModes: ["onchain_custodial"],
+      submitRegistration: vi.fn(),
+    };
+    deps.resolveTenantOnchainSigner = vi.fn(async () => null);
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Custodial Agent",
+        attestation_mode: "onchain_custodial",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(201);
     await app.close();
   });
 });

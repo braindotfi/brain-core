@@ -306,6 +306,20 @@ export class AgentService implements IAgentService {
       onchainAddress: existing.onchain_address ?? "",
       scopeHash: existing.scope_hash !== null ? existing.scope_hash.toString("hex") : "",
       mode: existing.attestation_mode as "tenant_signed" | "onchain_custodial",
+      // tier 2 only: the customer's already-verified signature, collected via
+      // POST /agents/{id}/attestation (repository.storeTenantAttestationSignature).
+      // Omitted entirely for onchain_custodial, and the relayer must fail
+      // closed if tenant_signed reaches it with either still null
+      // (attestation not submitted yet) -- exactOptionalPropertyTypes means
+      // the key itself, not just an undefined value, must be left out.
+      ...(existing.attestation_mode === "tenant_signed" &&
+      existing.tenant_signer_address !== null &&
+      existing.tenant_signature !== null
+        ? {
+            tenantSignerAddress: existing.tenant_signer_address,
+            tenantSignature: existing.tenant_signature,
+          }
+        : {}),
     });
 
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>

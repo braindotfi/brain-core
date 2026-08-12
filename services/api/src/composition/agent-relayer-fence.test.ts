@@ -86,6 +86,30 @@ describe("assertAgentRelayerFences", () => {
     ).toThrow(/MCP_AGENT_REGISTRY_ADDRESS/);
   });
 
+  test("production: tenant_signed with everything configured passes", () => {
+    expect(() =>
+      assertAgentRelayerFences({
+        nodeEnv: "production",
+        mode: "tenant_signed",
+        privateKeyConfigured: true,
+        rpcUrlConfigured: true,
+        registryAddressConfigured: true,
+      }),
+    ).not.toThrow();
+  });
+
+  test("production: tenant_signed with a missing signer key throws (same fence as custodial)", () => {
+    expect(() =>
+      assertAgentRelayerFences({
+        nodeEnv: "production",
+        mode: "tenant_signed",
+        privateKeyConfigured: false,
+        rpcUrlConfigured: true,
+        registryAddressConfigured: true,
+      }),
+    ).toThrow(/BRAIN_AGENT_RELAYER_PRIVATE_KEY/);
+  });
+
   test("undefined nodeEnv (boot-time race) is treated as not-production", () => {
     expect(() =>
       assertAgentRelayerFences({

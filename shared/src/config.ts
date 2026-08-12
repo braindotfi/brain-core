@@ -587,12 +587,20 @@ const envSchema = z.object({
    * "off" (default): AgentService gets UnconfiguredRegistrationRelayer, and
    * POST /agents keeps returning agent_rail_unavailable for both attested
    * modes, exactly as before this relayer existed. "custodial": wires
-   * KmsCustodialRegistrationRelayer for attestation_mode=onchain_custodial.
-   * "tenant_signed" arrives in increment 4.
+   * KmsCustodialRegistrationRelayer for attestation_mode=onchain_custodial
+   * (tier 3, Brain-held signer). "tenant_signed": wires
+   * TenantSignedRegistrationRelayer for attestation_mode=tenant_signed
+   * (tier 2, customer-signed attestations, Brain-bootstrapped signer set --
+   * see docs/contracts/production-agents.md). A deployment runs exactly one
+   * of the two attested relayers at a time.
    */
-  BRAIN_AGENT_RELAYER_MODE: z.enum(["off", "custodial"]).default("off"),
+  BRAIN_AGENT_RELAYER_MODE: z.enum(["off", "custodial", "tenant_signed"]).default("off"),
   /**
-   * The custodial relayer's own signer key. Deliberately its OWN config value,
+   * Brain's own relayer signer key -- used by BOTH attested relayer modes.
+   * Custodial mode seats this key as the tenant's permanent signer;
+   * tenant_signed mode uses it ONLY for the one-time initialAdmin bootstrap
+   * transaction that seats the CUSTOMER's address, then never signs another
+   * attestation for that tenant again. Deliberately its OWN config value,
    * never defaulted to AUDIT_PUBLISHER_KEY: the anchor publisher wallet is
    * already documented to drain fast (see anchor-interval-eth-drain), and
    * agent registration competing with anchoring for the same gas would

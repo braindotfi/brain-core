@@ -90,6 +90,24 @@ test("requires BRAIN_AGENT_RELAYER_PRIVATE_KEY only when BRAIN_AGENT_RELAYER_MOD
   );
 });
 
+test("requires BRAIN_AGENT_RELAYER_PRIVATE_KEY only when BRAIN_AGENT_RELAYER_MODE=tenant_signed", () => {
+  withFiles(
+    {
+      compose: "services: {}\n",
+      env: "BRAIN_AGENT_RELAYER_MODE=tenant_signed\n",
+    },
+    (composePath, envPath) => {
+      assert.throws(
+        () => run(composePath, envPath),
+        (error) => {
+          assert.match(error.stderr, /missing secret: BRAIN_AGENT_RELAYER_PRIVATE_KEY/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
 test("enforces enabled application boot fences without affecting disabled integrations", () => {
   withFiles(
     {

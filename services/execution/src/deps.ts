@@ -38,6 +38,19 @@ export interface ExecutionDeps {
   relayer?: AgentRegistrationRelayer;
 
   /**
+   * RFC 0002 Phase C, increment 4: read a tenant's designated on-chain
+   * signer address (tenants.onchain_signer_address, set via
+   * POST /v1/tenants/{tenant_id}/onchain-signer). Optional: absent means
+   * every tenant reads as having no designated signer, so POST /agents keeps
+   * tenant_signed at tenant_signer_not_designated and never blocks
+   * onchain_custodial on clause D.
+   */
+  resolveTenantOnchainSigner?: (
+    ctx: ServiceCallContext,
+    tenantId: string,
+  ) => Promise<string | null>;
+
+  /**
    * Shared secret proving a POST /execution/propose caller is a trusted
    * first-party service (the Python reasoning agents), not just any
    * execution:propose principal. Same trust model and v2 HMAC scheme as

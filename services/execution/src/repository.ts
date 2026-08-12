@@ -309,6 +309,15 @@ export interface AgentRow {
   onchain_attestation_attempts: number;
   last_attestation_error: string | null;
   next_attempt_at: Date | null;
+  /* Tier 2 (attestation_mode="tenant_signed") attestation storage
+   * (services/execution/migrations/0033_agents_tenant_attestation.sql).
+   * Both null until POST /agents/{id}/attestation stores an
+   * already-verified signature; tenant_signer_address is the tenant's
+   * designated signer AT THE TIME the signature was verified, denormalized
+   * from tenants.onchain_signer_address so a later re-designation cannot
+   * silently reattach an old signature to a new signer. */
+  tenant_signer_address: string | null;
+  tenant_signature: string | null;
 }
 
 export async function insertAgent(
@@ -321,6 +330,8 @@ export async function insertAgent(
     | "onchain_attestation_attempts"
     | "last_attestation_error"
     | "next_attempt_at"
+    | "tenant_signer_address"
+    | "tenant_signature"
   > & {
     registeredAt?: Date;
     attestation_mode?: string;
@@ -397,6 +408,32 @@ export async function markAgentRegistered(
       WHERE id = $1 AND state = 'pending_onchain'
       RETURNING *`,
     [id, txHash],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Store an ALREADY-VERIFIED tier-2 (tenant_signed) attestation signature on
+ * a pending_onchain row, so the existing agent-registration worker can pick
+ * it up exactly like an onchain_custodial row. Callers MUST verify the
+ * signature recovers to the tenant's designated on-chain signer BEFORE
+ * calling this -- it stores whatever it is given, unconditionally.
+ * Conditional on the row still being pending_onchain and tenant_signed
+ * (idempotent no-op posture, same as markAgentRegistered): returns null
+ * rather than erroring if the state changed concurrently.
+ */
+export async function storeTenantAttestationSignature(
+  client: TenantScopedClient,
+  id: string,
+  tenantSignerAddress: string,
+  tenantSignature: string,
+): Promise<AgentRow | null> {
+  const { rows } = await client.query<AgentRow>(
+    `UPDATE agents
+        SET tenant_signer_address = $2, tenant_signature = $3
+      WHERE id = $1 AND state = 'pending_onchain' AND attestation_mode = 'tenant_signed'
+      RETURNING *`,
+    [id, tenantSignerAddress.toLowerCase(), tenantSignature],
   );
   return rows[0] ?? null;
 }
