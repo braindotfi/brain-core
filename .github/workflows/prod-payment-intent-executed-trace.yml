@@ -1,0 +1,190 @@
+name: prod-payment-intent-executed-trace
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: trace executed payment-intent audit gaps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-payment-intent-executed-trace
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed read-only executed-intent trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          echo '::group::runtime'
+          echo 'window_days=90'
+          echo "api_health=$(curl -fsS --max-time 10 https://api.brain.fi/health || true)"
+          echo "api_git_sha=$(docker exec brain-prod-api printenv GIT_SHA 2>/dev/null || true)"
+          echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA 2>/dev/null || true)"
+          echo '::endgroup::'
+
+          echo '::group::executed payment-intent trace'
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo 'scope: current executed intents with a payment_intent.created audit event in the fixed 90-day window'
+          \echo 'payloads are intentionally omitted; this returns lifecycle IDs, timestamps, and statuses only'
+
+          WITH params AS (
+            SELECT current_timestamp - interval '90 days' AS window_start
+          ), created_events AS (
+            SELECT ae.tenant_id,
+                   ae.id AS created_event_id,
+                   ae.created_at AS created_event_at,
+                   NULLIF(ae.outputs->>'status', '') AS creation_status,
+                   COALESCE(
+                     NULLIF(ae.outputs->>'payment_intent_id', ''),
+                     NULLIF(ae.inputs->>'payment_intent_id', '')
+                   ) AS payment_intent_id
+              FROM audit_events ae
+              CROSS JOIN params p
+             WHERE ae.action = 'payment_intent.created'
+               AND ae.created_at >= p.window_start
+          ), created_intents AS (
+            SELECT DISTINCT ON (tenant_id, payment_intent_id)
+                   tenant_id,
+                   payment_intent_id,
+                   created_event_id,
+                   created_event_at,
+                   creation_status
+              FROM created_events
+             WHERE payment_intent_id IS NOT NULL
+             ORDER BY tenant_id, payment_intent_id, created_event_at ASC, created_event_id ASC
+          ), traced AS (
+            SELECT ci.tenant_id,
+                   ci.payment_intent_id,
+                   ci.created_event_id,
+                   ci.created_event_at,
+                   ci.creation_status,
+                   pi.action_type,
+                   pi.created_by_agent_id,
+                   pi.policy_decision_id,
+                   pi.created_at AS intent_created_at,
+                   pi.updated_at AS intent_updated_at,
+                   pi.approval_ids,
+                   pi.execution_receipt_ids
+              FROM created_intents ci
+              JOIN ledger_payment_intents pi
+                ON pi.owner_id = ci.tenant_id
+               AND pi.id = ci.payment_intent_id
+             WHERE pi.status = 'executed'
+          )
+          SELECT t.tenant_id,
+                 t.payment_intent_id,
+                 t.created_event_id,
+                 t.created_event_at,
+                 t.creation_status,
+                 t.intent_created_at,
+                 t.intent_updated_at,
+                 t.action_type,
+                 t.created_by_agent_id,
+                 t.policy_decision_id,
+                 t.approval_ids,
+                 t.execution_receipt_ids,
+                 COALESCE(a.approval_count, 0) AS approval_row_count,
+                 a.first_approval_at,
+                 COALESCE(o.outbox_count, 0) AS outbox_row_count,
+                 o.outbox_rows,
+                 COALESCE(x.execution_count, 0) AS execution_row_count,
+                 x.execution_rows,
+                 COALESCE(e.audit_event_count, 0) AS lifecycle_audit_event_count,
+                 e.audit_timeline
+            FROM traced t
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS approval_count,
+                     MIN(signed_at) AS first_approval_at
+                FROM approvals
+               WHERE tenant_id = t.tenant_id
+                 AND subject_type = 'payment_intent'
+                 AND subject_id = t.payment_intent_id
+            ) a ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS outbox_count,
+                     json_agg(
+                       json_build_object(
+                         'id', id,
+                         'status', status,
+                         'execution_id', execution_id,
+                         'attempt_count', attempt_count,
+                         'created_at', created_at,
+                         'dispatched_at', dispatched_at,
+                         'completed_at', completed_at,
+                         'audit_before_id', audit_before_id,
+                         'audit_after_id', audit_after_id
+                       ) ORDER BY created_at
+                     ) AS outbox_rows
+                FROM execution_outbox
+               WHERE tenant_id = t.tenant_id
+                 AND payment_intent_id = t.payment_intent_id
+            ) o ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS execution_count,
+                     json_agg(
+                       json_build_object(
+                         'id', id,
+                         'status', status,
+                         'rail', rail,
+                         'started_at', started_at,
+                         'completed_at', completed_at
+                       ) ORDER BY started_at
+                     ) AS execution_rows
+                FROM executions
+               WHERE tenant_id = t.tenant_id
+                 AND proposal_id = t.payment_intent_id
+            ) x ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT COUNT(*) AS audit_event_count,
+                     json_agg(
+                       json_build_object(
+                         'id', ae.id,
+                         'action', ae.action,
+                         'created_at', ae.created_at,
+                         'actor', ae.actor
+                       ) ORDER BY ae.created_at, ae.id
+                     ) AS audit_timeline
+                FROM audit_events ae
+               WHERE ae.tenant_id = t.tenant_id
+                 AND (
+                   COALESCE(
+                     NULLIF(ae.outputs->>'payment_intent_id', ''),
+                     NULLIF(ae.inputs->>'payment_intent_id', '')
+                   ) = t.payment_intent_id
+                   OR ae.policy_decision_id = t.policy_decision_id
+                 )
+            ) e ON TRUE
+           ORDER BY t.created_event_at, t.payment_intent_id;
+
+          COMMIT;
+          SQL
+          echo '::endgroup::'
+          REMOTE
