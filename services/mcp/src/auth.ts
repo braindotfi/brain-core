@@ -25,20 +25,19 @@ import {
   type Scope,
   type ServiceCallContext,
 } from "@brain/shared";
-import { scopesForAgentRole } from "@brain/internal-agents";
+import { scopesForAgentRole, MCP_UNATTESTED_SCOPES } from "@brain/internal-agents";
 import type { Pool } from "pg";
 
 /**
- * Scopes an agent may hold and still skip the on-chain BrainMCPAgentRegistry
- * check (RFC 0002 Phase C, increment 1 -- the tier-1 "unattested read-only
- * agent" path). Deliberately small and read-only: nothing in this set can
- * move money or write Ledger/Raw state.
+ * Re-exported so every existing importer of MCP_UNATTESTED_SCOPES from this
+ * module (services/mcp/src/index.ts, and this file own callers below) keeps
+ * working unchanged. The canonical definition moved to
+ * services/internal-agents/src/agent-role-scopes.ts (RFC 0002 Phase C,
+ * increment 2) so services/execution/src/routes.ts can import the SAME
+ * binding for POST /v1/agents without an import cycle -- services/mcp already
+ * depends on services/execution, so the reverse direction is not available.
  */
-export const MCP_UNATTESTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
-  "ledger:read",
-  "wiki:read",
-  "raw:read",
-]);
+export { MCP_UNATTESTED_SCOPES };
 
 export interface AgentRecord {
   id: string;

@@ -15,12 +15,17 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { scopesForAgentRole } from "@brain/internal-agents";
+import {
+  KNOWN_AGENT_ROLES,
+  MCP_UNATTESTED_SCOPES,
+  scopesForAgentRole,
+} from "@brain/internal-agents";
 import {
   brainError,
   computeAgentScopeHash,
   extractRawBody,
   isBrainId,
+  newAgentId,
   newProposalId,
   requireScope,
   singleHeaderValue,
@@ -45,6 +50,7 @@ const PROPOSE: Scope = "execution:propose";
 const WRITE: Scope = "execution:write";
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
+const POLICY_WRITE: Scope = "policy:write";
 
 /* RFC 0002 Phase C, increment 1: the three attestation_mode values a caller
  * may set on POST /execution/agents/register. Kept as a plain literal set
@@ -52,6 +58,40 @@ const ADMIN: Scope = "execution:admin";
  * dependency) mirroring the CHECK constraint in
  * services/execution/migrations/0031_agents_attestation_mode.sql. */
 const VALID_ATTESTATION_MODES = new Set(["none", "tenant_signed", "onchain_custodial"]);
+
+/* POST /agents (increment 2) accepts either execution:admin (member-role
+ * admin, shared/src/auth/scopes.ts MEMBER_ROLE_SCOPES.admin) or policy:write
+ * (tenant owner, services/api/src/onboarding/login.ts OWNER_SCOPES). Neither
+ * vocabulary alone covers both callers this route must accept, and
+ * execution:admin is deliberately NOT added to OWNER_SCOPES -- it also gates
+ * member management, API-key mint/revoke, and agent halt/restore, none of
+ * which a tenant owner token should gain as a side effect of this route. */
+function requireAdminOrPolicyWrite(scopes: readonly string[]): void {
+  if (!scopes.includes(ADMIN) && !scopes.includes(POLICY_WRITE)) {
+    throw brainError("auth_scope_insufficient", `requires one of: ${ADMIN}, ${POLICY_WRITE}`, {
+      details: { required_any_of: [ADMIN, POLICY_WRITE], held: scopes },
+    });
+  }
+}
+
+const AGENT_CREATE_FIELDS = new Set([
+  "role",
+  "display_name",
+  "onchain_address",
+  "attestation_mode",
+]);
+
+/** Rejects agent_id, scope_hash, state, or any other field the server must
+ *  own -- the caller mints none of those on this route (the server mints
+ *  agent_id and derives scope_hash; state is always server-computed). */
+function rejectUnknownAgentCreateFields(body: Record<string, unknown>): void {
+  const found = Object.keys(body).filter((key) => !AGENT_CREATE_FIELDS.has(key));
+  if (found.length > 0) {
+    throw brainError("request_body_invalid", "unknown_field", {
+      details: { reason: "unknown_field", fields: found },
+    });
+  }
+}
 
 function proposedAgentId(principal: NonNullable<FastifyRequest["principal"]>, requested?: string) {
   if (requested !== undefined && principal.scopes.includes(ADMIN)) {
@@ -385,6 +425,149 @@ export async function registerExecutionRoutes(
       });
       reply.status(201);
       return serializeAgent(row);
+    },
+  );
+
+  // POST /agents (RFC 0002 Phase C, increment 2) -- self-serve agent
+  // registration. Distinct from POST /execution/agents/register above: this
+  // route MINTS agent_id and DERIVES scope_hash from role rather than
+  // accepting either as caller-supplied input, so a caller cannot plant a
+  // non-canonical hash or collide an id. Accepts execution:admin OR
+  // policy:write (see requireAdminOrPolicyWrite) so both a member-role admin
+  // and a self-serve tenant owner can call it.
+  app.post(
+    "/agents",
+    { config: { idempotent: true } },
+    async (
+      request: FastifyRequest<{
+        Body: {
+          role?: string;
+          display_name?: string;
+          onchain_address?: string;
+          attestation_mode?: string;
+        };
+      }>,
+      reply,
+    ) => {
+      const principal = requirePrincipal(request);
+      requireAdminOrPolicyWrite(principal.scopes);
+
+      const rawBody = request.body;
+      if (
+        rawBody === undefined ||
+        rawBody === null ||
+        typeof rawBody !== "object" ||
+        Array.isArray(rawBody)
+      ) {
+        throw brainError("request_body_invalid", "body must be an object");
+      }
+      const body = rawBody as Record<string, unknown>;
+      rejectUnknownAgentCreateFields(body);
+
+      const role = body["role"];
+      const displayName = body["display_name"];
+      const onchainAddress = body["onchain_address"];
+      const attestationMode = body["attestation_mode"];
+      if (
+        typeof role !== "string" ||
+        role.length === 0 ||
+        typeof displayName !== "string" ||
+        displayName.length === 0 ||
+        typeof attestationMode !== "string"
+      ) {
+        throw brainError("request_body_invalid", "role, display_name, attestation_mode required");
+      }
+      if (!VALID_ATTESTATION_MODES.has(attestationMode)) {
+        throw brainError(
+          "request_body_invalid",
+          "attestation_mode must be one of: " + Array.from(VALID_ATTESTATION_MODES).join(", "),
+          { details: { attestation_mode: attestationMode } },
+        );
+      }
+
+      // Clause 1: role must be a known role. scopesForAgentRole silently
+      // falls through to a read-heavy default for anything else, so an
+      // unrecognized role must be rejected here rather than trusting that
+      // function to fail on a typo.
+      if (!KNOWN_AGENT_ROLES.includes(role)) {
+        throw brainError("request_body_invalid", "unknown role", {
+          details: { role, known_roles: KNOWN_AGENT_ROLES },
+        });
+      }
+      const roleScopes = scopesForAgentRole(role);
+      const isUnattested = attestationMode === "none";
+
+      if (isUnattested) {
+        // Clause 2: "none" (tier-1 unattested) is only valid for a role whose
+        // full scope set is read-only and contained in MCP_UNATTESTED_SCOPES
+        // -- the identical predicate McpAuthVerifier.verify
+        // (services/mcp/src/auth.ts) enforces at request time, imported from
+        // the same constant so the two can never drift apart. A caller must
+        // not be able to self-declare tier 1 for a money-path role.
+        const eligible =
+          roleScopes.length > 0 && roleScopes.every((s) => MCP_UNATTESTED_SCOPES.has(s));
+        if (!eligible) {
+          throw brainError(
+            "request_body_invalid",
+            "attestation_mode none requires a role whose scopes are a subset of the unattested read-only scopes",
+            { details: { role, role_scopes: roleScopes } },
+          );
+        }
+      } else {
+        // Clause 3: any attested mode needs an on-chain address to attest.
+        if (typeof onchainAddress !== "string" || onchainAddress.length === 0) {
+          throw brainError(
+            "request_body_invalid",
+            `onchain_address required for attestation_mode ${attestationMode}`,
+          );
+        }
+        // Clause 4: the on-chain registration relayer that would submit this
+        // attestation is not built until RFC 0002 Phase C increments 3/4 --
+        // same error AgentService.confirmRegistration returns when no relayer
+        // is configured, rather than pretending the mode works today.
+        throw brainError(
+          "agent_rail_unavailable",
+          `attestation_mode ${attestationMode} requires the on-chain registration relayer, which is not yet available`,
+          { details: { attestation_mode: attestationMode } },
+        );
+      }
+
+      const scopeHash = computeAgentScopeHash(roleScopes).slice(2);
+      const agentId = newAgentId();
+      const row = await withTenantScope(deps.pool, principal.tenantId, (c) =>
+        insertAgent(c, {
+          id: agentId,
+          tenant_id: principal.tenantId,
+          kind: "external",
+          role,
+          display_name: displayName,
+          scope_hash: Buffer.from(scopeHash, "hex"),
+          onchain_address: typeof onchainAddress === "string" ? onchainAddress : null,
+          state: isUnattested ? "active" : "pending_onchain",
+          registered_tx: null,
+          attestation_mode: attestationMode,
+          ...(isUnattested ? { registeredAt: new Date() } : {}),
+        }),
+      );
+
+      // Only attestationMode === "none" ever reaches this line today --
+      // the else branch above always throws agent_rail_unavailable for
+      // tenant_signed/onchain_custodial, so custodial is always false until
+      // increments 3/4 wire the relayer and remove that throw. Written as a
+      // literal comparison rather than hardcoded false so it self-corrects
+      // once that branch stops always throwing.
+      const custodial: boolean = (attestationMode as string) === "onchain_custodial";
+      await deps.audit.emit({
+        tenantId: principal.tenantId,
+        layer: "execution",
+        actor: principal.id,
+        action: "agent.registered",
+        inputs: { role, attestation_mode: attestationMode },
+        outputs: { state: row.state, custodial },
+      });
+
+      reply.status(201);
+      return { ...serializeAgent(row), custodial };
     },
   );
 

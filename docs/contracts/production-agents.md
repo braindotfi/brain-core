@@ -110,6 +110,44 @@ events never include bearer token values, refresh tokens, hashes, or plaintext s
 6. Production tenants must never use `POST /v1/auth/service-token`.
 7. Audit events must never carry token values.
 
+## Self-Serve Agent Registration (POST /agents)
+
+RFC 0002 Phase C adds a self-serve path alongside the platform-driven tenant
+creation flow above: `POST /agents` lets a caller register an agent for the
+tenant it already belongs to, without a platform service credential. It
+requires `execution:admin` OR `policy:write` (a member-role admin token, or a
+tenant owner token, either one).
+
+The route mints `agent_id` and derives `scope_hash` from `role` server-side.
+It never accepts either as input, and rejects `agent_id`, `scope_hash`, or
+`state` in the request body outright.
+
+Every agent carries `attestation_mode`, one of three values:
+
+- `none` -- tier-1 unattested. No on-chain `BrainMCPAgentRegistry` record is
+  required; the agent is `active` immediately. Only accepted when the
+  requested role's full scope set is read-only and contained in the MCP
+  unattested scope set (`ledger:read`, `wiki:read`, `raw:read`). A caller
+  cannot self-declare this tier for a money-path role: `services/mcp/src/auth.ts`
+  enforces the identical check on every MCP request, imported from the same
+  constant this route validates against, so the two cannot drift apart.
+- `tenant_signed` -- the tenant holds its own on-chain signing key and signs
+  the attestation itself.
+- `onchain_custodial` -- Brain custodies the on-chain signing key on the
+  tenant's behalf. The `custodial` field in the response is `true` only for
+  this mode, so integrators have a machine-readable disclosure of custody
+  rather than having to infer it from `attestation_mode` alone.
+
+`tenant_signed` and `onchain_custodial` both require `onchain_address` and
+currently return `503 agent_rail_unavailable`: the on-chain registration
+relayer that would actually submit either attestation is not built until RFC
+0002 Phase C increments 3 and 4. Only `attestation_mode: "none"` succeeds
+today.
+
+`POST /agents` supports the `Idempotency-Key` header
+(`docs/contracts/idempotency-correlation.md`); a replayed key with the same
+body returns the original stored response rather than minting a second agent.
+
 ## Invariants
 
 1. `POST /v1/tenants` creates exactly one active bootstrap admin member and exactly one

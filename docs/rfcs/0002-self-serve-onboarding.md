@@ -171,6 +171,30 @@ Decision: **register off-chain immediately, confirm on-chain asynchronously.**
    user-submits-the-tx variants later without a schema change. Only the relay
    strategy differs.
 
+**Amendment (increment 2, three-tier model).** The single `pending_onchain`
+flow above turned out to conflate two different needs: an agent that only
+ever reads tenant data does not need an on-chain attestation at all, while an
+agent that can move money always does. `POST /v1/agents` now takes an
+explicit `attestation_mode`:
+
+1. `none` -- tier-1 unattested. Skips on-chain registration entirely; the
+   agent is `active` immediately. Gated to roles whose full scope set is
+   read-only and contained in the MCP unattested scope set (`ledger:read`,
+   `wiki:read`, `raw:read`), enforced by the same constant
+   `services/mcp/src/auth.ts` checks per-request, so registration-time and
+   request-time enforcement cannot drift apart.
+2. `tenant_signed` -- the tenant holds its own signing key and submits the
+   attestation itself.
+3. `onchain_custodial` -- Brain's KMS-backed relayer signs on the tenant's
+   behalf, exactly the flow items 1 to 3 above originally described. The
+   response's `custodial` field is `true` only for this mode, a
+   machine-readable custody disclosure rather than an implied default.
+
+`tenant_signed` and `onchain_custodial` both still land `pending_onchain` and
+both currently return `503 agent_rail_unavailable`, because increment 2 built
+only the request-shape and the tier-1 exemption; the KMS relayer itself is
+increments 3 and 4.
+
 The KMS signer construction + Base RPC wiring is the deferred live-wiring step
 (as with the escrow/x402 rails and the `resolveEscrowState` reader).
 
@@ -213,13 +237,14 @@ Each phase is additive, flag-gated, fails closed, and lands green
 
 ## 11. Decisions (decision log)
 
-| #       | Decision                    | Resolution                                                                                                                                                            |
-| ------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **O-1** | Signup gating               | **Open, sandbox-first.** Anyone can provision a tenant; it lands sandbox/fail-closed; real money stays behind H-24 + audit.                                           |
-| **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login. |
-| **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                              |
-| **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                               |
-| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                                |
+| #       | Decision                    | Resolution                                                                                                                                                                                                                                                                                      |
+| ------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **O-1** | Signup gating               | **Open, sandbox-first.** Anyone can provision a tenant; it lands sandbox/fail-closed; real money stays behind H-24 + audit.                                                                                                                                                                     |
+| **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login.                                                                                                                           |
+| **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                                                                                                                                                        |
+| **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                                                                                                                                                         |
+| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                                                                                                                                                          |
+| **O-6** | Attestation tiers           | **Three explicit `attestation_mode` values** (`none`, `tenant_signed`, `onchain_custodial`), not one `pending_onchain` flow. `none` is gated to read-only roles by the same constant the MCP surface checks per-request; the other two remain `agent_rail_unavailable` until the relayer ships. |
 
 ## 12. Non-goals (this RFC)
 

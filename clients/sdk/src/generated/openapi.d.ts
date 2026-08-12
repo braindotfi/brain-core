@@ -1690,7 +1690,34 @@ export interface paths {
          */
         get: operations["listAgents"];
         put?: never;
-        post?: never;
+        /**
+         * Self-serve agent registration (RFC 0002 Phase C, increment 2)
+         * @description Requires execution:admin OR policy:write (a member-role admin token,
+         *     or a tenant owner token, either one). The server mints agent_id and
+         *     derives scope_hash from role; it never accepts either as input, and
+         *     rejects agent_id, scope_hash, or state in the request body with
+         *     request_body_invalid (unknown_field).
+         *
+         *     role must be one of the known agent roles; an unrecognized role is
+         *     rejected outright rather than silently falling back to a default
+         *     scope set.
+         *
+         *     attestation_mode none (tier-1 unattested) is only accepted when the
+         *     role's full scope set is read-only and contained in the MCP
+         *     unattested scope set (ledger:read, wiki:read, raw:read) -- the same
+         *     check services/mcp/src/auth.ts enforces at request time, so a caller
+         *     cannot self-declare tier 1 for a money-path role.
+         *
+         *     attestation_mode tenant_signed and onchain_custodial both require
+         *     onchain_address and currently return 503 agent_rail_unavailable: the
+         *     on-chain registration relayer that would submit either attestation
+         *     ships in RFC 0002 Phase C increments 3/4, not this one.
+         *
+         *     Supports the Idempotency-Key header (docs/contracts/idempotency-correlation.md);
+         *     a replayed key with the same body returns the original stored
+         *     response instead of minting a second agent.
+         */
+        post: operations["createAgent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1771,13 +1798,15 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Register an external agent
+         * Register an external agent (superseded)
          * @deprecated
-         * @description Not yet implemented under /agents/*. Registration currently goes through
-         *     the still-live legacy POST /execution/agents/register, which persists the
-         *     agent in `pending_onchain` until the BrainMCPAgentRegistry tx confirms.
-         *     This path is reserved for the v0.3 migration and is documented here for
-         *     forward reference only.
+         * @description Superseded by POST /agents (RFC 0002 Phase C, increment 2), which
+         *     mints agent_id and derives scope_hash server-side instead of
+         *     accepting either as input. The still-live legacy
+         *     POST /execution/agents/register also remains available and accepts
+         *     the same fields this operation documents. This path itself has never
+         *     been implemented and returns 404; it is kept only as a forward
+         *     reference to the two routes above.
          */
         post: operations["registerAgent"];
         delete?: never;
@@ -4853,6 +4882,24 @@ export interface components {
             registered_tx?: string | null;
             /** Format: date-time */
             registered_at?: string | null;
+            /**
+             * @description RFC 0002 Phase C. none is the tier-1 unattested path (read-only
+             *     scopes, no BrainMCPAgentRegistry record required). tenant_signed
+             *     and onchain_custodial both still require on-chain attestation
+             *     before the agent is active; POST /agents currently rejects both
+             *     with agent_rail_unavailable until the registration relayer ships
+             *     (increments 3/4).
+             * @enum {string}
+             */
+            attestation_mode: "none" | "tenant_signed" | "onchain_custodial";
+            /**
+             * @description Present only on the POST /agents response. True only when
+             *     attestation_mode is onchain_custodial, a machine-readable
+             *     disclosure of whether Brain custodies the on-chain signing key
+             *     for this agent, distinct from the tenant_signed mode where the
+             *     tenant holds its own key.
+             */
+            custodial?: boolean;
         };
         /** @enum {string} */
         AgentRunStatus: "routing" | "routed" | "no_match" | "unscoped" | "missing_handler" | "missing_action" | "missing_evidence" | "proposal_created" | "confirmation_required" | "executed" | "notify_only" | "rejected" | "failed" | "duplicate_skipped" | "paused" | "shadow_completed";
@@ -8444,6 +8491,56 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    createAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    role: string;
+                    display_name: string;
+                    /** @description Required when attestation_mode is not none. */
+                    onchain_address?: string;
+                    /** @enum {string} */
+                    attestation_mode: "none" | "tenant_signed" | "onchain_custodial";
+                };
+            };
+        };
+        responses: {
+            /** @description Agent registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing both execution:admin and policy:write. Error code auth_scope_insufficient. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description attestation_mode is tenant_signed or onchain_custodial; the on-chain registration relayer is not yet available. Error code agent_rail_unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getAgent: {

@@ -690,6 +690,16 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
 - `POST /audit/anchor/publish` derives its per-tenant cooldown from the latest
   `audit_anchors` row rather than in-process state, so it survives restart, is
   not per-replica, and a failed publish no longer consumes the window.
+- RFC 0002 Phase C increment 2 adds self-serve `POST /agents`, accepting
+  `execution:admin` OR `policy:write`. The server mints `agent_id` and derives
+  `scope_hash` from `role`; it rejects a caller-supplied `agent_id`,
+  `scope_hash`, or `state` outright. `attestation_mode: "none"` (tier-1
+  unattested) is gated to roles whose scopes are a subset of the same
+  `MCP_UNATTESTED_SCOPES` constant `services/mcp/src/auth.ts` checks
+  per-request (now exported from `@brain/internal-agents` so both sides import
+  the identical binding). `tenant_signed` and `onchain_custodial` both return
+  `agent_rail_unavailable` until the on-chain registration relayer ships in
+  increments 3 and 4.
 
 Pending Dmitriy sign-off
 
