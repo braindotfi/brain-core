@@ -35,10 +35,13 @@ test("counterparty trust impact report classifies demo and sandbox rows for revi
   assert.match(report, /BEGIN TRANSACTION READ ONLY/);
 });
 
-test("staging fixed-report compilation ignores the repository tsconfig", () => {
+test("staging fixed-report transpilation bypasses repository type checking", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
 
-  assert.match(workflow, /pnpm exec tsc \\\n\s+--ignoreConfig \\\n\s+--target es2022/);
+  assert.match(
+    workflow,
+    /pnpm exec tsc \\\n\s+--ignoreConfig \\\n\s+--noCheck \\\n\s+--target es2022/,
+  );
 });
 
 test("staging Wiki question trace is tenant-bounded, selector-bounded, and read-only", () => {
