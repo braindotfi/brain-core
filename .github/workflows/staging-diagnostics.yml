@@ -173,7 +173,7 @@ jobs:
       - name: Install lockfile dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Compile fixed report for stdin execution
+      - name: Transpile fixed report for stdin execution
         if: inputs.diagnostic == 'counterparty-trust-gate-impact'
         shell: bash
         run: |
@@ -194,11 +194,10 @@ jobs:
           esac
           pnpm exec tsc \
             --ignoreConfig \
+            --noCheck \
             --target es2022 \
             --module es2022 \
             --moduleResolution bundler \
-            --skipLibCheck \
-            --esModuleInterop \
             --outDir "$RUNNER_TEMP/staging-diagnostics" \
             "$report_source"
           echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
