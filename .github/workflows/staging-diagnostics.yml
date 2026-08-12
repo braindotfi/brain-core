@@ -16,6 +16,7 @@ on:
           - tenant-identity-lookup
           - wiki-question-trace
           - anchor-reconciliation-correlation
+          - anchor-cycle-runtime-trace
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -46,6 +47,16 @@ on:
         required: false
         type: string
         default: ""
+      anchor_cycle_since:
+        description: "ISO UTC lower bound for anchor-cycle-runtime-trace only."
+        required: false
+        type: string
+        default: ""
+      anchor_cycle_until:
+        description: "ISO UTC upper bound for anchor-cycle-runtime-trace only."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -69,13 +80,15 @@ jobs:
       WIKI_QUESTION_SINCE: ${{ inputs.wiki_question_since }}
       WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
+      ANCHOR_CYCLE_SINCE: ${{ inputs.anchor_cycle_since }}
+      ANCHOR_CYCLE_UNTIL: ${{ inputs.anchor_cycle_until }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, or anchor-reconciliation-correlation"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, or anchor-cycle-runtime-trace"
             exit 1
           fi
 
@@ -129,6 +142,25 @@ jobs:
               echo "wiki-question-trace requires an event id, timestamp bound, or question search"
               exit 1
             fi
+          fi
+
+          if [[ "$DIAGNOSTIC" == "anchor-cycle-runtime-trace" ]]; then
+            for value in "$ANCHOR_CYCLE_SINCE" "$ANCHOR_CYCLE_UNTIL"; do
+              if [[ ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                echo "anchor-cycle-runtime-trace requires exact ISO UTC bounds"
+                exit 1
+              fi
+            done
+            python3 - "$ANCHOR_CYCLE_SINCE" "$ANCHOR_CYCLE_UNTIL" <<'PY'
+          from datetime import datetime
+          import sys
+
+          start = datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")
+          end = datetime.strptime(sys.argv[2], "%Y-%m-%dT%H:%M:%SZ")
+          seconds = (end - start).total_seconds()
+          if seconds <= 0 or seconds > 1_200:
+              raise SystemExit("anchor-cycle-runtime-trace window must be greater than zero and no more than 20 minutes")
+          PY
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
@@ -197,6 +229,8 @@ jobs:
           wiki_question_since_b64="$(printf '%s' "$WIKI_QUESTION_SINCE" | base64 | tr -d '\n')"
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
+          anchor_cycle_since_b64="$(printf '%s' "$ANCHOR_CYCLE_SINCE" | base64 | tr -d '\n')"
+          anchor_cycle_until_b64="$(printf '%s' "$ANCHOR_CYCLE_UNTIL" | base64 | tr -d '\n')"
 
           run_tenant_identity_lookup() {
             ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
@@ -438,6 +472,64 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "anchor-reconciliation-correlation" ]]; then
             run_anchor_reconciliation_correlation
+            exit 0
+          fi
+
+          run_anchor_cycle_runtime_trace() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "ANCHOR_CYCLE_SINCE_B64='$anchor_cycle_since_b64' ANCHOR_CYCLE_UNTIL_B64='$anchor_cycle_until_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            anchor_cycle_since="$(printf '%s' "$ANCHOR_CYCLE_SINCE_B64" | base64 -d)"
+            anchor_cycle_until="$(printf '%s' "$ANCHOR_CYCLE_UNTIL_B64" | base64 -d)"
+            for value in "$anchor_cycle_since" "$anchor_cycle_until"; do
+              if [[ ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                echo "anchor-cycle-runtime-trace timestamp failed remote validation"
+                exit 1
+              fi
+            done
+
+            echo "anchor_cycle_window=${anchor_cycle_since}/${anchor_cycle_until}"
+            echo "anchor_cycle_worker_log_lines"
+            docker logs --since "$anchor_cycle_since" --until "$anchor_cycle_until" brain-prod-worker 2>&1 | \
+              grep -E 'anchor cycle closing|anchor publish batch completed|pending anchor retry batch completed|anchor cycle completed' || true
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v anchor_cycle_since="$anchor_cycle_since" \
+              -v anchor_cycle_until="$anchor_cycle_until" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'anchor rows grouped by onchain transaction'
+            SELECT encode(onchain_tx_hash, 'hex') AS onchain_tx_hash,
+                   COUNT(*) AS anchor_rows,
+                   COUNT(DISTINCT tenant_id) AS tenant_roots,
+                   MIN(created_at) AS first_anchor_row_at,
+                   MAX(created_at) AS last_anchor_row_at,
+                   MIN(period_start) AS earliest_period_start,
+                   MAX(period_end) AS latest_period_end
+              FROM audit_anchors
+             WHERE created_at >= :'anchor_cycle_since'::timestamptz
+               AND created_at <= :'anchor_cycle_until'::timestamptz
+             GROUP BY onchain_tx_hash
+             ORDER BY first_anchor_row_at, onchain_tx_hash;
+
+            \echo 'unpublished anchor rows remaining in window'
+            SELECT COUNT(*) AS pending_rows
+              FROM audit_anchors
+             WHERE created_at >= :'anchor_cycle_since'::timestamptz
+               AND created_at <= :'anchor_cycle_until'::timestamptz
+               AND onchain_tx_hash IS NULL
+               AND onchain_status = 'pending';
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "anchor-cycle-runtime-trace" ]]; then
+            run_anchor_cycle_runtime_trace
             exit 0
           fi
 
