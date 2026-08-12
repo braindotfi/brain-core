@@ -205,6 +205,9 @@ import {
   ProposalDecisionService,
   resolveEvidenceRefs,
   unsupportedEvidenceKinds,
+  UnconfiguredRegistrationRelayer,
+  KmsCustodialRegistrationRelayer,
+  startAgentRegistrationWorker,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
@@ -323,6 +326,7 @@ import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-l
 import { assertOutboxDispatchGuardWiredInProduction } from "./composition/outbox-dispatch-guard-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { assertServiceTokenFences } from "./composition/service-token-fence.js";
+import { assertAgentRelayerFences } from "./composition/agent-relayer-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
@@ -534,6 +538,17 @@ async function main(): Promise<void> {
     serviceTokenEnabled: cfg.BRAIN_SERVICE_TOKEN_ENABLED,
     serviceTokenSecret: cfg.BRAIN_SERVICE_TOKEN_SECRET,
     testnetAttested: cfg.BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED,
+  });
+
+  // Refuse to boot in production with BRAIN_AGENT_RELAYER_MODE=custodial but
+  // the signer key, RPC URL, or registry address missing -- logic + tests
+  // live in composition/agent-relayer-fence.ts.
+  assertAgentRelayerFences({
+    nodeEnv: cfg.NODE_ENV,
+    mode: cfg.BRAIN_AGENT_RELAYER_MODE,
+    privateKeyConfigured: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY !== undefined,
+    rpcUrlConfigured: (cfg.BASE_RPC_URL ?? cfg.RPC_URL) !== undefined,
+    registryAddressConfigured: cfg.MCP_AGENT_REGISTRY_ADDRESS !== undefined,
   });
 
   let wikiPool = pool;
@@ -1122,10 +1137,28 @@ async function main(): Promise<void> {
   });
   const rails: RailRegistry = railsBuild.rails;
 
+  // RFC 0002 Phase C, increment 3: the on-chain agent registration relayer.
+  // "off" (default) keeps the fail-closed UnconfiguredRegistrationRelayer, so
+  // POST /agents and AgentService.confirmRegistration behave exactly as they
+  // did before this relayer existed. Deliberately its OWN signer var
+  // (BRAIN_AGENT_RELAYER_PRIVATE_KEY), never AUDIT_PUBLISHER_KEY -- see that
+  // var's doc comment in shared/src/config.ts for why sharing must not be the
+  // default.
+  const agentRegistrationRelayer =
+    cfg.BRAIN_AGENT_RELAYER_MODE === "custodial"
+      ? new KmsCustodialRegistrationRelayer({
+          privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+          audit,
+        })
+      : new UnconfiguredRegistrationRelayer();
+
   const executionDeps: ExecutionDeps = {
     pool,
     audit,
     rails,
+    relayer: agentRegistrationRelayer,
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
@@ -1472,7 +1505,24 @@ async function main(): Promise<void> {
     evaluatePolicy: evaluateLegacyPolicy,
     resolveAgentAuthority: (_ctx, agentId) =>
       internalAgentDefinitions[agentId]?.default_authority ?? null,
+    relayer: agentRegistrationRelayer,
   });
+
+  // RFC 0002 Phase C, increment 3: drive confirmRegistration for pending_onchain
+  // agents. Only runs when a real relayer is wired -- with BRAIN_AGENT_RELAYER_MODE
+  // left at its "off" default (or misconfigured outside production, where the
+  // boot fence above does not throw) the cycle would just claim rows and fail
+  // every one closed, burning the attempt ceiling for nothing.
+  const agentRegistrationWorker =
+    composition.workers.has("execution") && agentRegistrationRelayer.configured
+      ? startAgentRegistrationWorker({
+          agentService,
+          withPrivileged,
+          metrics,
+          log,
+        })
+      : undefined;
+  if (agentRegistrationWorker !== undefined) log.info("agent registration worker started");
 
   // H-07 Proof builder (shared with the HTTP /v1/proof/{action_id} route).
   // Hoisted so the MCP brain://proofs/{action_id} resource and the HTTP route

@@ -521,15 +521,21 @@ export async function registerExecutionRoutes(
             `onchain_address required for attestation_mode ${attestationMode}`,
           );
         }
-        // Clause 4: the on-chain registration relayer that would submit this
-        // attestation is not built until RFC 0002 Phase C increments 3/4 --
-        // same error AgentService.confirmRegistration returns when no relayer
-        // is configured, rather than pretending the mode works today.
-        throw brainError(
-          "agent_rail_unavailable",
-          `attestation_mode ${attestationMode} requires the on-chain registration relayer, which is not yet available`,
-          { details: { attestation_mode: attestationMode } },
-        );
+        // Clause 4 (RFC 0002 Phase C, increment 3): onchain_custodial is
+        // accepted once a CONFIGURED relayer is wired -- the agent lands
+        // pending_onchain and the background worker (agent-registration-worker.ts)
+        // drives confirmRegistration. tenant_signed still always throws until
+        // increment 4 builds that relayer; an unconfigured onchain_custodial
+        // relayer (or none injected at all) keeps the same
+        // agent_rail_unavailable this route has always returned, rather than
+        // landing a pending_onchain row nothing will ever confirm.
+        if (attestationMode !== "onchain_custodial" || deps.relayer?.configured !== true) {
+          throw brainError(
+            "agent_rail_unavailable",
+            `attestation_mode ${attestationMode} requires the on-chain registration relayer, which is not yet available`,
+            { details: { attestation_mode: attestationMode } },
+          );
+        }
       }
 
       const scopeHash = computeAgentScopeHash(roleScopes).slice(2);
@@ -550,12 +556,9 @@ export async function registerExecutionRoutes(
         }),
       );
 
-      // Only attestationMode === "none" ever reaches this line today --
-      // the else branch above always throws agent_rail_unavailable for
-      // tenant_signed/onchain_custodial, so custodial is always false until
-      // increments 3/4 wire the relayer and remove that throw. Written as a
-      // literal comparison rather than hardcoded false so it self-corrects
-      // once that branch stops always throwing.
+      // true only for onchain_custodial, and only once clause 4 above let it
+      // through (a configured relayer). tenant_signed still always throws, so
+      // it never reaches this line until increment 4.
       const custodial: boolean = (attestationMode as string) === "onchain_custodial";
       await deps.audit.emit({
         tenantId: principal.tenantId,

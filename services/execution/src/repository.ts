@@ -304,11 +304,24 @@ export interface AgentRow {
    * /0031_agents_attestation_mode.sql). RFC 0002 Phase C: "none" is the tier-1
    * unattested path (services/mcp/src/auth.ts MCP_UNATTESTED_SCOPES). */
   attestation_mode: string;
+  /* Retry durability for the on-chain registration relayer worker
+   * (services/execution/migrations/0032_agents_attestation_attempts.sql). */
+  onchain_attestation_attempts: number;
+  last_attestation_error: string | null;
+  next_attempt_at: Date | null;
 }
 
 export async function insertAgent(
   client: TenantScopedClient,
-  input: Omit<AgentRow, "created_at" | "registered_at" | "attestation_mode"> & {
+  input: Omit<
+    AgentRow,
+    | "created_at"
+    | "registered_at"
+    | "attestation_mode"
+    | "onchain_attestation_attempts"
+    | "last_attestation_error"
+    | "next_attempt_at"
+  > & {
     registeredAt?: Date;
     attestation_mode?: string;
   },
@@ -376,7 +389,7 @@ export async function transitionAgent(
 export async function markAgentRegistered(
   client: TenantScopedClient,
   id: string,
-  txHash: string,
+  txHash: string | null,
 ): Promise<AgentRow | null> {
   const { rows } = await client.query<AgentRow>(
     `UPDATE agents
@@ -384,6 +397,117 @@ export async function markAgentRegistered(
       WHERE id = $1 AND state = 'pending_onchain'
       RETURNING *`,
     [id, txHash],
+  );
+  return rows[0] ?? null;
+}
+
+/** Cross-tenant query surface for the agent-registration worker's privileged connection. */
+export type PrivilegedAgentClient = Pick<TenantScopedClient, "query">;
+
+/**
+ * Claim a batch of `pending_onchain` agents for on-chain attestation
+ * (RFC 0002 Phase C, increment 3). Cross-tenant: run on a privileged
+ * (BYPASSRLS `brain_execution_worker`) connection, mirroring
+ * OutboxService.claimNext.
+ *
+ * `next_attempt_at` does double duty as both the retry backoff clock (see
+ * markAgentAttestationFailed) and the claim lease: this single atomic
+ * UPDATE ... RETURNING pushes it `leaseSeconds` into the future for every
+ * claimed row, so a concurrent claim (or the next cycle, if this worker
+ * crashes mid-row) naturally excludes it until the lease expires. No
+ * separate locked_at/locked_by column, and no reclaim step, is needed.
+ */
+export async function claimPendingOnchainAgentsForAttestation(
+  client: PrivilegedAgentClient,
+  limit: number,
+  maxAttempts: number,
+  leaseSeconds = 300,
+): Promise<Array<Pick<AgentRow, "id" | "tenant_id" | "onchain_attestation_attempts">>> {
+  const { rows } = await client.query<
+    Pick<AgentRow, "id" | "tenant_id" | "onchain_attestation_attempts">
+  >(
+    `UPDATE agents
+        SET next_attempt_at = now() + ($4 || ' seconds')::interval
+      WHERE id IN (
+        SELECT id FROM agents
+         WHERE state = 'pending_onchain'
+           AND onchain_attestation_attempts < $2
+           AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+         ORDER BY created_at ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, tenant_id, onchain_attestation_attempts`,
+    [limit, maxAttempts, leaseSeconds, leaseSeconds],
+  );
+  return rows;
+}
+
+/**
+ * Insufficient relayer funds is never a permanent failure (matches
+ * anchorBroadcaster.ts's InsufficientAnchorFundsError posture): release the
+ * claim lease immediately without touching the attempt counter, so the row
+ * is retried the next cycle rather than backing off or counting toward the
+ * ceiling.
+ */
+export async function resetAgentAttestationLease(
+  client: PrivilegedAgentClient,
+  id: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE agents SET next_attempt_at = NULL WHERE id = $1 AND state = 'pending_onchain'`,
+    [id],
+  );
+}
+
+/**
+ * Record an attestation failure: bump the attempt counter, store the error,
+ * and set the next bounded-exponential-backoff claim window (same schedule
+ * as OutboxService: baseSeconds * 2^(old attempts), capped). Returns the new
+ * attempt count so the caller can detect the ceiling. `onchain_attestation_attempts`
+ * on the right-hand side of the SET expression refers to the PRE-update value
+ * (Postgres evaluates every SET expression against the old row), which is
+ * exactly the exponent this schedule needs.
+ */
+export async function markAgentAttestationFailed(
+  client: PrivilegedAgentClient,
+  id: string,
+  error: string,
+  baseSeconds = 30,
+  capSeconds = 480,
+): Promise<number> {
+  const { rows } = await client.query<{ onchain_attestation_attempts: number }>(
+    `UPDATE agents
+        SET onchain_attestation_attempts = onchain_attestation_attempts + 1,
+            last_attestation_error = $2,
+            next_attempt_at = now() + (LEAST($3 * power(2, onchain_attestation_attempts), $4) || ' seconds')::interval
+      WHERE id = $1 AND state = 'pending_onchain'
+      RETURNING onchain_attestation_attempts`,
+    [id, error, baseSeconds, capSeconds],
+  );
+  const row = rows[0];
+  if (row === undefined) throw new Error(`agent ${id} not in state pending_onchain`);
+  return row.onchain_attestation_attempts;
+}
+
+/**
+ * Terminal failure: the attestation attempt ceiling was reached. Transitions
+ * pending_onchain -> failed (state-machines.ts already allows it) and records
+ * the last error. Conditional on the row still being pending_onchain, same
+ * idempotent-no-op posture as markAgentRegistered.
+ */
+export async function markAgentFailed(
+  client: PrivilegedAgentClient,
+  id: string,
+  error: string,
+): Promise<AgentRow | null> {
+  assertAgentTransition("pending_onchain", "failed");
+  const { rows } = await client.query<AgentRow>(
+    `UPDATE agents
+        SET state = 'failed', last_attestation_error = $2
+      WHERE id = $1 AND state = 'pending_onchain'
+      RETURNING *`,
+    [id, error],
   );
   return rows[0] ?? null;
 }

@@ -74,7 +74,7 @@ ALTER ROLE brain_mcp_reader WITH LOGIN PASSWORD :'brain_mcp_reader_password' NOB
 --      brain_raw_worker          sync + interpret workers     (raw_* tables)
 --      brain_canonical_projector canonical projection worker  (canonical_* + read raw_parsed)
 --      brain_ledger_projector    ledger projection workers     (ledger projections + read canonical_*)
---      brain_execution_worker    outbox drain worker           (execution_outbox claim/mark only)
+--      brain_execution_worker    outbox drain + agent-registration worker (execution_outbox, agents)
 --      brain_audit_verifier      audit consistency verifier    (audit_events read + verifier state)
 --      brain_audit_publisher     anchor tenant enumeration     (audit_events read only)
 --      brain_resolver            webhook/SIWX/login resolvers  (cross-tenant SELECT only)
@@ -251,10 +251,13 @@ GRANT SELECT ON agent_trigger_cooldowns TO brain_ledger_projector;
 -- brain_ledger_projector, so it needs INSERT on the trigger target table too.
 GRANT INSERT ON ledger_counterparty_payment_instructions TO brain_ledger_projector;
 
--- brain_execution_worker: cross-tenant claim/reclaim/mark on the outbox only.
--- The per-row settle re-enters tenant scope on brain_app, so this role needs no
--- money-path (ledger_*) grants at all.
+-- brain_execution_worker: cross-tenant claim/reclaim/mark on the outbox, plus
+-- (RFC 0002 Phase C, increment 3) the agent-registration worker's cross-tenant
+-- claim of pending_onchain agents. The per-row settle / confirmRegistration
+-- both re-enter tenant scope on brain_app, so this role needs no money-path
+-- (ledger_*) grants at all.
 GRANT SELECT, INSERT, UPDATE ON execution_outbox TO brain_execution_worker;
+GRANT SELECT, UPDATE ON agents TO brain_execution_worker;
 
 -- brain_audit_verifier: read audit events and tenant anchor modes; scan and heal audit anchors;
 -- advance the verifier cursor; append findings. No UPDATE/DELETE on findings,

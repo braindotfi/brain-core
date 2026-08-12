@@ -138,15 +138,47 @@ Every agent carries `attestation_mode`, one of three values:
   this mode, so integrators have a machine-readable disclosure of custody
   rather than having to infer it from `attestation_mode` alone.
 
-`tenant_signed` and `onchain_custodial` both require `onchain_address` and
-currently return `503 agent_rail_unavailable`: the on-chain registration
-relayer that would actually submit either attestation is not built until RFC
-0002 Phase C increments 3 and 4. Only `attestation_mode: "none"` succeeds
-today.
+`tenant_signed` and `onchain_custodial` both require `onchain_address`.
+`tenant_signed` still returns `503 agent_rail_unavailable` unconditionally:
+that relayer is RFC 0002 Phase C increment 4, not yet built.
+`onchain_custodial` (increment 3) succeeds -- the agent lands
+`pending_onchain` and a background worker confirms it on-chain -- ONLY when
+the operator has configured the custodial relayer
+(`BRAIN_AGENT_RELAYER_MODE=custodial` plus its signer key, RPC URL, and
+registry address). With no relayer configured, `onchain_custodial` still
+returns `503 agent_rail_unavailable`, identically to `tenant_signed`.
 
 `POST /agents` supports the `Idempotency-Key` header
 (`docs/contracts/idempotency-correlation.md`); a replayed key with the same
 body returns the original stored response rather than minting a second agent.
+
+### Custodial disclosure (onchain_custodial)
+
+This is the honest custody statement for any tenant registered with
+`attestation_mode: "onchain_custodial"`.
+
+A custodially-registered tenant does NOT hold its own on-chain signing key
+for `BrainMCPAgentRegistry`. Brain's own configured relayer key
+(`BRAIN_AGENT_RELAYER_PRIVATE_KEY`) is seated as that tenant's signer
+on-chain (`setTenantSigner`, bootstrapped through the registry's
+`initialAdmin` path on first use) and signs every attestation on the
+tenant's behalf, including the agent registration itself.
+
+What this means for the attestation guarantee: the on-chain record proves
+that SOME signer authorized this agent for this tenant, and the
+`BrainMCPAgentRegistry` contract still enforces immutable, publicly
+verifiable revocation. It does NOT prove the tenant itself authorized the
+registration independently of Brain -- Brain is both the operator that
+accepted the tenant's `POST /agents` request and the signer that attested
+it on-chain. A tenant that wants an attestation independent of Brain's own
+infrastructure must use `tenant_signed` (increment 4) once it exists, where
+the tenant's own key produces the signature and Brain only relays it.
+
+Operationally: the custodial relayer's signer key is deliberately its own
+configuration value (`BRAIN_AGENT_RELAYER_PRIVATE_KEY`), never defaulted to
+the audit anchor publisher key (`AUDIT_PUBLISHER_KEY`). The two keys serve
+different purposes and share no default so that agent registration gas
+competing with anchor publishing can never silently degrade both.
 
 ## Invariants
 

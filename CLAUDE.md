@@ -700,6 +700,23 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   the identical binding). `tenant_signed` and `onchain_custodial` both return
   `agent_rail_unavailable` until the on-chain registration relayer ships in
   increments 3 and 4.
+- RFC 0002 Phase C increment 3 lands the `onchain_custodial` relayer.
+  `KmsCustodialRegistrationRelayer` (`services/execution/src/relayers/kms-custodial.ts`)
+  ports the two-phase `setTenantSigner` (idempotent bootstrap) then
+  `registerAgent` ceremony from `scripts/ops/register-prod-agent.ts`, gated by
+  `BRAIN_AGENT_RELAYER_MODE=custodial` plus its own signer key
+  (`BRAIN_AGENT_RELAYER_PRIVATE_KEY`, deliberately never defaulted to
+  `AUDIT_PUBLISHER_KEY`). A new background worker
+  (`agent-registration-worker.ts`) claims `pending_onchain` agents cross-tenant
+  and drives `AgentService.confirmRegistration`, with a bounded exponential
+  backoff and a 12-attempt ceiling before a row terminally fails
+  (`services/execution/migrations/0032_agents_attestation_attempts.sql`).
+  `POST /agents` now accepts `onchain_custodial` (landing `pending_onchain`)
+  whenever a configured relayer is wired; with none configured, or for
+  `tenant_signed`, it still returns `agent_rail_unavailable`. See
+  `docs/contracts/production-agents.md` for the custodial disclosure: a
+  custodially-registered tenant has Brain's own key seated as its on-chain
+  signer, not its own.
 
 Pending Dmitriy sign-off
 

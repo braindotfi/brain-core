@@ -29,7 +29,23 @@ export {
   type AgentRegistrationRelayer,
   type AgentRegistrationRequest,
   type AgentRegistrationResult,
+  type AttestationRelayerMode,
 } from "./registration-relayer.js";
+// RFC 0002 Phase C, increment 3 — the custodial on-chain registration relayer
+// and its background confirmation worker.
+export {
+  KmsCustodialRegistrationRelayer,
+  InsufficientRelayerFundsError,
+  type KmsCustodialRegistrationRelayerOptions,
+} from "./relayers/kms-custodial.js";
+export {
+  startAgentRegistrationWorker,
+  runAgentRegistrationCycle,
+  AGENT_ATTESTATION_MAX_ATTEMPTS,
+  DEFAULT_AGENT_REGISTRATION_INTERVAL_MS,
+  type AgentRegistrationWorkerDeps,
+  type AgentRegistrationCycleResult,
+} from "./agent-registration-worker.js";
 export type {
   PaymentIntentServiceDeps,
   PaymentIntentPolicyEvaluator,
@@ -190,6 +206,14 @@ export type {
 // Repository primitives exposed for boot-binary dependency wiring.
 export { findAgent, findUser, transitionAgent } from "./repository.js";
 export type { AgentRow, UserRow } from "./repository.js";
+// RFC 0002 Phase C, increment 3 — agent-registration worker primitives.
+export {
+  claimPendingOnchainAgentsForAttestation,
+  markAgentAttestationFailed,
+  markAgentFailed,
+  resetAgentAttestationLease,
+  type PrivilegedAgentClient,
+} from "./repository.js";
 // Collections proposal reconciliation (BC-1/#534/#535): the reconciler worker
 // re-enters the same lock + refresh primitives AgentService.propose() uses so
 // the two write paths cannot diverge.

@@ -582,6 +582,28 @@ const envSchema = z.object({
    */
   BRAIN_AZURE_KEY_VAULT_URL: z.string().url().optional(),
 
+  // ---- Agent on-chain registration relayer (RFC 0002 Phase C) ----
+  /**
+   * "off" (default): AgentService gets UnconfiguredRegistrationRelayer, and
+   * POST /agents keeps returning agent_rail_unavailable for both attested
+   * modes, exactly as before this relayer existed. "custodial": wires
+   * KmsCustodialRegistrationRelayer for attestation_mode=onchain_custodial.
+   * "tenant_signed" arrives in increment 4.
+   */
+  BRAIN_AGENT_RELAYER_MODE: z.enum(["off", "custodial"]).default("off"),
+  /**
+   * The custodial relayer's own signer key. Deliberately its OWN config value,
+   * never defaulted to AUDIT_PUBLISHER_KEY: the anchor publisher wallet is
+   * already documented to drain fast (see anchor-interval-eth-drain), and
+   * agent registration competing with anchoring for the same gas would
+   * silently degrade both. An operator MAY point both at the same key on
+   * purpose, but sharing must never be the built-in default.
+   */
+  BRAIN_AGENT_RELAYER_PRIVATE_KEY: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
+
   // ---- Audit anchor (Base Sepolia) ----
   AUDIT_PUBLISHER_KEY: z
     .string()

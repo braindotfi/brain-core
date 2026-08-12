@@ -282,12 +282,30 @@ export class AgentService implements IAgentService {
         "agent on-chain registration relayer is not configured",
       );
     }
+    // A pending_onchain row can only carry an attested mode (register()
+    // writes "none" agents already active), but the column is a plain TEXT
+    // check constraint, not a TS union, so narrow defensively rather than
+    // trusting the DB value at the relayer boundary.
+    if (
+      existing.attestation_mode !== "tenant_signed" &&
+      existing.attestation_mode !== "onchain_custodial"
+    ) {
+      throw brainError(
+        "agent_rail_unavailable",
+        "agent " +
+          agentId +
+          " has attestation_mode " +
+          existing.attestation_mode +
+          ", not an attested mode",
+      );
+    }
 
     const { txHash } = await this.deps.relayer.submitRegistration({
       agentId,
       tenantId: ctx.tenantId,
       onchainAddress: existing.onchain_address ?? "",
       scopeHash: existing.scope_hash !== null ? existing.scope_hash.toString("hex") : "",
+      mode: existing.attestation_mode as "tenant_signed" | "onchain_custodial",
     });
 
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>

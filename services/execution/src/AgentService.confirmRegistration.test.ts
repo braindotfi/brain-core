@@ -22,6 +22,7 @@ function agentRow(overrides: Record<string, unknown> = {}) {
     registered_tx: null,
     registered_at: null,
     created_at: new Date(),
+    attestation_mode: "onchain_custodial",
     ...overrides,
   };
 }

@@ -1691,7 +1691,7 @@ export interface paths {
         get: operations["listAgents"];
         put?: never;
         /**
-         * Self-serve agent registration (RFC 0002 Phase C, increment 2)
+         * Self-serve agent registration (RFC 0002 Phase C, increments 2-3)
          * @description Requires execution:admin OR policy:write (a member-role admin token,
          *     or a tenant owner token, either one). The server mints agent_id and
          *     derives scope_hash from role; it never accepts either as input, and
@@ -1709,9 +1709,14 @@ export interface paths {
          *     cannot self-declare tier 1 for a money-path role.
          *
          *     attestation_mode tenant_signed and onchain_custodial both require
-         *     onchain_address and currently return 503 agent_rail_unavailable: the
-         *     on-chain registration relayer that would submit either attestation
-         *     ships in RFC 0002 Phase C increments 3/4, not this one.
+         *     onchain_address. tenant_signed still returns 503 agent_rail_unavailable
+         *     unconditionally (RFC 0002 Phase C increment 4, not yet built).
+         *     onchain_custodial succeeds (201, state pending_onchain) once the
+         *     operator has configured the KMS custodial relayer
+         *     (BRAIN_AGENT_RELAYER_MODE=custodial); with no relayer configured it
+         *     also returns 503 agent_rail_unavailable. A pending_onchain custodial
+         *     agent is confirmed on-chain asynchronously by a background worker; see
+         *     docs/contracts/production-agents.md for the custodial disclosure.
          *
          *     Supports the Idempotency-Key header (docs/contracts/idempotency-correlation.md);
          *     a replayed key with the same body returns the original stored
@@ -4885,10 +4890,11 @@ export interface components {
             /**
              * @description RFC 0002 Phase C. none is the tier-1 unattested path (read-only
              *     scopes, no BrainMCPAgentRegistry record required). tenant_signed
-             *     and onchain_custodial both still require on-chain attestation
-             *     before the agent is active; POST /agents currently rejects both
-             *     with agent_rail_unavailable until the registration relayer ships
-             *     (increments 3/4).
+             *     and onchain_custodial both require on-chain attestation before
+             *     the agent is active. onchain_custodial lands pending_onchain and
+             *     is confirmed asynchronously by the KMS custodial relayer
+             *     (increment 3) when configured; tenant_signed still rejects with
+             *     agent_rail_unavailable until its relayer ships (increment 4).
              * @enum {string}
              */
             attestation_mode: "none" | "tenant_signed" | "onchain_custodial";
@@ -8532,7 +8538,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description attestation_mode is tenant_signed or onchain_custodial; the on-chain registration relayer is not yet available. Error code agent_rail_unavailable. */
+            /** @description attestation_mode is tenant_signed (always), or onchain_custodial with no relayer configured. Error code agent_rail_unavailable. */
             503: {
                 headers: {
                     [name: string]: unknown;

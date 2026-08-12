@@ -14,6 +14,7 @@ describe("UnconfiguredRegistrationRelayer — RFC 0002 Phase C (fail-closed)", (
         tenantId: "tnt_x",
         onchainAddress: "0x" + "ab".repeat(20),
         scopeHash: "00".repeat(32),
+        mode: "onchain_custodial",
       }),
     ).rejects.toThrow(/not configured/i);
   });

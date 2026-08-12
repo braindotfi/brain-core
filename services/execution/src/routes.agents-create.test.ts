@@ -239,7 +239,7 @@ describe("POST /agents - attestation_mode none requires an unattested-eligible r
   });
 });
 
-describe("POST /agents - tiers 2/3 (relayer not yet built)", () => {
+describe("POST /agents - tier 2 (relayer not yet built) / tier 3 (custodial relayer)", () => {
   it("returns agent_rail_unavailable for attestation_mode=tenant_signed", async () => {
     const app = await buildApp(agentInsertingDeps(), ["execution:admin"]);
     const res = await app.inject({
@@ -287,6 +287,46 @@ describe("POST /agents - tiers 2/3 (relayer not yet built)", () => {
     });
     expect(res.statusCode).toBe(400);
     expect((res.json() as { error: { code: string } }).error.code).toBe("request_body_invalid");
+    await app.close();
+  });
+
+  it("returns 201 pending_onchain for attestation_mode=onchain_custodial when the relayer is configured", async () => {
+    const deps = agentInsertingDeps();
+    deps.relayer = { configured: true, submitRegistration: vi.fn() };
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Custodial Agent",
+        attestation_mode: "onchain_custodial",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { state: string; custodial: boolean };
+    expect(body.state).toBe("pending_onchain");
+    expect(body.custodial).toBe(true);
+    await app.close();
+  });
+
+  it("still returns agent_rail_unavailable for onchain_custodial when the relayer is configured=false", async () => {
+    const deps = agentInsertingDeps();
+    deps.relayer = { configured: false, submitRegistration: vi.fn() };
+    const app = await buildApp(deps, ["execution:admin"]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents",
+      payload: {
+        role: "payment",
+        display_name: "Custodial Agent",
+        attestation_mode: "onchain_custodial",
+        onchain_address: "0x0000000000000000000000000000000000dEaD",
+      },
+    });
+    expect(res.statusCode).toBe(503);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("agent_rail_unavailable");
     await app.close();
   });
 });

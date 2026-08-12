@@ -21,11 +21,21 @@ import type { Pool } from "pg";
 import type { RailRegistry } from "./rails/stubs.js";
 import type { ResolvedInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";
 import type { ActorResolver } from "./members/ActorResolver.js";
+import type { AgentRegistrationRelayer } from "./registration-relayer.js";
 
 export interface ExecutionDeps {
   pool: Pool;
   audit: AuditEmitter;
   rails: RailRegistry;
+
+  /**
+   * On-chain agent registration relayer (RFC 0002 Phase C). Optional: when
+   * absent or unconfigured, POST /agents keeps returning agent_rail_unavailable
+   * for attestation_mode=onchain_custodial, matching tenant_signed until
+   * increment 4. Presence of a CONFIGURED relayer is what unblocks the
+   * custodial path (see registerExecutionRoutes below).
+   */
+  relayer?: AgentRegistrationRelayer;
 
   /**
    * Shared secret proving a POST /execution/propose caller is a trusted
