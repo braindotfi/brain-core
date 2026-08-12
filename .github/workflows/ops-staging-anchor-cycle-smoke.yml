@@ -20,6 +20,7 @@ jobs:
       VM_ENV_FILE: .env.staging
       API_BASE: https://staging-api.brain.fi
       ROOT_COUNT: "50"
+      MAX_SMOKE_BATCH_TRANSACTIONS: "2"
       MAX_WAIT_SECONDS: "3600"
     steps:
       - name: Configure staging SSH
@@ -36,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           smoke_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' ROOT_COUNT='$ROOT_COUNT' MAX_WAIT_SECONDS='$MAX_WAIT_SECONDS' bash -s" <<'REMOTE'
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' ROOT_COUNT='$ROOT_COUNT' MAX_SMOKE_BATCH_TRANSACTIONS='$MAX_SMOKE_BATCH_TRANSACTIONS' MAX_WAIT_SECONDS='$MAX_WAIT_SECONDS' bash -s" <<'REMOTE'
           set -euo pipefail
           trap 'echo "anchor_smoke_failure_line=${LINENO}" >&2' ERR
 
@@ -154,16 +155,20 @@ jobs:
           anchored_summary=""
           for _ in $(seq 1 30); do
             anchored_summary="$(docker exec brain-prod-postgres psql -U brain -d brain -At -F '|' -v ON_ERROR_STOP=1 \
-              -c "SELECT COUNT(*) FILTER (WHERE onchain_tx_hash IS NOT NULL), COUNT(DISTINCT onchain_tx_hash), COALESCE(MAX(EXTRACT(EPOCH FROM (created_at - to_timestamp(${started_epoch})))::bigint), 0) FROM audit_anchors WHERE tenant_id IN (${ids_sql});")"
-            IFS='|' read -r anchored_count tx_count elapsed_seconds <<< "$anchored_summary"
-            if [[ "$anchored_count" == "$ROOT_COUNT" && "$tx_count" == "1" ]]; then
+              -c "WITH smoke_rows AS (SELECT tenant_id, onchain_tx_hash, created_at FROM audit_anchors WHERE tenant_id IN (${ids_sql})), involved_transactions AS (SELECT DISTINCT onchain_tx_hash FROM smoke_rows WHERE onchain_tx_hash IS NOT NULL), batch_sizes AS (SELECT a.onchain_tx_hash, COUNT(*) AS tenant_roots FROM audit_anchors a JOIN involved_transactions t ON t.onchain_tx_hash = a.onchain_tx_hash GROUP BY a.onchain_tx_hash) SELECT COUNT(*) FILTER (WHERE onchain_tx_hash IS NOT NULL), COUNT(DISTINCT onchain_tx_hash), COALESCE(MAX(EXTRACT(EPOCH FROM (created_at - to_timestamp(${started_epoch})))::bigint), 0), COALESCE((SELECT MAX(tenant_roots) FROM batch_sizes), 0), COALESCE((SELECT SUM(tenant_roots) FROM batch_sizes), 0) - COUNT(*) FILTER (WHERE onchain_tx_hash IS NOT NULL) FROM smoke_rows;")"
+            IFS='|' read -r anchored_count tx_count elapsed_seconds max_batch_roots ambient_root_count <<< "$anchored_summary"
+            if [[ "$anchored_count" == "$ROOT_COUNT" && "$tx_count" -ge 1 && "$tx_count" -le "$MAX_SMOKE_BATCH_TRANSACTIONS" && "$max_batch_roots" -le "$ROOT_COUNT" ]]; then
               break
             fi
             sleep 10
           done
 
-          if [[ "${anchored_count:-0}" != "$ROOT_COUNT" || "${tx_count:-0}" != "1" ]]; then
-            echo "Expected one confirmed batch covering all $ROOT_COUNT on-chain smoke tenants; got '$anchored_summary'" >&2
+          if [[ "${anchored_count:-0}" != "$ROOT_COUNT" || "${tx_count:-0}" -lt 1 || "${tx_count:-0}" -gt "$MAX_SMOKE_BATCH_TRANSACTIONS" || "${max_batch_roots:-0}" -gt "$ROOT_COUNT" ]]; then
+            echo "Expected all $ROOT_COUNT smoke roots in one or two cap-$ROOT_COUNT transactions; got '$anchored_summary'" >&2
+            exit 1
+          fi
+          if [[ "$tx_count" == "2" && "${ambient_root_count:-0}" -lt 1 ]]; then
+            echo "Smoke roots split across two transactions without a co-batched staging root; got '$anchored_summary'" >&2
             exit 1
           fi
           if (( elapsed_seconds >= MAX_WAIT_SECONDS )); then
@@ -172,6 +177,8 @@ jobs:
           fi
           echo "onchain_confirmed_anchor_rows=$anchored_count"
           echo "onchain_batch_transaction_count=$tx_count"
+          echo "onchain_batch_max_tenant_roots=$max_batch_roots"
+          echo "onchain_batch_ambient_tenant_roots=$ambient_root_count"
           echo "early_cycle_seconds=$elapsed_seconds"
           echo "anchor_smoke_complete=1"
           REMOTE
