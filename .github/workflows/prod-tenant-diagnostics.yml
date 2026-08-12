@@ -37,6 +37,11 @@ on:
         required: false
         type: boolean
         default: false
+      trust_gate_impact:
+        description: "When true, report paused-counterparty payment-intent impact across all production tenants"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -60,12 +65,21 @@ jobs:
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
       PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
+      TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
     steps:
       - name: Validate tenant id
         shell: bash
         run: |
-          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" != "true" && "$TRUST_GATE_IMPACT" != "false" ]]; then
+            echo "trust_gate_impact must be true or false"
+            exit 1
+          fi
+          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
+            exit 1
+          fi
+          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
+            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -103,7 +117,7 @@ jobs:
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -111,8 +125,16 @@ jobs:
           WIKI_QUESTION_UNTIL="$(printf '%s' "$WIKI_QUESTION_UNTIL_B64" | base64 -d)"
           WIKI_QUESTION_SEARCH="$(printf '%s' "$WIKI_QUESTION_SEARCH_B64" | base64 -d)"
 
-          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" != "true" && "$TRUST_GATE_IMPACT" != "false" ]]; then
+            echo "trust_gate_impact failed remote validation"
+            exit 1
+          fi
+          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id failed remote validation"
+            exit 1
+          fi
+          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
+            echo "trust_gate_impact requires an empty tenant_id"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -141,6 +163,96 @@ jobs:
           docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml \
             logs --tail=200 worker | grep "document extraction worker configured" | tail -n 5 || true
           echo "::endgroup::"
+
+          if [[ "$TRUST_GATE_IMPACT" == "true" ]]; then
+            echo "::group::counterparty trust-gate impact"
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'counterparty trust-gate impact summary'
+            WITH impact AS (
+              SELECT cp.owner_id AS tenant_id,
+                     t.kind AS tenant_kind,
+                     t.sandbox,
+                     t.created_via,
+                     (t.kind = 'production' AND t.sandbox = FALSE) AS review_required,
+                     cp.id AS counterparty_id,
+                     cp.name AS counterparty_name,
+                     cp.trust_status,
+                     COUNT(pi.id) AS payment_intent_count,
+                     ARRAY_AGG(pi.id ORDER BY pi.created_at) AS payment_intent_ids,
+                     ARRAY_AGG(DISTINCT pi.status ORDER BY pi.status) AS statuses
+                FROM ledger_counterparties cp
+                JOIN tenants t ON t.id = cp.owner_id
+                JOIN ledger_payment_intents pi
+                  ON pi.owner_id = cp.owner_id
+                 AND pi.destination_counterparty_id = cp.id
+               WHERE cp.trust_status = 'paused'
+                 AND pi.status IN (
+                   'proposed', 'pending_approval', 'awaiting_second_approval',
+                   'approved', 'paused', 'dispatching'
+                 )
+               GROUP BY cp.owner_id, t.kind, t.sandbox, t.created_via, cp.id, cp.name, cp.trust_status
+            )
+            SELECT COUNT(*) AS paused_counterparty_groups,
+                   COALESCE(SUM(payment_intent_count), 0) AS affected_payment_intents,
+                   COUNT(*) FILTER (WHERE review_required) AS non_demo_review_groups,
+                   COALESCE(SUM(payment_intent_count) FILTER (WHERE review_required), 0)
+                     AS non_demo_review_payment_intents,
+                   COUNT(*) FILTER (WHERE NOT review_required) AS demo_or_sandbox_groups,
+                   COALESCE(SUM(payment_intent_count) FILTER (WHERE NOT review_required), 0)
+                     AS demo_or_sandbox_payment_intents
+              FROM impact;
+
+            \echo 'counterparty trust-gate impact rows'
+            WITH impact AS (
+              SELECT cp.owner_id AS tenant_id,
+                     t.kind AS tenant_kind,
+                     t.sandbox,
+                     t.created_via,
+                     (t.kind = 'production' AND t.sandbox = FALSE) AS review_required,
+                     cp.id AS counterparty_id,
+                     cp.name AS counterparty_name,
+                     cp.trust_status,
+                     COUNT(pi.id) AS payment_intent_count,
+                     ARRAY_AGG(pi.id ORDER BY pi.created_at) AS payment_intent_ids,
+                     ARRAY_AGG(DISTINCT pi.status ORDER BY pi.status) AS statuses
+                FROM ledger_counterparties cp
+                JOIN tenants t ON t.id = cp.owner_id
+                JOIN ledger_payment_intents pi
+                  ON pi.owner_id = cp.owner_id
+                 AND pi.destination_counterparty_id = cp.id
+               WHERE cp.trust_status = 'paused'
+                 AND pi.status IN (
+                   'proposed', 'pending_approval', 'awaiting_second_approval',
+                   'approved', 'paused', 'dispatching'
+                 )
+               GROUP BY cp.owner_id, t.kind, t.sandbox, t.created_via, cp.id, cp.name, cp.trust_status
+            )
+            SELECT tenant_id,
+                   tenant_kind,
+                   sandbox,
+                   created_via,
+                   review_required,
+                   counterparty_id,
+                   counterparty_name,
+                   trust_status,
+                   payment_intent_count,
+                   payment_intent_ids,
+                   statuses
+              FROM impact
+             ORDER BY review_required DESC, tenant_id, counterparty_name, counterparty_id;
+
+            COMMIT;
+          SQL
+            echo "::endgroup::"
+            exit 0
+          fi
 
           echo "::group::tenant diagnostics"
           docker exec -i brain-prod-postgres psql -U brain -d brain \
