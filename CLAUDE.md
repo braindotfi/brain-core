@@ -1051,7 +1051,16 @@ files but before rollback tagging, image pull, migrations, or compose recreate.
 It derives unconditional requirements from `${VAR:?message}` interpolation in
 `docker-compose.prod.yml`, reports only missing variable names, and also checks
 the enabled conditional boot fences for API keys, service tokens, demo
-provisioning, external agents, and surface integrations. Auth's
+provisioning, external agents, and surface integrations. It also checks
+that the target environment's `CORS_ALLOWED_ORIGINS` contains
+`https://app.brain.fi`. During the public-host transition, set
+`CORS_ALLOWED_ORIGINS=https://mvp.brain.fi,https://app.brain.fi` plus every
+other existing origin in both `.env.staging` and `.env.prod` through the
+gated VM configuration process. This is not a repository-managed secret or
+env-file change. The preflight intentionally blocks a deploy if the new origin
+is absent; remove the guard only in the later, deliberate mvp retirement
+change.
+Auth's
 `AUTH_SIGN_KEY`, `AUTH_COOKIE_SECRET`, `EMAIL_ENDPOINT`, and `EMAIL_API_KEY`
 are compose-required as well as boot-fenced. This would have stopped both the
 missing `AUTH_COOKIE_SECRET` and missing `BRAIN_MCP_READER_DB_PASSWORD`
