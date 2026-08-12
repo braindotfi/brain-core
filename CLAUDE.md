@@ -870,7 +870,10 @@ Pending Dmitriy sign-off
   denies with `counterparty_trust_paused`; missing, malformed, or unloadable
   trust state denies with `counterparty_trust_unknown`. Run
   `scripts/ops/report-counterparty-trust-gate-impact.ts` in read-only mode and
-  complete a focused section 6 re-audit before enabling any environment.
+  complete a focused section 6 re-audit before enabling any environment. The
+  report classifies every affected paused-counterparty group by tenant kind and
+  sandbox posture; only production, non-sandbox groups require named review
+  before an enablement flip.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.
