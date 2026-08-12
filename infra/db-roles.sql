@@ -491,6 +491,13 @@ REVOKE UPDATE, DELETE, TRUNCATE ON policy_decisions
 -- Defence in depth: FORCE RLS on every tenant-scoped table so even a connection
 -- that happens to be the table owner is still subject to the tenant_isolation
 -- policy. Applies to every table that has RLS enabled (set by the migrations).
+--
+-- Skip already-forced tables. ALTER TABLE takes an ACCESS EXCLUSIVE lock and
+-- this DO block is one transaction, so re-forcing all 93 already-forced tables
+-- against a live database deadlocked the staging deploy of #575 (db-roles held
+-- ledger_counterparties and wanted canonical_counterparty; a live projector
+-- held the reverse). check-rls-coverage already requires migrations to ENABLE
+-- and FORCE, so in steady state this loop matches nothing and takes no locks.
 DO $$
 DECLARE
   t regclass;
@@ -500,6 +507,7 @@ BEGIN
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity
+      AND NOT c.relforcerowsecurity
   LOOP
     EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', t);
   END LOOP;
