@@ -163,6 +163,11 @@ Done
   `flagged` is reserved for risk events that require attention. `wiki.question`
   emits `assistant_activity` with severity `info` and includes the original
   question text at `inputs.question`.
+- A policy allow that creates an already-approved payment intent emits
+  `payment_intent.auto_approved`, distinct from the human
+  `payment_intent.approved` event. Successful payment completion transitions
+  the linked execution from `in_flight` to `completed` in the same tenant
+  transaction that marks the intent executed.
 - Wiki and Assistant question answers treat retrieved evidence as untrusted
   tenant data. Evidence blocks are wrapped in a per-request random boundary,
   evidence text is facts to cite and never instructions to obey, and answer

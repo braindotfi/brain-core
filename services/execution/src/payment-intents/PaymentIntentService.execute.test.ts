@@ -437,6 +437,7 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
     const dispatchingRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "dispatching" };
     const executedRow: PaymentIntentRow = { ...APPROVED_INTENT_ROW, status: "executed" };
     const consumedReservations: unknown[] = [];
+    const executionTransitions: unknown[][] = [];
     const pool = makeFakePool((sql, values) => {
       if (sql.includes("FROM ledger_payment_intents WHERE id")) {
         return { rows: [dispatchingRow], rowCount: 1 };
@@ -447,7 +448,11 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
           rowCount: 1,
         };
       }
-      if (sql.includes("UPDATE executions") || sql.includes("UPDATE ledger_payment_intents")) {
+      if (sql.includes("UPDATE executions")) {
+        executionTransitions.push(values);
+        return { rows: [executedRow], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE ledger_payment_intents")) {
         return { rows: [executedRow], rowCount: 1 };
       }
       if (sql.includes("UPDATE ledger_reservations")) {
@@ -468,6 +473,7 @@ describe("PaymentIntentService.completeExecution / failExecution (outbox callbac
       }),
     ).resolves.toBeUndefined();
     expect(consumedReservations).toEqual(["rsv_1"]);
+    expect(executionTransitions).toContainEqual(["completed", "exec_1", "in_flight"]);
   });
 
   it("completeExecution is a no-op when the intent is already executed (idempotent replay)", async () => {
