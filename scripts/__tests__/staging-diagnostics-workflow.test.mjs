@@ -19,6 +19,22 @@ test("staging tenant identity lookup is fixed, validated, and read-only", () => 
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
 
+test("counterparty trust impact report classifies demo and sandbox rows for review", () => {
+  const report = readFileSync(
+    join(process.cwd(), "scripts/ops/report-counterparty-trust-gate-impact.ts"),
+    "utf8",
+  );
+
+  assert.match(report, /JOIN tenants t ON t\.id = cp\.owner_id/);
+  assert.match(report, /t\.kind AS tenant_kind/);
+  assert.match(report, /t\.sandbox/);
+  assert.match(report, /t\.created_via/);
+  assert.match(report, /t\.kind = 'production' AND t\.sandbox = FALSE/);
+  assert.match(report, /non_demo_review_groups=/);
+  assert.match(report, /demo_or_sandbox_groups=/);
+  assert.match(report, /BEGIN TRANSACTION READ ONLY/);
+});
+
 test("staging Wiki question trace is tenant-bounded, selector-bounded, and read-only", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
 
