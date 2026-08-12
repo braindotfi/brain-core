@@ -179,7 +179,7 @@ jobs:
                  ) AS complete_executed_chain_percent,
                  ROUND(
                    100.0 * COUNT(*) FILTER (
-                     WHERE current_status = 'executed' AND NOT (has_approved AND has_executed)
+                     WHERE current_status = 'executed' AND NOT (has_approval_step AND has_executed)
                    ) / NULLIF(COUNT(*) FILTER (WHERE current_status = 'executed'), 0),
                    2
                  ) AS disconnected_executed_chain_percent
