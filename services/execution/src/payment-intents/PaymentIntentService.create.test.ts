@@ -405,6 +405,9 @@ describe("PaymentIntentService.create — hard human-approval floor routing", ()
     await service.create(ctx, { ...baseInput, action_type: "onchain_transfer" });
 
     expect(insertStatus(calls)).toBe("pending_approval");
+    expect(audit.events).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ action: "payment_intent.auto_approved" })]),
+    );
   });
 
   it("routes allow-outcome wire to pending_approval", async () => {
@@ -433,6 +436,20 @@ describe("PaymentIntentService.create — hard human-approval floor routing", ()
     await service.create(ctx, { ...baseInput, action_type: "ach_outbound", amount: "100.00" });
 
     expect(insertStatus(calls)).toBe("approved");
+    expect(audit.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "payment_intent.auto_approved",
+          inputs: { payment_intent_id: expect.any(String) },
+          outputs: expect.objectContaining({
+            status: "approved",
+            approval_mode: "policy_auto_allow",
+            policy_decision_id: PD,
+          }),
+          policyDecisionId: PD,
+        }),
+      ]),
+    );
   });
 
   it("routes ACH to pending_approval when the cap is missing", async () => {

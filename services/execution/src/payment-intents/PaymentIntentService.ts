@@ -502,6 +502,24 @@ export class PaymentIntentService implements IPaymentIntentService {
       outcome: decision.outcome,
     });
 
+    if (status === "approved") {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: "payment_intent.auto_approved",
+        inputs: { payment_intent_id: row.id },
+        outputs: {
+          status: "approved",
+          approval_mode: "policy_auto_allow",
+          policy_decision_id: decision.id,
+        },
+        policyDecisionId: decision.id,
+        ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+        outcome: decision.outcome,
+      });
+    }
+
     return toRecord(row);
   }
 
@@ -1252,6 +1270,7 @@ export class PaymentIntentService implements IPaymentIntentService {
           `completeExecution: intent ${args.paymentIntentId} moved before executed transition`,
         );
       }
+      await transitionExecution(c, args.executionId, "in_flight", "completed");
       await LedgerPaymentIntents.appendExecutionReceiptId(
         c,
         args.paymentIntentId,
