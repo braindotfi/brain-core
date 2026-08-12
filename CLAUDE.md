@@ -874,6 +874,15 @@ Pending Dmitriy sign-off
   report classifies every affected paused-counterparty group by tenant kind and
   sandbox posture; only production, non-sandbox groups require named review
   before an enablement flip.
+  `ops-staging-trust-gate-controlled-smoke.yml` is the staging-only temporary
+  enablement check. It requires the running process flag to be off, enables it
+  only long enough to exercise checks 5 and 5.25 against an isolated fixture
+  tenant, then restores and verifies the process flag off with an `always()`
+  cleanup. The fixture deliberately fails at Check 4 after passing trust and
+  policy evaluation, so it cannot create an execution outbox row. Gate
+  `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
+  persistence and execution audit events, so it is not a substitute for the
+  real `payment_intent.execute.after` evidence required before enablement.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.
