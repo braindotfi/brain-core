@@ -1,0 +1,147 @@
+name: ops-cors-allowed-origins
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target whose CORS allowlist will retain app.brain.fi."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  ensure_app_origin:
+    name: ensure app.brain.fi CORS origin on ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || 'staging' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'promote-prod' || 'deploy-staging-refs/heads/main' }}
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ inputs.target == 'production' && secrets.VM_HOST || secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ inputs.target == 'production' && secrets.VM_SSH_KEY || secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: ${{ inputs.target == 'production' && '.env.prod' || '.env.staging' }}
+      COMPOSE_PROJECT: ${{ inputs.target == 'production' && 'brain-prod' || 'brain-staging' }}
+      HEALTH_URL: ${{ inputs.target == 'production' && 'https://api.brain.fi/health' || vars.BRAIN_STAGING_HEALTH_URL || 'https://staging-api.brain.fi/health' }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Ensure app.brain.fi remains in the target CORS allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$(mktemp)"
+          cat > "$script" <<'PY'
+          from pathlib import Path
+          import os
+          import stat
+          import sys
+          import tempfile
+
+          path = Path(sys.argv[1])
+          key = "CORS_ALLOWED_ORIGINS"
+          required_origin = "https://app.brain.fi"
+
+          if not path.is_file():
+              print(f"env_file_status=missing path={path}")
+              raise SystemExit(1)
+
+          lines = path.read_text().splitlines()
+          matching_indices = [
+              index
+              for index, line in enumerate(lines)
+              if not line.lstrip().startswith("#") and line.split("=", 1)[0].strip() == key
+          ]
+          index = matching_indices[-1] if matching_indices else None
+          current = lines[index].split("=", 1)[1] if index is not None and "=" in lines[index] else ""
+          origins = [origin.strip() for origin in current.split(",") if origin.strip()]
+
+          if required_origin in origins:
+              status = "present"
+              print(f"cors_allowed_origins_status={status}")
+              print(f"cors_allowed_origins_count={len(origins)}")
+              raise SystemExit(0)
+          else:
+              origins.append(required_origin)
+              updated = f"{key}={','.join(origins)}"
+              if index is None:
+                  lines.append(updated)
+              else:
+                  lines[index] = updated
+              status = "appended"
+
+          fd, temporary_path = tempfile.mkstemp(prefix=f".{path.name}.cors-", dir=path.parent)
+          temporary = Path(temporary_path)
+          try:
+              with os.fdopen(fd, "w") as handle:
+                  handle.write("\n".join(lines) + "\n")
+              os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+              os.replace(temporary, path)
+          finally:
+              temporary.unlink(missing_ok=True)
+
+          print(f"cors_allowed_origins_status={status}")
+          print(f"cors_allowed_origins_count={len(origins)}")
+          PY
+          remote_script="/tmp/ensure-cors-allowed-origins-${{ github.run_id }}-${{ github.run_attempt }}.py"
+          scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:$remote_script"
+          rm -f "$script"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE'; rc=\$?; rm -f '$remote_script'; exit \$rc"
+
+      - name: Recreate the API CORS consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
+            up -d --no-deps --no-build --force-recreate api
+          REMOTE
+
+      - name: Verify API health and app.brain.fi CORS preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 5 "$HEALTH_URL" >/dev/null; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --silent --show-error --max-time 5 "$HEALTH_URL" >/dev/null
+
+          api_url="${HEALTH_URL%/health}/v1/ledger/accounts"
+          headers="$(mktemp)"
+          trap 'rm -f "$headers"' EXIT
+          curl --fail --silent --show-error --max-time 10 --dump-header "$headers" --output /dev/null \
+            --request OPTIONS "$api_url" \
+            --header 'Origin: https://app.brain.fi' \
+            --header 'Access-Control-Request-Method: GET' \
+            --header 'Access-Control-Request-Headers: authorization,content-type'
+          tr -d '\r' < "$headers" > "${headers}.normalized"
+          mv "${headers}.normalized" "$headers"
+
+          grep --quiet --fixed-strings 'access-control-allow-origin: https://app.brain.fi' "$headers"
+          grep --quiet --fixed-strings 'access-control-allow-credentials: true' "$headers"
+          grep --quiet --fixed-strings 'access-control-allow-methods: GET,HEAD,POST' "$headers"
+          grep --quiet --fixed-strings 'access-control-allow-headers: authorization,content-type' "$headers"
+          echo 'cors_preflight_status=passed'

@@ -1059,7 +1059,10 @@ other existing origin in both `.env.staging` and `.env.prod` through the
 gated VM configuration process. This is not a repository-managed secret or
 env-file change. The preflight intentionally blocks a deploy if the new origin
 is absent; remove the guard only in the later, deliberate mvp retirement
-change.
+change. Use the target-bounded `ops-cors-allowed-origins.yml` workflow to
+append `https://app.brain.fi` without removing existing origins, recreate only
+the API CORS consumer, and verify the public preflight. Its production target
+uses the GitHub `production` environment gate.
 Auth's
 `AUTH_SIGN_KEY`, `AUTH_COOKIE_SECRET`, `EMAIL_ENDPOINT`, and `EMAIL_API_KEY`
 are compose-required as well as boot-fenced. This would have stopped both the
