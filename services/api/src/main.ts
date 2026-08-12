@@ -713,6 +713,7 @@ async function main(): Promise<void> {
               onchain_address: row.onchain_address,
               state: row.state,
               registered_at: row.registered_at,
+              registered_tx: row.registered_tx,
               created_at: row.created_at,
             };
       }),
@@ -1436,6 +1437,7 @@ async function main(): Promise<void> {
           scope_hash: null,
           onchain_address: null,
           role: "dev",
+          attestation_mode: "onchain_custodial",
         })
       : (() => {
           // Boot-time registry self-check. `getOnchainScopeHash` fails closed to

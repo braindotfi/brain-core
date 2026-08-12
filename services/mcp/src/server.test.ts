@@ -30,6 +30,7 @@ const ACTIVE_AGENT: AgentRecord = {
   scope_hash: null,
   onchain_address: null,
   role: "payment",
+  attestation_mode: "onchain_custodial",
 };
 
 function principal(scopes: string[]): Principal {

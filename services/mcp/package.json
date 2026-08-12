@@ -27,6 +27,7 @@
   "dependencies": {
     "@brain/shared": "workspace:*",
     "@brain/execution": "workspace:*",
+    "@brain/internal-agents": "workspace:*",
     "@brain/ledger": "workspace:*",
     "@brain/wiki": "workspace:*",
     "fastify": "^5.11.0",

@@ -315,6 +315,7 @@ interface AgentLookupRow {
   role: string;
   scope_hash: Buffer | null;
   state: string;
+  attestation_mode: string;
 }
 
 /**
@@ -337,7 +338,7 @@ export class PostgresAgentRegistry implements AgentRegistryLookup {
 
   public async resolveByAddress(address: string): Promise<AgentResolution | null> {
     const { rows } = await this.pool.query<AgentLookupRow>(
-      `SELECT id, tenant_id, role, scope_hash, state
+      `SELECT id, tenant_id, role, scope_hash, state, attestation_mode
          FROM agents
         WHERE LOWER(onchain_address) = LOWER($1)
           AND state = 'active'
@@ -357,6 +358,7 @@ export class PostgresAgentRegistry implements AgentRegistryLookup {
       scopeHash: row.scope_hash,
       expectedScopes: scopes,
       onchain: this.onchain,
+      attestationMode: row.attestation_mode,
     });
     return {
       agentId: row.id,

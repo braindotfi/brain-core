@@ -178,12 +178,13 @@ interface EligibleAgentRow {
   readonly display_name: string;
   readonly role: string;
   readonly scope_hash: Buffer | null;
+  readonly attestation_mode: string;
 }
 
 async function listEligibleAgents(pool: Pool, tenantId: string): Promise<EligibleAgentRow[]> {
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
-      `SELECT id, display_name, role, scope_hash FROM agents
+      `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
         WHERE tenant_id = $1 AND state = 'active' AND scope_hash IS NOT NULL
         ORDER BY display_name`,
       [tenantId],
@@ -199,7 +200,7 @@ async function loadActiveAgent(
 ): Promise<EligibleAgentRow | null> {
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
-      `SELECT id, display_name, role, scope_hash FROM agents
+      `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
         WHERE tenant_id = $1 AND id = $2 AND state = 'active' LIMIT 1`,
       [tenantId, agentId],
     );
@@ -478,6 +479,7 @@ export async function registerOauthRoutes(
           scopeHash: agent.scope_hash,
           expectedScopes: registeredScopes,
           onchain: deps.onchain,
+          attestationMode: agent.attestation_mode,
         });
       } catch {
         await deps.audit.emit({

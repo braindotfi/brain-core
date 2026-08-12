@@ -15,6 +15,8 @@ export {
   FakeAuthVerifier,
   CachedOnchainScopeChecker,
   assertScopeHashAcceptable,
+  OnchainScopeUnavailableError,
+  MCP_UNATTESTED_SCOPES,
   type AuthVerifier,
   type AgentRecord,
   type OnchainScopeChecker,

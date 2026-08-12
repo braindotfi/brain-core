@@ -46,6 +46,13 @@ const WRITE: Scope = "execution:write";
 const READ: Scope = "execution:read";
 const ADMIN: Scope = "execution:admin";
 
+/* RFC 0002 Phase C, increment 1: the three attestation_mode values a caller
+ * may set on POST /execution/agents/register. Kept as a plain literal set
+ * (not shared with services/mcp -- that would invert the mcp -> execution
+ * dependency) mirroring the CHECK constraint in
+ * services/execution/migrations/0031_agents_attestation_mode.sql. */
+const VALID_ATTESTATION_MODES = new Set(["none", "tenant_signed", "onchain_custodial"]);
+
 function proposedAgentId(principal: NonNullable<FastifyRequest["principal"]>, requested?: string) {
   if (requested !== undefined && principal.scopes.includes(ADMIN)) {
     return requested;
@@ -311,6 +318,7 @@ export async function registerExecutionRoutes(
           scope_hash?: string;
           onchain_address?: string;
           registered_tx?: string;
+          attestation_mode?: string;
         };
       }>,
       reply,
@@ -321,6 +329,20 @@ export async function registerExecutionRoutes(
       if (b.agent_id === undefined || b.role === undefined || b.display_name === undefined) {
         throw brainError("request_body_invalid", "agent_id, role, display_name required");
       }
+      // Defaults to the pre-existing behavior ("onchain_custodial"): every
+      // agent still requires BrainMCPAgentRegistry confirmation unless a
+      // caller explicitly opts a read-only agent into the tier-1 unattested
+      // path. Increment 2 (POST /v1/agents) is the intended primary caller of
+      // "none"; this route accepting it too keeps the one insert path.
+      const attestationMode = b.attestation_mode ?? "onchain_custodial";
+      if (!VALID_ATTESTATION_MODES.has(attestationMode)) {
+        throw brainError(
+          "request_body_invalid",
+          "attestation_mode must be one of: " + Array.from(VALID_ATTESTATION_MODES).join(", "),
+          { details: { attestation_mode: attestationMode } },
+        );
+      }
+      const isUnattested = attestationMode === "none";
       // A caller-supplied scope_hash must be the canonical derivation for the
       // supplied role, or a bare insert here could plant a non-canonical hash
       // (the same class of bug the seed-golden-path seeder had). An omitted
@@ -344,8 +366,13 @@ export async function registerExecutionRoutes(
           display_name: b.display_name!,
           scope_hash: b.scope_hash !== undefined ? Buffer.from(b.scope_hash, "hex") : null,
           onchain_address: b.onchain_address ?? null,
-          state: "pending_onchain",
-          registered_tx: b.registered_tx ?? null,
+          state: isUnattested ? "active" : "pending_onchain",
+          // Tier-1 has no on-chain confirmation to record; ignore any
+          // caller-supplied registered_tx rather than storing a value that
+          // implies a registration that never happened.
+          registered_tx: isUnattested ? null : (b.registered_tx ?? null),
+          attestation_mode: attestationMode,
+          ...(isUnattested ? { registeredAt: new Date() } : {}),
         }),
       );
       await deps.audit.emit({
@@ -353,7 +380,7 @@ export async function registerExecutionRoutes(
         layer: "execution",
         actor: principal.id,
         action: "execution.agent.register",
-        inputs: { agent_id: row.id, role: row.role },
+        inputs: { agent_id: row.id, role: row.role, attestation_mode: row.attestation_mode },
         outputs: { state: row.state },
       });
       reply.status(201);
@@ -463,6 +490,7 @@ function serializeAgent(row: {
   state: string;
   registered_tx: string | null;
   registered_at: Date | null;
+  attestation_mode: string;
 }): Record<string, unknown> {
   return {
     id: row.id,
@@ -474,5 +502,6 @@ function serializeAgent(row: {
     state: row.state,
     registered_tx: row.registered_tx,
     registered_at: row.registered_at?.toISOString() ?? null,
+    attestation_mode: row.attestation_mode,
   };
 }

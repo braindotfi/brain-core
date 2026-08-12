@@ -220,10 +220,20 @@ export class AgentService implements IAgentService {
     return row !== null ? rowToRecord(row) : null;
   }
 
+  /**
+   * `attestationMode` defaults to "onchain_custodial" -- the pre-existing
+   * behavior of always requiring BrainMCPAgentRegistry confirmation before
+   * `active`. Passing "none" (RFC 0002 Phase C, increment 1: tier-1
+   * unattested) registers the agent already `active`, with `registered_at`
+   * stamped now and no `registered_tx` -- there is no on-chain confirmation
+   * to wait for.
+   */
   public async register(
     ctx: ServiceCallContext,
     input: Omit<AgentRecord, "state" | "registered_at">,
+    attestationMode: string = "onchain_custodial",
   ): Promise<AgentRecord> {
+    const isUnattested = attestationMode === "none";
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       insertAgent(c, {
         id: input.id,
@@ -233,8 +243,10 @@ export class AgentService implements IAgentService {
         display_name: input.display_name,
         scope_hash: input.scope_hash !== null ? Buffer.from(input.scope_hash, "hex") : null,
         onchain_address: input.onchain_address,
-        state: "pending_onchain",
-        registered_tx: input.registered_tx,
+        state: isUnattested ? "active" : "pending_onchain",
+        registered_tx: isUnattested ? null : input.registered_tx,
+        attestation_mode: attestationMode,
+        ...(isUnattested ? { registeredAt: new Date() } : {}),
       }),
     );
     return rowToRecord(row);

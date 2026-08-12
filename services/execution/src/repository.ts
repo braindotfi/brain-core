@@ -300,16 +300,23 @@ export interface AgentRow {
   registered_tx: string | null;
   registered_at: Date | null;
   created_at: Date;
+  /* "none" | "tenant_signed" | "onchain_custodial" (services/execution/migrations
+   * /0031_agents_attestation_mode.sql). RFC 0002 Phase C: "none" is the tier-1
+   * unattested path (services/mcp/src/auth.ts MCP_UNATTESTED_SCOPES). */
+  attestation_mode: string;
 }
 
 export async function insertAgent(
   client: TenantScopedClient,
-  input: Omit<AgentRow, "created_at" | "registered_at"> & { registeredAt?: Date },
+  input: Omit<AgentRow, "created_at" | "registered_at" | "attestation_mode"> & {
+    registeredAt?: Date;
+    attestation_mode?: string;
+  },
 ): Promise<AgentRow> {
   const { rows } = await client.query<AgentRow>(
     `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash,
-                         onchain_address, state, registered_tx, registered_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+                         onchain_address, state, registered_tx, registered_at, attestation_mode)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [
       input.id,
       input.tenant_id,
@@ -321,6 +328,11 @@ export async function insertAgent(
       input.state,
       input.registered_tx,
       input.registeredAt ?? null,
+      // Explicit, matching the migration's DB-level default: never rely on an
+      // implicit column-list omission to pick "onchain_custodial", since a
+      // future caller that forgets this field must not silently mint a
+      // tier-1 unattested agent.
+      input.attestation_mode ?? "onchain_custodial",
     ],
   );
   const row = rows[0];
