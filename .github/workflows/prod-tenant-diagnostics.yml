@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tenant_id:
-        description: "Production tenant id to inspect, e.g. tnt_..."
-        required: true
+        description: "Production tenant id to inspect, e.g. tnt_... Required unless trust_gate_impact is true."
+        required: false
+        default: ""
         type: string
       wiki_question_event_id:
         description: "Optional evt_... id for one wiki.question audit row"
