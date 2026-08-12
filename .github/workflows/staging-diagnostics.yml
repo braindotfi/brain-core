@@ -173,35 +173,6 @@ jobs:
       - name: Install lockfile dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Transpile fixed report for stdin execution
-        if: inputs.diagnostic == 'counterparty-trust-gate-impact'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/staging-diagnostics"
-          report_source=""
-          case "$DIAGNOSTIC" in
-            counterparty-trust-gate-impact)
-              report_source="scripts/ops/report-counterparty-trust-gate-impact.ts"
-              ;;
-            upload-pipeline-state)
-              report_source="scripts/ops/report-upload-pipeline-state.ts"
-              ;;
-            *)
-              echo "unsupported diagnostic: $DIAGNOSTIC"
-              exit 1
-              ;;
-          esac
-          pnpm exec tsc \
-            --ignoreConfig \
-            --noCheck \
-            --target es2022 \
-            --module es2022 \
-            --moduleResolution bundler \
-            --outDir "$RUNNER_TEMP/staging-diagnostics" \
-            "$report_source"
-          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
-
       - name: Configure SSH
         shell: bash
         run: |
@@ -600,25 +571,72 @@ jobs:
             exit 0
           fi
 
-          run_report() {
+          run_counterparty_trust_impact() {
             local tenant_id="$1"
-            local remote_command
-            # The worker owns the scoped ledger-projector URL assembled by Compose.
-            remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
-            if [[ -n "$tenant_id" ]]; then
-              remote_command+=" --tenant-id '$tenant_id'"
-            fi
-            cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
-              "azureuser@$VM_HOST" "$remote_command"
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TENANT_ID='$tenant_id' bash -s" <<'REMOTE'
+            set -euo pipefail
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset format unaligned
+            \pset tuples_only on
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+            WITH impact AS (
+              SELECT cp.owner_id AS tenant_id,
+                     t.kind AS tenant_kind,
+                     t.sandbox,
+                     t.created_via,
+                     (t.kind = 'production' AND t.sandbox = FALSE) AS review_required,
+                     cp.id AS counterparty_id,
+                     cp.name AS counterparty_name,
+                     cp.trust_status,
+                     COUNT(pi.id) AS payment_intent_count,
+                     array_agg(pi.id ORDER BY pi.created_at) AS payment_intent_ids,
+                     array_agg(DISTINCT pi.status ORDER BY pi.status) AS statuses
+                FROM ledger_counterparties cp
+                JOIN tenants t ON t.id = cp.owner_id
+                JOIN ledger_payment_intents pi
+                  ON pi.owner_id = cp.owner_id
+                 AND pi.destination_counterparty_id = cp.id
+               WHERE cp.trust_status = 'paused'
+                 AND pi.status IN (
+                   'proposed', 'pending_approval', 'awaiting_second_approval',
+                   'approved', 'paused', 'dispatching'
+                 )
+                 AND (NULLIF(:'tenant_id', '') IS NULL OR cp.owner_id = :'tenant_id')
+               GROUP BY cp.owner_id, t.kind, t.sandbox, t.created_via, cp.id, cp.name, cp.trust_status
+            )
+            SELECT jsonb_build_object(
+              'paused_counterparty_groups', COUNT(*),
+              'affected_payment_intents', COALESCE(SUM(payment_intent_count), 0),
+              'non_demo_review_groups', COUNT(*) FILTER (WHERE review_required),
+              'non_demo_review_payment_intents', COALESCE(SUM(payment_intent_count) FILTER (WHERE review_required), 0),
+              'demo_or_sandbox_groups', COUNT(*) FILTER (WHERE NOT review_required),
+              'demo_or_sandbox_payment_intents', COALESCE(SUM(payment_intent_count) FILTER (WHERE NOT review_required), 0),
+              'rows', COALESCE(jsonb_agg(to_jsonb(impact) ORDER BY tenant_id, counterparty_name, counterparty_id), '[]'::jsonb)
+            )
+              FROM impact;
+            COMMIT;
+          SQL
+          REMOTE
           }
 
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
+            echo "diagnostic dispatch did not reach its fixed handler: $DIAGNOSTIC"
+            exit 1
+          fi
+
           if [[ -z "$TENANT_IDS" ]]; then
-            run_report ""
+            run_counterparty_trust_impact ""
             exit 0
           fi
 
           IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
           for tenant_id in "${tenant_ids[@]}"; do
             echo "tenant_id=$tenant_id"
-            run_report "$tenant_id"
+            run_counterparty_trust_impact "$tenant_id"
           done

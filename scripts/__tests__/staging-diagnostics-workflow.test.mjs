@@ -19,29 +19,22 @@ test("staging tenant identity lookup is fixed, validated, and read-only", () => 
   assert.doesNotMatch(workflow, /arbitrary SQL/i);
 });
 
-test("counterparty trust impact report classifies demo and sandbox rows for review", () => {
-  const report = readFileSync(
-    join(process.cwd(), "scripts/ops/report-counterparty-trust-gate-impact.ts"),
-    "utf8",
-  );
-
-  assert.match(report, /JOIN tenants t ON t\.id = cp\.owner_id/);
-  assert.match(report, /t\.kind AS tenant_kind/);
-  assert.match(report, /t\.sandbox/);
-  assert.match(report, /t\.created_via/);
-  assert.match(report, /t\.kind = 'production' AND t\.sandbox = FALSE/);
-  assert.match(report, /non_demo_review_groups=/);
-  assert.match(report, /demo_or_sandbox_groups=/);
-  assert.match(report, /BEGIN TRANSACTION READ ONLY/);
-});
-
-test("staging fixed-report transpilation bypasses repository type checking", () => {
+test("counterparty trust impact report classifies rows through the read-only diagnostics role", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
 
-  assert.match(
-    workflow,
-    /pnpm exec tsc \\\n\s+--ignoreConfig \\\n\s+--noCheck \\\n\s+--target es2022/,
-  );
+  assert.match(workflow, /docker exec -i brain-prod-postgres psql -U brain -d brain/);
+  assert.match(workflow, /JOIN tenants t ON t\.id = cp\.owner_id/);
+  assert.match(workflow, /t\.kind AS tenant_kind/);
+  assert.match(workflow, /t\.sandbox/);
+  assert.match(workflow, /t\.created_via/);
+  assert.match(workflow, /t\.kind = 'production' AND t\.sandbox = FALSE/);
+  assert.match(workflow, /non_demo_review_groups/);
+  assert.match(workflow, /demo_or_sandbox_groups/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY/);
+  assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
+  assert.match(workflow, /^ {10}SQL$/m);
+  assert.match(workflow, /^ {10}REMOTE$/m);
+  assert.doesNotMatch(workflow, /REPORT_SCRIPT/);
 });
 
 test("staging Wiki question trace is tenant-bounded, selector-bounded, and read-only", () => {
