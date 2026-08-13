@@ -323,6 +323,10 @@ import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-l
 import { assertOutboxDispatchGuardWiredInProduction } from "./composition/outbox-dispatch-guard-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { assertServiceTokenFences } from "./composition/service-token-fence.js";
+import {
+  assertMcpDevBypassFence,
+  isMcpDevBypassAllowed,
+} from "./composition/mcp-dev-bypass-fence.js";
 import { RAIL_CATALOG, computeRailPostures, type RailName } from "./composition/rail-catalog.js";
 import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
@@ -556,9 +560,13 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_DEMO_MODE && cfg.NODE_ENV === "production") {
     throw new Error("BRAIN_DEMO_MODE=true is not allowed in NODE_ENV=production");
   }
-  if (cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV === "production") {
-    throw new Error("BRAIN_MCP_DEV_AUTH_BYPASS=true is not allowed in NODE_ENV=production");
-  }
+  // BRAIN-97: allowlist, not a production-only denylist -- see
+  // composition/mcp-dev-bypass-fence.ts. NODE_ENV=staging is a real deployed
+  // environment with a real database and was never covered by the old check.
+  assertMcpDevBypassFence({
+    nodeEnv: cfg.NODE_ENV,
+    devAuthBypass: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
+  });
   if (cfg.BLOB_BACKEND === "memory" && cfg.NODE_ENV === "production") {
     throw new Error(
       "BLOB_BACKEND=memory is not allowed in NODE_ENV=production — set BLOB_BACKEND=azure or BLOB_BACKEND=s3",
@@ -1427,8 +1435,11 @@ async function main(): Promise<void> {
     rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
     contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
   });
+  // BRAIN-97: isMcpDevBypassAllowed is the single allowlist condition;
+  // skipPrincipalTypeCheck below (the MCP route wiring) must use the exact
+  // same function so the two can never drift the way they did before.
   const mcpAuthVerifier =
-    cfg.BRAIN_MCP_DEV_AUTH_BYPASS && cfg.NODE_ENV !== "production"
+    cfg.BRAIN_MCP_DEV_AUTH_BYPASS && isMcpDevBypassAllowed(cfg.NODE_ENV)
       ? new FakeAuthVerifier({
           id: "agent_00000000000000000000000000",
           tenant_id: "tnt_00000000000000000000000000",
@@ -2155,7 +2166,16 @@ async function main(): Promise<void> {
         );
         await v1.register(async (child) =>
           registerMcpRoute(child, mcpServer, {
-            skipPrincipalTypeCheck: cfg.BRAIN_MCP_DEV_AUTH_BYPASS,
+            // BRAIN-97: was wired straight off the raw flag with no
+            // environment condition at all, unlike the verifier swap above
+            // (which carried a redundant production-only check). An
+            // operator running the bypass against a real staging database
+            // got FakeAuthVerifier AND the principal-type gate disabled at
+            // the same time, so an api_partner token would also be
+            // accepted on the MCP route. Same allowlist condition as the
+            // verifier swap now.
+            skipPrincipalTypeCheck:
+              cfg.BRAIN_MCP_DEV_AUTH_BYPASS && isMcpDevBypassAllowed(cfg.NODE_ENV),
             // Per-tenant rate limit so a single misbehaving agent cannot crowd
             // out other tenants on the shared MCP surface (peer review).
             tenantRateLimiter: new RedisSlidingWindowRateLimiter(redis, {
