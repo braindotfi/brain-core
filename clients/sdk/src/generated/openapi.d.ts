@@ -555,12 +555,13 @@ export interface paths {
         put?: never;
         /**
          * Trigger document extraction for a raw artifact
-         * @description Requires `raw:write`. Enqueues or re-enqueues an async document
+         * @description Requires `raw:write`. Enqueues an async document
          *     extraction job for the referenced artifact. In the composed API process,
          *     the route also drains the queued job through extraction and downstream
          *     projection before returning when the worker dependencies are available.
-         *     A terminal succeeded job for the same raw artifact and content hash is
-         *     reused.
+         *     A terminal job for the same raw artifact and content hash is reused.
+         *     Send `{ "retry": true }` to explicitly re-enqueue a terminal job.
+         *     Use `GET /raw/{raw_id}/extraction` to read the latest job status.
          */
         post: operations["extractRawDocument"];
         delete?: never;
@@ -6427,7 +6428,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Re-enqueue a terminal extraction job for the same artifact bytes. */
+                    retry?: boolean;
+                };
+            };
+        };
         responses: {
             /** @description Document extraction job completed or reused */
             200: {
