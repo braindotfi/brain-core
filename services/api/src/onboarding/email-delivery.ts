@@ -83,6 +83,11 @@ export function buildVerificationEmailDelivery(
     if (!result.ok) {
       throw brainError("dependency_unavailable", "email verification delivery failed", {
         details: { provider_error: result.error ?? "email provider returned a non-success status" },
+        // The provider's specific rejection reason (result.rawBody) is
+        // server-log-only via cause, never in details -- POST /v1/signup is
+        // public and unauthenticated, so the client-facing detail stays a
+        // generic status phrase regardless of what the ESP actually said.
+        ...(result.rawBody !== undefined ? { cause: new Error(result.rawBody) } : {}),
       });
     }
   };
@@ -151,6 +156,7 @@ export function buildSetPasswordEmailDelivery(
     if (!result.ok) {
       throw brainError("dependency_unavailable", "set-password email delivery failed", {
         details: { provider_error: result.error ?? "email provider returned a non-success status" },
+        ...(result.rawBody !== undefined ? { cause: new Error(result.rawBody) } : {}),
       });
     }
   };
