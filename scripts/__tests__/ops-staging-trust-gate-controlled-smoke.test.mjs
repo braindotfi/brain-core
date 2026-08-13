@@ -34,6 +34,10 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /execution_outbox/);
   assert.match(workflow, /smoke_outbox_rows=0/);
   assert.match(workflow, /payment_intent\.execute\.after/);
+  assert.match(workflow, /payment_intent_create_request=/);
+  assert.match(workflow, /payment_intent_create_response_status=/);
+  assert.match(workflow, /payment_intent_create_response=/);
+  assert.match(workflow, /Controlled trust-gate matrix failed with SSH status/);
   assert.match(workflow, /durable payment_intent\.execute\.after events/);
   assert.match(workflow, /Expected five durable payment_intent\.execute\.after events/);
   assert.match(workflow, /SMOKE_TENANT_ID=/);
