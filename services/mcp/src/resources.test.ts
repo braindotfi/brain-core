@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listResources, parseBrainUri } from "./resources.js";
+import { listResources, listResourceTemplates, parseBrainUri } from "./resources.js";
 
 describe("parseBrainUri", () => {
   it("parses ledger account uris", () => {
@@ -76,13 +76,34 @@ describe("parseBrainUri", () => {
 });
 
 describe("listResources", () => {
-  it("declares the v0.3 surface", () => {
+  it("returns only genuinely readable, concrete resources (BRAIN-102)", () => {
+    // Templated URIs (a literal backtick-quoted placeholder segment) belong in
+    // resources/templates/list instead -- a generic client that reads a
+    // resources/list entry literally would otherwise call
+    // resources/read("brain://ledger/accounts/{account_id}") and get back
+    // ledger_row_not_found for an id that was never real.
     const r = listResources();
     const uris = r.resources.map((d) => d.uri);
-    expect(uris).toContain("brain://ledger/accounts/{account_id}");
-    expect(uris).toContain("brain://wiki/pages/{slug}");
-    expect(uris).toContain("brain://payments/action_types");
-    expect(uris).toContain("brain://proofs/{action_id}");
-    expect(r.resources.length).toBe(7);
+    expect(uris).toEqual(["brain://payments/action_types"]);
+    for (const uri of uris) {
+      expect(uri).not.toContain("{");
+    }
+  });
+});
+
+describe("listResourceTemplates", () => {
+  it("declares the six templated v0.3 resources (BRAIN-102)", () => {
+    const r = listResourceTemplates();
+    const templates = r.resourceTemplates.map((d) => d.uriTemplate);
+    expect(templates).toContain("brain://ledger/accounts/{account_id}");
+    expect(templates).toContain("brain://ledger/transactions/{transaction_id}");
+    expect(templates).toContain("brain://ledger/obligations/{obligation_id}");
+    expect(templates).toContain("brain://ledger/payment-intents/{id}");
+    expect(templates).toContain("brain://wiki/pages/{slug}");
+    expect(templates).toContain("brain://proofs/{action_id}");
+    expect(r.resourceTemplates.length).toBe(6);
+    for (const uriTemplate of templates) {
+      expect(uriTemplate).toContain("{");
+    }
   });
 });

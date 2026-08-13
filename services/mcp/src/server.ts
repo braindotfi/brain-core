@@ -37,6 +37,7 @@ import {
   type PromptListResult,
   type ResourceListResult,
   type ResourceReadResult,
+  type ResourceTemplateListResult,
   type ToolCallResult,
   type ToolListResult,
 } from "./types.js";
@@ -48,7 +49,7 @@ import type {
   ToolContext,
   ToolResult,
 } from "./tools/types.js";
-import { listResources, readResource } from "./resources.js";
+import { listResources, listResourceTemplates, readResource } from "./resources.js";
 import { getPrompt, listPrompts } from "./prompts.js";
 import type { AuthVerifier } from "./auth.js";
 
@@ -136,6 +137,7 @@ export class BrainMcpServer {
       "tools/list": async () => this.toolsList(principal.scopes),
       "tools/call": async (params) => this.toolsCall(toolCtx, params, principal.scopes),
       "resources/list": async () => listResources(),
+      "resources/templates/list": async () => listResourceTemplates(),
       "resources/read": async (params) => this.resourcesRead(toolCtx, params, principal.scopes),
       "prompts/list": async () => listPrompts(),
       "prompts/get": async (params) => this.promptsGet(params),
@@ -330,6 +332,7 @@ export class BrainMcpServer {
   protected _typeRefs(): {
     list: PromptListResult;
     res: ResourceListResult;
+    resTemplates: ResourceTemplateListResult;
     tools: ToolListResult;
   } {
     return {} as never;

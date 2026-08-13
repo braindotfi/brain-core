@@ -43,6 +43,7 @@ export const MCP_METHODS = [
   "tools/list",
   "tools/call",
   "resources/list",
+  "resources/templates/list",
   "resources/read",
   "prompts/list",
   "prompts/get",
@@ -98,6 +99,17 @@ export interface ResourceDescriptor {
 
 export interface ResourceListResult {
   resources: ResourceDescriptor[];
+}
+
+export interface ResourceTemplateDescriptor {
+  uriTemplate: string;
+  name: string;
+  description: string;
+  mimeType: string;
+}
+
+export interface ResourceTemplateListResult {
+  resourceTemplates: ResourceTemplateDescriptor[];
 }
 
 export interface ResourceReadResult {

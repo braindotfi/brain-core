@@ -456,6 +456,28 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     expect(r.protocolVersion).toBe("2025-06-18");
   });
 
+  it("resources/templates/list returns the templated resources; resources/list stays concrete-only (BRAIN-102)", async () => {
+    const { server, p } = makeServer();
+    const templatesRes = await server.handle(
+      { jsonrpc: "2.0", id: 1, method: "resources/templates/list" },
+      p,
+    );
+    if (!(templatesRes !== null && "result" in templatesRes)) {
+      throw new Error("expected result");
+    }
+    const templates = templatesRes.result as {
+      resourceTemplates: Array<{ uriTemplate: string }>;
+    };
+    const templateUris = templates.resourceTemplates.map((t) => t.uriTemplate);
+    expect(templateUris).toContain("brain://ledger/accounts/{account_id}");
+    expect(templates.resourceTemplates.length).toBe(6);
+
+    const listRes = await server.handle({ jsonrpc: "2.0", id: 2, method: "resources/list" }, p);
+    if (!(listRes !== null && "result" in listRes)) throw new Error("expected result");
+    const list = listRes.result as { resources: Array<{ uri: string }> };
+    expect(list.resources.map((r) => r.uri)).toEqual(["brain://payments/action_types"]);
+  });
+
   it("a notification (no id) gets no JSON-RPC response from handle()", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", method: "ping" }, p);
