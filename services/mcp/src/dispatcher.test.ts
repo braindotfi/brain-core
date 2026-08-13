@@ -151,6 +151,64 @@ describe("dispatch", () => {
       ctx,
     );
     expect(res !== null && "error" in res && res.error.code).toBe(JSON_RPC_INTERNAL_ERROR);
+    // The uncaught exception's own message must never reach the client --
+    // it could be a stack trace, a DB connection string, or other detail
+    // that never went through brainError(...) at all.
+    if (res !== null && "error" in res) {
+      expect(res.error.message).toBe("Internal error");
+      expect(res.error.message).not.toContain("boom");
+    }
+  });
+
+  describe("not-found family error mapping (BRAIN-103)", () => {
+    it.each([
+      "execution_proposal_not_found",
+      "raw_artifact_not_found",
+      "payment_intent_not_found",
+      "payment_intent_invalid_state",
+      "proof_not_found",
+      "ledger_row_not_found",
+      "wiki_page_not_found",
+      "payment_intent_approval_invalid",
+    ])("maps %s to -32602 and preserves the message", async (code) => {
+      const res = await dispatch(
+        { jsonrpc: "2.0", id: 1, method: "tools/call" },
+        {
+          handlers: {
+            "tools/call": async () => {
+              throw { code, message: `no such thing: ${code}` };
+            },
+          },
+        },
+        ctx,
+      );
+      expect(res !== null && "error" in res && res.error.code).toBe(-32602);
+      if (res !== null && "error" in res) {
+        expect(res.error.message).toBe(`no such thing: ${code}`);
+        expect(res.error.data?.brain_code).toBe(code);
+      }
+    });
+
+    it("preserves the message for dependency_unavailable despite staying at the internal-error code", async () => {
+      const res = await dispatch(
+        { jsonrpc: "2.0", id: 1, method: "tools/call" },
+        {
+          handlers: {
+            "tools/call": async () => {
+              throw {
+                code: "dependency_unavailable",
+                message: "agent.action.propose is not available",
+              };
+            },
+          },
+        },
+        ctx,
+      );
+      expect(res !== null && "error" in res && res.error.code).toBe(JSON_RPC_INTERNAL_ERROR);
+      if (res !== null && "error" in res) {
+        expect(res.error.message).toBe("agent.action.propose is not available");
+      }
+    });
   });
 
   describe("notifications (no id) get no response", () => {

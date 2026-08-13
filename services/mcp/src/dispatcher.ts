@@ -120,8 +120,19 @@ export async function dispatch(
 }
 
 /**
+ * Brain error codes that fall through the numeric map below to
+ * JSON_RPC_INTERNAL_ERROR but still carry a static, developer-authored
+ * message (see dependency_unavailable and the explicit internal_server_error
+ * call sites in resources.ts / tools/types.ts) -- safe to surface verbatim,
+ * unlike an uncaught exception\x27s message, which can carry a stack trace, a
+ * DB connection string, or other internal detail that never went through
+ * brainError(...) at all.
+ */
+const SAFE_UNMAPPED_CODES = new Set<string>(["dependency_unavailable", "internal_server_error"]);
+
+/**
  * Shape an arbitrary error into a JSON-RPC error response. Recognizes
- * Brain's BrainError and maps its code to the implementation-defined
+ * Brain\x27s BrainError and maps its code to the implementation-defined
  * server-error range. Unknown errors become INTERNAL_ERROR.
  */
 function shapeError(id: number | string | null, err: unknown): JsonRpcResponse {
@@ -130,7 +141,8 @@ function shapeError(id: number | string | null, err: unknown): JsonRpcResponse {
   // modules raise BrainError; the server.ts wrapper translates by
   // matching on .code.
   const e = err as { code?: string; message?: string; details?: Record<string, unknown> };
-  const codeStr = typeof e.code === "string" ? e.code : "internal_server_error";
+  const hasBrainCode = typeof e.code === "string" && e.code.length > 0;
+  const codeStr = hasBrainCode ? (e.code as string) : "internal_server_error";
   const message = typeof e.message === "string" ? e.message : "internal error";
 
   const map: Record<string, number> = {
@@ -155,19 +167,45 @@ function shapeError(id: number | string | null, err: unknown): JsonRpcResponse {
     agent_scope_hash_mismatch: -32005,
     request_body_invalid: -32602,
     request_params_invalid: -32602,
+    // Not-found family: the caller supplied an id that does not resolve to
+    // anything under this tenant. JSON-RPC has no dedicated "not found"
+    // code, so -32602 (Invalid params) is the closest standard fit -- the
+    // params named something that does not exist, a caller-input problem,
+    // not a server fault. These used to fall through to the unmapped
+    // default and get their message discarded, so a typo\x27d id was
+    // indistinguishable from a server crash.
+    execution_proposal_not_found: -32602,
+    raw_artifact_not_found: -32602,
+    payment_intent_not_found: -32602,
+    proof_not_found: -32602,
+    ledger_row_not_found: -32602,
+    wiki_page_not_found: -32602,
+    // Same "caller\x27s request does not apply" shape as the not-found family
+    // above, just keyed by state/authorization instead of existence.
+    payment_intent_invalid_state: -32602,
+    payment_intent_approval_invalid: -32602,
   };
 
   const rpcCode = map[codeStr] ?? JSON_RPC_INTERNAL_ERROR;
   const data: Record<string, unknown> = { brain_code: codeStr };
   if (e.details !== undefined) data.details = e.details;
 
+  // Redact the message only when we cannot tell it came from a Brain error
+  // with a static, developer-authored string -- i.e. a genuinely uncaught
+  // exception (DB driver error, network fault, etc.) that never went
+  // through brainError(...) at all. Every explicitly mapped code above
+  // keeps its message by construction (rpcCode !== INTERNAL_ERROR);
+  // SAFE_UNMAPPED_CODES covers the handful of codes that are deliberately
+  // internal-error-class but still have a safe message.
+  const redact =
+    rpcCode === JSON_RPC_INTERNAL_ERROR && !(hasBrainCode && SAFE_UNMAPPED_CODES.has(codeStr));
+
   return {
     jsonrpc: "2.0",
     id,
-    error:
-      rpcCode === JSON_RPC_INTERNAL_ERROR
-        ? { code: rpcCode, message: "Internal error", data }
-        : { code: rpcCode, message, data },
+    error: redact
+      ? { code: rpcCode, message: "Internal error", data }
+      : { code: rpcCode, message, data },
   };
 }
 
