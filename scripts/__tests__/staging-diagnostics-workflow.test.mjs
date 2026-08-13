@@ -86,7 +86,10 @@ test("prior controlled-smoke execution diagnostic is fixed and read-only", () =>
 
 test("trust-gate observation is fixed, staging-only, and read-only", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
+  const observationStart = workflow.indexOf("run_trust_gate_24h_observation() {");
+  const wikiStart = workflow.indexOf("run_wiki_question_trace() {");
 
+  assert.ok(observationStart >= 0 && wikiStart > observationStart);
   assert.match(workflow, /trust-gate-24h-observation/);
   assert.match(workflow, /trust_gate_observation_since/);
   assert.match(workflow, /requires an exact ISO UTC start bound/);
@@ -100,6 +103,10 @@ test("trust-gate observation is fixed, staging-only, and read-only", () => {
   assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
   assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
   assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+  assert.match(
+    workflow.slice(observationStart, wikiStart),
+    /\n {10}SQL\n {10}REMOTE\n {10}\}\n\n {10}if \[\[ "\$DIAGNOSTIC" == "trust-gate-24h-observation" \]\]; then/,
+  );
 });
 
 test("staging diagnostic nested heredocs close at their owning handler", () => {
