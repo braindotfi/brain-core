@@ -129,7 +129,7 @@ jobs:
           if [[ ! "$counterparty_id" =~ ^cp_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then echo "No vendor counterparty on isolated smoke tenant $smoke_tenant_id" >&2; exit 1; fi
 
           # The five-minute agent JWT is minted inside staging API only and never logged.
-          agent_token="$(docker exec -e SMOKE_TENANT_ID="$smoke_tenant_id" -e SMOKE_AGENT_ID="$agent_id" brain-prod-api node --input-type=module -e '
+          agent_token="$(docker exec -w /app/services/api -e SMOKE_TENANT_ID="$smoke_tenant_id" -e SMOKE_AGENT_ID="$agent_id" brain-prod-api node --input-type=module -e '
             import { JwtSigner, newTokenId } from "@brain/shared";
             const key=JSON.parse(process.env.AUTH_SIGN_KEY); const signer=new JwtSigner({issuer:process.env.AUTH_ISSUER,audience:process.env.AUTH_AUDIENCE,key,algorithm:key.alg ?? "HS256"});
             process.stdout.write(await signer.sign({id:process.env.SMOKE_AGENT_ID,type:"agent",tenantId:process.env.SMOKE_TENANT_ID,tokenId:newTokenId(),expiresAt:Math.floor(Date.now()/1000)+300,scopes:["ledger:read","audit:read","payment_intent:propose","payment_intent:execute","execution:propose"]}));

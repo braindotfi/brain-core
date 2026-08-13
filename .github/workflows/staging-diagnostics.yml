@@ -381,7 +381,7 @@ jobs:
             fi
 
             # Mint this read-only token in the API container. The token is never printed.
-            agent_token="$(docker exec -e SMOKE_TENANT_ID="$smoke_tenant_id" -e SMOKE_AGENT_ID="$agent_id" brain-prod-api node --input-type=module -e '
+            agent_token="$(docker exec -w /app/services/api -e SMOKE_TENANT_ID="$smoke_tenant_id" -e SMOKE_AGENT_ID="$agent_id" brain-prod-api node --input-type=module -e '
               import { JwtSigner, newTokenId } from "@brain/shared";
               const key = JSON.parse(process.env.AUTH_SIGN_KEY);
               const signer = new JwtSigner({ issuer: process.env.AUTH_ISSUER, audience: process.env.AUTH_AUDIENCE, key, algorithm: key.alg ?? "HS256" });
