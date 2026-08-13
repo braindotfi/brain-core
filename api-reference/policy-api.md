@@ -146,7 +146,15 @@ Authorization: Bearer <token>
 
 ### Evaluate an Action
 
-Dry-run an action against the active policy. This is the same evaluator the §6 pre-execution gate uses internally; it does **not** propose, reserve, or audit. It just returns the decision.
+Evaluate an action against the active policy. This endpoint does not propose or reserve a payment, but every call emits a `policy.evaluate` audit event.
+
+The endpoint uses the same policy VM as the section 6 gate, but it is not a
+complete gate simulation. Its request parser accepts only `kind`,
+`counterparty_id`, `amount`, `agent_role`, and `timestamp`. It does not accept
+or populate `agent_id`, `tenant_category`, `confidence`, `evidence_score`,
+`risk_level`, `spend_in_window`, `tx_count_in_window`, `behavior_hash`, or
+`action_id`. Rules using those inputs can therefore evaluate differently here
+than they do with a fully populated gate action.
 
 ```http
 POST /v1/policy/{tenant_id}/evaluate
@@ -213,13 +221,19 @@ fallback.
 
 `allow | confirm | reject` is the canonical protocol decision. The rule-level `execute` field and the SDK use aliases that map 1:1; the PaymentIntent status reflects the same outcome:
 
-| Protocol decision (HTTP/MCP) | Rule-level `execute` | SDK `decision.outcome` / `action.status` | Resulting PaymentIntent status |
-| ---------------------------- | -------------------- | ---------------------------------------- | ------------------------------ |
-| `allow`                      | `auto`               | `auto`                                   | `approved`                     |
-| `confirm`                    | `confirm`            | `needs_approval`                         | `pending_approval`             |
-| `reject`                     | `reject`             | `rejected`                               | `rejected`                     |
+| Protocol decision (HTTP/MCP) | Rule-level `execute` | SDK `decision.outcome` / `action.status` | Resulting PaymentIntent status     |
+| ---------------------------- | -------------------- | ---------------------------------------- | ---------------------------------- |
+| `allow`                      | `auto`               | `auto`                                   | `approved` or `pending_approval`\* |
+| `confirm`                    | `confirm`            | `needs_approval`                         | `pending_approval`                 |
+| `reject`                     | `reject`             | `rejected`                               | `rejected`                         |
 
 Compare against `allow | confirm | reject` over HTTP/MCP; the `auto | needs_approval | rejected` triple is an SDK alias, not the protocol vocabulary.
+
+\* An allow decision still enters `pending_approval` when the hard human-approval
+floor applies. The floor always applies to `onchain_transfer` and
+`escrow_release`, applies to `wire` while the fiat floor is enabled, and applies
+to `ach_outbound`, `ach_inbound`, `card_payment`, and `x402_settle` unless the
+matched rule carries a covering signed autonomous amount cap.
 
 ### Action Vocabulary
 
@@ -311,7 +325,12 @@ Content-Type: application/json
   "would_allow": 3902,
   "would_confirm": 201,
   "would_reject": 24,
-  "diff_vs_active": { "newly_rejected": 7, "newly_confirmed": 14, "loosened": 0 }
+  "diff_vs_active": {
+    "newly_allowed": ["pi_001"],
+    "newly_rejected": ["pi_002"],
+    "changed_other": ["pi_003"],
+    "unchanged": 4124
+  }
 }
 ```
 
