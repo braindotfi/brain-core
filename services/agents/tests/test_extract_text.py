@@ -3,6 +3,7 @@
 import io
 
 import pytest
+from docx import Document as DocxDocument
 from openpyxl import Workbook
 from pypdf import PdfReader, PdfWriter
 
@@ -75,6 +76,25 @@ def _xlsx_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def _docx_bytes(
+    paragraphs: list[str] | None = None, table_rows: list[list[str]] | None = None
+) -> bytes:
+    document = DocxDocument()
+    for text in (
+        paragraphs if paragraphs is not None else ["INVOICE", "Acme Utilities", "Total due: 120.50"]
+    ):
+        document.add_paragraph(text)
+    if table_rows:
+        table = document.add_table(rows=0, cols=len(table_rows[0]))
+        for row_values in table_rows:
+            row = table.add_row()
+            for cell, value in zip(row.cells, row_values, strict=True):
+                cell.text = value
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def test_extract_text_decodes_csv() -> None:
     content = b"vendor,amount,due\nAcme Utilities,120.50,2026-07-01\n"
     out = extract_text(content, "text/csv")
@@ -106,6 +126,54 @@ def test_extract_text_reads_xlsx_cells() -> None:
     assert "120.5" in out
     # blank trailing row must not produce an empty tab-joined line
     assert "\n\t\t\n" not in out
+
+
+def test_extract_text_reads_docx_paragraphs_and_tables() -> None:
+    out = extract_text(
+        _docx_bytes(
+            paragraphs=["INVOICE", "Acme Utilities"],
+            table_rows=[["Vendor", "Amount"], ["Acme Utilities", "120.50"]],
+        ),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert "Acme Utilities" in out
+    assert "# table: 1" in out
+    assert "120.50" in out
+
+
+def test_extract_text_docx_skips_blank_paragraphs() -> None:
+    out = extract_text(
+        _docx_bytes(paragraphs=["Page one terms", "", "Remit to Acme"]),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert "Page one terms" in out
+    assert "Remit to Acme" in out
+    assert "\n\n" not in out  # a blank paragraph must not produce an empty line
+
+
+def test_extract_text_docx_skips_entirely_blank_table() -> None:
+    out = extract_text(
+        _docx_bytes(paragraphs=["INVOICE"], table_rows=[["", ""], ["", ""]]),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert "INVOICE" in out
+    assert "# table: 1" not in out
+
+
+def test_extract_text_docx_with_no_text_raises() -> None:
+    with pytest.raises(DocumentTextUnavailableError, match="no extractable text"):
+        extract_text(
+            _docx_bytes(paragraphs=[]),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+
+def test_extract_text_malformed_docx_raises() -> None:
+    with pytest.raises(DocumentTextUnavailableError, match="unreadable DOCX"):
+        extract_text(
+            b"not actually a docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
 
 
 def test_extract_text_reads_pdf_text_layer() -> None:
@@ -177,4 +245,15 @@ def test_extract_text_rejects_xlsx_over_uncompressed_size_limit(
         extract_text(
             _xlsx_bytes(),
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
+def test_extract_text_rejects_docx_over_uncompressed_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extract_text_module, "_MAX_DOCX_UNCOMPRESSED_BYTES", 10)
+    with pytest.raises(DocumentTooLargeError, match="uncompressed content exceeds"):
+        extract_text(
+            _docx_bytes(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )

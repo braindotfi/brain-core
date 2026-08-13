@@ -57,6 +57,7 @@ describe("DocumentExtractClient.extract", () => {
         "X-Brain-Auth": signAgentRequest("secret", expectedBody),
       },
       body: expectedBody,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -105,5 +106,40 @@ describe("DocumentExtractClient.extract", () => {
         agentId: BODY.agent_id,
       }),
     ).rejects.toMatchObject({ code: "internal_server_error" });
+  });
+
+  it("passes a bounded timeout signal so a hung agent response cannot hang forever", async () => {
+    const client = new DocumentExtractClient(BASE_URL);
+
+    await client.extract(CTX, {
+      rawId: BODY.raw_id,
+      mimeType: BODY.mime_type,
+      documentB64: BODY.document_b64,
+      agentId: BODY.agent_id,
+    });
+
+    const init = vi.mocked(fetch).mock.calls[0]?.[1];
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.signal?.aborted).toBe(false);
+  });
+
+  it("maps a timed-out agent request to dependency_unavailable, distinct from unreachable", async () => {
+    // AbortSignal.timeout() rejects fetch with a DOMException named "TimeoutError" --
+    // this must not be lumped in with genuine connection failures (internal_server_error),
+    // since a slow agent is a different operational signal than a down one.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("The operation timed out.", "TimeoutError")),
+    );
+    const client = new DocumentExtractClient(BASE_URL);
+
+    await expect(
+      client.extract(CTX, {
+        rawId: BODY.raw_id,
+        mimeType: BODY.mime_type,
+        documentB64: BODY.document_b64,
+        agentId: BODY.agent_id,
+      }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 });
