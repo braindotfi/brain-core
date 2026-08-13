@@ -284,7 +284,6 @@ jobs:
 
             COMMIT;
           SQL
-          REMOTE
           }
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
