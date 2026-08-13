@@ -801,15 +801,20 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   public async cancel(ctx: ServiceCallContext, id: string): Promise<PaymentIntent> {
     const intent = await this.requireIntent(ctx, id);
-    if (intent.status !== "proposed") {
+    // BRAIN-95: cancellable from proposed OR pending_approval. pending_approval
+    // carries no recorded approval signature yet (approve() only advances it
+    // to awaiting_second_approval or approved once one lands), so cancelling
+    // from there withdraws the agent still-unreviewed proposal rather
+    // than undoing a decision anyone else already made.
+    if (intent.status !== "proposed" && intent.status !== "pending_approval") {
       throw brainError(
         "payment_intent_invalid_state",
-        `cancel only allowed from 'proposed', current=${intent.status}`,
+        `cancel only allowed from 'proposed' or 'pending_approval', current=${intent.status}`,
       );
     }
-    assertPaymentIntentTransition("proposed", "cancelled");
+    assertPaymentIntentTransition(intent.status as PaymentIntentState, "cancelled");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.transition(c, id, "proposed", "cancelled"),
+      LedgerPaymentIntents.transition(c, id, intent.status, "cancelled"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during cancel");
