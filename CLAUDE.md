@@ -269,6 +269,11 @@ Done
   must never leave more than one unresolved proposal open for the same invoice.
   Later sweeps refresh the pending row, while the guarded production cleanup
   marks historical duplicates `superseded` with an audit link to the retained row.
+  Vendor risk, subscription, fraud anomaly, and compliance proposals likewise
+  refresh one pending row per stable agent-specific subject key. Vendor risk
+  uses vendor or counterparty id, subscription and fraud use transaction id,
+  and compliance uses policy-decision or audit-event id. Missing compliance
+  identifiers are never treated as a shared subject.
   The authorized production cleanup run `31434998851` superseded 6,950 rows,
   left 943 pending Collections proposals, and left zero duplicate groups. Run
   cleanup in `report` mode before any future apply.
