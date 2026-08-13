@@ -69,13 +69,30 @@ test("trust-gate smoke audit reconciliation is fixed, bounded, and read-only", (
   assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
 });
 
+test("prior controlled-smoke execution diagnostic is fixed and read-only", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /trust-gate-prior-smoke-execution/);
+  assert.match(workflow, /tnt_01KZX2QQZVES2W2Y05AJHKCGQ0/);
+  assert.match(workflow, /prior controlled-smoke tenant payment intents/);
+  assert.match(workflow, /prior controlled-smoke tenant outbox rows and terminal state/);
+  assert.match(workflow, /prior controlled-smoke tenant execution receipts/);
+  assert.match(workflow, /prior controlled-smoke tenant execution audit events/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
+  assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+});
+
 test("staging diagnostic nested heredocs close at their owning handler", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
   const identityStart = workflow.indexOf("run_tenant_identity_lookup() {");
   const reconciliationStart = workflow.indexOf("run_trust_gate_smoke_audit_reconciliation() {");
   const wikiStart = workflow.indexOf("run_wiki_question_trace() {");
 
-  assert.ok(identityStart >= 0 && reconciliationStart > identityStart && wikiStart > reconciliationStart);
+  assert.ok(
+    identityStart >= 0 && reconciliationStart > identityStart && wikiStart > reconciliationStart,
+  );
   const identityHandler = workflow.slice(identityStart, reconciliationStart);
   const reconciliationHandler = workflow.slice(reconciliationStart, wikiStart);
 

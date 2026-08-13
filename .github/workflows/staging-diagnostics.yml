@@ -18,6 +18,7 @@ on:
           - anchor-reconciliation-correlation
           - anchor-cycle-runtime-trace
           - trust-gate-smoke-audit-reconciliation
+          - trust-gate-prior-smoke-execution
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -88,8 +89,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, or trust-gate-smoke-audit-reconciliation"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, trust-gate-smoke-audit-reconciliation, or trust-gate-prior-smoke-execution"
             exit 1
           fi
 
@@ -405,6 +406,78 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "trust-gate-smoke-audit-reconciliation" ]]; then
             run_trust_gate_smoke_audit_reconciliation
+            exit 0
+          fi
+
+          run_trust_gate_prior_smoke_execution() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+            readonly smoke_tenant_id='tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+            docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'prior controlled-smoke tenant payment intents'
+            SELECT pi.id,
+                   pi.status,
+                   pi.source_account_id,
+                   pi.destination_counterparty_id,
+                   pi.approval_ids,
+                   pi.execution_receipt_ids,
+                   pi.created_at,
+                   pi.updated_at
+              FROM ledger_payment_intents pi
+             WHERE pi.owner_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY pi.created_at ASC, pi.id ASC;
+
+            \echo 'prior controlled-smoke tenant outbox rows and terminal state'
+            SELECT eo.id,
+                   eo.payment_intent_id,
+                   eo.execution_id,
+                   eo.rail,
+                   eo.status,
+                   eo.attempt_count,
+                   eo.last_error,
+                   eo.rail_receipt,
+                   eo.created_at,
+                   eo.dispatched_at,
+                   eo.completed_at
+              FROM execution_outbox eo
+             WHERE eo.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY eo.created_at ASC, eo.id ASC;
+
+            \echo 'prior controlled-smoke tenant execution receipts'
+            SELECT e.id,
+                   e.rail,
+                   e.status,
+                   e.rail_receipt,
+                   e.started_at,
+                   e.completed_at
+              FROM executions e
+             WHERE e.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY e.started_at ASC, e.id ASC;
+
+            \echo 'prior controlled-smoke tenant execution audit events'
+            SELECT ae.id,
+                   ae.action,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs
+              FROM audit_events ae
+             WHERE ae.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+               AND ae.action IN ('payment_intent.execute.before', 'payment_intent.execute.after', 'payment_intent.executed')
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-prior-smoke-execution" ]]; then
+            run_trust_gate_prior_smoke_execution
             exit 0
           fi
 
