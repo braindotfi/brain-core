@@ -143,6 +143,11 @@ jobs:
             response="$(cat /tmp/trust-gate-create-response.json)"
             printf 'payment_intent_create_request=%s\npayment_intent_create_response_status=%s\npayment_intent_create_response=%s\n' "$request_body" "$status" "$response" >&2
             if [[ "$status" != 201 ]]; then
+              request_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{try { const id=JSON.parse(b).error?.request_id; if (typeof id === "string") process.stdout.write(id); } catch {} })')"
+              if [[ -n "$request_id" ]]; then
+                echo "payment_intent_create_api_log request_id=$request_id" >&2
+                docker logs --since 2m brain-prod-api 2>&1 | grep -F "$request_id" | tail -20 >&2 || true
+              fi
               echo "Expected 201 while creating smoke payment intent, got $status" >&2
               exit 1
             fi
