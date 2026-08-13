@@ -882,9 +882,14 @@ Pending Dmitriy sign-off
   mutation. A failed baseline precondition leaves the prior environment state
   unchanged. The workflow retains the public API responses, the five durable
   `payment_intent.execute.after` rows, and its full-window non-fixture query in
-  the Actions log. The fixture deliberately fails at Check 4 after passing
-  trust and policy evaluation, so it cannot create an execution outbox row. Gate
-  `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
+  the Actions log. Each remote mutation and matrix section emits a completion
+  sentinel that the workflow asserts, so an incomplete remote heredoc cannot be
+  reported as a successful smoke. The fixture creates its own active source
+  account rather than using an example identifier, then deliberately fails at
+  Check 4 after passing trust and policy evaluation, so it cannot create an
+  execution outbox row. The missing-counterparty Check 5 case is an isolated
+  fixture-row corruption because the production foreign key correctly prevents
+  that state through public creation. Gate `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
   persistence and execution audit events, so it is not a substitute for the
   real `payment_intent.execute.after` evidence required before enablement.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money

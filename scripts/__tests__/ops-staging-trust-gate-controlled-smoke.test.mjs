@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-const WORKFLOW = join(process.cwd(), ".github/workflows/ops-staging-trust-gate-controlled-smoke.yml");
+const WORKFLOW = join(
+  process.cwd(),
+  ".github/workflows/ops-staging-trust-gate-controlled-smoke.yml",
+);
 
 test("controlled trust-gate smoke is staging-only and restores the process flag", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
@@ -13,6 +16,7 @@ test("controlled trust-gate smoke is staging-only and restores the process flag"
   assert.doesNotMatch(workflow, /environment:\s*production/);
   assert.match(workflow, /runtime_flag_before_api=false/);
   assert.match(workflow, /runtime_flag_before_worker=false/);
+  assert.match(workflow, /trust_gate_baseline_complete=true/);
   assert.match(workflow, /runtime_flag_enabled_api=true/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=false/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=true/);
@@ -20,6 +24,10 @@ test("controlled trust-gate smoke is staging-only and restores the process flag"
   assert.match(workflow, /runtime_flag_after_api=\$api_flag/);
   assert.match(workflow, /output\.append\(f"\{key\}=true"\)/);
   assert.match(workflow, /output\.append\(f"\{key\}=false"\)/);
+  assert.match(workflow, /trust_gate_enable_remote_complete/);
+  assert.match(workflow, /trust_gate_restore_remote_complete/);
+  assert.match(workflow, /trust_gate_matrix_remote_complete/);
+  assert.match(workflow, /trust_gate_confirmation_complete=true/);
 });
 
 test("controlled trust-gate smoke exercises the denial matrix without rail dispatch", () => {
@@ -38,7 +46,15 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /payment_intent_create_response_status=/);
   assert.match(workflow, /payment_intent_create_response=/);
   assert.match(workflow, /payment_intent_create_api_log request_id=/);
+  assert.match(workflow, /missing_source_account_response_status=/);
+  assert.match(workflow, /Expected 404 for a nonexistent source account/);
+  assert.match(workflow, /missing_source_account_api_log request_id=/);
+  assert.match(workflow, /smoke_source_account_id=/);
+  assert.match(workflow, /INSERT INTO ledger_accounts/);
+  assert.match(workflow, /fixture_counterparty_reference_removed/);
+  assert.match(workflow, /session_replication_role = replica/);
   assert.match(workflow, /docker logs --since 2m brain-prod-api/);
+  assert.match(workflow, /for attempt in \$\(seq 1 8\)/);
   assert.match(workflow, /Controlled trust-gate matrix failed with SSH status/);
   assert.match(workflow, /durable payment_intent\.execute\.after events/);
   assert.match(workflow, /Expected five durable payment_intent\.execute\.after events/);
