@@ -83,4 +83,5 @@ test("staging diagnostic nested heredocs close at their owning handler", () => {
   assert.match(reconciliationHandler, /SQL[\s\S]*REMOTE\n\s+\}/);
   assert.match(reconciliationHandler, /<<'REMOTE'/);
   assert.doesNotMatch(reconciliationHandler, /docker exec -i brain-prod-postgres psql[^\n]*-c/);
+  assert.doesNotMatch(reconciliationHandler, /-c \\\"SELECT/);
 });

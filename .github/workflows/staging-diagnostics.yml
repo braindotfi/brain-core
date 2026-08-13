@@ -374,7 +374,7 @@ jobs:
             COMMIT;
           SQL
 
-            agent_id="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c \"SELECT id FROM agents WHERE tenant_id = '${smoke_tenant_id}' AND state = 'active' ORDER BY created_at ASC, id ASC LIMIT 1;\")"
+            agent_id="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT id FROM agents WHERE tenant_id = '${smoke_tenant_id}' AND state = 'active' ORDER BY created_at ASC, id ASC LIMIT 1;")"
             if [[ ! "$agent_id" =~ ^agent_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
               echo "no active agent found for the original smoke tenant" >&2
               exit 1
