@@ -50,3 +50,17 @@ test("staging Wiki question trace is tenant-bounded, selector-bounded, and read-
   assert.match(workflow, /LIMIT 20;/);
   assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
 });
+
+test("trust-gate smoke audit reconciliation is fixed, bounded, and read-only", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /trust-gate-smoke-audit-reconciliation/);
+  assert.match(workflow, /connection role and RLS posture/);
+  assert.match(workflow, /current_setting\('app\.tenant_id', true\)/);
+  assert.match(workflow, /ae\.inputs->>'company_name' = 'Controlled trust-gate smoke'/);
+  assert.match(workflow, /ae\.action = 'payment_intent\.execute\.after'/);
+  assert.match(workflow, /LIMIT 20;/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
+  assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
+});

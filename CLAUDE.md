@@ -875,12 +875,15 @@ Pending Dmitriy sign-off
   sandbox posture; only production, non-sandbox groups require named review
   before an enablement flip.
   `ops-staging-trust-gate-controlled-smoke.yml` is the staging-only temporary
-  enablement check. It requires the running process flag to be off, enables it
-  only long enough to exercise checks 5 and 5.25 against an isolated fixture
-  tenant, then restores and verifies the process flag off with an `always()`
-  cleanup only after the workflow has begun its own mutation. A failed baseline
-  precondition leaves the prior environment state unchanged. The fixture deliberately fails at Check 4 after passing trust and
-  policy evaluation, so it cannot create an execution outbox row. Gate
+  enablement check. It requires the API and worker running-process flags to be
+  off, enables them only long enough to exercise checks 5 and 5.25 against an
+  isolated fixture tenant, then restores and verifies both process flags off
+  with an `always()` cleanup only after the workflow has begun its own
+  mutation. A failed baseline precondition leaves the prior environment state
+  unchanged. The workflow retains the public API responses, the five durable
+  `payment_intent.execute.after` rows, and its full-window non-fixture query in
+  the Actions log. The fixture deliberately fails at Check 4 after passing
+  trust and policy evaluation, so it cannot create an execution outbox row. Gate
   `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
   persistence and execution audit events, so it is not a substitute for the
   real `payment_intent.execute.after` evidence required before enablement.

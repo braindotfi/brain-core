@@ -11,7 +11,8 @@ test("controlled trust-gate smoke is staging-only and restores the process flag"
   assert.match(workflow, /VM_HOST_STAGING/);
   assert.doesNotMatch(workflow, /secrets\.VM_HOST(?!_STAGING)/);
   assert.doesNotMatch(workflow, /environment:\s*production/);
-  assert.match(workflow, /runtime_flag_before=false/);
+  assert.match(workflow, /runtime_flag_before_api=false/);
+  assert.match(workflow, /runtime_flag_before_worker=false/);
   assert.match(workflow, /runtime_flag_enabled_api=true/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=false/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=true/);
@@ -33,6 +34,10 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /execution_outbox/);
   assert.match(workflow, /smoke_outbox_rows=0/);
   assert.match(workflow, /payment_intent\.execute\.after/);
+  assert.match(workflow, /durable payment_intent\.execute\.after events/);
+  assert.match(workflow, /Expected five durable payment_intent\.execute\.after events/);
+  assert.match(workflow, /SMOKE_TENANT_ID=/);
+  assert.match(workflow, /window_non_fixture_execute_after_count/);
   assert.match(workflow, /trust_gate_window_start/);
   assert.match(workflow, /trust_gate_window_end/);
 });

@@ -50,11 +50,13 @@ jobs:
           worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv GIT_SHA")"
           git merge-base --is-ancestor "$TRUST_GATE_BASE_SHA" "$worker_sha"
           api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED")"
-          if [[ "$api_flag" != "false" ]]; then
-            echo "Expected staging trust gate OFF before controlled smoke, got ${api_flag:-unset}" >&2
+          worker_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED")"
+          if [[ "$api_flag" != "false" || "$worker_flag" != "false" ]]; then
+            echo "Expected API and worker trust gate OFF before controlled smoke, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2
             exit 1
           fi
-          echo "runtime_flag_before=false"
+          echo "runtime_flag_before_api=false"
+          echo "runtime_flag_before_worker=false"
           echo "staging_git_sha=$worker_sha"
 
       - name: Enable the staging trust gate for this smoke only
@@ -102,7 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          matrix_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/brain-core
           set -a
@@ -168,8 +170,23 @@ jobs:
           audit_response="$(curl -fsS --connect-timeout 10 --max-time 30 "$API_BASE/v1/audit/events?limit=100" -H "Authorization: Bearer ${agent_token}")"
           printf '%s' "$audit_response" | SMOKE_INTENTS="$intent_ids" docker exec -i -e SMOKE_INTENTS brain-prod-api node -e '
             let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const ids=new Set(process.env.SMOKE_INTENTS.split(","));const es=JSON.parse(b).events.filter(e=>e.action==="payment_intent.execute.after"&&ids.has(e.inputs?.payment_intent_id));if(es.length!==5)process.exit(1);for(const e of es)console.log(JSON.stringify(e))})'
+          durable_after_count="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ','));")"
+          if [[ "$durable_after_count" != 5 ]]; then
+            echo "Expected five durable payment_intent.execute.after events for $smoke_tenant_id, found $durable_after_count" >&2
+            exit 1
+          fi
+          echo 'durable payment_intent.execute.after events'
+          docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c "SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ',')) ORDER BY created_at ASC, id ASC;"
           printf 'smoke_tenant_id=%s\nsmoke_counterparty_id=%s\nsmoke_outbox_rows=0\n' "$smoke_tenant_id" "$counterparty_id"
           REMOTE
+          )"
+          printf '%s\n' "$matrix_output"
+          smoke_tenant_id="$(printf '%s\n' "$matrix_output" | sed -n 's/^smoke_tenant_id=//p' | tail -1)"
+          if [[ ! "$smoke_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "Matrix output did not include one canonical smoke tenant id" >&2
+            exit 1
+          fi
+          echo "SMOKE_TENANT_ID=$smoke_tenant_id" >> "$GITHUB_ENV"
 
       - name: Restore staging trust gate to off
         if: always() && env.TRUST_GATE_SMOKE_MUTATION_STARTED == 'true'
@@ -213,7 +230,18 @@ jobs:
           echo "runtime_flag_after_worker=$worker_flag"
           echo "trust_gate_window_start=$WINDOW_START"
           echo "trust_gate_window_end=$window_end"
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\""
+          window_rows="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\"")"
+          printf '%s\n' "$window_rows"
+          if [[ -n "${SMOKE_TENANT_ID:-}" ]]; then
+            foreign_event_count="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c \"SELECT count(*) FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz AND tenant_id <> '${SMOKE_TENANT_ID}';\"")"
+            echo "window_non_fixture_execute_after_count=$foreign_event_count"
+            if [[ "$foreign_event_count" != 0 ]]; then
+              echo "A non-fixture payment_intent.execute.after event occurred during the temporary trust-gate window" >&2
+              exit 1
+            fi
+          else
+            echo "window isolation query not asserted because no smoke tenant was created"
+          fi
           if [[ "$TRUST_GATE_SMOKE_MUTATION_STARTED" == true && ( "$api_flag" != false || "$worker_flag" != false ) ]]; then
             echo "Failed to restore staging trust gate OFF, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2
             exit 1
