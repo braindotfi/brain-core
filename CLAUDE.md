@@ -772,6 +772,16 @@ Pending Dmitriy sign-off
   complete. Its `BRAIN_API_TOKEN` is a golden-tenant, agent-principal JWT with
   only `raw:write`; rotate it without logging the value through
   `ops-rotate-agents-api-token.yml` before its one-year expiry.
+- DOCX is a fifth deterministic document type alongside CSV/XLSX/text-layer
+  PDF, read via `python-docx` in `extract_text.py`. Both zip-based OOXML
+  formats (XLSX, DOCX) share the same pre-parse zip-bomb guard on declared
+  uncompressed size. The document_extractor's field-extraction LLM call
+  (every document type, not just OCR) carries the same 30s per-request
+  timeout as the OCR vision call; the api's `documentExtractClient` fetch
+  carries a 90s `AbortSignal.timeout`, mapped to `dependency_unavailable`
+  distinct from a genuinely unreachable agent. Previously neither had any
+  bound, so a slow/rate-limited OpenAI response could hang a request
+  indefinitely with no error ever surfacing to the caller.
   Known upload PDFs are classified before parser selection: bank statement PDFs
   must clear the bank-statement confidence floor, while AR aging and payroll
   PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
