@@ -18,7 +18,9 @@ The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto th
 | **Production** | `https://mcp.brain.fi`  | `https://api.brain.fi/v1/agents/mcp`         |
 | **Sandbox**    | `https://mcp.brain.dev` | `https://api.sandbox.brain.fi/v1/agents/mcp` |
 
-Sandbox is wired to Base Sepolia; production is wired to Base mainnet.
+Sandbox and production are wired to Base Sepolia for agent registration, scope
+verification, policy registration, and audit anchoring. This is separate from
+the settlement rail's own mainnet gating.
 
 ### Methods
 
@@ -37,9 +39,16 @@ The methods the JSON-RPC entry accepts (matches the spec's `JsonRpcRequest.metho
 
 Once a request reaches JSON-RPC dispatch, the HTTP layer returns `200` and application errors live in the JSON-RPC response's `error` field. **Authentication and authorization fail _before_ dispatch**, so they return an HTTP `401`/`403` Brain error envelope (not a `200` with a JSON-RPC `error`). See [Error Codes](#error-codes).
 
-### The 16 Tools
+### The 17 Tools
 
-Five Ledger reads, two Wiki reads, one Raw contribute, three PaymentIntent tools (`payment_intent.propose`, `payment_intent.cancel`, `payment_intent.list`), three proposal tools (`proposals.list`, `proposals.get`, `proposals.decide`), one evidence resolve (`evidence.resolve`), and one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one**. Execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
+Five Ledger reads, two Wiki reads, two Raw tools (`raw.contribute` and
+`raw.artifact.get`), three PaymentIntent tools (`payment_intent.propose`,
+`payment_intent.cancel`, `payment_intent.list`), three proposal tools
+(`proposals.list`, `proposals.get`, `proposals.decide`), one evidence resolve
+(`evidence.resolve`), and one agent action propose. **There is no
+`payment_intent.execute` tool, and there will never be one**. Execution is
+reserved for internal Brain workers running under tenant policy and the section 6
+gate.
 
 [**→ Tool reference**](../mcp-server/tools.md)
 
@@ -51,7 +60,7 @@ Resource templates addressable by `brain://` URIs:
 brain://ledger/accounts/{account_id}
 brain://ledger/transactions/{transaction_id}
 brain://ledger/obligations/{obligation_id}
-brain://ledger/payment-intents/{payment_intent_id}
+brain://ledger/payment-intents/{id}
 brain://wiki/pages/{slug}
 brain://payments/action_types
 brain://proofs/{action_id}
@@ -123,4 +132,4 @@ Content-Type: application/json
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP Overview</strong></td><td>The full architecture and surface map.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>🛠️ Tools</strong></td><td>The 16 tools in detail.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="../mcp-server/mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 MCP Overview</strong></td><td>The full architecture and surface map.</td><td><a href="../mcp-server/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>🛠️ Tools</strong></td><td>The 17 tools in detail.</td><td><a href="../mcp-server/tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT and on-chain scope verification.</td><td><a href="../mcp-server/mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>

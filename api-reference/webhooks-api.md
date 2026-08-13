@@ -2,10 +2,10 @@
 
 Inspect and replay failed deliveries on Brain's outbound webhook endpoints. This is the operator-facing surface for dead-lettered events. The inbound provider webhook (`POST /v1/raw/webhooks/{provider}`) lives in [Sources & Raw Ingestion](sources-api.md).
 
-| Operation                 | Endpoint                                       |
-| ------------------------- | ---------------------------------------------- |
-| List dead-letter events   | `GET  /v1/webhooks/{endpoint_id}/dead-letters` |
-| Replay dead-letter events | `POST /v1/webhooks/{endpoint_id}/replay`       |
+| Operation                 | Endpoint                                       | Required scope |
+| ------------------------- | ---------------------------------------------- | -------------- |
+| List dead-letter events   | `GET  /v1/webhooks/{endpoint_id}/dead-letters` | `audit:read`   |
+| Replay dead-letter events | `POST /v1/webhooks/{endpoint_id}/replay`       | `audit:write`  |
 
 Both routes are tenant-isolated. The `endpoint_id` belongs to the calling tenant; a cross-tenant id returns `404`.
 
