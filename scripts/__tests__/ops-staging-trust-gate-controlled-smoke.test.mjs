@@ -13,8 +13,10 @@ test("controlled trust-gate smoke is staging-only and restores the process flag"
   assert.doesNotMatch(workflow, /environment:\s*production/);
   assert.match(workflow, /runtime_flag_before=false/);
   assert.match(workflow, /runtime_flag_enabled_api=true/);
-  assert.match(workflow, /runtime_flag_after_api=false/);
-  assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=false/);
+  assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=true/);
+  assert.match(workflow, /if: always\(\) && env\.TRUST_GATE_SMOKE_MUTATION_STARTED == 'true'/);
+  assert.match(workflow, /runtime_flag_after_api=\$api_flag/);
   assert.match(workflow, /output\.append\(f"\{key\}=true"\)/);
   assert.match(workflow, /output\.append\(f"\{key\}=false"\)/);
 });

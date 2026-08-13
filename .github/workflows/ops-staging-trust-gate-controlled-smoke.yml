@@ -36,6 +36,13 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
+      - name: Initialize controlled-smoke window
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "WINDOW_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "TRUST_GATE_SMOKE_MUTATION_STARTED=false" >> "$GITHUB_ENV"
+
       - name: Verify staged baseline and runtime flag is off
         shell: bash
         run: |
@@ -49,12 +56,15 @@ jobs:
           fi
           echo "runtime_flag_before=false"
           echo "staging_git_sha=$worker_sha"
-          echo "WINDOW_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Enable the staging trust gate for this smoke only
         shell: bash
         run: |
           set -euo pipefail
+          # Set this before the remote mutation. If recreation fails midway, cleanup
+          # must still restore the known-off baseline. A failed precondition never
+          # reaches this line and therefore cannot alter the prior environment state.
+          echo "TRUST_GATE_SMOKE_MUTATION_STARTED=true" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "cd ~/brain-core && VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
           set -euo pipefail
           python3 - "$VM_ENV_FILE" <<'PY'
@@ -162,7 +172,7 @@ jobs:
           REMOTE
 
       - name: Restore staging trust gate to off
-        if: always()
+        if: always() && env.TRUST_GATE_SMOKE_MUTATION_STARTED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -198,10 +208,13 @@ jobs:
           curl -fsS "$HEALTH_URL"
           api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED")"
           worker_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED")"
-          if [[ "$api_flag" != false || "$worker_flag" != false ]]; then echo "Failed to restore staging trust gate OFF, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2; exit 1; fi
           window_end="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "runtime_flag_after_api=false"
-          echo "runtime_flag_after_worker=false"
+          echo "runtime_flag_after_api=$api_flag"
+          echo "runtime_flag_after_worker=$worker_flag"
           echo "trust_gate_window_start=$WINDOW_START"
           echo "trust_gate_window_end=$window_end"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\""
+          if [[ "$TRUST_GATE_SMOKE_MUTATION_STARTED" == true && ( "$api_flag" != false || "$worker_flag" != false ) ]]; then
+            echo "Failed to restore staging trust gate OFF, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2
+            exit 1
+          fi
