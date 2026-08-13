@@ -328,6 +328,19 @@ services:
       EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:?EMAIL_ENDPOINT is required in production}
       EMAIL_API_KEY: ${EMAIL_API_KEY:?EMAIL_API_KEY is required in production}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      # BRAIN-99: this service builds its own on-chain scope checker
+      # (services/auth/src/onchain-scope-checker.ts, wired in main.ts) to
+      # verify consent-time agent scope attestations against
+      # BrainMCPAgentRegistry -- the same contract api's own scope checker
+      # reads. Without these two, main.ts falls back to shared/src/config.ts's
+      # DEFAULTS (a stale registry address predating the 2026-08-05
+      # redeploy, and the public sepolia.base.org RPC), which can silently
+      # diverge from whatever api actually validates against via its
+      # env_file-loaded .env.prod values. Set explicitly here, not via
+      # env_file, so this public browser-facing origin still gets none of
+      # the broader production secret set.
+      MCP_AGENT_REGISTRY_ADDRESS: ${MCP_AGENT_REGISTRY_ADDRESS:?MCP_AGENT_REGISTRY_ADDRESS is required in production}
+      BASE_RPC_URL: ${BASE_RPC_URL:?BASE_RPC_URL is required in production}
     depends_on:
       postgres:
         condition: service_healthy
