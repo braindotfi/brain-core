@@ -49,7 +49,12 @@ import type {
   ToolContext,
   ToolResult,
 } from "./tools/types.js";
-import { listResources, listResourceTemplates, readResource } from "./resources.js";
+import {
+  listResources,
+  listResourceTemplates,
+  readResource,
+  requiredScopesForBrainUri,
+} from "./resources.js";
 import { getPrompt, listPrompts } from "./prompts.js";
 import type { AuthVerifier } from "./auth.js";
 
@@ -242,8 +247,20 @@ export class BrainMcpServer {
     const label = `resources.read:${uri}`;
     try {
       if (typeof params.uri !== "string") invalidParams("'uri' is required");
-      const { result, requiredScopes } = await readResource(params.uri as string, ctx);
+      // BRAIN-96: required scopes are derived statically from the URI shape
+      // and enforced BEFORE readResource runs any I/O. readResource used to
+      // run first and return requiredScopes alongside a result already
+      // fetched (or a not-found already thrown), so an insufficiently-scoped
+      // caller both triggered work it had no scope to trigger and, worse,
+      // got a DIFFERENT error (not-found vs scope-insufficient) depending on
+      // whether the id existed -- a cross-scope existence oracle. Deriving
+      // the requirement first and checking it before the read closes both.
+      const requiredScopes = requiredScopesForBrainUri(params.uri as string);
+      if (requiredScopes === null) {
+        throw brainError("request_params_invalid", `unsupported resource URI: ${uri}`);
+      }
       requireAll(scopes, requiredScopes);
+      const { result } = await readResource(params.uri as string, ctx);
       await this.emitOuterAudit(ctx, label, true, { uri });
       return result;
     } catch (err) {
