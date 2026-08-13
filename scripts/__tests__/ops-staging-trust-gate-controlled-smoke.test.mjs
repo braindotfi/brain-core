@@ -45,6 +45,10 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /payment_intent_create_request=/);
   assert.match(workflow, /payment_intent_create_response_status=/);
   assert.match(workflow, /payment_intent_create_response=/);
+  assert.match(workflow, /payment_intent_approve_request payment_intent_id=/);
+  assert.match(workflow, /payment_intent_approve_response_status=/);
+  assert.match(workflow, /payment_intent_approve_response=/);
+  assert.match(workflow, /Expected 200 while approving smoke payment intent/);
   assert.match(workflow, /payment_intent_create_api_log request_id=/);
   assert.match(workflow, /missing_source_account_response_status=/);
   assert.match(workflow, /Expected 404 for a nonexistent source account/);
