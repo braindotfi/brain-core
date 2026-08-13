@@ -284,6 +284,7 @@ jobs:
 
             COMMIT;
           SQL
+          REMOTE
           }
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
@@ -358,7 +359,6 @@ jobs:
 
             COMMIT;
           SQL
-          REMOTE
           }
 
           if [[ "$DIAGNOSTIC" == "trust-gate-smoke-audit-reconciliation" ]]; then
