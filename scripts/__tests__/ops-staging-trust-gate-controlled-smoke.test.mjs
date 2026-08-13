@@ -40,4 +40,5 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /window_non_fixture_execute_after_count/);
   assert.match(workflow, /trust_gate_window_start/);
   assert.match(workflow, /trust_gate_window_end/);
+  assert.doesNotMatch(workflow, /docker exec -i brain-prod-postgres psql[^\n]*-c/);
 });
