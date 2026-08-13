@@ -56,6 +56,13 @@ const GATE_PRINCIPAL: GatePrincipal = {
   scopes: ["payment_intent:execute"],
 };
 
+const SOURCE_ACCOUNT = {
+  id: ACCT,
+  status: "active",
+  currency: "USD",
+  available_balance: "1000.00",
+};
+
 function insertedRow(): PaymentIntentRow {
   return {
     id: newPaymentIntentId(),
@@ -119,6 +126,7 @@ function makeService(
       ctx: ServiceCallContext,
       id: string,
     ) => Promise<"payable" | "receivable" | null>;
+    resolveAccount?: (ctx: ServiceCallContext, id: string) => Promise<typeof SOURCE_ACCOUNT | null>;
     decision?: GatePolicyDecision;
     onPolicy?: (intent: GatePaymentIntent) => void;
     fiatHumanApprovalFloorEnabled?: boolean;
@@ -130,7 +138,7 @@ function makeService(
     outbox: new OutboxService(),
     approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
     resolveAgent: async () => null,
-    resolveAccount: async () => null,
+    resolveAccount: opts.resolveAccount ?? (async () => SOURCE_ACCOUNT),
     resolveCounterparty: async () => null,
     resolvePrincipal: async () => GATE_PRINCIPAL,
     evaluatePolicy: async (_ctx, intent) => {
@@ -178,6 +186,30 @@ function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
+  it("returns a not-found error for an absent source account before policy or insert", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePool();
+    const evaluatePolicy = vi.fn(async () => DECISION);
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => null,
+      resolveAccount: async () => null,
+      resolveCounterparty: async () => null,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      evaluatePolicy,
+    });
+
+    await expect(service.create(ctx, baseInput)).rejects.toMatchObject({
+      code: "ledger_row_not_found",
+      details: { source_account_id: ACCT },
+    });
+    expect(evaluatePolicy).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(false);
+  });
+
   it("H-21/H-22 regression: threads obligation_id and invoice_id into the create-time gate intent", async () => {
     // stubGateIntent previously dropped these two fields even when the caller
     // supplied them, silently disabling gate check 6.7 (obligation direction)

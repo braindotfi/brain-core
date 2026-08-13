@@ -390,6 +390,23 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
   }
 
+  /**
+   * Validate the source account before the payment-intent insert reaches the
+   * ledger foreign key. A well-formed but unknown account is a caller error,
+   * not an internal database failure.
+   */
+  private async assertSourceAccountExists(
+    ctx: ServiceCallContext,
+    input: CreatePaymentIntentInput,
+  ): Promise<void> {
+    const account = await this.deps.resolveAccount(ctx, input.source_account_id);
+    if (account === null) {
+      throw brainError("ledger_row_not_found", "source account not found", {
+        details: { source_account_id: input.source_account_id },
+      });
+    }
+  }
+
   public async create(
     ctx: ServiceCallContext,
     input: CreatePaymentIntentInput,
@@ -399,6 +416,8 @@ export class PaymentIntentService implements IPaymentIntentService {
     if (!/^\d+(\.\d+)?$/.test(input.amount) || input.amount === "0") {
       throw brainError("request_body_invalid", "amount must be a positive decimal string");
     }
+
+    await this.assertSourceAccountExists(ctx, input);
 
     // RFC 0004 §5.2: an intent is no more confident than the Ledger evidence it
     // cites. Cap its confidence at the referenced obligation's so a low-
