@@ -249,12 +249,19 @@ jobs:
             printf 'fixture_counterparty_reference_removed payment_intent_id=%s\n' "$intent_id"
           }
           make_fixture_source_account_missing() {
-            local intent_id="$1"
+            local intent_id="$1" mutation
             # Public creation now requires a real source account. This isolated
             # post-approval fixture mutation reaches Check 4 without allowing
-            # the payment intent to be dispatched.
-            docker exec brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -c "BEGIN; SET LOCAL session_replication_role = replica; UPDATE ledger_payment_intents SET source_account_id = '${missing_account_id}' WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}'; COMMIT;"
-            printf 'fixture_source_account_reference_removed payment_intent_id=%s\n' "$intent_id"
+            # the payment intent to be dispatched. The query locks and updates
+            # exactly the one isolated tenant-owned intent, then returns the
+            # before and after account references as inspectable evidence.
+            mutation="$(docker exec brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=1 -c "BEGIN; SET LOCAL session_replication_role = replica; WITH prior AS (SELECT source_account_id AS before_source_account_id FROM ledger_payment_intents WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}' FOR UPDATE), updated AS (UPDATE ledger_payment_intents SET source_account_id = '${missing_account_id}' WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}' RETURNING source_account_id AS after_source_account_id) SELECT json_build_object('tenant_id', '${smoke_tenant_id}', 'payment_intent_id', '${intent_id}', 'matched_rows', (SELECT count(*) FROM prior), 'updated_rows', (SELECT count(*) FROM updated), 'before_source_account_id', (SELECT before_source_account_id FROM prior), 'after_source_account_id', (SELECT after_source_account_id FROM updated)); COMMIT;")"
+            printf 'fixture_source_account_mutation=%s\n' "$mutation"
+            if ! printf '%s' "$mutation" | EXPECTED_TENANT_ID="$smoke_tenant_id" EXPECTED_INTENT_ID="$intent_id" EXPECTED_BEFORE_ACCOUNT_ID="$source_account_id" EXPECTED_AFTER_ACCOUNT_ID="$missing_account_id" docker exec -i -e EXPECTED_TENANT_ID -e EXPECTED_INTENT_ID -e EXPECTED_BEFORE_ACCOUNT_ID -e EXPECTED_AFTER_ACCOUNT_ID brain-prod-api node -e '
+              let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(v.tenant_id!==process.env.EXPECTED_TENANT_ID||v.payment_intent_id!==process.env.EXPECTED_INTENT_ID||v.matched_rows!==1||v.updated_rows!==1||v.before_source_account_id!==process.env.EXPECTED_BEFORE_ACCOUNT_ID||v.after_source_account_id!==process.env.EXPECTED_AFTER_ACCOUNT_ID)process.exit(1)})'; then
+              echo "Fixture source-account mutation did not affect exactly one expected tenant-owned payment intent" >&2
+              exit 1
+            fi
           }
 
           reproduce_missing_source_account

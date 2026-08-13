@@ -887,8 +887,9 @@ Pending Dmitriy sign-off
   reported as a successful smoke. The fixture creates its own active source
   account rather than using an example identifier. After public creation and
   approval, the Check 4 cases deliberately replace only the isolated fixture
-  row's source-account reference, so they cannot create an execution outbox
-  row. The missing-counterparty Check 5 case is likewise an isolated fixture-row
+  row's source-account reference. The mutation locks and updates exactly one
+  `(tenant_id, payment_intent_id)` row and logs its before and after references,
+  so they cannot create an execution outbox row. The missing-counterparty Check 5 case is likewise an isolated fixture-row
   corruption because the production foreign key correctly prevents either state
   through public creation. Gate `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
   persistence and execution audit events, so it is not a substitute for the

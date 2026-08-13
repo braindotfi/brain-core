@@ -62,7 +62,11 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /smoke_source_account_id=/);
   assert.match(workflow, /INSERT INTO ledger_accounts/);
   assert.match(workflow, /fixture_counterparty_reference_removed/);
-  assert.match(workflow, /fixture_source_account_reference_removed/);
+  assert.match(workflow, /fixture_source_account_mutation=/);
+  assert.match(workflow, /matched_rows/);
+  assert.match(workflow, /updated_rows/);
+  assert.match(workflow, /before_source_account_id/);
+  assert.match(workflow, /after_source_account_id/);
   assert.match(workflow, /session_replication_role = replica/);
   assert.match(workflow, /docker logs --since 2m brain-prod-api/);
   assert.match(workflow, /for attempt in \$\(seq 1 8\)/);
