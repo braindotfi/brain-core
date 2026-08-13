@@ -19,6 +19,7 @@ on:
           - anchor-cycle-runtime-trace
           - trust-gate-smoke-audit-reconciliation
           - trust-gate-prior-smoke-execution
+          - trust-gate-24h-observation
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -59,6 +60,11 @@ on:
         required: false
         type: string
         default: ""
+      trust_gate_observation_since:
+        description: "Exact ISO UTC start bound for trust-gate-24h-observation."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -84,13 +90,14 @@ jobs:
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
       ANCHOR_CYCLE_SINCE: ${{ inputs.anchor_cycle_since }}
       ANCHOR_CYCLE_UNTIL: ${{ inputs.anchor_cycle_until }}
+      TRUST_GATE_OBSERVATION_SINCE: ${{ inputs.trust_gate_observation_since }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, trust-gate-smoke-audit-reconciliation, or trust-gate-prior-smoke-execution"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" && "$DIAGNOSTIC" != "trust-gate-24h-observation" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, trust-gate-smoke-audit-reconciliation, trust-gate-prior-smoke-execution, or trust-gate-24h-observation"
             exit 1
           fi
 
@@ -165,6 +172,13 @@ jobs:
           PY
           fi
 
+          if [[ "$DIAGNOSTIC" == "trust-gate-24h-observation" ]]; then
+            if [[ ! "$TRUST_GATE_OBSERVATION_SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+              echo "trust-gate-24h-observation requires an exact ISO UTC start bound"
+              exit 1
+            fi
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v4.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -204,6 +218,7 @@ jobs:
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
           anchor_cycle_since_b64="$(printf '%s' "$ANCHOR_CYCLE_SINCE" | base64 | tr -d '\n')"
           anchor_cycle_until_b64="$(printf '%s' "$ANCHOR_CYCLE_UNTIL" | base64 | tr -d '\n')"
+          trust_gate_observation_since_b64="$(printf '%s' "$TRUST_GATE_OBSERVATION_SINCE" | base64 | tr -d '\n')"
 
           run_tenant_identity_lookup() {
             ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
@@ -478,6 +493,145 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "trust-gate-prior-smoke-execution" ]]; then
             run_trust_gate_prior_smoke_execution
+            exit 0
+          fi
+
+          run_trust_gate_24h_observation() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TRUST_GATE_OBSERVATION_SINCE_B64='$trust_gate_observation_since_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            observation_since="$(printf '%s' "$TRUST_GATE_OBSERVATION_SINCE_B64" | base64 -d)"
+            if [[ ! "$observation_since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+              echo "trust-gate-24h-observation timestamp failed remote validation"
+              exit 1
+            fi
+
+            echo "trust_gate_observation_since=$observation_since"
+            echo "trust_gate_observation_until=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for service in brain-prod-api brain-prod-worker brain-prod-agents; do
+              status="$(docker inspect --format='{{.State.Status}}' "$service")"
+              health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$service")"
+              echo "${service}_state=$status"
+              echo "${service}_health=$health"
+            done
+            echo "api_trust_gate_enabled=$(docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED)"
+            echo "worker_trust_gate_enabled=$(docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED)"
+            echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA)"
+            curl -fsS --connect-timeout 10 --max-time 30 https://staging-api.brain.fi/health
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v observation_since="$observation_since" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'trust-gate denial summary'
+            SELECT COUNT(*) FILTER (
+                     WHERE outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+                       AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_unknown'
+                   ) AS counterparty_trust_unknown_count,
+                   COUNT(*) FILTER (
+                     WHERE outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+                       AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_paused'
+                   ) AS counterparty_trust_paused_count,
+                   COUNT(*) FILTER (WHERE outputs->>'ok' = 'true') AS successful_execute_after_count,
+                   COUNT(*) FILTER (
+                     WHERE outputs->>'ok' = 'false'
+                       AND COALESCE(outputs->'failed_check'->'detail'->>'reason', '') NOT IN (
+                         'counterparty_trust_unknown', 'counterparty_trust_paused'
+                       )
+                   ) AS non_trust_execute_failure_count
+              FROM audit_events
+             WHERE action = 'payment_intent.execute.after'
+               AND created_at >= :'observation_since'::timestamptz;
+
+            \echo 'counterparty_trust_unknown events'
+            SELECT id,
+                   tenant_id,
+                   created_at,
+                   inputs->>'payment_intent_id' AS payment_intent_id,
+                   outputs->'failed_check' AS failed_check
+              FROM audit_events
+             WHERE action = 'payment_intent.execute.after'
+               AND created_at >= :'observation_since'::timestamptz
+               AND outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+               AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_unknown'
+             ORDER BY created_at, id
+             LIMIT 100;
+
+            \echo 'counterparty_trust_paused events with pause attribution'
+            SELECT ae.id,
+                   ae.tenant_id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   pi.destination_counterparty_id,
+                   cp.name AS counterparty_name,
+                   cp.trust_status AS current_trust_status,
+                   pause_event.id AS pause_event_id,
+                   pause_event.created_at AS pause_event_at,
+                   pause_event.actor AS paused_by,
+                   ae.outputs->'failed_check' AS failed_check
+              FROM audit_events ae
+              LEFT JOIN ledger_payment_intents pi
+                ON pi.owner_id = ae.tenant_id
+               AND pi.id = ae.inputs->>'payment_intent_id'
+              LEFT JOIN ledger_counterparties cp
+                ON cp.owner_id = pi.owner_id
+               AND cp.id = pi.destination_counterparty_id
+              LEFT JOIN LATERAL (
+                SELECT trust_event.id,
+                       trust_event.created_at,
+                       trust_event.actor
+                  FROM audit_events trust_event
+                 WHERE trust_event.tenant_id = ae.tenant_id
+                   AND trust_event.action = 'counterparty.trust.paused'
+                   AND trust_event.inputs->>'counterparty_id' = pi.destination_counterparty_id
+                   AND trust_event.created_at <= ae.created_at
+                 ORDER BY trust_event.created_at DESC, trust_event.id DESC
+                 LIMIT 1
+              ) pause_event ON TRUE
+             WHERE ae.action = 'payment_intent.execute.after'
+               AND ae.created_at >= :'observation_since'::timestamptz
+               AND ae.outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+               AND ae.outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_paused'
+             ORDER BY ae.created_at, ae.id
+             LIMIT 100;
+
+            \echo 'normal payment execution outcomes'
+            SELECT ae.id,
+                   ae.tenant_id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs->>'ok' AS gate_or_execution_ok,
+                   ae.outputs->'failed_check' AS failed_check,
+                   eo.status AS outbox_status,
+                   eo.attempt_count,
+                   eo.last_error,
+                   eo.completed_at AS outbox_completed_at,
+                   e.status AS execution_status,
+                   e.completed_at AS execution_completed_at
+              FROM audit_events ae
+              LEFT JOIN execution_outbox eo
+                ON eo.tenant_id = ae.tenant_id
+               AND eo.payment_intent_id = ae.inputs->>'payment_intent_id'
+              LEFT JOIN executions e
+                ON e.tenant_id = ae.tenant_id
+               AND e.id = eo.execution_id
+             WHERE ae.action = 'payment_intent.execute.after'
+               AND ae.created_at >= :'observation_since'::timestamptz
+             ORDER BY ae.created_at, ae.id
+             LIMIT 200;
+
+            COMMIT;
+            SQL
+            REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-24h-observation" ]]; then
+            run_trust_gate_24h_observation
             exit 0
           fi
 
