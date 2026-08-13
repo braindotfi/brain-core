@@ -23,7 +23,10 @@ export async function registerRawExtractRoute(
 ): Promise<void> {
   app.post(
     "/raw/:raw_id/extract",
-    async (request: FastifyRequest<{ Params: { raw_id: string } }>, reply: FastifyReply) => {
+    async (
+      request: FastifyRequest<{ Params: { raw_id: string }; Body: { retry?: boolean } }>,
+      reply: FastifyReply,
+    ) => {
       const principal = request.principal;
       if (principal === undefined) {
         throw brainError("auth_token_missing", "principal required");
@@ -33,7 +36,8 @@ export async function registerRawExtractRoute(
         throw brainError("request_params_invalid", "malformed raw_id");
       }
 
-      const job = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
+      const retry = request.body?.retry === true;
+      const result = await withTenantScope(deps.pool, principal.tenantId, async (c) => {
         const artifact = await findArtifactById(c, request.params.raw_id);
         if (artifact === null) {
           throw brainError("raw_artifact_not_found", "raw artifact not found", {
@@ -45,24 +49,30 @@ export async function registerRawExtractRoute(
             statusOverride: 410,
           });
         }
+        const latest = await findLatestExtractionJob(c, artifact.id);
+        if (latest !== null && isTerminalJobForArtifact(latest, artifact.sha256) && !retry) {
+          return { job: latest, enqueued: false };
+        }
         const enqueued = await enqueueExtractionJob(c, {
           tenantId: principal.tenantId,
           rawId: artifact.id,
           contentSha256: artifact.sha256,
           requestedBy: principal.id,
+          requeueSucceeded: retry,
         });
-        return enqueued.row;
+        return { job: enqueued.row, enqueued: true };
       });
-      if (deps.afterEnqueue === undefined) {
-        reply.status(job.status === "queued" || job.status === "running" ? 202 : 200);
-        return extractionJobToWire(job);
+      if (!result.enqueued || deps.afterEnqueue === undefined) {
+        assertExtractionJobIsHonest(result.job);
+        reply.status(result.job.status === "queued" || result.job.status === "running" ? 202 : 200);
+        return extractionJobToWire(result.job);
       }
 
-      await deps.afterEnqueue(job);
+      await deps.afterEnqueue(result.job);
       const latest = await withTenantScope(deps.pool, principal.tenantId, async (c) =>
-        findLatestExtractionJob(c, request.params.raw_id),
+        findLatestExtractionJob(c, result.job.raw_id),
       );
-      const responseJob = latest ?? job;
+      const responseJob = latest ?? result.job;
       assertExtractionJobIsHonest(responseJob);
       reply.status(responseJob.status === "queued" || responseJob.status === "running" ? 202 : 200);
       return extractionJobToWire(responseJob);
@@ -98,6 +108,13 @@ export async function registerRawExtractRoute(
       });
       return extractionJobToWire(job);
     },
+  );
+}
+
+function isTerminalJobForArtifact(job: ExtractionJobRow, contentSha256: Buffer): boolean {
+  return (
+    (job.status === "succeeded" || job.status === "failed") &&
+    job.content_sha256.equals(contentSha256)
   );
 }
 
