@@ -98,7 +98,10 @@ To lift the cap, a human or a higher-trust source has to corroborate. Once corro
 
 ### Authorization
 
-The `raw:write` scope is one of the five MCP capability scopes. It is granted by the tenant at agent registration time via an EIP-712 signature, and the hash of the canonical scope document is anchored in `BrainMCPAgentRegistry`. Without `raw:write`, calls to `raw.contribute` are rejected with JSON-RPC error `-32004` (scope insufficient).
+The `raw:write` scope is one of the six MCP scopes an external agent may hold.
+Without `raw:write`, calls to `raw.contribute` are rejected with JSON-RPC error
+`-32002` (`auth_scope_insufficient`). JSON-RPC error `-32004` is reserved for
+payment-intent gate failures.
 
 [**→ MCP Authentication**](../mcp-server/mcp-authentication.md)
 

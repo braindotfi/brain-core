@@ -52,7 +52,6 @@ The Ledger Layer normalizes raw evidence into standard linkable objects.
 | `obligations`              | Subscriptions, recurring charges, contracts |
 | `cash_flows`               | Aggregations and forecasts                  |
 | `assets` and `liabilities` | Holdings and debts                          |
-| `permissions`              | Authorizations affecting the Ledger         |
 | `events`                   | Lifecycle events tied to records            |
 
 #### Post-Projection Agent Routing
@@ -78,23 +77,19 @@ duplicate agent proposals.
 
 Every Ledger record carries:
 
-| Field               | What It Contains                             |
-| ------------------- | -------------------------------------------- |
-| `raw_refs`          | The Raw artifact hashes that produced it     |
-| `extractor_version` | The deterministic extractor that produced it |
-| `confidence`        | A calibrated score from 0 to 1               |
-| `supersedes`        | Optional pointer to the record this corrects |
+| Field          | What It Contains                                        |
+| -------------- | ------------------------------------------------------- |
+| `source_ids`   | Raw artifact identifiers that contributed to the record |
+| `evidence_ids` | Parsed-evidence identifiers that support the record     |
+| `provenance`   | The record's trust classification, such as `extracted`  |
+| `confidence`   | A calibrated score from 0 to 1                          |
 
 #### Immutability
 
-Records are immutable and append-only. Corrections are written as superseding records that reference what they correct.
-
-```
-record_v1: { id: "tx_001", amount: 1234.56, supersedes: null }
-record_v2: { id: "tx_002", amount: 1234.65, supersedes: "tx_001" }
-```
-
-The history is preserved. Any reader can replay the chain to see how the value evolved.
+The current Ledger schema does not define a generic `supersedes` pointer for
+record corrections. Provenance and linked source and evidence identifiers remain
+on each record, while domain-specific services and audit events record their own
+update history.
 
 ### Why Ledger Sits Between Raw and Wiki
 
