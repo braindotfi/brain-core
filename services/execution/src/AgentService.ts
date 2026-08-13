@@ -33,11 +33,14 @@ import type { AgentAuthority } from "@brain/schemas";
 import {
   findProposal,
   findPendingCollectionsProposalForInvoice,
+  findPendingProposalForSubject,
   insertProposal,
   listAgents,
   lockCollectionsProposalForInvoice,
+  lockPendingProposalForSubject,
   findAgent,
   refreshCollectionsProposal,
+  refreshPendingProposal,
   insertAgent,
   markAgentRegistered,
   transitionProposal,
@@ -114,6 +117,43 @@ function collectionsInvoiceId(agentId: string, action: Record<string, unknown>):
   return typeof invoiceId === "string" && invoiceId.length > 0 ? invoiceId : null;
 }
 
+/**
+ * Subject keys for the agent types confirmed to re-propose an unchanged
+ * finding on every evaluation. Empty compliance identifiers are deliberately
+ * absent, so unrelated unresolved findings never share a synthetic subject.
+ */
+function proposalSubjectKey(
+  agentId: string,
+  action: Record<string, unknown>,
+): { field: string; value: string } | null {
+  const stringValue = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+
+  switch (agentId) {
+    case "vendor_risk": {
+      const vendorId = stringValue(action["vendor_id"]);
+      if (vendorId !== null) return { field: "vendor_id", value: vendorId };
+      const counterpartyId = stringValue(action["counterparty_id"]);
+      return counterpartyId !== null ? { field: "counterparty_id", value: counterpartyId } : null;
+    }
+    case "subscription":
+    case "fraud_anomaly": {
+      const transactionId = stringValue(action["transaction_id"]);
+      return transactionId !== null ? { field: "transaction_id", value: transactionId } : null;
+    }
+    case "compliance": {
+      const policyDecisionId = stringValue(action["policy_decision_id"]);
+      if (policyDecisionId !== null) {
+        return { field: "policy_decision_id", value: policyDecisionId };
+      }
+      const auditEventId = stringValue(action["audit_event_id"]);
+      return auditEventId !== null ? { field: "audit_event_id", value: auditEventId } : null;
+    }
+    default:
+      return null;
+  }
+}
+
 export class AgentService implements IAgentService {
   public constructor(private readonly deps: AgentServiceDeps) {}
 
@@ -134,6 +174,7 @@ export class AgentService implements IAgentService {
     const id = newProposalId();
 
     const invoiceId = collectionsInvoiceId(agentId, action);
+    const subjectKey = invoiceId === null ? proposalSubjectKey(agentId, action) : null;
     let proposalId = id;
     let refreshed = false;
     let previousAction: Record<string, unknown> | null = null;
@@ -145,6 +186,34 @@ export class AgentService implements IAgentService {
         if (existing !== null) {
           previousAction = existing.action;
           await refreshCollectionsProposal(c, existing, {
+            action,
+            policyVersion: policyResult.policy_version,
+            policyDecision: policyResult.outcome,
+            policyTrace: policyResult.trace as never,
+            requiredApprovers: policyResult.required_approvers,
+            status,
+          });
+          proposalId = existing.id;
+          refreshed = true;
+          return;
+        }
+      } else if (subjectKey !== null) {
+        await lockPendingProposalForSubject(
+          c,
+          ctx.tenantId,
+          agentId,
+          subjectKey.field,
+          subjectKey.value,
+        );
+        const existing = await findPendingProposalForSubject(
+          c,
+          agentId,
+          subjectKey.field,
+          subjectKey.value,
+        );
+        if (existing !== null) {
+          previousAction = existing.action;
+          await refreshPendingProposal(c, existing, {
             action,
             policyVersion: policyResult.policy_version,
             policyDecision: policyResult.outcome,
@@ -183,6 +252,7 @@ export class AgentService implements IAgentService {
         action_kind: String(action["kind"] ?? "agent_action"),
         proposal_id: proposalId,
         ...(invoiceId !== null ? { invoice_id: invoiceId } : {}),
+        ...(subjectKey !== null ? { [subjectKey.field]: subjectKey.value } : {}),
       },
       outputs: {
         status,
