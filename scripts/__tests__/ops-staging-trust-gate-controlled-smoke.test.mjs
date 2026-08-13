@@ -17,17 +17,20 @@ test("controlled trust-gate smoke is staging-only and restores the process flag"
   assert.match(workflow, /runtime_flag_before_api=false/);
   assert.match(workflow, /runtime_flag_before_worker=false/);
   assert.match(workflow, /trust_gate_baseline_complete=true/);
+  assert.match(workflow, /trust_gate_baseline_remote_complete/);
   assert.match(workflow, /runtime_flag_enabled_api=true/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=false/);
   assert.match(workflow, /TRUST_GATE_SMOKE_MUTATION_STARTED=true/);
   assert.match(workflow, /if: always\(\) && env\.TRUST_GATE_SMOKE_MUTATION_STARTED == 'true'/);
-  assert.match(workflow, /runtime_flag_after_api=\$api_flag/);
+  assert.match(workflow, /runtime_flag_after_api=%s/);
+  assert.match(workflow, /s\/\^runtime_flag_after_api=\/\/p/);
   assert.match(workflow, /output\.append\(f"\{key\}=true"\)/);
   assert.match(workflow, /output\.append\(f"\{key\}=false"\)/);
   assert.match(workflow, /trust_gate_enable_remote_complete/);
   assert.match(workflow, /trust_gate_restore_remote_complete/);
   assert.match(workflow, /trust_gate_matrix_remote_complete/);
-  assert.match(workflow, /trust_gate_confirmation_complete=true/);
+  assert.match(workflow, /trust_gate_confirmation_remote_complete/);
+  assert.match(workflow, /Staging trust-gate confirmation remote step did not complete/);
 });
 
 test("controlled trust-gate smoke exercises the denial matrix without rail dispatch", () => {
@@ -48,6 +51,9 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /payment_intent_approve_request payment_intent_id=/);
   assert.match(workflow, /payment_intent_approve_response_status=/);
   assert.match(workflow, /payment_intent_approve_response=/);
+  assert.match(workflow, /payment_intent_execute_request matrix=/);
+  assert.match(workflow, /payment_intent_execute_response_status=/);
+  assert.match(workflow, /payment_intent_execute_response=/);
   assert.match(workflow, /Expected 200 while approving smoke payment intent/);
   assert.match(workflow, /payment_intent_create_api_log request_id=/);
   assert.match(workflow, /missing_source_account_response_status=/);
@@ -56,6 +62,7 @@ test("controlled trust-gate smoke exercises the denial matrix without rail dispa
   assert.match(workflow, /smoke_source_account_id=/);
   assert.match(workflow, /INSERT INTO ledger_accounts/);
   assert.match(workflow, /fixture_counterparty_reference_removed/);
+  assert.match(workflow, /fixture_source_account_reference_removed/);
   assert.match(workflow, /session_replication_role = replica/);
   assert.match(workflow, /docker logs --since 2m brain-prod-api/);
   assert.match(workflow, /for attempt in \$\(seq 1 8\)/);
