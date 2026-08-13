@@ -18,6 +18,9 @@ const EXTERNAL_AGENT_ARTIFACT = { source_type: "email_attachment" };
 const BANK_STATEMENT_FIXTURE = readFileSync(
   new URL("../../../raw/src/interpreters/__fixtures__/bank_statement_2026-06.pdf", import.meta.url),
 );
+const AR_AGING_XLSX_FIXTURE = readFileSync(
+  new URL("../../../raw/src/interpreters/__fixtures__/ar_aging_2026-06-30.xlsx", import.meta.url),
+);
 
 function artifactRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -186,12 +189,12 @@ describe("runDocumentExtractionCycle", () => {
     expect(failed?.values?.[1]).toContain("dependency_unavailable");
   });
 
-  it("never sends an unsupported CSV upload to the external document extractor", async () => {
+  it("never sends an XLSX upload with unsupported headers to the external document extractor", async () => {
     const app = appPool({
       artifact: {
-        source_type: "csv_upload",
+        source_type: "xlsx_upload",
         source_schema: "brain.upload.document.v1",
-        mime_type: "text/csv",
+        mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       },
     });
     const client: DocumentExtractPort = { extract: vi.fn() };
@@ -209,6 +212,64 @@ describe("runDocumentExtractionCycle", () => {
     expect(client.extract).not.toHaveBeenCalled();
     const failed = app.updates.find((u) => u.kind === "failed");
     expect(failed?.values?.[1]).toContain("raw_source_unsupported");
+  });
+
+  it("parses a real XLSX upload in process and skips the external agent", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "xlsx_upload",
+        source_schema: "brain.upload.document.v1",
+        source_ref: { filename: "ar_aging_2026-06-30.xlsx" },
+        mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => {
+        throw new Error("external agent should not be called");
+      }),
+    };
+
+    await runDocumentExtractionCycle(
+      { scanPool: scanPool(), appPool: app.pool, blob: blob(AR_AGING_XLSX_FIXTURE), client },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).not.toHaveBeenCalled();
+    const inserted = app.updates.find((u) => u.kind === "parsed");
+    expect(inserted?.values?.[3]).toBe("document_records_upload_v1");
+    const extracted = JSON.parse(String(inserted?.values?.[5])) as {
+      object_type?: string;
+      receivables?: unknown[];
+    };
+    expect(extracted.object_type).toBe("ar_aging");
+    expect(extracted.receivables).toHaveLength(8);
+  });
+
+  it("sends text uploads to the external document extractor", async () => {
+    const app = appPool({
+      artifact: {
+        source_type: "txt_upload",
+        source_schema: null,
+        source_ref: { filename: "vendor-note.txt" },
+        mime_type: "text/plain",
+      },
+    });
+    const client: DocumentExtractPort = {
+      extract: vi.fn(async () => ({
+        parsed_id: "prs_01TEST000000000000000000000",
+        parser: "doc_obligation_v1",
+        confidence: 0.91,
+      })),
+    };
+
+    await runDocumentExtractionCycle(
+      { scanPool: scanPool(), appPool: app.pool, blob: blob("Vendor invoice note"), client },
+      { batchSize: 1 },
+    );
+
+    expect(client.extract).toHaveBeenCalledOnce();
+    const succeeded = app.updates.find((u) => u.kind === "succeeded");
+    expect(succeeded?.values).toEqual([JOB_ID, "prs_01TEST000000000000000000000", 0.5]);
   });
 
   it("calls the extractor from the worker and caps recorded confidence at 0.5", async () => {

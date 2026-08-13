@@ -410,6 +410,8 @@ function sourceTrust(sourceType: string): TrustLevel {
   if (
     sourceType === "agent_contributed" ||
     sourceType === "csv_upload" ||
+    sourceType === "xlsx_upload" ||
+    sourceType === "txt_upload" ||
     sourceType === "pdf_upload" ||
     sourceType === "email_inbound" ||
     sourceType === "other"

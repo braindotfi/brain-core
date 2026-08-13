@@ -17,13 +17,20 @@ import {
 } from "./stubs.js";
 import { StripeAdapter } from "./stripe.js";
 import type { SourceAdapter } from "./types.js";
-import { CsvUploadAdapter, PdfUploadAdapter } from "./upload.js";
+import {
+  CsvUploadAdapter,
+  PdfUploadAdapter,
+  TxtUploadAdapter,
+  XlsxUploadAdapter,
+} from "./upload.js";
 import { CONNECTOR_DESCRIPTORS, type ConnectorDescriptor } from "./descriptors.js";
 import { FinchAdapter } from "./finch.js";
 import { MergeAccountingAdapter } from "./merge_accounting.js";
 
 const ADAPTERS: ReadonlyArray<SourceAdapter> = [
   CsvUploadAdapter,
+  XlsxUploadAdapter,
+  TxtUploadAdapter,
   PdfUploadAdapter,
   PlaidAdapter,
   StripeAdapter,

@@ -677,7 +677,7 @@ export interface paths {
         /**
          * Trigger a sync for a source
          * @description Requires `raw:write`. Stub connectors (netsuite, email_inbound,
-         *     csv_upload, pdf_upload, alchemy_wallet, eth_address) return
+         *     csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address) return
          *     immediately with `notes: "stub"` rather than performing a real sync.
          *     The returned `job_id` can be polled with
          *     `GET /sources/{source_id}/sync/{job_id}`.
@@ -3820,10 +3820,10 @@ export interface components {
             error_description?: string;
         };
         /**
-         * @description One reconciled, provider-named artifact source vocabulary: the eight connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
+         * @description One reconciled, provider-named artifact source vocabulary: the connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
          * @enum {string}
          */
-        RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
+        RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "xlsx_upload" | "txt_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
         RawIngestResponse: {
             raw_id?: string;
             sha256?: string;
@@ -3882,7 +3882,7 @@ export interface components {
          * @description Connectable source-connector vocabulary for POST /sources. A subset of RawSourceType — excludes the non-connector origins (agent_contributed, wiki_annotation, other).
          * @enum {string}
          */
-        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
+        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "xlsx_upload" | "txt_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
         /**
          * @description Derived source freshness. `fresh` means the source synced within the
          *     last 24 hours. `stale` means the last sync is older than 24 hours.
@@ -3911,7 +3911,7 @@ export interface components {
                 [key: string]: unknown;
             };
             error_message: string | null;
-            /** @description True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub". */
+            /** @description True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub". */
             is_stub: boolean;
             /** Format: date-time */
             created_at: string;
