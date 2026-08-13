@@ -30,7 +30,6 @@ import {
   CUSTOMER_ASSERTED_CSV_PARSER,
   defaultSourceSchemaForUpload,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
-  UPLOAD_DOCUMENT_SCHEMA,
   UPLOAD_DOCUMENT_INTERPRETER_VERSION,
 } from "../interpreters/upload.js";
 
