@@ -366,6 +366,148 @@ describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", 
   });
 });
 
+describe("PaymentIntentService.create — proposal-layer idempotency (BRAIN-94)", () => {
+  const DEDUP_KEY = "mcp:payment_intent.propose:agent_X:deadbeef";
+
+  function makeFakePoolWithDedup(opts: {
+    existingByDedupKey?: PaymentIntentRow | null;
+    insertError?: unknown;
+  }): { pool: Pool; calls: { sql: string; values: unknown[] }[] } {
+    const calls: { sql: string; values: unknown[] }[] = [];
+    let insertCount = 0;
+    const client = {
+      query: vi.fn((sql: string, values?: unknown[]) => {
+        calls.push({ sql, values: values ?? [] });
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        if (sql.includes("proposal_dedup_key = $1")) {
+          const existing = opts.existingByDedupKey ?? null;
+          return Promise.resolve({
+            rows: existing === null ? [] : [existing],
+            rowCount: existing === null ? 0 : 1,
+          });
+        }
+        if (sql.includes("INSERT INTO ledger_payment_intents")) {
+          insertCount += 1;
+          if (opts.insertError !== undefined) return Promise.reject(opts.insertError);
+          return Promise.resolve({ rows: [insertedRow()], rowCount: 1 });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+      release: vi.fn(),
+    };
+    return {
+      pool: { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool,
+      calls,
+    };
+  }
+
+  it("returns the existing intent unchanged on a dedup-key hit, without inserting a second row", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const existing = { ...insertedRow(), id: "pi_EXISTING", proposal_dedup_key: DEDUP_KEY };
+    const { pool, calls } = makeFakePoolWithDedup({ existingByDedupKey: existing });
+    const evaluatePolicy = vi.fn(async () => DECISION);
+    const service = new PaymentIntentService({
+      pool,
+      audit,
+      outbox: new OutboxService(),
+      approvals: new ApprovalService({ pool, audit, resolveRole: async () => null }),
+      resolveAgent: async () => null,
+      resolveAccount: async () => SOURCE_ACCOUNT,
+      resolveCounterparty: async () => null,
+      resolvePrincipal: async () => GATE_PRINCIPAL,
+      evaluatePolicy,
+    });
+
+    const result = await service.create(ctx, { ...baseInput, proposal_dedup_key: DEDUP_KEY });
+
+    expect(result.id).toBe("pi_EXISTING");
+    // The replay never re-runs policy or touches resolveAccount -- it returns
+    // before either, which is also what keeps a retry cheap.
+    expect(evaluatePolicy).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.sql.includes("INSERT INTO ledger_payment_intents"))).toBe(false);
+    expect(audit.events.some((e) => e.action === "payment_intent.created")).toBe(false);
+  });
+
+  it("passes proposal_dedup_key through to the insert on a genuine first create", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePoolWithDedup({ existingByDedupKey: null });
+    const service = makeService(pool, audit);
+
+    await service.create(ctx, { ...baseInput, proposal_dedup_key: DEDUP_KEY });
+
+    const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
+    // proposal_dedup_key is the 17th positional param ($17) -> values index 16.
+    expect(insert?.values[16]).toBe(DEDUP_KEY);
+  });
+
+  it("on a unique-violation race, returns the winner row instead of throwing", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const winner = { ...insertedRow(), id: "pi_WINNER", proposal_dedup_key: DEDUP_KEY };
+    const uniqueViolation = Object.assign(new Error("duplicate key"), { code: "23505" });
+    const calls: { sql: string; values: unknown[] }[] = [];
+    let dedupLookupCount = 0;
+    const client = {
+      query: vi.fn((sql: string, values?: unknown[]) => {
+        calls.push({ sql, values: values ?? [] });
+        if (
+          sql === "BEGIN" ||
+          sql === "COMMIT" ||
+          sql === "ROLLBACK" ||
+          sql.startsWith("SELECT set_config")
+        ) {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        if (sql.includes("proposal_dedup_key = $1")) {
+          dedupLookupCount += 1;
+          // First lookup (pre-insert): miss, so create() proceeds to insert.
+          // Second lookup (post-race, inside the catch): the winner is there.
+          if (dedupLookupCount === 1) return Promise.resolve({ rows: [], rowCount: 0 });
+          return Promise.resolve({ rows: [winner], rowCount: 1 });
+        }
+        if (sql.includes("INSERT INTO ledger_payment_intents")) {
+          return Promise.reject(uniqueViolation);
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(() => Promise.resolve(client)) } as unknown as Pool;
+    const service = makeService(pool, audit);
+
+    const result = await service.create(ctx, { ...baseInput, proposal_dedup_key: DEDUP_KEY });
+
+    expect(result.id).toBe("pi_WINNER");
+  });
+
+  it("rethrows an insert error that is NOT a unique violation", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const otherError = Object.assign(new Error("connection reset"), { code: "08006" });
+    const { pool } = makeFakePoolWithDedup({ existingByDedupKey: null, insertError: otherError });
+    const service = makeService(pool, audit);
+
+    await expect(service.create(ctx, { ...baseInput, proposal_dedup_key: DEDUP_KEY })).rejects.toBe(
+      otherError,
+    );
+  });
+
+  it("skips the dedup lookup entirely when no proposal_dedup_key is supplied", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, calls } = makeFakePoolWithDedup({});
+    const service = makeService(pool, audit);
+
+    await service.create(ctx, baseInput);
+
+    expect(calls.some((c) => c.sql.includes("proposal_dedup_key = $1"))).toBe(false);
+  });
+});
+
 describe("PaymentIntentService.create — obligation-direction gate (Codex 2026-06-05 P2)", () => {
   it("rejects a new obligation-linked intent whose direction is unknown (null)", async () => {
     const audit = new InMemoryAuditEmitter();

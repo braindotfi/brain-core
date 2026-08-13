@@ -374,18 +374,19 @@ function makeServer(
   const proposals = fakeProposals();
   const evidence = fakeEvidence();
   const raw = opts.raw ?? fakeRaw();
+  const paymentIntents = fakePI();
   const server = new BrainMcpServer({
     auth: new FakeAuthVerifier(ACTIVE_AGENT),
     ledger: fakeLedger(),
     wiki: fakeWiki(),
     raw,
     ...(opts.rawReaderPool !== undefined ? { rawReaderPool: opts.rawReaderPool } : {}),
-    paymentIntents: fakePI(),
+    paymentIntents,
     proposals,
     evidence,
     audit,
   });
-  return { server, audit, proposals, evidence, raw, p: principal(scopes) };
+  return { server, audit, proposals, evidence, raw, paymentIntents, p: principal(scopes) };
 }
 
 function makeServerWithoutProposalDeps(scopes: string[] = ["execution:read"]) {
@@ -1105,6 +1106,73 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
       expect(r.content[0]!.text).toContain("PaymentIntent `pi_TEST`");
     }
     expect(audit.events.some((e) => e.action === "agent.mcp.tool_called")).toBe(true);
+  });
+
+  it("BRAIN-94: derives a deterministic proposal_dedup_key so a byte-identical retry collides", async () => {
+    const { server, paymentIntents, p } = makeServer(["payment_intent:propose"]);
+    const call = {
+      jsonrpc: "2.0" as const,
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "payment_intent.propose",
+        arguments: {
+          action_type: "ach_outbound",
+          source_account_id: "acct_x",
+          destination_counterparty_id: "cp_y",
+          amount: "10.00",
+          currency: "USD",
+        },
+      },
+    };
+
+    await server.handle(call, p);
+    await server.handle(call, p);
+
+    const create = paymentIntents.create as unknown as ReturnType<typeof vi.fn>;
+    expect(create).toHaveBeenCalledTimes(2);
+    const firstKey = (create.mock.calls[0]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    const secondKey = (create.mock.calls[1]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    expect(firstKey).toBeDefined();
+    expect(firstKey).toBe(secondKey);
+  });
+
+  it("BRAIN-94: a different amount derives a different proposal_dedup_key", async () => {
+    const { server, paymentIntents, p } = makeServer(["payment_intent:propose"]);
+    const baseArgs = {
+      action_type: "ach_outbound",
+      source_account_id: "acct_x",
+      destination_counterparty_id: "cp_y",
+      currency: "USD",
+    };
+
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.propose", arguments: { ...baseArgs, amount: "10.00" } },
+      },
+      p,
+    );
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.propose", arguments: { ...baseArgs, amount: "20.00" } },
+      },
+      p,
+    );
+
+    const create = paymentIntents.create as unknown as ReturnType<typeof vi.fn>;
+    const firstKey = (create.mock.calls[0]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    const secondKey = (create.mock.calls[1]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    expect(firstKey).not.toBe(secondKey);
   });
 });
 

@@ -107,6 +107,15 @@ export interface CreatePaymentIntentInput {
    * by gate check 6.6.
    */
   job_terms_hash?: string;
+  /**
+   * Proposal-layer idempotency key (1a.5, BRAIN-94). When set, create() first
+   * looks up an existing PaymentIntent with this key (scoped by the partial
+   * unique index on ledger_payment_intents(owner_id, proposal_dedup_key)) and
+   * returns it unchanged instead of creating a second row. A caller retrying
+   * an identical propose call after a lost response supplies the same key on
+   * retry and gets back the original intent rather than a duplicate.
+   */
+  proposal_dedup_key?: string;
 }
 
 export interface ExecuteResult {

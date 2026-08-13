@@ -281,14 +281,28 @@ export class BrainMcpServer {
     ok: boolean,
     extra: Record<string, unknown>,
   ): Promise<void> {
-    await this.deps.audit.emit({
-      tenantId: ctx.ctx.tenantId,
-      layer: "agent",
-      actor: ctx.ctx.actor,
-      action: "agent.mcp.tool_called",
-      inputs: { tool: label },
-      outputs: { ok, ...extra },
-    });
+    // BRAIN-94: best-effort, matching emitRejectionAudit below. A transient
+    // audit-sink failure on the success path used to propagate out of
+    // toolsCall/resourcesRead and turn an already-committed success into a
+    // thrown error, which is exactly the signal that prompts a client retry
+    // -- and a retry of payment_intent.propose is the duplicate-PaymentIntent
+    // path BRAIN-94 closes on the create() side. Swallowing here means a
+    // genuine tool error (thrown by the tool itself, caught by the caller,
+    // and re-thrown after this call) is never masked: this function no
+    // longer throws at all, so the caller's own throw is always what
+    // propagates.
+    try {
+      await this.deps.audit.emit({
+        tenantId: ctx.ctx.tenantId,
+        layer: "agent",
+        actor: ctx.ctx.actor,
+        action: "agent.mcp.tool_called",
+        inputs: { tool: label },
+        outputs: { ok, ...extra },
+      });
+    } catch {
+      // Swallowed. See comment above.
+    }
   }
 
   /**
