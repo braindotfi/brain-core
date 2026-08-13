@@ -626,8 +626,8 @@ jobs:
              LIMIT 200;
 
             COMMIT;
-            SQL
-            REMOTE
+          SQL
+          REMOTE
           }
 
           if [[ "$DIAGNOSTIC" == "trust-gate-24h-observation" ]]; then
