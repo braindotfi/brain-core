@@ -561,6 +561,7 @@ export interface paths {
          *     projection before returning when the worker dependencies are available.
          *     A terminal job for the same raw artifact and content hash is reused.
          *     Send `{ "retry": true }` to explicitly re-enqueue a terminal job.
+         *     Use `GET /raw/{raw_id}/extraction` to read the latest job status.
          */
         post: operations["extractRawDocument"];
         delete?: never;
