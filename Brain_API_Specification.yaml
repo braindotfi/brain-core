@@ -4041,29 +4041,40 @@ paths:
       description: |
         Single-shot HTTP transport for the Brain MCP (Model Context
         Protocol) surface. The request body is a JSON-RPC 2.0 envelope;
-        the response is a JSON-RPC 2.0 envelope (always HTTP 200 unless
-        the transport itself fails — application-level errors are
-        carried inside the `error` field).
+        the response is a JSON-RPC 2.0 envelope over HTTP 200, EXCEPT a
+        JSON-RPC notification (a request with no `id`, e.g. the mandatory
+        `notifications/initialized` handshake message), which per spec
+        gets no JSON-RPC response at all — this route answers those
+        with `202 Accepted` and an empty body instead.
 
         Authentication: standard Brain JWT bearer with
-        `principal_type=agent`. Before any method is dispatched the MCP
-        server verifies (a) the agent record is `active`, (b) the JWT's
-        `scope_hash` matches the on-chain hash registered in
-        `BrainMCPAgentRegistry`, and (c) tenant equality. These
-        pre-dispatch checks fail with an HTTP 401/403 Brain error
-        envelope — NOT a JSON-RPC response. The JSON-RPC `McpErrorCode`
-        range (-32001..-32005) is reserved for failures raised *after*
-        authentication, inside method dispatch — chiefly per-tool scope
-        checks (-32002) and §6 gate failures (-32004).
+        `principal_type=agent`, issued by `auth.brain.fi` and verified
+        via its JWKS. There is no `scope_hash` claim on the JWT itself.
+        Before any method is dispatched the MCP server verifies (a) the
+        agent record is `active`, (b) the JWT's `tenant_id` matches that
+        DB row's `tenant_id`, (c) the agent is registered and not revoked
+        in `BrainMCPAgentRegistry`, and (d) the DB row's `scope_hash`
+        matches the on-chain hash. These pre-dispatch checks fail with an
+        HTTP 401/403 Brain error envelope — NOT a JSON-RPC response. The
+        JSON-RPC `McpErrorCode` range (-32001..-32005) is reserved for
+        failures raised *after* authentication, inside method dispatch —
+        chiefly per-tool scope checks (-32002) and §6 gate failures
+        (-32004). The not-found family (e.g. `ledger_row_not_found`) maps
+        to the standard -32602 (invalid params), not -32603.
 
         Supported methods (v0.3):
-          * `initialize`, `ping`
-          * `tools/list`, `tools/call` — 12 tools across ledger, wiki,
-            raw evidence, payment intents (propose/cancel/list), and
-            agent action proposals
-          * `resources/list`, `resources/read` — 7 resource templates
+          * `initialize` (negotiates protocolVersion; supports
+            2024-11-05, 2025-03-26, 2025-06-18), `ping`
+          * `tools/list`, `tools/call` — 17 tools across ledger, wiki,
+            raw evidence read and contribute, payment intents
+            (propose/cancel/list), proposals, evidence, and agent action
+            proposals. `tools/list` returns the full registry regardless
+            of the caller's granted scopes.
+          * `resources/list` — the one concrete (non-templated) resource
+          * `resources/templates/list` — the six templated resources
             (ledger accounts/transactions/obligations/payment-intents,
-            wiki pages, payments action_types catalog, action proofs)
+            wiki pages, action proofs), each with a `{...}` placeholder
+          * `resources/read`
           * `prompts/list`, `prompts/get` — 5 canned prompts
 
         Tools enforce per-call scopes (e.g. `ledger:read`,
@@ -9125,8 +9136,11 @@ components:
             - { type: integer }
             - { type: 'null' }
           description: |
-            Request id echoed in the response. Omit for notifications
-            (Brain's MCP surface treats notifications as no-ops at v0.3).
+            Request id echoed in the response. OMIT this member entirely for
+            a notification (e.g. the mandatory notifications/initialized
+            handshake message) -- per JSON-RPC 2.0, a notification gets no
+            response at all, and this route answers it with 202 Accepted and
+            an empty body rather than a JSON-RPC envelope.
         method:
           type: string
           enum:
@@ -9135,9 +9149,12 @@ components:
             - tools/list
             - tools/call
             - resources/list
+            - resources/templates/list
             - resources/read
             - prompts/list
             - prompts/get
+            - notifications/initialized
+            - notifications/cancelled
         params:
           type: object
           description: |
@@ -9211,7 +9228,12 @@ components:
       properties:
         protocolVersion:
           type: string
-          example: '2024-11-05'
+          description: |
+            Negotiated per the MCP spec: if the client's requested
+            protocolVersion is one of 2024-11-05, 2025-03-26, or 2025-06-18,
+            the server echoes it back. Otherwise (including when none was
+            requested) it responds with the latest it supports, 2025-06-18.
+          example: '2025-06-18'
         serverInfo:
           type: object
           required: [name, version]

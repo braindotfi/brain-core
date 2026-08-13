@@ -16,9 +16,9 @@ The MCP surface uses single-shot HTTP. One request, one response, one audit even
 
 ### Surface Map
 
-The MCP surface is intentionally small. **16 tools, 7 resource templates, 5 canned prompts.**
+The MCP surface is intentionally small. **17 tools, 1 concrete resource plus 6 resource templates, 5 canned prompts.**
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 16 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, three PaymentIntent (propose, cancel, list), three proposal tools (list, get, decide), one evidence resolve, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 7 Resources</strong></td><td>Resource templates addressable by <code>brain://</code> URIs: ledger accounts/transactions/obligations/payment-intents, wiki pages, payments/action_types catalog, and per-action proofs.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>. Per-tenant rate limit on the route so one misbehaving agent cannot crowd out other tenants.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ 17 Tools</strong></td><td>Five Ledger reads, two Wiki reads, one Raw contribute, one Raw artifact read, three PaymentIntent (propose, cancel, list), three proposal tools (list, get, decide), one evidence resolve, one agent action propose.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>📦 7 Resources</strong></td><td>One concrete resource (<code>brain://payments/action_types</code>) readable via <code>resources/read</code>, plus six templated <code>brain://</code> URIs (ledger accounts/transactions/obligations/payment-intents, wiki pages, per-action proofs) returned only from <code>resources/templates/list</code>, not <code>resources/list</code>.</td><td><a href="resources.md">resources.md</a></td><td></td></tr><tr><td><strong>💬 5 Prompts</strong></td><td>Canned prompts for the most common agent loops: cash flow, bills, spending, invoices, subscriptions.</td><td><a href="prompts.md">prompts.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>JWT plus on-chain scope hash verification against <code>BrainMCPAgentRegistry</code>. Per-tenant rate limit on the route so one misbehaving agent cannot crowd out other tenants.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
 
 ### What an External Agent Can Do
 
@@ -107,7 +107,6 @@ Content-Type: application/json
   "params": {
     "name": "wiki.question",
     "arguments": {
-      "tenant_id": "acme",
       "question": "What's our top expense category this month?"
     }
   }
@@ -121,13 +120,23 @@ Response:
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "content": [{ "type": "text", "text": "AWS at $61,404 across 3 environments." }],
-    "metadata": {
-      "ledger_evidence": [
-        { "type": "ledger_transactions", "id": "tx_4127" },
-        { "type": "ledger_transactions", "id": "tx_4128" }
+    "content": [
+      {
+        "type": "text",
+        "text": "**Q:** What's our top expense category this month?\n**A:** AWS at $61,404 across 3 environments.\n\nCited evidence:\n  - `tx_4127` (ledger_transaction): AWS Inc $61,404.00"
+      }
+    ],
+    "structuredContent": {
+      "answer": "AWS at $61,404 across 3 environments.",
+      "evidence": [
+        {
+          "entityId": "tx_4127",
+          "entityType": "ledger_transaction",
+          "excerpt": "AWS Inc $61,404.00"
+        }
       ],
-      "audit_event_id": "evt_a1b2c3..."
+      "model": "...",
+      "usage": { "inputTokens": 812, "outputTokens": 46 }
     }
   }
 }
@@ -135,4 +144,4 @@ Response:
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 16 tools in detail.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>How JWT and on-chain scope verification work together.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛠️ Tools</strong></td><td>The 17 tools in detail.</td><td><a href="tools.md">tools.md</a></td><td></td></tr><tr><td><strong>🪪 Authentication</strong></td><td>How JWT and on-chain scope verification work together.</td><td><a href="mcp-authentication.md">mcp-authentication.md</a></td><td></td></tr></tbody></table>
