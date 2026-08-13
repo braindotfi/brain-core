@@ -125,7 +125,7 @@ jobs:
           agent_id="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node -e '
             let body=""; process.stdin.on("data", c => body += c); process.stdin.on("end", () => { const v=JSON.parse(body); if (!/^agent_[0-9A-HJKMNP-TV-Z]{26}$/.test(v.agent?.id ?? "")) process.exit(1); process.stdout.write(v.agent.id); });
           ')"
-          counterparty_id="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT id FROM ledger_counterparties WHERE owner_id = '${smoke_tenant_id}' AND type = 'vendor' ORDER BY id LIMIT 1;")"
+          counterparty_id="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT id FROM ledger_counterparties WHERE owner_id = '${smoke_tenant_id}' AND type = 'vendor' ORDER BY id LIMIT 1;")"
           if [[ ! "$counterparty_id" =~ ^cp_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then echo "No vendor counterparty on isolated smoke tenant $smoke_tenant_id" >&2; exit 1; fi
 
           # The five-minute agent JWT is minted inside staging API only and never logged.
@@ -165,18 +165,18 @@ jobs:
           missing_counterparty_id='cp_01ARZ3NDEKTSV4RRFFQ69G5FAV'
           missing_intent="$(create_approved_intent "$missing_counterparty_id")"; expect_execute_failure missing_counterparty "$missing_intent" 5 counterparty_allowed 'counterparty not found'
           intent_ids="$unreviewed_intent,$trusted_intent,$paused_intent,$acknowledged_intent,$missing_intent"
-          outbox_count="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM execution_outbox WHERE tenant_id = '${smoke_tenant_id}' AND payment_intent_id = ANY(string_to_array('${intent_ids}', ','));")"
+          outbox_count="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM execution_outbox WHERE tenant_id = '${smoke_tenant_id}' AND payment_intent_id = ANY(string_to_array('${intent_ids}', ','));")"
           if [[ "$outbox_count" != 0 ]]; then echo "Controlled smoke unexpectedly enqueued $outbox_count rail dispatches" >&2; exit 1; fi
           audit_response="$(curl -fsS --connect-timeout 10 --max-time 30 "$API_BASE/v1/audit/events?limit=100" -H "Authorization: Bearer ${agent_token}")"
           printf '%s' "$audit_response" | SMOKE_INTENTS="$intent_ids" docker exec -i -e SMOKE_INTENTS brain-prod-api node -e '
             let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const ids=new Set(process.env.SMOKE_INTENTS.split(","));const es=JSON.parse(b).events.filter(e=>e.action==="payment_intent.execute.after"&&ids.has(e.inputs?.payment_intent_id));if(es.length!==5)process.exit(1);for(const e of es)console.log(JSON.stringify(e))})'
-          durable_after_count="$(docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ','));")"
+          durable_after_count="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ','));")"
           if [[ "$durable_after_count" != 5 ]]; then
             echo "Expected five durable payment_intent.execute.after events for $smoke_tenant_id, found $durable_after_count" >&2
             exit 1
           fi
           echo 'durable payment_intent.execute.after events'
-          docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c "SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ',')) ORDER BY created_at ASC, id ASC;"
+          docker exec brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c "SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE tenant_id = '${smoke_tenant_id}' AND action = 'payment_intent.execute.after' AND inputs->>'payment_intent_id' = ANY(string_to_array('${intent_ids}', ',')) ORDER BY created_at ASC, id ASC;"
           printf 'smoke_tenant_id=%s\nsmoke_counterparty_id=%s\nsmoke_outbox_rows=0\n' "$smoke_tenant_id" "$counterparty_id"
           REMOTE
           )"
@@ -230,10 +230,10 @@ jobs:
           echo "runtime_flag_after_worker=$worker_flag"
           echo "trust_gate_window_start=$WINDOW_START"
           echo "trust_gate_window_end=$window_end"
-          window_rows="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\"")"
+          window_rows="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\"")"
           printf '%s\n' "$window_rows"
           if [[ -n "${SMOKE_TENANT_ID:-}" ]]; then
-            foreign_event_count="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c \"SELECT count(*) FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz AND tenant_id <> '${SMOKE_TENANT_ID}';\"")"
+            foreign_event_count="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c \"SELECT count(*) FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz AND tenant_id <> '${SMOKE_TENANT_ID}';\"")"
             echo "window_non_fixture_execute_after_count=$foreign_event_count"
             if [[ "$foreign_event_count" != 0 ]]; then
               echo "A non-fixture payment_intent.execute.after event occurred during the temporary trust-gate window" >&2
