@@ -13,6 +13,7 @@ import { Pool } from "pg";
 import { PostgresAuditEmitter } from "@brain/shared";
 
 const AGENT_PROPOSAL_LOCK_NAMESPACE = 0x41474e54; // "AGNT"
+const REPORT_STATEMENT_TIMEOUT = "60s";
 
 function requireEnv(name) {
   const value = process.env[name]?.trim();
@@ -87,7 +88,10 @@ const subjectCte = `
 async function inReadOnlyTransaction(pool, fn) {
   await pool.query("BEGIN TRANSACTION READ ONLY");
   try {
-    await pool.query("SET LOCAL statement_timeout = '10s'");
+    // The full historical report ranks every pending eligible row. It is
+    // read-only and bounded by the workflow timeout, but needs headroom for
+    // the production backlog rather than failing at the old 10 second budget.
+    await pool.query(`SET LOCAL statement_timeout = '${REPORT_STATEMENT_TIMEOUT}'`);
     await pool.query("SET LOCAL lock_timeout = '1s'");
     const result = await fn();
     await pool.query("COMMIT");
