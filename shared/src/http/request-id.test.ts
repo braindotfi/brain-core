@@ -1,5 +1,8 @@
+import { Writable } from "node:stream";
+import Fastify from "fastify";
+import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { sanitizeRequestId } from "./request-id.js";
+import requestIdPlugin, { sanitizeRequestId } from "./request-id.js";
 
 describe("sanitizeRequestId", () => {
   it("accepts well-formed client-supplied IDs", () => {
@@ -28,5 +31,35 @@ describe("sanitizeRequestId", () => {
 
   it("permits the characters in Brain ID shapes", () => {
     expect(sanitizeRequestId("req_01HQ7K3.ABC:DEF-123")).toBe("req_01HQ7K3.ABC:DEF-123");
+  });
+
+  it("binds the Brain request id to subsequent Fastify log records", async () => {
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        lines.push(chunk.toString("utf8").trim());
+        callback();
+      },
+    });
+    const app = Fastify({ loggerInstance: pino({}, stream) });
+    await app.register(requestIdPlugin);
+    app.get("/probe", async (request) => {
+      request.log.warn("request-id correlation probe");
+      return { ok: true };
+    });
+
+    const requestId = "req_01HQ7K3ABCDEFGHJKMNPQRSTV";
+    const response = await app.inject({
+      method: "GET",
+      url: "/probe",
+      headers: { "x-request-id": requestId },
+    });
+    await app.close();
+
+    expect(response.headers["x-request-id"]).toBe(requestId);
+    const record = lines
+      .map((line) => JSON.parse(line) as { msg?: string; request_id?: string })
+      .find((line) => line.msg === "request-id correlation probe");
+    expect(record?.request_id).toBe(requestId);
   });
 });
