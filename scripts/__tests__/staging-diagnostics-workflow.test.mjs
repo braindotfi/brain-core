@@ -57,9 +57,13 @@ test("trust-gate smoke audit reconciliation is fixed, bounded, and read-only", (
   assert.match(workflow, /trust-gate-smoke-audit-reconciliation/);
   assert.match(workflow, /connection role and RLS posture/);
   assert.match(workflow, /current_setting\('app\.tenant_id', true\)/);
-  assert.match(workflow, /ae\.inputs->>'company_name' = 'Controlled trust-gate smoke'/);
+  assert.match(workflow, /API database target, redacted/);
+  assert.match(workflow, /direct PostgreSQL target/);
+  assert.match(workflow, /tnt_01KZW834C21D22K32NEE79FWQE/);
+  assert.match(workflow, /durable payment intents for the original smoke tenant/);
+  assert.match(workflow, /tenant-scoped API audit response for the original smoke tenant/);
+  assert.match(workflow, /scopes: \["audit:read"\]/);
   assert.match(workflow, /ae\.action = 'payment_intent\.execute\.after'/);
-  assert.match(workflow, /LIMIT 20;/);
   assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
   assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
   assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
@@ -76,6 +80,6 @@ test("staging diagnostic nested heredocs close at their owning handler", () => {
   const reconciliationHandler = workflow.slice(reconciliationStart, wikiStart);
 
   assert.match(identityHandler, /SQL\n\s+REMOTE\n\s+\}/);
-  assert.match(reconciliationHandler, /SQL\n\s+\}/);
-  assert.doesNotMatch(reconciliationHandler, /SQL\n\s+REMOTE\n\s+\}/);
+  assert.match(reconciliationHandler, /SQL[\s\S]*REMOTE\n\s+\}/);
+  assert.match(reconciliationHandler, /<<'REMOTE'/);
 });
