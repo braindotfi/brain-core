@@ -104,6 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           matrix_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/brain-core
@@ -136,8 +137,15 @@ jobs:
           ')"
           missing_account_id='acct_01ARZ3NDEKTSV4RRFFQ69G5FAV'
           create_approved_intent() {
-            local destination="$1" response intent_id status
-            response="$(curl -fsS --connect-timeout 10 --max-time 30 -X POST "$API_BASE/v1/payment-intents" -H 'Content-Type: application/json' -H "Authorization: Bearer ${agent_token}" --data "{\"action_type\":\"ach_outbound\",\"source_account_id\":\"${missing_account_id}\",\"destination_counterparty_id\":\"${destination}\",\"amount\":\"1.00\",\"currency\":\"USD\"}")"
+            local destination="$1" response intent_id status request_body
+            request_body="{\"action_type\":\"ach_outbound\",\"source_account_id\":\"${missing_account_id}\",\"destination_counterparty_id\":\"${destination}\",\"amount\":\"1.00\",\"currency\":\"USD\"}"
+            status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-create-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents" -H 'Content-Type: application/json' -H "Authorization: Bearer ${agent_token}" --data "$request_body")"
+            response="$(cat /tmp/trust-gate-create-response.json)"
+            printf 'payment_intent_create_request=%s\npayment_intent_create_response_status=%s\npayment_intent_create_response=%s\n' "$request_body" "$status" "$response" >&2
+            if [[ "$status" != 201 ]]; then
+              echo "Expected 201 while creating smoke payment intent, got $status" >&2
+              exit 1
+            fi
             intent_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(!/^pi_[0-9A-HJKMNP-TV-Z]{26}$/.test(v.id??""))process.exit(1);process.stdout.write(v.id)})')"
             status="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>process.stdout.write(String(JSON.parse(b).status??"")))')"
             if [[ "$status" != pending_approval ]]; then echo "Expected pending_approval for $intent_id, got $status" >&2; exit 1; fi
@@ -150,7 +158,7 @@ jobs:
             cat /tmp/trust-gate-response.json | EXPECTED_INDEX="$expected_index" EXPECTED_NAME="$expected_name" EXPECTED_REASON="$expected_reason" docker exec -i -e EXPECTED_INDEX -e EXPECTED_NAME -e EXPECTED_REASON brain-prod-api node -e '
               let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b),d=v.error?.details??v.details??{};if(process.env.EXPECTED_INDEX!==String(d.check_index)||process.env.EXPECTED_NAME!==d.check_name||(process.env.EXPECTED_REASON&&process.env.EXPECTED_REASON!==d.reason))process.exit(1)})'
             if [[ "$status" != 409 ]]; then echo "Expected 409 for $label, got $status" >&2; cat /tmp/trust-gate-response.json >&2; exit 1; fi
-            printf 'matrix=%s payment_intent_id=%s http_status=%s failed_check=%s reason=%s\n' "$label" "$intent_id" "$status" "$expected_index" "${expected_reason:-none}"
+            printf 'matrix=%s payment_intent_id=%s http_status=%s failed_check=%s reason=%s response=%s\n' "$label" "$intent_id" "$status" "$expected_index" "${expected_reason:-none}" "$(cat /tmp/trust-gate-response.json)"
           }
           transition() { curl -fsS --connect-timeout 10 --max-time 30 -X POST "$API_BASE/v1/ledger/counterparties/$counterparty_id/trust/$1" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{"reason":"controlled trust-gate smoke"}' >/dev/null; }
 
@@ -180,7 +188,13 @@ jobs:
           printf 'smoke_tenant_id=%s\nsmoke_counterparty_id=%s\nsmoke_outbox_rows=0\n' "$smoke_tenant_id" "$counterparty_id"
           REMOTE
           )"
+          matrix_status=$?
+          set -e
           printf '%s\n' "$matrix_output"
+          if [[ "$matrix_status" != 0 ]]; then
+            echo "Controlled trust-gate matrix failed with SSH status $matrix_status" >&2
+            exit "$matrix_status"
+          fi
           smoke_tenant_id="$(printf '%s\n' "$matrix_output" | sed -n 's/^smoke_tenant_id=//p' | tail -1)"
           if [[ ! "$smoke_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "Matrix output did not include one canonical smoke tenant id" >&2
