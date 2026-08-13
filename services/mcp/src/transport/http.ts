@@ -9,6 +9,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { brainError, type SlidingWindowRateLimiter } from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
+import { isSupportedProtocolVersion } from "../types.js";
 
 export interface McpRouteOptions {
   /** Path the MCP server is mounted at. Default `/agents/mcp`. */
@@ -87,6 +88,28 @@ export async function registerMcpRoute(
           },
         });
       }
+    }
+    // MCP spec (HTTP transport): once a client has completed `initialize`, it
+    // MUST send `MCP-Protocol-Version` on subsequent requests. This server is
+    // stateless per-request (no session), so it cannot check the header
+    // against a version actually negotiated earlier -- there is no session to
+    // hold that state. What it CAN do, and what this checks, is reject a
+    // header naming a version this server never supported at all, per the
+    // spec's "If the server receives a request with an invalid or unsupported
+    // MCP-Protocol-Version, it MUST respond with 400 Bad Request." An absent
+    // header is not an error here (the spec's back-compat fallback assumes a
+    // default version in that case; this server does not need to pick one
+    // since every request already carries its own principal and scopes).
+    const protocolVersionHeader = request.headers["mcp-protocol-version"];
+    if (
+      typeof protocolVersionHeader === "string" &&
+      !isSupportedProtocolVersion(protocolVersionHeader)
+    ) {
+      throw brainError(
+        "request_params_invalid",
+        `unsupported MCP-Protocol-Version: ${protocolVersionHeader}`,
+        { details: { header: protocolVersionHeader } },
+      );
     }
     const response = await server.handle(request.body, request.principal);
     // JSON-RPC always returns 200 even on error; the error is in the

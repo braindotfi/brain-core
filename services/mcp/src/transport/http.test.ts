@@ -280,3 +280,60 @@ describe("registerMcpRoute — RFC 9728 WWW-Authenticate discovery", () => {
     }
   });
 });
+
+describe("registerMcpRoute — MCP-Protocol-Version header (BRAIN-100)", () => {
+  it("rejects an unsupported MCP-Protocol-Version with 400", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: {
+          "x-test-tenant": TENANT_A,
+          "content-type": "application/json",
+          "mcp-protocol-version": "1999-01-01",
+        },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(400);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("request_params_invalid");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts a supported MCP-Protocol-Version header", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: {
+          "x-test-tenant": TENANT_A,
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not require the header at all (no session to check it against)", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-tenant": TENANT_A, "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+});

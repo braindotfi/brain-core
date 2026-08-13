@@ -424,6 +424,38 @@ describe("BrainMcpServer.handle — protocol surface", () => {
     }
   });
 
+  it("initialize echoes back a supported requested protocolVersion (BRAIN-100)", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } },
+      p,
+    );
+    if (!("result" in res)) throw new Error("expected result");
+    const r = res.result as { protocolVersion: string };
+    expect(r.protocolVersion).toBe("2024-11-05");
+  });
+
+  it("initialize falls back to the latest supported version for an unsupported request (BRAIN-100)", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "1999-01-01" } },
+      p,
+    );
+    if (!("result" in res)) throw new Error("expected result");
+    const r = res.result as { protocolVersion: string };
+    // Never the oldest supported version -- that would silently walk a
+    // modern client back to a revision with no authorization spec.
+    expect(r.protocolVersion).toBe("2025-06-18");
+  });
+
+  it("initialize falls back to the latest supported version when none is requested", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" }, p);
+    if (!("result" in res)) throw new Error("expected result");
+    const r = res.result as { protocolVersion: string };
+    expect(r.protocolVersion).toBe("2025-06-18");
+  });
+
   it("ping returns {}", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, p);

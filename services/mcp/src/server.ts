@@ -28,6 +28,7 @@ import {
 import type { Pool } from "pg";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
+  isSupportedProtocolVersion,
   PROTOCOL_VERSION,
   SERVER_INFO,
   type InitializeResult,
@@ -130,7 +131,7 @@ export class BrainMcpServer {
     };
 
     const handlers: Record<string, JsonRpcHandler> = {
-      initialize: async () => this.initialize(),
+      initialize: async (params) => this.initialize(params),
       ping: async () => ({}),
       "tools/list": async () => this.toolsList(principal.scopes),
       "tools/call": async (params) => this.toolsCall(toolCtx, params, principal.scopes),
@@ -145,9 +146,23 @@ export class BrainMcpServer {
 
   // ---------- method implementations ----------------------------------
 
-  private initialize(): InitializeResult {
+  /**
+   * Protocol version negotiation (MCP spec, Lifecycle section): if the
+   * client's requested `protocolVersion` is one this server supports, echo
+   * it back unchanged. Otherwise respond with the latest version this
+   * server supports and let the client decide whether to continue or
+   * disconnect -- never silently downgrade to the oldest supported version,
+   * since that would walk a client back to 2024-11-05, which predates the
+   * RFC 9728 authorization flow this server actually implements.
+   */
+  private initialize(params: Record<string, unknown>): InitializeResult {
+    const requested = params.protocolVersion;
+    const protocolVersion =
+      typeof requested === "string" && isSupportedProtocolVersion(requested)
+        ? requested
+        : PROTOCOL_VERSION;
     return {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion,
       serverInfo: SERVER_INFO,
       capabilities: {
         tools: { listChanged: false },
@@ -293,7 +308,7 @@ export class BrainMcpServer {
 
   /** Test-only: forces a list response without going through dispatcher. */
   public _testInitialize(): InitializeResult {
-    return this.initialize();
+    return this.initialize({});
   }
 
   /** Used by promise-list assertions: how many tools the registry exposes. */
