@@ -84,6 +84,24 @@ test("prior controlled-smoke execution diagnostic is fixed and read-only", () =>
   assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
 });
 
+test("trust-gate observation is fixed, staging-only, and read-only", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /trust-gate-24h-observation/);
+  assert.match(workflow, /trust_gate_observation_since/);
+  assert.match(workflow, /requires an exact ISO UTC start bound/);
+  assert.match(workflow, /api_trust_gate_enabled=/);
+  assert.match(workflow, /worker_trust_gate_enabled=/);
+  assert.match(workflow, /counterparty_trust_unknown_count/);
+  assert.match(workflow, /counterparty_trust_paused events with pause attribution/);
+  assert.match(workflow, /counterparty\.trust\.paused/);
+  assert.match(workflow, /normal payment execution outcomes/);
+  assert.match(workflow, /BEGIN TRANSACTION READ ONLY;/);
+  assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
+  assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+});
+
 test("staging diagnostic nested heredocs close at their owning handler", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
   const identityStart = workflow.indexOf("run_tenant_identity_lookup() {");

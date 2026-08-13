@@ -894,6 +894,12 @@ Pending Dmitriy sign-off
   through public creation. Gate `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
   persistence and execution audit events, so it is not a substitute for the
   real `payment_intent.execute.after` evidence required before enablement.
+  A sustained staging enablement is observed with the fixed, staging-only
+  `trust-gate-24h-observation` diagnostic. It requires the exact enablement
+  start time, reads only, and reports process-level API and worker flags,
+  health, `counterparty_trust_unknown` denials, pause-attribution evidence,
+  and normal payment execution outcomes. Production requires a separate impact
+  report, approval, and decision after a healthy staging window.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.
