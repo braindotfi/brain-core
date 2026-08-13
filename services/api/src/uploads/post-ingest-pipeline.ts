@@ -346,5 +346,10 @@ class UploadProjectionStepTimeoutError extends Error {
 }
 
 function isUploadSourceType(sourceType: string): boolean {
-  return sourceType === "pdf_upload" || sourceType === "csv_upload";
+  return (
+    sourceType === "pdf_upload" ||
+    sourceType === "csv_upload" ||
+    sourceType === "xlsx_upload" ||
+    sourceType === "txt_upload"
+  );
 }

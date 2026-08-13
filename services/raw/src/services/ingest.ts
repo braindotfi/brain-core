@@ -30,7 +30,6 @@ import {
   CUSTOMER_ASSERTED_CSV_PARSER,
   defaultSourceSchemaForUpload,
   DOCUMENT_RECORDS_UPLOAD_PARSER,
-  UPLOAD_DOCUMENT_SCHEMA,
   UPLOAD_DOCUMENT_INTERPRETER_VERSION,
 } from "../interpreters/upload.js";
 
@@ -111,9 +110,12 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
         shouldAutoExtractDocument(input) &&
         (await isAutoExtractDocumentsEnabled(client))
       ) {
+        const acceptedParsers = expectedUploadParsers(input.sourceType);
         const hasValidParsed = await hasValidParsedForArtifact(client, artifact.row.id, {
-          acceptedParsers: expectedUploadParsers(input.sourceType),
-          acceptedParserVersions: [UPLOAD_DOCUMENT_INTERPRETER_VERSION],
+          ...(acceptedParsers !== undefined ? { acceptedParsers } : {}),
+          ...(acceptedParsers !== undefined
+            ? { acceptedParserVersions: [UPLOAD_DOCUMENT_INTERPRETER_VERSION] }
+            : {}),
           excludeTerminalZeroProjection: true,
         });
         if (!hasValidParsed) {
@@ -158,10 +160,7 @@ export async function ingestOne(deps: IngestDeps, input: IngestInput): Promise<I
     bytes: Number(row.bytes),
     sourceType: row.source_type,
     sourceSchema: row.source_schema ?? null,
-    projectionStatus:
-      row.source_schema === UPLOAD_DOCUMENT_SCHEMA && extractionJob !== null
-        ? "pending"
-        : row.projection_status,
+    projectionStatus: extractionJob !== null ? "pending" : row.projection_status,
     ingestedAt: toIso(row.ingested_at),
     deduplicated,
     extractionJob,
@@ -185,7 +184,9 @@ function toIso(d: Date | string): string {
 }
 
 function shouldAutoExtractDocument(input: IngestInput): boolean {
-  if (!["pdf_upload", "csv_upload"].includes(input.sourceType)) return false;
+  if (!["pdf_upload", "csv_upload", "xlsx_upload", "txt_upload"].includes(input.sourceType)) {
+    return false;
+  }
   const mime = input.mimeType?.toLowerCase() ?? "";
   if (mime.startsWith("image/")) return true;
   if (mime.startsWith("text/")) return true;
@@ -198,12 +199,12 @@ function shouldAutoExtractDocument(input: IngestInput): boolean {
   ].includes(mime);
 }
 
-function expectedUploadParsers(sourceType: string): readonly string[] {
+function expectedUploadParsers(sourceType: string): readonly string[] | undefined {
   if (sourceType === "pdf_upload") return [BANK_STATEMENT_UPLOAD_PARSER];
-  if (sourceType === "csv_upload") {
+  if (sourceType === "csv_upload" || sourceType === "xlsx_upload") {
     return [DOCUMENT_RECORDS_UPLOAD_PARSER, CUSTOMER_ASSERTED_CSV_PARSER];
   }
-  return [];
+  return undefined;
 }
 
 function withDefaultUploadEnvelope(input: IngestInput): IngestEnvelopeFields | undefined {

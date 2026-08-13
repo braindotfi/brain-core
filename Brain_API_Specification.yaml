@@ -2210,7 +2210,7 @@ paths:
       summary: Trigger a sync for a source
       description: |
         Requires `raw:write`. Stub connectors (netsuite, email_inbound,
-        csv_upload, pdf_upload, alchemy_wallet, eth_address) return
+        csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address) return
         immediately with `notes: "stub"` rather than performing a real sync.
         The returned `job_id` can be polled with
         `GET /sources/{source_id}/sync/{job_id}`.
@@ -7407,7 +7407,7 @@ components:
     RawSourceType:
       type: string
       description: >
-        One reconciled, provider-named artifact source vocabulary: the eight
+        One reconciled, provider-named artifact source vocabulary: the
         connectable source types plus the non-connector ingestion origins
         (agent contributions, human Wiki annotations, and `other`, the
         universal fallback for sources with no native connector).
@@ -7417,6 +7417,8 @@ components:
         - netsuite
         - email_inbound
         - csv_upload
+        - xlsx_upload
+        - txt_upload
         - pdf_upload
         - alchemy_wallet
         - eth_address
@@ -7502,6 +7504,8 @@ components:
         - netsuite
         - email_inbound
         - csv_upload
+        - xlsx_upload
+        - txt_upload
         - pdf_upload
         - alchemy_wallet
         - eth_address
@@ -7541,7 +7545,7 @@ components:
         error_message: { type: [string, "null"] }
         is_stub:
           type: boolean
-          description: True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub".
+          description: True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub".
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

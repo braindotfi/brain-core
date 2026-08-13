@@ -144,6 +144,8 @@ const REGISTRY: Readonly<Record<SourceType, Connector>> = {
   netsuite: stubConnector,
   email_inbound: stubConnector,
   csv_upload: stubConnector,
+  xlsx_upload: stubConnector,
+  txt_upload: stubConnector,
   pdf_upload: stubConnector,
   alchemy_wallet: stubConnector,
   eth_address: stubConnector,
