@@ -17,6 +17,7 @@ on:
           - wiki-question-trace
           - anchor-reconciliation-correlation
           - anchor-cycle-runtime-trace
+          - trust-gate-smoke-audit-reconciliation
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -87,8 +88,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, or anchor-cycle-runtime-trace"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, or trust-gate-smoke-audit-reconciliation"
             exit 1
           fi
 
@@ -288,6 +289,81 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
             run_tenant_identity_lookup
+            exit 0
+          fi
+
+          run_trust_gate_smoke_audit_reconciliation() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'connection role and RLS posture'
+            SELECT current_user,
+                   session_user,
+                   current_setting('app.tenant_id', true) AS tenant_context,
+                   r.rolsuper,
+                   r.rolbypassrls
+              FROM pg_roles r
+             WHERE r.rolname = current_user;
+
+            \echo 'latest controlled trust-gate smoke tenants from durable tenant.created events'
+            WITH smoke_tenants AS (
+              SELECT ae.tenant_id,
+                     ae.id AS tenant_created_event_id,
+                     ae.created_at AS tenant_created_at,
+                     row_number() OVER (ORDER BY ae.created_at DESC, ae.id DESC) AS row_number
+                FROM audit_events ae
+               WHERE ae.action = 'tenant.created'
+                 AND ae.inputs->>'company_name' = 'Controlled trust-gate smoke'
+             )
+            SELECT tenant_id,
+                   tenant_created_event_id,
+                   tenant_created_at
+              FROM smoke_tenants
+             WHERE row_number <= 5
+             ORDER BY tenant_created_at DESC, tenant_created_event_id DESC;
+
+            \echo 'durable payment_intent.execute.after events for those smoke tenants without runner clock bounds'
+            WITH smoke_tenants AS (
+              SELECT ae.tenant_id,
+                     row_number() OVER (ORDER BY ae.created_at DESC, ae.id DESC) AS row_number
+                FROM audit_events ae
+               WHERE ae.action = 'tenant.created'
+                 AND ae.inputs->>'company_name' = 'Controlled trust-gate smoke'
+             )
+            SELECT ae.tenant_id,
+                   ae.id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs->'failed_check' AS failed_check
+              FROM audit_events ae
+              JOIN smoke_tenants st ON st.tenant_id = ae.tenant_id
+             WHERE st.row_number <= 5
+               AND ae.action = 'payment_intent.execute.after'
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            \echo 'latest durable payment_intent.execute.after events across staging for timestamp comparison'
+            SELECT tenant_id,
+                   id,
+                   created_at,
+                   inputs->>'payment_intent_id' AS payment_intent_id,
+                   outputs->'failed_check' AS failed_check
+              FROM audit_events
+             WHERE action = 'payment_intent.execute.after'
+             ORDER BY created_at DESC, id DESC
+             LIMIT 20;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-smoke-audit-reconciliation" ]]; then
+            run_trust_gate_smoke_audit_reconciliation
             exit 0
           fi
 
