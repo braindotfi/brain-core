@@ -50,6 +50,18 @@ export const MCP_METHODS = [
 
 export type McpMethod = (typeof MCP_METHODS)[number];
 
+// JSON-RPC notifications the server recognizes. A notification carries no
+// `id` (see JsonRpcRequest.id) and never gets a JSON-RPC response -- see
+// dispatcher.ts. Registering them here just documents the accepted set;
+// dispatch()'s no-response behavior applies to ANY id-less request,
+// recognized or not.
+export const MCP_NOTIFICATION_METHODS = [
+  "notifications/initialized",
+  "notifications/cancelled",
+] as const;
+
+export type McpNotificationMethod = (typeof MCP_NOTIFICATION_METHODS)[number];
+
 export interface InitializeResult {
   protocolVersion: string;
   serverInfo: { name: string; version: string };

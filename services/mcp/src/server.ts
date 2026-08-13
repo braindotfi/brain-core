@@ -78,7 +78,7 @@ export class BrainMcpServer {
    * authenticated by `authPlugin` upstream — the only verification this
    * function does is the MCP-specific agent-record + scope-hash check.
    */
-  public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse> {
+  public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse | null> {
     const requestId = newRequestId();
 
     // Agent principals are verified against the MCP agent registry before any
@@ -139,6 +139,15 @@ export class BrainMcpServer {
       "resources/read": async (params) => this.resourcesRead(toolCtx, params, principal.scopes),
       "prompts/list": async () => listPrompts(),
       "prompts/get": async (params) => this.promptsGet(params),
+      // Notifications (no `id`, never get a response -- see dispatcher.ts).
+      // Brain's MCP server is stateless per-request, so there is nothing to
+      // update on `initialized`/`cancelled`; registering them explicitly
+      // documents that they are recognized rather than silently falling
+      // through to "method not found" (harmless for a notification either
+      // way, since no response goes out regardless, but this keeps intent
+      // visible).
+      "notifications/initialized": async () => undefined,
+      "notifications/cancelled": async () => undefined,
     };
 
     return dispatch(payload, { handlers }, { requestId });

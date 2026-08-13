@@ -416,8 +416,8 @@ describe("BrainMcpServer.handle — protocol surface", () => {
   it("initialize returns protocolVersion + capabilities", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, p);
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { protocolVersion: string; capabilities: unknown };
       expect(typeof r.protocolVersion).toBe("string");
       expect(r.capabilities).toBeDefined();
@@ -430,7 +430,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } },
       p,
     );
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { protocolVersion: string };
     expect(r.protocolVersion).toBe("2024-11-05");
   });
@@ -441,7 +441,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "1999-01-01" } },
       p,
     );
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { protocolVersion: string };
     // Never the oldest supported version -- that would silently walk a
     // modern client back to a revision with no authorization spec.
@@ -451,21 +451,27 @@ describe("BrainMcpServer.handle — protocol surface", () => {
   it("initialize falls back to the latest supported version when none is requested", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" }, p);
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { protocolVersion: string };
     expect(r.protocolVersion).toBe("2025-06-18");
+  });
+
+  it("a notification (no id) gets no JSON-RPC response from handle()", async () => {
+    const { server, p } = makeServer();
+    const res = await server.handle({ jsonrpc: "2.0", method: "ping" }, p);
+    expect(res).toBeNull();
   });
 
   it("ping returns {}", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, p);
-    expect("result" in res && res.result).toEqual({});
+    expect(res !== null && "result" in res && res.result).toEqual({});
   });
 
   it("tools/list lists every registered tool regardless of scope", async () => {
     const { server, p } = makeServer([]); // no scopes
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" }, p);
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { tools: Array<{ name: string }> };
     expect(r.tools.length).toBe(17);
     const names = r.tools.map((t) => t.name);
@@ -491,7 +497,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 
   it("tools/call dispatches to a known tool with valid input", async () => {
@@ -505,8 +511,8 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }>; structuredContent?: unknown };
       expect(r.content[0]!.text).toContain("**Q:**");
     }
@@ -525,7 +531,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
   });
 
   it("tools/call returns invalid-params on missing required input", async () => {
@@ -539,7 +545,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("accepts user principals via FakeAuthVerifier (dev-bypass mode)", async () => {
@@ -557,7 +563,7 @@ describe("BrainMcpServer.handle — protocol surface", () => {
       expiresAt: Math.floor(Date.now() / 1000) + 60,
     };
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "ping" }, userPrincipal);
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
   });
 });
 
@@ -589,8 +595,8 @@ describe("BrainMcpServer.handle - raw.artifact.get", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if (!("result" in res)) throw new Error("expected result");
+    expect(res !== null && "result" in res).toBe(true);
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const body = res.result as {
       structuredContent: {
         raw_id: string;
@@ -627,7 +633,9 @@ describe("BrainMcpServer.handle - raw.artifact.get", () => {
         },
         p,
       );
-      expect("error" in res && res.error.data?.brain_code).toBe("raw_artifact_not_found");
+      expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+        "raw_artifact_not_found",
+      );
     }
   });
 
@@ -660,8 +668,8 @@ describe("BrainMcpServer.handle - raw.artifact.get", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if (!("result" in res)) throw new Error("expected result");
+    expect(res !== null && "result" in res).toBe(true);
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const body = res.result as { structuredContent: { parsed: unknown[] } };
     expect(body.structuredContent.parsed).toEqual([]);
   });
@@ -678,7 +686,9 @@ describe("BrainMcpServer.handle - raw.artifact.get", () => {
       },
       p,
     );
-    expect("error" in res && res.error.data?.brain_code).toBe("dependency_unavailable");
+    expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+      "dependency_unavailable",
+    );
     expect(raw.signedUrl).not.toHaveBeenCalled();
   });
 });
@@ -695,12 +705,12 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(proposals.list).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT, actor: AGENT_ID }),
       expect.objectContaining({ type: "collections", limit: 10 }),
     );
-    if ("result" in res) {
+    if (res !== null && "result" in res) {
       const body = res.result as { structuredContent: { proposals: Array<{ id: string }> } };
       expect(body.structuredContent.proposals[0]!.id).toContain(TENANT);
     }
@@ -727,7 +737,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(proposals.list).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT }),
       expect.objectContaining({
@@ -759,7 +769,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("reads one proposal by id", async () => {
@@ -773,7 +783,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(proposals.get).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT }),
       "prop_TEST",
@@ -791,7 +801,9 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("error" in res && res.error.data?.brain_code).toBe("execution_proposal_not_found");
+    expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+      "execution_proposal_not_found",
+    );
   });
 
   it("fails closed when proposal services are not wired", async () => {
@@ -805,7 +817,9 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("error" in res && res.error.data?.brain_code).toBe("dependency_unavailable");
+    expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+      "dependency_unavailable",
+    );
   });
 
   it("resolves typed evidence refs through the evidence service", async () => {
@@ -822,11 +836,11 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(evidence.resolve).toHaveBeenCalledWith(expect.objectContaining({ tenantId: TENANT }), [
       { kind: "invoice", ref: "inv_TEST" },
     ]);
-    if ("result" in res) {
+    if (res !== null && "result" in res) {
       const body = res.result as { structuredContent: { results: Array<{ resolvable: boolean }> } };
       expect(body.structuredContent.results[0]!.resolvable).toBe(true);
     }
@@ -851,7 +865,9 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       "prop_TEST",
       "acknowledge",
     );
-    expect("error" in res && res.error.data?.brain_code).toBe("payment_intent_approval_invalid");
+    expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+      "payment_intent_approval_invalid",
+    );
   });
 
   it("rejects proposal decisions without a decision-capable scope", async () => {
@@ -869,7 +885,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       user,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 
   it("rejects malformed proposal decisions", async () => {
@@ -887,7 +903,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       user,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("allows proposal decisions for user principals with the HTTP-compatible scope gate", async () => {
@@ -905,7 +921,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       user,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(proposals.decide).toHaveBeenCalledWith(
       expect.objectContaining({ principalType: "user", actor: "user_X" }),
       "prop_TEST",
@@ -928,7 +944,7 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       user,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(proposals.decide).toHaveBeenCalledWith(
       expect.objectContaining({ principalType: "user" }),
       "prop_TEST",
@@ -957,7 +973,9 @@ describe("BrainMcpServer.handle — proposals and evidence tools", () => {
       },
       user,
     );
-    expect("error" in res && res.error.data?.brain_code).toBe("auth_scope_insufficient");
+    expect(res !== null && "error" in res && res.error.data?.brain_code).toBe(
+      "auth_scope_insufficient",
+    );
   });
 });
 
@@ -965,7 +983,7 @@ describe("BrainMcpServer.handle — resources + prompts", () => {
   it("resources/list returns the v0.3 surface", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "resources/list" }, p);
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { resources: Array<{ uri: string }> };
     expect(r.resources.length).toBeGreaterThan(0);
     expect(r.resources[0]!.uri.startsWith("brain://")).toBe(true);
@@ -974,7 +992,7 @@ describe("BrainMcpServer.handle — resources + prompts", () => {
   it("prompts/list returns templated questions", async () => {
     const { server, p } = makeServer();
     const res = await server.handle({ jsonrpc: "2.0", id: 1, method: "prompts/list" }, p);
-    if (!("result" in res)) throw new Error("expected result");
+    if (!(res !== null && "result" in res)) throw new Error("expected result");
     const r = res.result as { prompts: Array<{ name: string }> };
     expect(r.prompts.map((x) => x.name)).toContain("wiki.question.cash_flow_summary");
   });
@@ -990,7 +1008,7 @@ describe("BrainMcpServer.handle — resources + prompts", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("prompts/get renders when args are valid", async () => {
@@ -1007,8 +1025,8 @@ describe("BrainMcpServer.handle — resources + prompts", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { messages: Array<{ content: { text: string } }> };
       expect(r.messages[0]!.content.text).toContain("2026-04");
     }
@@ -1036,7 +1054,7 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 
   it("calls PaymentIntentService.create when scope is held", async () => {
@@ -1059,8 +1077,8 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("PaymentIntent `pi_TEST`");
     }
@@ -1134,7 +1152,7 @@ describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (
       propose({ ...baseArgs, action_type: "x402_settle", pay_to: payTo }),
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(created).toHaveLength(1);
     expect(created[0]!.action_type).toBe("x402_settle");
     expect(created[0]!.pay_to).toBe(payTo);
@@ -1143,7 +1161,7 @@ describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (
   it("rejects x402_settle without pay_to", async () => {
     const { server, p } = serverWithCapture(["payment_intent:propose"]);
     const res = await server.handle(propose({ ...baseArgs, action_type: "x402_settle" }), p);
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("rejects on-chain settlement in a non-USDC currency", async () => {
@@ -1157,7 +1175,7 @@ describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (
       }),
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 
   it("accepts escrow_release with escrow_id + job_terms_hash", async () => {
@@ -1173,7 +1191,7 @@ describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (
       }),
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(created[0]!.escrow_id).toBe(escrowId);
     expect(created[0]!.job_terms_hash).toBe(jobTermsHash);
   });
@@ -1189,8 +1207,8 @@ describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { contents: Array<{ text: string }> };
       const body = JSON.parse(r.contents[0]!.text) as {
         action_types: Array<{ action_type: string }>;
@@ -1265,7 +1283,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -1285,7 +1303,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
     expect(cancel).not.toHaveBeenCalled();
   });
 
@@ -1305,7 +1323,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
     expect(cancel).not.toHaveBeenCalled();
   });
 
@@ -1324,7 +1342,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
   });
 
   it("cancel blocks when payment_intent:propose scope is missing", async () => {
@@ -1339,7 +1357,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 
   // --- list ---
@@ -1360,7 +1378,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("result" in res).toBe(true);
+    expect(res !== null && "result" in res).toBe(true);
     expect(list).toHaveBeenCalledOnce();
     const [, opts] = (list as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(opts).toMatchObject({ agent_id: AGENT_ID, status: "proposed", limit: 5 });
@@ -1378,7 +1396,7 @@ describe("BrainMcpServer.handle — payment_intent.cancel + .list (item 17)", ()
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 });
 
@@ -1435,8 +1453,8 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { contents: Array<{ text: string }> };
       const body = JSON.parse(r.contents[0]!.text) as { action_id: string };
       expect(body.action_id).toBe("act_X");
@@ -1456,7 +1474,7 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
   });
 
   it("errors with internal_server_error when buildProof is unwired", async () => {
@@ -1470,7 +1488,7 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
   });
 
   it("blocks when audit:read is missing", async () => {
@@ -1505,7 +1523,7 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32002);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32002);
   });
 });
 
@@ -1521,8 +1539,8 @@ describe("BrainMcpServer.handle — remaining prompt renders", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { messages: Array<{ content: { text: string } }> };
       expect(r.messages[0]!.content.text).toContain("7");
     }
@@ -1539,8 +1557,8 @@ describe("BrainMcpServer.handle — remaining prompt renders", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { messages: Array<{ content: { text: string } }> };
       expect(r.messages[0]!.content.text).toContain("2026-Q1");
     }
@@ -1557,8 +1575,8 @@ describe("BrainMcpServer.handle — remaining prompt renders", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { messages: Array<{ content: { text: string } }> };
       expect(r.messages[0]!.content.text).toContain("INV-42");
     }
@@ -1575,8 +1593,8 @@ describe("BrainMcpServer.handle — remaining prompt renders", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { messages: Array<{ content: { text: string } }> };
       expect(r.messages[0]!.content.text).toContain("subscriptions");
     }
@@ -1593,7 +1611,7 @@ describe("BrainMcpServer.handle — remaining prompt renders", () => {
       },
       p,
     );
-    expect("error" in res && res.error.code).toBe(-32602);
+    expect(res !== null && "error" in res && res.error.code).toBe(-32602);
   });
 });
 
@@ -1609,8 +1627,8 @@ describe("BrainMcpServer.handle — wiki.page.get tool", () => {
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("No wiki page");
     }
@@ -1644,8 +1662,8 @@ describe("BrainMcpServer.handle — wiki.page.get tool", () => {
       },
       principal(["wiki:read"]),
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("Account summary");
     }
@@ -1683,8 +1701,8 @@ describe("BrainMcpServer.handle — wiki.question optional params and evidence",
       },
       principal(["wiki:read"]),
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("tx_01");
     }
@@ -1755,8 +1773,8 @@ describe("BrainMcpServer.handle — payment_intent.propose status variants", () 
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("confirm");
     }
@@ -1782,8 +1800,8 @@ describe("BrainMcpServer.handle — payment_intent.propose status variants", () 
       },
       p,
     );
-    expect("result" in res).toBe(true);
-    if ("result" in res) {
+    expect(res !== null && "result" in res).toBe(true);
+    if (res !== null && "result" in res) {
       const r = res.result as { content: Array<{ text: string }> };
       expect(r.content[0]!.text).toContain("reject");
     }
@@ -1837,7 +1855,7 @@ describe("BrainMcpServer.handle -- rejection-audit emission (batch 12)", () => {
       },
       p,
     );
-    expect("error" in res).toBe(true);
+    expect(res !== null && "error" in res).toBe(true);
 
     const rows = audit.events.filter((e) => e.action === "agent.mcp.tool_called");
     expect(rows).toHaveLength(1);

@@ -112,6 +112,15 @@ export async function registerMcpRoute(
       );
     }
     const response = await server.handle(request.body, request.principal);
+    if (response === null) {
+      // JSON-RPC notification: the spec forbids a response body. Streamable
+      // HTTP's answer is 202 Accepted with nothing in it -- not a 200 with an
+      // empty JSON-RPC envelope, which would itself be a malformed response.
+      // `reply.send()` with no argument is what actually produces an empty
+      // body here -- returning `null` from the handler would have Fastify
+      // JSON-serialize it to the literal text "null", which is not empty.
+      return reply.status(202).send();
+    }
     // JSON-RPC always returns 200 even on error; the error is in the
     // body. Clients distinguish success from failure by the presence of
     // `result` vs `error`.

@@ -33,23 +33,29 @@ export interface DispatcherOptions {
 }
 
 /**
- * Parse a raw payload into a JsonRpcRequest. Returns null on parse
- * failure; callers translate that to a JSON_RPC_PARSE_ERROR response.
+ * Parses a raw payload into a JsonRpcRequest. A JSON-RPC 2.0 notification is
+ * a Request object with the `id` member OMITTED entirely -- not present with
+ * value `null`. We must preserve that distinction: `parsed.id === undefined`
+ * means "this is a notification, do not respond"; `parsed.id === null` means
+ * the caller sent an explicit (if unusual) null id on a request that still
+ * expects a response. Collapsing the two, as this used to do, made every
+ * notification -- including the mandatory `notifications/initialized`
+ * handshake -- get back a JSON-RPC response, which the spec forbids.
+ *
+ * Returns null on parse failure; callers translate that to a
+ * JSON_RPC_PARSE_ERROR response.
  */
 export function parseRequest(payload: unknown): JsonRpcRequest | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
   const obj = payload as Record<string, unknown>;
   if (obj.jsonrpc !== "2.0") return null;
   if (typeof obj.method !== "string") return null;
+  const hasId = obj.id !== undefined;
   const id =
-    obj.id === undefined
-      ? null
-      : typeof obj.id === "string" || typeof obj.id === "number" || obj.id === null
-        ? obj.id
-        : null;
+    typeof obj.id === "string" || typeof obj.id === "number" || obj.id === null ? obj.id : null;
   return {
     jsonrpc: "2.0",
-    id: id ?? null,
+    ...(hasId ? { id } : {}),
     method: obj.method,
     params:
       typeof obj.params === "object" && obj.params !== null && !Array.isArray(obj.params)
@@ -58,13 +64,22 @@ export function parseRequest(payload: unknown): JsonRpcRequest | null {
   };
 }
 
+/**
+ * Dispatch a parsed JSON-RPC payload to its handler. Returns `null` for a
+ * notification (no `id` on the request) -- per JSON-RPC 2.0, the server MUST
+ * NOT send a response for a notification, success or failure. The HTTP
+ * transport (transport/http.ts) turns a `null` return into `202 Accepted`
+ * with an empty body instead of a JSON-RPC envelope.
+ */
 export async function dispatch(
   payload: unknown,
   opts: DispatcherOptions,
   ctx: { requestId: string },
-): Promise<JsonRpcResponse> {
+): Promise<JsonRpcResponse | null> {
   const parsed = parseRequest(payload);
   if (parsed === null) {
+    // A payload we cannot even parse as a Request has no reliable id to key
+    // notification-ness off, so it always gets a response, same as before.
     return {
       jsonrpc: "2.0",
       id: null,
@@ -74,9 +89,11 @@ export async function dispatch(
       },
     };
   }
+  const isNotification = parsed.id === undefined;
 
   const handler = opts.handlers[parsed.method];
   if (handler === undefined) {
+    if (isNotification) return null;
     return {
       jsonrpc: "2.0",
       id: parsed.id ?? null,
@@ -89,6 +106,7 @@ export async function dispatch(
 
   try {
     const result = await handler(parsed.params ?? {}, ctx);
+    if (isNotification) return null;
     return {
       jsonrpc: "2.0",
       id: parsed.id ?? null,
@@ -96,6 +114,7 @@ export async function dispatch(
     };
   } catch (err) {
     opts.onError?.(err, parsed.method);
+    if (isNotification) return null;
     return shapeError(parsed.id ?? null, err);
   }
 }
