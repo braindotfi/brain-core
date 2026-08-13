@@ -153,23 +153,16 @@ Authorization: Bearer <access_token>
 ```
 
 {% hint style="info" %}
-The MCP auth chain additionally verifies the agent record is `active` and that the JWT's `scope_hash` matches the on-chain hash in `BrainMCPAgentRegistry`. Agents can read, contribute evidence, and **propose**. Never **execute** (there is no execute tool; every settlement passes the §6 gate).
+The MCP auth chain verifies that the agent record is `active` and that its stored `scope_hash` matches the hash registered in `BrainMCPAgentRegistry`. Agents can read, contribute evidence, and **propose**. Never **execute**. There is no execute tool, and every settlement passes the section 6 gate.
 {% endhint %}
 
-### ScopeAttestation EIP-712 Type
+### Agent Scope Hash
 
-```
-ScopeAttestation(
-  bytes32 tenantId,
-  address agent,
-  bytes32 capability,
-  uint128 maxAmount,
-  bytes32 resourceScope,
-  uint64  notBefore,
-  uint64  notAfter,
-  uint256 nonce
-)
-```
+The current scope mechanism is a hash commitment, not an EIP-712 scope-attestation
+object. Brain sorts an agent's plain scope strings lexicographically, joins them with
+`|`, and calculates `keccak256` over that value. The resulting `scope_hash` must
+match the agent's registered on-chain hash. It has no per-grant amount, resource,
+time-window, or nonce fields.
 
 ### Token Lifetimes
 
@@ -186,13 +179,13 @@ Owner JWTs include `surfaces:admin` so a tenant admin can connect or revoke
 Slack, Teams, and email approval surfaces. Surface onboarding endpoints derive
 the Brain tenant from this bearer principal, not from request bodies.
 
-### Revocation
+### Agent Control
 
-| Type                   | How to Revoke                                            |
-| ---------------------- | -------------------------------------------------------- |
-| **Agent scope**        | `DELETE /v1/agents/{id}/scopes/{capability}`             |
-| **Agent registration** | `POST /v1/agents/{id}/deactivate` (also called on-chain) |
-| **Token**              | Short-lived by design; tokens expire (15 min / 1 hour)   |
+| Operation   | Endpoint                                 | Behavior                                                                                                                                                                                  |
+| ----------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Halt**    | `POST /v1/agents/{agent_id}/halt`        | Requires `payment_intent:approve`. Pauses approved in-flight payment intents from the agent and quarantines its local agent record.                                                       |
+| **Restore** | `POST /v1/agents/{agent_id}/restore`     | Requires `payment_intent:approve`. Restores a quarantined local agent record to `active`. Returns 404 when the agent is not registered and 409 unless its current state is `quarantined`. |
+| **Token**   | Re-authenticate or rotate the credential | Tokens are short-lived by design and expire after their configured lifetime.                                                                                                              |
 
 ### What's Next
 
