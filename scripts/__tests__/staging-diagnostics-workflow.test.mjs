@@ -64,3 +64,18 @@ test("trust-gate smoke audit reconciliation is fixed, bounded, and read-only", (
   assert.match(workflow, /SET LOCAL statement_timeout = '5s';/);
   assert.match(workflow, /SET LOCAL lock_timeout = '1s';/);
 });
+
+test("staging diagnostic nested heredocs close at their owning handler", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+  const identityStart = workflow.indexOf("run_tenant_identity_lookup() {");
+  const reconciliationStart = workflow.indexOf("run_trust_gate_smoke_audit_reconciliation() {");
+  const wikiStart = workflow.indexOf("run_wiki_question_trace() {");
+
+  assert.ok(identityStart >= 0 && reconciliationStart > identityStart && wikiStart > reconciliationStart);
+  const identityHandler = workflow.slice(identityStart, reconciliationStart);
+  const reconciliationHandler = workflow.slice(reconciliationStart, wikiStart);
+
+  assert.match(identityHandler, /SQL\n\s+REMOTE\n\s+\}/);
+  assert.match(reconciliationHandler, /SQL\n\s+\}/);
+  assert.doesNotMatch(reconciliationHandler, /SQL\n\s+REMOTE\n\s+\}/);
+});
