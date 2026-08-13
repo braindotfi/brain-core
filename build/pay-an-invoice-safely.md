@@ -1,160 +1,119 @@
 ---
-description: Propose a payment, route to approval if needed, execute, get a receipt.
+description: Create a PaymentIntent, route it through approval when needed, then execute it.
 ---
 
 # Pay an Invoice Safely
 
-Goal: pay an invoice with a single SDK call. If it's within the tenant's policy, it goes through. If not, it routes to a human approver. Either way, you get a receipt you can show a customer.
+Goal: create a payment intent, respect the tenant policy decision, and execute
+only an approved intent through the section 6 gate.
 
-### The Simplest Case
+### Create an Invoice Payment
 
 ```typescript
-const action = await brain.pay("acme", { invoiceId: "inv_8231" });
+const intent = await brain.payments.create({
+  type: "pay_invoice",
+  invoice_id: "inv_8231",
+  idempotencyKey: "example-idempotency-key-1",
+});
 
-console.log(action.status);
-// "auto"           → already executed
-// "needs_approval" → waiting for a human
-// "rejected"       → policy said no
+console.log(intent.id, intent.status, intent.policy_decision_id);
 ```
 
-{% hint style="info" %}
-`action.status` uses the SDK aliases `auto | needs_approval | rejected`. The HTTP PaymentIntent lifecycle uses `approved | pending_approval | rejected | executed | …` for the same states (`auto` ⇒ `approved`/`executed`). See the [mapping table](../api-reference/payment-intents-api.md#status-lifecycle).
-{% endhint %}
+The API derives the tenant from the credential. The idempotency key is sent as
+the `Idempotency-Key` header.
 
-### Handling All Three Outcomes
+### Handle the Policy Result
 
 ```typescript
-const action = await brain.pay("acme", { invoiceId: "inv_8231" });
-
-switch (action.status) {
-  case "auto":
-    // Already done. Brain executed and recorded the receipt.
-    console.log("paid:", action.receipt.txHash ?? action.receipt.railReceipt);
-    break;
-
-  case "needs_approval":
-    // Surface to your approval UI. Approvers receive the action.
-    console.log("waiting on:", action.approvers);
-    break;
-
-  case "rejected":
-    console.log("blocked:", action.reason);
-    break;
+if (intent.status === "approved" && intent.id) {
+  const execution = await brain.payments.execute(intent.id);
+  console.log(execution.paymentIntentId, execution.outboxId, execution.status);
+} else if (intent.status === "pending_approval" && intent.id) {
+  console.log("waiting for a member approval", intent.id);
+} else if (intent.status === "rejected") {
+  console.log("policy rejected the payment", intent.policy_decision_id);
 }
 ```
 
-### Approving from Your App
+The convenience helper `brain.pay("current-tenant", params)` creates the same
+intent. It throws `PolicyApprovalRequiredError` for `pending_approval` and
+`PolicyRejectedError` for `rejected`. On an immediately approved intent, it
+executes the intent and returns `{ intent, execution }`.
+
+### Approve, Then Execute
+
+Approval and execution are separate calls. A second distinct approver may be
+required before the intent becomes `approved`.
 
 ```typescript
-// In your approval UI, signed by the approver's key.
-await brain.approve(actionId);
+const afterApproval = await brain.payments.approve("pi_8231");
+
+if (afterApproval.status === "approved" && afterApproval.id) {
+  const execution = await brain.payments.execute(afterApproval.id);
+  console.log(execution.rail, execution.status);
+}
 ```
 
-`approve` records the typed signature. Once all required approvers have signed, the intent becomes `approved` and Brain's internal settlement path runs the §6 gate and dispatches it; you do not call a separate execute step, and the approver's signature is not itself a settlement call. The action's status moves from `needs_approval` to `auto`.
-
-For multi-approver policies, every required approver calls `brain.approve`. Brain holds the action in `needs_approval` until the last one lands.
-
-### Rejecting from Your App
+### Create a Standard Payment
 
 ```typescript
-await brain.reject(actionId, {
-  reason: "Vendor under review",
+const intent = await brain.payments.create({
+  action_type: "ach_outbound",
+  source_account_id: "acct_operations",
+  destination_counterparty_id: "cp_acme_legal",
+  amount: "12500.00",
+  currency: "USD",
+  idempotencyKey: "example-idempotency-key-2",
 });
 ```
 
-Rejection is final. The action moves to `rejected` and emits a webhook your app can react to.
-
-### Getting the Receipt
-
-Every executed action has a verifiable receipt.
+### Get a Verifiable Proof
 
 ```typescript
-const proof = await brain.proof(actionId);
+const proof = await brain.proof.get("pi_8231");
 
-proof.txHash;       // on-chain tx for on-chain rails (Base)
-proof.railReceipt;  // bank receipt for ACH/wire
-proof.merklePath;   // Merkle path to the on-chain anchor
-proof.anchorTx;     // anchor transaction on Base L2
+console.log(proof.merkle_root);
+console.log(proof.merkle_proof);
+console.log(proof.rail_receipt);
+console.log(proof.chain_anchor?.tx_hash);
 ```
 
-If you ever need to prove to a customer that a payment happened, this is the thing to send them. They can verify it without a Brain account.
+The proof contains the Merkle root and proof, any rail receipt, and the
+Base Sepolia chain anchor when one is available.
 
-### Paying Without an Invoice
+### Receive Lifecycle Webhooks
 
-Sometimes you're paying something that isn't a structured invoice yet (a vendor name and an amount, say). Pass the destination directly.
-
-```typescript
-const action = await brain.pay("acme", {
-  to:        { counterpartyId: "cp_acme_legal" },
-  amount:    "12500.00",
-  currency:  "USD",
-  memo:      "Q3 retainer",
-});
-```
-
-Brain still runs every check it would run for an invoice payment.
-
-### Idempotency
-
-Always pass an idempotency key. Retries with the same key return the existing action instead of creating a duplicate.
+| Event | Meaning |
+| --- | --- |
+| `payment_intent.created` | The intent was created |
+| `payment_intent.approved` | Required human approvals completed |
+| `payment_intent.rejected` | Policy or an approver rejected the intent |
+| `payment_intent.execute.after` | The section 6 gate evaluated before dispatch |
+| `payment_intent.executed` | The rail completed the payment |
+| `payment_intent.failed` | The rail failed deterministically |
 
 ```typescript
-const action = await brain.pay("acme", {
-  invoiceId:      "inv_8231",
-  idempotencyKey: "pay_inv_8231_2025_09",
-});
-```
-
-If your service crashes mid-call and your retry handler fires, you'll get the same action back. No duplicate payments.
-
-### Webhooks for Long-Running Flows
-
-Most ACH and wire payments don't settle instantly. Subscribe to the action's lifecycle.
-
-Outbound webhooks use the `payment_intent.*` event names (the same `event_type` values the [Webhooks API](../api-reference/webhooks-api.md) lists), not an `action.*` namespace:
-
-| `event_type`                   | When                                                                        |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| `payment_intent.created`       | Just after `brain.pay` returns (intent proposed)                            |
-| `payment_intent.approved`      | All required approvers have signed (or Policy returned `allow`)             |
-| `payment_intent.rejected`      | Policy or an approver rejected                                              |
-| `payment_intent.execute.after` | The §6 gate ran and the intent was dispatched to its rail                   |
-
-{% hint style="info" %}
-Settlement is asynchronous and there is **no** dedicated `payment_intent.settled` / `payment_intent.failed` outbound event today. `payment_intent.execute.after` fires when the intent is dispatched; final rail settlement (or failure) is observed via the rail-specific provider webhook and confirmed through [`GET /v1/proof/{action_id}`](../api-reference/proof-api.md) / replay-investigation.
-{% endhint %}
-
-```typescript
-// Webhook handler
-app.post("/webhooks/brain", verifyBrainSig, (req, res) => {
-  const event = req.body;
-  switch (event.event_type) {
-    case "payment_intent.execute.after":
-      markInvoiceDispatched(event.data.invoiceId);
-      break;
+app.post("/webhooks/brain", verifyBrainSignature, (request, response) => {
+  const event = request.body;
+  if (event.type === "payment_intent.executed") {
+    markInvoicePaid(event.data);
   }
-  res.sendStatus(200);
+  response.sendStatus(200);
 });
 ```
 
-### What if My Action Fails?
+### Handle a Failure
 
-Brain returns a structured failure code and never silently retries.
+Payment and gate failures use lowercase snake-case error codes.
 
 ```json
 {
   "status": "failed",
-  "reason": "INSUFFICIENT_BALANCE",
-  "details": {
-    "required":  "61404.12 USD",
-    "available": "58901.04 USD",
-    "accountId": "acct_ops"
-  }
+  "reason": "insufficient_balance"
 }
 ```
 
-You can re-propose with a different source account, a different amount, or wait until the balance covers it.
-
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🛡 Spending Limits</strong></td><td>Define what counts as "needs approval" in plain English.</td><td><a href="give-an-agent-a-spending-limit.md">give-an-agent-a-spending-limit.md</a></td><td></td></tr><tr><td><strong>📜 Audit Trail</strong></td><td>Pull the full record of what happened and why.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>
+- [Give an Agent a Spending Limit](give-an-agent-a-spending-limit.md)
+- [Audit Every Action](audit-every-action.md)
