@@ -182,7 +182,7 @@ jobs:
             printf 'missing_source_account_api_log request_id=%s\n%s\n' "$request_id" "$matched_log"
           }
           create_approved_intent() {
-            local destination="$1" response intent_id status request_body
+            local destination="$1" response intent_id status request_body approval_status approval_response
             request_body="{\"action_type\":\"ach_outbound\",\"source_account_id\":\"${source_account_id}\",\"destination_counterparty_id\":\"${destination}\",\"amount\":\"1.00\",\"currency\":\"USD\"}"
             status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-create-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents" -H 'Content-Type: application/json' -H "Authorization: Bearer ${agent_token}" --data "$request_body")"
             response="$(cat /tmp/trust-gate-create-response.json)"
@@ -203,7 +203,13 @@ jobs:
             intent_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(!/^pi_[0-9A-HJKMNP-TV-Z]{26}$/.test(v.id??""))process.exit(1);process.stdout.write(v.id)})')"
             status="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>process.stdout.write(String(JSON.parse(b).status??"")))')"
             if [[ "$status" != pending_approval ]]; then echo "Expected pending_approval for $intent_id, got $status" >&2; exit 1; fi
-            curl -fsS --connect-timeout 10 --max-time 30 -X POST "$API_BASE/v1/payment-intents/$intent_id/approve" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{}' >/dev/null
+            approval_status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-approve-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents/$intent_id/approve" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{}')"
+            approval_response="$(cat /tmp/trust-gate-approve-response.json)"
+            printf 'payment_intent_approve_request payment_intent_id=%s\npayment_intent_approve_response_status=%s\npayment_intent_approve_response=%s\n' "$intent_id" "$approval_status" "$approval_response" >&2
+            if [[ "$approval_status" != 200 ]]; then
+              echo "Expected 200 while approving smoke payment intent $intent_id, got $approval_status" >&2
+              exit 1
+            fi
             printf '%s' "$intent_id"
           }
           expect_execute_failure() {
