@@ -71,6 +71,9 @@ async function buildApp(pool: Pool, principal: Principal): Promise<FastifyInstan
       typeof registerOnchainSignerRoutes
     >[1]["audit"],
     redis: {} as Redis,
+    // Inert here: this suite does not exercise chain pinning. Matches the 8453
+    // TEST_CHAIN_ID that siwx.test.ts signs with, so the two stay consistent.
+    chainId: 8453,
   });
   await app.ready();
   return app;
