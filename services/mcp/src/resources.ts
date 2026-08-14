@@ -121,6 +121,39 @@ export function listResourceTemplates(): ResourceTemplateListResult {
 }
 
 /**
+ * Scopes required to read each resource kind. A pure function of the parsed
+ * URI shape, never of the underlying row, so the caller can enforce it
+ * BEFORE doing any I/O (BRAIN-96) instead of discovering it only after
+ * readResource has already fetched the row and possibly thrown a
+ * not-found.
+ */
+const REQUIRED_SCOPES_BY_KIND: Record<ParsedBrainUri["kind"], string[]> = {
+  "ledger.account": ["ledger:read"],
+  "ledger.transaction": ["ledger:read"],
+  "ledger.obligation": ["ledger:read"],
+  "ledger.payment_intent": ["ledger:read"],
+  "wiki.page": ["wiki:read"],
+  "payments.action_types": ["payment_intent:propose"],
+  proof: ["audit:read"],
+};
+
+/**
+ * Required scopes for a brain:// URI, derived statically from
+ * parseBrainUri alone (no service calls). Returns null for a URI shape
+ * parseBrainUri does not recognize. Callers must enforce scope with this
+ * BEFORE calling readResource, not after: readResource doing the I/O first
+ * meant an insufficiently-scoped caller could trigger a full read (e.g.
+ * H-07 proof assembly) before the scope check ever ran, and a not-found
+ * thrown from inside that read leaked whether a tenant-scoped id exists to
+ * a caller who never had the scope to ask.
+ */
+export function requiredScopesForBrainUri(uri: string): string[] | null {
+  const parsed = parseBrainUri(uri);
+  if (parsed === null) return null;
+  return REQUIRED_SCOPES_BY_KIND[parsed.kind];
+}
+
+/**
  * Resolve a brain:// URI to a JSON-string body via the same Brain
  * services the tools call. Throws BrainError on missing resources;
  * the dispatcher maps to the right JSON-RPC code.
@@ -139,7 +172,7 @@ export async function readResource(
       const result = await ctx.ledger.getAccount(ctx.ctx, parsed.id);
       if (result === null) throw brainError("ledger_row_not_found", "account not found");
       return {
-        requiredScopes: ["ledger:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [
             {
@@ -155,7 +188,7 @@ export async function readResource(
       const result = await ctx.ledger.getTransaction(ctx.ctx, parsed.id);
       if (result === null) throw brainError("ledger_row_not_found", "transaction not found");
       return {
-        requiredScopes: ["ledger:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],
         },
@@ -165,7 +198,7 @@ export async function readResource(
       const result = await ctx.ledger.getObligation(ctx.ctx, parsed.id);
       if (result === null) throw brainError("ledger_row_not_found", "obligation not found");
       return {
-        requiredScopes: ["ledger:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],
         },
@@ -175,7 +208,7 @@ export async function readResource(
       const result = await ctx.paymentIntents.get(ctx.ctx, parsed.id);
       if (result === null) throw brainError("payment_intent_not_found", "payment intent not found");
       return {
-        requiredScopes: ["ledger:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }],
         },
@@ -185,7 +218,7 @@ export async function readResource(
       const page = await ctx.wiki.getPage(ctx.ctx, parsed.id);
       if (page === null) throw brainError("wiki_page_not_found", "page not found");
       return {
-        requiredScopes: ["wiki:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [{ uri, mimeType: "text/markdown", text: page.body_md }],
         },
@@ -193,7 +226,7 @@ export async function readResource(
     }
     case "payments.action_types": {
       return {
-        requiredScopes: ["payment_intent:propose"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [
             {
@@ -216,7 +249,7 @@ export async function readResource(
         throw brainError("proof_not_found", "no proof for that action");
       }
       return {
-        requiredScopes: ["audit:read"],
+        requiredScopes: REQUIRED_SCOPES_BY_KIND[parsed.kind],
         result: {
           contents: [{ uri, mimeType: "application/json", text: JSON.stringify(proof, null, 2) }],
         },

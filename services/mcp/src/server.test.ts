@@ -374,18 +374,19 @@ function makeServer(
   const proposals = fakeProposals();
   const evidence = fakeEvidence();
   const raw = opts.raw ?? fakeRaw();
+  const paymentIntents = fakePI();
   const server = new BrainMcpServer({
     auth: new FakeAuthVerifier(ACTIVE_AGENT),
     ledger: fakeLedger(),
     wiki: fakeWiki(),
     raw,
     ...(opts.rawReaderPool !== undefined ? { rawReaderPool: opts.rawReaderPool } : {}),
-    paymentIntents: fakePI(),
+    paymentIntents,
     proposals,
     evidence,
     audit,
   });
-  return { server, audit, proposals, evidence, raw, p: principal(scopes) };
+  return { server, audit, proposals, evidence, raw, paymentIntents, p: principal(scopes) };
 }
 
 function makeServerWithoutProposalDeps(scopes: string[] = ["execution:read"]) {
@@ -1106,6 +1107,73 @@ describe("BrainMcpServer.handle — payment_intent.propose scope gate", () => {
     }
     expect(audit.events.some((e) => e.action === "agent.mcp.tool_called")).toBe(true);
   });
+
+  it("BRAIN-94: derives a deterministic proposal_dedup_key so a byte-identical retry collides", async () => {
+    const { server, paymentIntents, p } = makeServer(["payment_intent:propose"]);
+    const call = {
+      jsonrpc: "2.0" as const,
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "payment_intent.propose",
+        arguments: {
+          action_type: "ach_outbound",
+          source_account_id: "acct_x",
+          destination_counterparty_id: "cp_y",
+          amount: "10.00",
+          currency: "USD",
+        },
+      },
+    };
+
+    await server.handle(call, p);
+    await server.handle(call, p);
+
+    const create = paymentIntents.create as unknown as ReturnType<typeof vi.fn>;
+    expect(create).toHaveBeenCalledTimes(2);
+    const firstKey = (create.mock.calls[0]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    const secondKey = (create.mock.calls[1]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    expect(firstKey).toBeDefined();
+    expect(firstKey).toBe(secondKey);
+  });
+
+  it("BRAIN-94: a different amount derives a different proposal_dedup_key", async () => {
+    const { server, paymentIntents, p } = makeServer(["payment_intent:propose"]);
+    const baseArgs = {
+      action_type: "ach_outbound",
+      source_account_id: "acct_x",
+      destination_counterparty_id: "cp_y",
+      currency: "USD",
+    };
+
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.propose", arguments: { ...baseArgs, amount: "10.00" } },
+      },
+      p,
+    );
+    await server.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "payment_intent.propose", arguments: { ...baseArgs, amount: "20.00" } },
+      },
+      p,
+    );
+
+    const create = paymentIntents.create as unknown as ReturnType<typeof vi.fn>;
+    const firstKey = (create.mock.calls[0]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    const secondKey = (create.mock.calls[1]?.[1] as { proposal_dedup_key?: string })
+      .proposal_dedup_key;
+    expect(firstKey).not.toBe(secondKey);
+  });
 });
 
 describe("BrainMcpServer.handle — payment_intent.propose on-chain settlement (item 14)", () => {
@@ -1513,9 +1581,13 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
     expect(res !== null && "error" in res).toBe(true);
   });
 
-  it("blocks when audit:read is missing", async () => {
-    // The scope check runs AFTER readResource builds the body, so we need
-    // buildProof to succeed for the scope rejection to be the surfaced error.
+  it("blocks when audit:read is missing, without ever calling buildProof (BRAIN-96)", async () => {
+    // Scope is now derived statically from the URI and enforced BEFORE the
+    // read runs, so buildProof (the I/O) must never be invoked when the
+    // caller lacks audit:read -- assert the call count, not just the error.
+    // Historical behavior (fixed): the scope check used to run AFTER
+    // readResource built the body, so a scope-insufficient caller still
+    // triggered the read as a side effect.
     const buildProof = vi.fn(async () => ({
       action_id: "act_X",
       tenant_id: TENANT,
@@ -1546,6 +1618,135 @@ describe("BrainMcpServer.handle — brain://proofs/{action_id} resource (item 17
       p,
     );
     expect(res !== null && "error" in res && res.error.code).toBe(-32002);
+    expect(buildProof).not.toHaveBeenCalled();
+  });
+
+  it("BRAIN-96: an insufficiently-scoped caller gets the identical error for an existing and a non-existent proof id (closes the existence oracle)", async () => {
+    const buildProofFound = vi.fn(async () => ({
+      action_id: "act_EXISTS",
+      tenant_id: TENANT,
+      agent_id: AGENT_ID,
+      behavior_hash: null,
+      outcome: "executed" as const,
+      policy_version: "v1",
+      policy_hash: "0x",
+      matched_rule_id: null,
+      gate_checks: [],
+      evidence: [],
+      ledger_snapshot_hash: "0x",
+      audit_events: [],
+      merkle_root: "0x",
+      merkle_proof: [],
+      chain_anchor: null,
+      rail_receipt: null,
+      human_explanation: "",
+    }));
+    const buildProofMissing = vi.fn(async () => null);
+
+    const { server: serverFound, p: pFound } = serverWithProof(buildProofFound, ["ledger:read"]);
+    const resFound = await serverFound.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_EXISTS" },
+      },
+      pFound,
+    );
+
+    const { server: serverMissing, p: pMissing } = serverWithProof(buildProofMissing, [
+      "ledger:read",
+    ]);
+    const resMissing = await serverMissing.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://proofs/act_MISSING" },
+      },
+      pMissing,
+    );
+
+    // Same scope-insufficient error either way -- a caller without audit:read
+    // cannot distinguish an existing proof id from a missing one.
+    expect(resFound !== null && "error" in resFound && resFound.error.code).toBe(-32002);
+    expect(resMissing !== null && "error" in resMissing && resMissing.error.code).toBe(-32002);
+    expect(buildProofFound).not.toHaveBeenCalled();
+    expect(buildProofMissing).not.toHaveBeenCalled();
+  });
+});
+
+describe("BrainMcpServer.handle — resources/read ledger.payment_intent oracle (BRAIN-96)", () => {
+  function serverWithPaymentIntentGet(get: IPaymentIntentService["get"], scopes: string[]) {
+    const server = new BrainMcpServer({
+      auth: new FakeAuthVerifier(ACTIVE_AGENT),
+      ledger: fakeLedger(),
+      wiki: fakeWiki(),
+      raw: fakeRaw(),
+      paymentIntents: { ...fakePI(), get } as unknown as IPaymentIntentService,
+      audit: new InMemoryAuditEmitter(),
+    });
+    return { server, p: principal(scopes) };
+  }
+
+  it("a wiki:read-only agent gets the identical auth_scope_insufficient error whether the payment intent exists or not", async () => {
+    const getFound = vi.fn(async () => ({
+      id: "pi_ABC",
+      owner_id: TENANT,
+      source_ids: [],
+      evidence_ids: [],
+      provenance: "inferred" as const,
+      confidence: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      created_by_agent_id: AGENT_ID,
+      action_type: "ach_outbound" as const,
+      source_account_id: "acct_x",
+      destination_counterparty_id: "cp_y",
+      amount: "10.00",
+      currency: "USD",
+      obligation_id: null,
+      invoice_id: null,
+      status: "approved" as const,
+      policy_decision_id: "pd_x",
+      approval_ids: [],
+      execution_receipt_ids: [],
+    }));
+    const getMissing = vi.fn(async () => null);
+
+    const { server: serverFound, p: pFound } = serverWithPaymentIntentGet(getFound, ["wiki:read"]);
+    const resFound = await serverFound.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://ledger/payment-intents/pi_ABC" },
+      },
+      pFound,
+    );
+
+    const { server: serverMissing, p: pMissing } = serverWithPaymentIntentGet(getMissing, [
+      "wiki:read",
+    ]);
+    const resMissing = await serverMissing.handle(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "brain://ledger/payment-intents/pi_MISSING" },
+      },
+      pMissing,
+    );
+
+    // Before BRAIN-96 this pair diverged: auth_scope_insufficient for the
+    // existing id, payment_intent_not_found for the missing one -- a
+    // wiki:read-only caller could enumerate real payment-intent ids without
+    // ever holding ledger:read. Now both fail identically and get() is never
+    // called (the scope check runs before any read).
+    expect(resFound !== null && "error" in resFound && resFound.error.code).toBe(-32002);
+    expect(resMissing !== null && "error" in resMissing && resMissing.error.code).toBe(-32002);
+    expect(getFound).not.toHaveBeenCalled();
+    expect(getMissing).not.toHaveBeenCalled();
   });
 });
 

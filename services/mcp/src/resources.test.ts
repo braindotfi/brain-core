@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { listResources, listResourceTemplates, parseBrainUri } from "./resources.js";
+import {
+  listResources,
+  listResourceTemplates,
+  parseBrainUri,
+  requiredScopesForBrainUri,
+} from "./resources.js";
 
 describe("parseBrainUri", () => {
   it("parses ledger account uris", () => {
@@ -72,6 +77,25 @@ describe("parseBrainUri", () => {
   });
   it("returns null for missing id", () => {
     expect(parseBrainUri("brain://ledger/accounts/")).toBeNull();
+  });
+});
+
+describe("requiredScopesForBrainUri (BRAIN-96)", () => {
+  it("derives the same scope readResource would return, without touching a service", () => {
+    expect(requiredScopesForBrainUri("brain://ledger/accounts/acct_X")).toEqual(["ledger:read"]);
+    expect(requiredScopesForBrainUri("brain://ledger/payment-intents/pi_X")).toEqual([
+      "ledger:read",
+    ]);
+    expect(requiredScopesForBrainUri("brain://wiki/pages/some-slug")).toEqual(["wiki:read"]);
+    expect(requiredScopesForBrainUri("brain://payments/action_types")).toEqual([
+      "payment_intent:propose",
+    ]);
+    expect(requiredScopesForBrainUri("brain://proofs/act_X")).toEqual(["audit:read"]);
+  });
+
+  it("returns null for a URI shape parseBrainUri does not recognize", () => {
+    expect(requiredScopesForBrainUri("brain://ledger/widgets/widget_1")).toBeNull();
+    expect(requiredScopesForBrainUri("https://example.com/x")).toBeNull();
   });
 });
 

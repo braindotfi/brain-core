@@ -13,7 +13,7 @@
  * (confirm), or `rejected` — and acts accordingly.
  */
 
-import { brainError, type PaymentIntentStatus } from "@brain/shared";
+import { brainError, hashBody, type PaymentIntentStatus } from "@brain/shared";
 import {
   EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES,
   isExecutablePaymentIntentActionType,
@@ -43,6 +43,33 @@ interface PaymentIntentProposeInput {
   /** escrow_release: on-chain BrainEscrow id + keccak256 job-terms commitment (RFC 0001 §7.6). */
   escrow_id?: string;
   job_terms_hash?: string;
+}
+
+/**
+ * BRAIN-94: proposal-layer idempotency key for payment_intent.propose. A JSON-
+ * RPC client that retries after a lost response (proxy timeout, dropped
+ * connection) resends the identical arguments object, so a deterministic hash
+ * of exactly what the tool received, scoped to the calling agent, collides on
+ * retry and PaymentIntentService.create() returns the original intent instead
+ * of creating a duplicate. The HTTP route protects the same path with an
+ * opt-in Idempotency-Key header (shared/src/idempotency/middleware.ts), but a
+ * JSON-RPC client speaking MCP has no reason to set a custom HTTP header on a
+ * tool call, so a route-level mechanism would not actually cover this
+ * surface -- deriving the key from the call itself needs no client
+ * cooperation.
+ *
+ * ponytail: no TTL and no distinguishing nonce, so a deliberate second
+ * propose with byte-identical arguments (same rail/amount/counterparty, no
+ * obligation_id or invoice_id to tell them apart) is also absorbed rather
+ * than creating a second PaymentIntent. That is the safer failure direction
+ * for a money-mover (under-pay, never double-pay), and duplicate-content
+ * proposals are exactly what gate check 11.5 (detectDuplicates) already
+ * flags. Upgrade path if a real caller needs distinct proposals with
+ * identical content: accept an explicit idempotency token on the tool input.
+ */
+function proposeDedupKey(agentId: string, input: PaymentIntentProposeInput): string {
+  const canonical = JSON.stringify(input, Object.keys(input).sort());
+  return `mcp:payment_intent.propose:${agentId}:${hashBody(canonical)}`;
 }
 
 /** EVM address shape for the x402 settlement recipient (mirrors the HTTP route). */
@@ -162,6 +189,7 @@ export const paymentIntentProposeTool: Tool<PaymentIntentProposeInput> = {
       ...(input.escrow_id !== undefined ? { escrow_id: input.escrow_id } : {}),
       ...(input.job_terms_hash !== undefined ? { job_terms_hash: input.job_terms_hash } : {}),
       agent_id: agent.id,
+      proposal_dedup_key: proposeDedupKey(agent.id, input),
     });
     return {
       payload: intent,
