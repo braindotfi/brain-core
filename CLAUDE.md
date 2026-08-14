@@ -1254,7 +1254,11 @@ Update this table on every promote.
 
 Promoted 2026-08-14 via `promote-prod` (approved by damonnam), commit
 `e03dd97ebbe15dffa4b9ed902c1defccd48a8369`. Post-deploy `POST /v1/tenants`
-probe pending via `ops-prod-tenants-probe.yml`; record the result here once run.
+probe run via `ops-prod-tenants-probe.yml`, approved by damonnam: `201`, a
+`member` object, and a `session.token` all present, confirming production
+tenancy returns a real user-principal member session (probe tenant
+`tnt_01KZZPM7ZGZVMM0QN7ASNAQCMH`, founder email `@brain.invalid`, safe to
+ignore).
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.
