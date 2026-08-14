@@ -329,7 +329,7 @@ jobs:
                WHERE value IS NOT NULL AND value <> ''
                GROUP BY t.id
             )
-            SELECT 'COMPLIANCE_ENRICHMENT_RECORD_JSON_BEGIN';
+            \echo 'COMPLIANCE_ENRICHMENT_RECORD_JSON_BEGIN'
             SELECT jsonb_pretty(
               jsonb_build_object(
                 'tenant_id', :'tenant_id',
@@ -403,7 +403,7 @@ jobs:
             FROM target t
             LEFT JOIN evidence e ON e.id = t.id
             LEFT JOIN key_facts k ON k.id = t.id;
-            SELECT 'COMPLIANCE_ENRICHMENT_RECORD_JSON_END';
+            \echo 'COMPLIANCE_ENRICHMENT_RECORD_JSON_END'
 
             COMMIT;
           SQL
