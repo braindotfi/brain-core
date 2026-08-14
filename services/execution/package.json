@@ -33,6 +33,7 @@
     "@brain/policy": "workspace:*",
     "@brain/ledger": "workspace:*",
     "fastify": "^5.11.0",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "viem": "^2.55.11"
   }
 }
