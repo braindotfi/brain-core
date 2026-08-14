@@ -5313,6 +5313,8 @@ export interface operations {
                         session_id?: string;
                         /** @description EIP-4361 domain claim the message must bind to, e.g. api.brain.fi */
                         domain?: string;
+                        /** @description EIP-4361 chainId claim the message must bind to, e.g. 84532 */
+                        chain_id?: number;
                     };
                 };
             };

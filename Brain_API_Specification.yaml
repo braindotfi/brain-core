@@ -301,6 +301,7 @@ paths:
                   nonce: { type: string }
                   session_id: { type: string }
                   domain: { type: string, description: 'EIP-4361 domain claim the message must bind to, e.g. api.brain.fi' }
+                  chain_id: { type: integer, description: 'EIP-4361 chainId claim the message must bind to, e.g. 84532' }
 
   /auth/siwx:
     post:

@@ -2333,6 +2333,7 @@ async function main(): Promise<void> {
             registry: agentRegistry,
             resolveWalletIdentity: (addr) => walletIdentityReader.resolveByAddress(addr),
             redis,
+            chainId: cfg.BRAIN_BASE_CHAIN_ID,
             ...(cfg.BRAIN_DEMO_MODE ? { demoMode: true } : {}),
           }),
         );
