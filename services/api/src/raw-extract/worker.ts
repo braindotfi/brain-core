@@ -413,6 +413,7 @@ function supportedUploadSourceType(artifact: RawArtifactRow): "pdf_upload" | "cs
 
   if (
     sourceType === "csv_upload" ||
+    sourceType === "xlsx_upload" ||
     CSV_MIME_TYPES.has(mimeType) ||
     spreadsheetFilename(filename)
   ) {

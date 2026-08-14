@@ -28,9 +28,11 @@ The Wiki is built to answer the kinds of questions only memory can answer.
 | "What changed in receivables this quarter?" | Requires diff against prior periods    |
 | "Is this subscription one we still use?"    | Requires usage and recurrence tracking |
 
-### Citations on Every Answer
+### Evidence on Every Answer
 
-Every answer carries citations into the Ledger and Raw. Any claim is traceable back to source evidence.
+The question API returns the evidence it used for each answer. Each evidence item
+identifies a retrieved Ledger entity and includes an excerpt from that entity's
+Wiki projection.
 
 ```typescript
 const answer = await brain.wiki.question({
@@ -38,13 +40,17 @@ const answer = await brain.wiki.question({
   question: "What did we spend on AWS last quarter, by environment?",
 });
 
-// answer.text         → fluent natural-language response
-// answer.citations[]  → [{ ledger_id, raw_refs: [...] }, ...]
-// answer.audit_event_id → the audit event under which this query was logged
+// answer.question  -> submitted question
+// answer.answered  -> whether a grounded or deterministic answer was produced
+// answer.answer    -> fluent natural-language response
+// answer.evidence  -> [{ entityType, entityId, excerpt }, ...]
+// answer.model     -> model identifier
+// answer.usage     -> token usage
 ```
 
 {% hint style="success" %}
-You never have to trust the Wiki blindly. Every claim links back to the Ledger records and Raw artifacts that produced it.
+You do not have to trust the Wiki blindly. The response identifies the Ledger
+entities that supplied the returned evidence.
 {% endhint %}
 
 ### How the Wiki Updates

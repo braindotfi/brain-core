@@ -7,7 +7,7 @@ Brain does not need to build every agent. **It is the substrate they share.** Ex
 {% endhint %}
 
 {% hint style="info" %}
-**Internal agents are first-class participants of this same layer.** A Brain-shipped agent registers in the same `BrainMCPAgentRegistry`, carries the same per-tenant scope grant, and executes under the same `BrainSmartAccount` session-key model as any external agent. The only difference is a `provenance: "internal"` metadata field and that Brain operates the execution key. There is no separate native-agent path. See [Internal agents](../concepts/internal-agents.md).
+**Internal agents are first-class participants of this same layer.** A Brain-shipped agent registers in the same `BrainMCPAgentRegistry` and carries a scope-hash commitment. The only difference is a `provenance: "internal"` metadata field and that Brain operates the execution key. There is no separate native-agent path. See [Internal agents](../concepts/internal-agents.md).
 {% endhint %}
 
 ### Agents Are First-Class Entities
@@ -19,7 +19,7 @@ Each agent has four attributes registered on-chain or referenced from on-chain.
 | **Identity**           | A `BrainMCPAgentRegistry` record on Base, keyed by an agent address (`agentId`/`tenantId`/`scopeHash`/`behaviorHash`)                                 |
 | **Capability set**     | Declared at registration: `pay_invoice`, `rebalance_treasury`, `file_vat_return`, etc                                                                 |
 | **Reputation history** | A per-agent reputation pointer / Merkle root in `BrainReputationRegistry` (RFC 0001, **UNAUDITED testnet**); read by Policy as a threshold input only |
-| **Scope grants**       | Per-tenant EIP-712 attestations granting specific actions, limits, and durations                                                                      |
+| **Scope hash**         | A commitment to the agent's sorted plain scope strings, registered as `scopeHash`                                                                     |
 
 ### Discovery and Routing
 
@@ -86,30 +86,27 @@ External agents authenticate using SIWX (Sign-In With X), based on EIP-4361 over
 2. Agent signs the challenge with its registered execution key
 3. Brain verifies the signature, recovers the agent address
 4. Brain looks up the address in BrainMCPAgentRegistry
-5. Brain checks the agent's scope grants for the requesting tenant
+5. Brain verifies the agent is active and its stored scope hash matches `BrainMCPAgentRegistry`
 6. Brain issues a session token with scoped capabilities
 ```
 
-The session token gates every subsequent API or MCP call. Scopes that have not been granted by the tenant are simply invisible to the agent.
+The session token gates every subsequent API or MCP call. Each tool checks the
+scope required for that operation before it runs.
 
-### EIP-712 ScopeAttestation
+### Scope Hash Commitment
 
-A scope grant is a tenant-signed authorization for a specific agent to perform a specific capability under specific limits. The EIP-712 type:
+The current agent scope commitment is `scopeHash`, not a structured EIP-712
+attestation. Brain sorts the agent's plain scope strings lexicographically, joins
+them with `|`, then calculates `keccak256` over the result. The MCP verifier fails
+closed when the stored hash does not match the hash registered in
+`BrainMCPAgentRegistry`.
 
-```
-ScopeAttestation(
-  bytes32 tenantId,
-  address agent,
-  bytes32 capability,        // e.g. keccak256("pay_invoice")
-  uint128 maxAmount,
-  bytes32 resourceScope,     // e.g. counterparty allowlist root
-  uint64  notBefore,
-  uint64  notAfter,
-  uint256 nonce
-)
-```
-
-This signed attestation is enforced off-chain (its hash is anchored as the agent's `scopeHash` in `BrainMCPAgentRegistry`). On-chain, the tenant translates the grant into a `BrainSmartAccount` session key via `grantSessionKey`, which binds the `policyVersion` and per-tx / per-period spend caps at grant time; `executeViaSessionKey` then enforces those caps, the bound `policyVersion`, and a per-holder replay nonce on every call.
+The current agent API does not yet read and return an agent's on-chain registration
+record. It returns `registration: null` until that reader is wired. There is no public
+API for per-scope deletion or agent deactivation. Operators can halt an agent with
+`POST /v1/agents/{agent_id}/halt`, which pauses its approved in-flight payment intents
+and quarantines its local record, then restore a quarantined record with
+`POST /v1/agents/{agent_id}/restore`.
 
 ### What Brain Provides vs What the Agent Provides
 

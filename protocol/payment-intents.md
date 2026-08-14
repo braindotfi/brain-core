@@ -54,7 +54,7 @@ proposed
   │
   │ Policy evaluates against live Ledger state
   │
-  ├──► auto-allow ─────► approved
+  ├──► allow ──────────► approved
   │
   ├──► confirm ────────► pending_approval
   │                       │
@@ -116,7 +116,7 @@ cap that covers the amount.
 | From                       | To                         | Trigger                                                                  |
 | -------------------------- | -------------------------- | ------------------------------------------------------------------------ |
 | `proposed`                 | `pending_approval`         | Policy returned `confirm`; approvers required                            |
-| `proposed`                 | `approved`                 | Policy returned `auto`; no human in the loop                             |
+| `proposed`                 | `approved`                 | Policy VM returned `allow`; no human approval is required                |
 | `proposed`                 | `rejected`                 | Policy returned `reject`                                                 |
 | `pending_approval`         | `awaiting_second_approval` | First approver signed; a distinct second approver is required            |
 | `pending_approval`         | `approved`                 | All required approvers signed                                            |
@@ -182,7 +182,9 @@ Or in the MCP:
 { "method": "resources/read", "params": { "uri": "brain://ledger/payment-intents/pi_a1b2c3" } }
 ```
 
-A Wiki page about a vendor automatically includes their pending PaymentIntents in the **Recent Activity** section.
+A counterparty Wiki page includes recent Ledger transactions and open obligations.
+It does not currently query or display payment intents. Agent and obligation
+Wiki pages do include payment-intent projections.
 
 ### Idempotency
 

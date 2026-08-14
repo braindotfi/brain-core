@@ -198,6 +198,11 @@ export {
   findPendingCollectionsProposalForInvoice,
   refreshCollectionsProposal,
 } from "./repository.js";
+export {
+  lockPendingProposalForSubject,
+  findPendingProposalForSubject,
+  refreshPendingProposal,
+} from "./repository.js";
 export type { ProposalRow } from "./repository.js";
 export { outcomeToStatus } from "./AgentService.js";
 // H-09 agent contribution hold.

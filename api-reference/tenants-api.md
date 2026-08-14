@@ -8,6 +8,9 @@ GDPR right-to-erasure deletion.
 ```http
 DELETE /v1/tenants/{id}
 Authorization: Bearer <owner JWT>
+Content-Type: application/json
+
+{ "confirm": "{tenant_id}" }
 ```
 
 Walks every tenant-scoped table across the six layers and deletes rows for
@@ -28,6 +31,9 @@ row counts so the erasure is itself verifiable.
 Self-tenant only by design: the data subject (or their representative
 user) is the authorized agent of the erasure request. No machine
 credential (agent, API partner, or webhook signer) can trigger deletion.
+The caller must also hold `execution:admin`. The deletion service repeats the
+authorization check inside its deletion transaction and requires the caller to
+be an active admin member of the target tenant.
 
 #### Response (HTTP 200)
 
@@ -42,9 +48,17 @@ credential (agent, API partner, or webhook signer) can trigger deletion.
     "agents": 3,
     "...": "..."
   },
-  "totalRows": 1421
+  "totalRows": 1421,
+  "blobArtifactCount": 3,
+  "blobUrisPendingPurge": ["tnt_.../raw/raw_001"],
+  "blobPurgeJobId": "blob_purge_001"
 }
 ```
+
+Blob deletion is asynchronous. `blobUrisPendingPurge` lists the object-storage
+artifacts captured before the database rows were removed, and `blobPurgeJobId`
+identifies the separate purge job. The job id is `null` when no blobs need
+purging.
 
 #### What Is Preserved
 

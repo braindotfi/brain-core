@@ -15,6 +15,8 @@ describe("adapterForSourceType", () => {
       "netsuite",
       "email_inbound",
       "csv_upload",
+      "xlsx_upload",
+      "txt_upload",
       "pdf_upload",
       "alchemy_wallet",
       "eth_address",
@@ -73,6 +75,8 @@ describe("adapterForGenericIngest (authenticated provenance, Codex P1)", () => {
   it("permits the medium/low-trust source types on the generic route", () => {
     const ok = [
       "csv_upload",
+      "xlsx_upload",
+      "txt_upload",
       "pdf_upload",
       "email_inbound",
       "netsuite",

@@ -1,102 +1,119 @@
 ---
-description: Pull balances, transactions, obligations, and counterparties for a tenant.
+description: Pull balances, transactions, obligations, and counterparties for the authenticated tenant.
 ---
 
 # Read a Financial Picture
 
-Goal: get a structured view of a tenant's full financial state, ready to render in a dashboard or feed to an LLM.
+Goal: retrieve the authenticated tenant's current financial data for a dashboard or a grounded application workflow.
 
-### In One Call
+### Start With a Snapshot
+
+`brain.snapshot` is an SDK convenience method. The tenant is derived from the
+credential. Its compatibility argument is not sent to the API.
 
 ```typescript
-const picture = await brain.snapshot("acme");
+const picture = await brain.snapshot("current-tenant");
 
-picture.accounts;        // [{ id, name, currency, currentBalance, ... }]
-picture.transactions;    // recent, paginated
-picture.obligations;     // upcoming, due, overdue
-picture.counterparties;  // top counterparties by activity
-picture.cashFlow;        // 30-day inflow/outflow summary
+picture.balances;
+picture.recentTransactions;
+picture.openObligations;
+picture.asOf;
 ```
 
-`brain.snapshot` is a convenience wrapper. It runs a handful of underlying calls in parallel and stitches the response together. For full control, call them yourself.
+The snapshot contains balances, recent transactions, open obligations, and its
+observation timestamp. Query the individual Ledger resources when the UI needs
+additional entities or filters.
 
-### In Five Calls
+### Read Individual Resources
 
 ```typescript
 const [accounts, transactions, obligations, counterparties, cashFlow] = await Promise.all([
-  brain.accounts.list("acme"),
-  brain.transactions.list("acme", { from: "2025-09-01", limit: 100 }),
-  brain.obligations.list("acme", { status: ["upcoming", "due", "overdue"] }),
-  brain.counterparties.list("acme", { sortBy: "activity", limit: 20 }),
-  brain.cashFlow.summarize({ tenantId: "acme", since: "2025-09-01", until: "2025-09-30" }),
+  brain.accounts.list({ limit: 100 }),
+  brain.transactions.list({ since: "2025-09-01T00:00:00.000Z", limit: 100 }),
+  brain.obligations.list({ status: "due", limit: 100 }),
+  brain.counterparties.list({ limit: 100 }),
+  brain.cashFlow.getServerSummary({ days: 30 }),
 ]);
 ```
 
-### Filtering Transactions
+Every resource derives the tenant from the authenticated principal. List calls
+take one optional parameter object, not a tenant identifier.
+
+### Filter Transactions
 
 ```typescript
-const txns = await brain.transactions.list("acme", {
-  from: "2025-09-01",
-  to:   "2025-09-30",
-  direction:       "outflow",       // inflow | outflow | transfer | adjustment
-  counterpartyId:  "cp_aws",
-  minAmount:       100,
-  status:          ["posted", "cleared"],
-  limit:           50,
+const page = await brain.transactions.list({
+  since: "2025-09-01T00:00:00.000Z",
+  until: "2025-09-30T23:59:59.999Z",
+  direction: "outflow",
+  counterparty_id: "cp_aws",
+  status: "posted",
+  limit: 50,
 });
 
-txns.data.forEach((t) => console.log(t.date, t.amount, t.description));
-console.log(txns.nextCursor);
+for (const transaction of page.transactions) {
+  console.log(transaction.id, transaction.amount, transaction.currency);
+}
+console.log(page.nextCursor);
 ```
 
-| Filter                   | Type     | Notes                                                            |
-| ------------------------ | -------- | ---------------------------------------------------------------- |
-| `from`, `to`             | ISO date | Inclusive                                                        |
-| `direction`              | enum     | One or many                                                      |
-| `counterpartyId`         | string   | Filter to one counterparty                                       |
-| `accountId`              | string   | Filter to one account                                            |
-| `minAmount`, `maxAmount` | decimal  | Currency-agnostic                                                |
-| `currency`               | ISO 4217 | When mixing currencies                                           |
-| `status`                 | enum\[]  | `pending`, `posted`, `cleared`, `failed`, `reversed`, `disputed` |
+| Filter | Type | Notes |
+| --- | --- | --- |
+| `since`, `until` | ISO timestamp | Time range bounds |
+| `direction` | enum | One of `inflow`, `outflow`, `transfer`, or `adjustment` |
+| `counterparty_id` | string | One counterparty identifier |
+| `account_id` | string | One account identifier |
+| `status` | enum | One transaction status |
+| `limit`, `cursor` | number, string | Keyset pagination |
 
-### Asking Questions Instead of Querying
-
-Sometimes you don't know what to filter on. Ask in natural language.
+### Ask a Grounded Question
 
 ```typescript
-const answer = await brain.ask("acme", "Which counterparties did we pay the most in Q3?");
-console.log(answer.text);
-console.log(answer.citations);  // ledger references back to specific transactions
+const answer = await brain.ask(
+  "current-tenant",
+  "Which counterparties did we pay the most in Q3?",
+);
+
+console.log(answer.answer);
+for (const item of answer.evidence) {
+  console.log(item.entityType, item.entityId, item.excerpt);
+}
 ```
 
-The answer comes with citations to the specific transactions it cites. You can render those in your UI as clickable proof.
+The response contains `answer` and the evidence records used to ground it. The
+tenant argument is retained for SDK compatibility and is not sent on the wire.
 
-### Paginating
-
-All list endpoints return a `nextCursor`. Pass it on the next call.
+### Paginate
 
 ```typescript
-let cursor: string | undefined;
+let cursor: string | null = null;
+
 do {
-  const page = await brain.transactions.list("acme", { from: "2025-01-01", cursor, limit: 200 });
-  for (const t of page.data) {
-    // process
+  const page = await brain.transactions.list({
+    since: "2025-01-01T00:00:00.000Z",
+    limit: 200,
+    ...(cursor ? { cursor } : {}),
+  });
+
+  for (const transaction of page.transactions) {
+    console.log(transaction.id);
   }
   cursor = page.nextCursor;
 } while (cursor);
 ```
 
-### Getting Notified of Changes
+### Receive Change Notifications
 
-Instead of polling, use webhooks. Set the endpoint in the Console under Settings → Webhooks.
+Configure audit webhooks for the forwarded event names your application needs.
 
-| Event                     | Payload                                 |
-| ------------------------- | --------------------------------------- |
-| `transaction.created`     | The new transaction                     |
-| `transaction.updated`     | Status, amount, or counterparty changed |
-| `account.balance_changed` | New balance for an account              |
-| `obligation.due_soon`     | An obligation is N days from due        |
+| Event | Meaning |
+| --- | --- |
+| `ledger.transaction.created` | A transaction was written to the Ledger |
+| `ledger.obligation.created` | An obligation was written to the Ledger |
+| `ledger.counterparty.created` | A counterparty was created |
+| `raw.extraction.status_changed` | A Raw extraction changed state |
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Pay an Invoice</strong></td><td>Take action on what you just read.</td><td><a href="pay-an-invoice-safely.md">pay-an-invoice-safely.md</a></td><td></td></tr><tr><td><strong>🛡 Spending Limits</strong></td><td>Let an agent read and act, with guardrails.</td><td><a href="give-an-agent-a-spending-limit.md">give-an-agent-a-spending-limit.md</a></td><td></td></tr></tbody></table>
+- [Pay an Invoice Safely](pay-an-invoice-safely.md)
+- [Give an Agent a Spending Limit](give-an-agent-a-spending-limit.md)
