@@ -210,6 +210,112 @@ jobs:
             SET LOCAL statement_timeout = '5s';
             SET LOCAL lock_timeout = '1s';
 
+            \echo 'COMPLIANCE_ENRICHMENT_CANDIDATE_DEBUG_JSON_BEGIN'
+            WITH pending AS (
+              SELECT p.id,
+                     p.created_at,
+                     p.status,
+                     p.proposing_agent,
+                     p.action,
+                     p.action->>'type' AS action_type,
+                     p.action->>'agent_role' AS action_agent_role,
+                     p.action->>'agent_kind' AS action_agent_kind,
+                     p.action->>'agent_id' AS action_agent_id,
+                     p.action->>'kind' AS action_kind,
+                     COALESCE(p.action->>'narrative', p.action->>'summary', p.action->>'description') AS narrative_text,
+                     COALESCE(p.action->>'headline', p.action->>'summary', p.action->>'narrative', p.action->>'description') AS headline_text,
+                     a.role AS joined_agent_role
+                FROM proposals p
+                LEFT JOIN agents a ON a.id = p.proposing_agent AND a.tenant_id = p.tenant_id
+               WHERE p.tenant_id = :'tenant_id'
+                 AND p.status = 'pending'
+            ),
+            scoped AS (
+              SELECT *,
+                     (
+                       action_type = 'compliance'
+                       OR action_agent_role = 'compliance'
+                       OR action_agent_kind = 'compliance'
+                       OR action_agent_id = 'compliance'
+                       OR action_kind = 'compliance'
+                       OR joined_agent_role = 'compliance'
+                     ) AS diagnostic_compliance_match,
+                     (COALESCE(narrative_text, '') || ' ' || COALESCE(headline_text, '')) AS prose_text
+                FROM pending
+            )
+            SELECT jsonb_pretty(jsonb_build_object(
+              'pending_proposals', (SELECT count(*)::int FROM scoped),
+              'pending_diagnostic_compliance_matches', (
+                SELECT count(*)::int FROM scoped WHERE diagnostic_compliance_match
+              ),
+              'pending_with_prose_invoice_or_counterparty_ref', (
+                SELECT count(*)::int FROM scoped WHERE prose_text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+              ),
+              'pending_diagnostic_compliance_with_prose_invoice_or_counterparty_ref', (
+                SELECT count(*)::int
+                  FROM scoped
+                 WHERE diagnostic_compliance_match
+                   AND prose_text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+              ),
+              'pending_with_action_invoice_or_counterparty_ref', (
+                SELECT count(*)::int FROM scoped WHERE action::text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+              ),
+              'pending_diagnostic_compliance_with_action_invoice_or_counterparty_ref', (
+                SELECT count(*)::int
+                  FROM scoped
+                 WHERE diagnostic_compliance_match
+                   AND action::text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+              ),
+              'samples_with_prose_refs', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', s.id,
+                  'created_at', s.created_at,
+                  'proposing_agent', s.proposing_agent,
+                  'joined_agent_role', s.joined_agent_role,
+                  'action_type', s.action_type,
+                  'action_agent_role', s.action_agent_role,
+                  'action_agent_kind', s.action_agent_kind,
+                  'action_agent_id', s.action_agent_id,
+                  'action_kind', s.action_kind,
+                  'diagnostic_compliance_match', s.diagnostic_compliance_match,
+                  'narrative', s.narrative_text,
+                  'headline', s.headline_text
+                ) ORDER BY s.created_at DESC, s.id DESC)
+                FROM (
+                  SELECT *
+                    FROM scoped
+                   WHERE prose_text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 10
+                ) s
+              ), '[]'::jsonb),
+              'samples_compliance_with_action_refs', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', s.id,
+                  'created_at', s.created_at,
+                  'proposing_agent', s.proposing_agent,
+                  'joined_agent_role', s.joined_agent_role,
+                  'action_type', s.action_type,
+                  'action_agent_role', s.action_agent_role,
+                  'action_agent_kind', s.action_agent_kind,
+                  'action_agent_id', s.action_agent_id,
+                  'action_kind', s.action_kind,
+                  'narrative', s.narrative_text,
+                  'headline', s.headline_text,
+                  'first_action_ref', regexp_match(s.action::text, '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})', 'i')
+                ) ORDER BY s.created_at DESC, s.id DESC)
+                FROM (
+                  SELECT *
+                    FROM scoped
+                   WHERE diagnostic_compliance_match
+                     AND action::text ~* '((inv|cp)_[0-9A-HJKMNP-TV-Z]{26})'
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 10
+                ) s
+              ), '[]'::jsonb)
+            ));
+            \echo 'COMPLIANCE_ENRICHMENT_CANDIDATE_DEBUG_JSON_END'
+
             WITH candidates AS (
               SELECT p.id,
                      p.created_at,
