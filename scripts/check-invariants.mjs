@@ -15,6 +15,51 @@ function check(name, ok, detail) {
   checks.push({ name, ok, detail });
 }
 
+// RFC 0002 Phase C, increment 1: the tier-1 unattested read-only agent path
+// (services/mcp/src/auth.ts) must not skip the existing agent-state, tenant,
+// and scope-hash-presence checks -- it only replaces the on-chain
+// BrainMCPAgentRegistry read, and only when all four of its own clauses hold.
+const mcpAuthSource = read("services/mcp/src/auth.ts");
+const verifyStart = mcpAuthSource.indexOf("public async verify(");
+const verifyEnd = mcpAuthSource.indexOf("private async loadAgent(", verifyStart);
+const verifyBody = mcpAuthSource.slice(verifyStart, verifyEnd);
+const stateCheckIndex = verifyBody.indexOf('agent.state !== "active"');
+const tenantCheckIndex = verifyBody.indexOf("auth_tenant_mismatch");
+const scopeHashNullCheckIndex = verifyBody.indexOf("agent.scope_hash === null");
+const tier1BranchIndex = verifyBody.indexOf('agent.attestation_mode === "none"');
+check(
+  "MCP tier-1 unattested branch follows the state/tenant/scope_hash checks",
+  verifyStart >= 0 &&
+    verifyEnd > verifyStart &&
+    stateCheckIndex >= 0 &&
+    tenantCheckIndex > stateCheckIndex &&
+    scopeHashNullCheckIndex > tenantCheckIndex &&
+    tier1BranchIndex > scopeHashNullCheckIndex,
+  "McpAuthVerifier.verify's tier-1 branch must run AFTER the state !== active, " +
+    "tenant-mismatch, and scope_hash === null checks -- an unattested agent must " +
+    "still fail those first, unconditionally, before its four unattested-eligibility " +
+    "clauses are even considered",
+);
+
+// assertScopeHashAcceptable is a fail-closed on-chain read for non-tier-1
+// agents (services/mcp/src/auth.ts): a chain outage must throw
+// OnchainScopeUnavailableError and propagate, never be caught and downgraded
+// to the canonical-derivation fallback.
+const assertScopeHashStart = mcpAuthSource.indexOf(
+  "export async function assertScopeHashAcceptable",
+);
+const assertScopeHashBody = mcpAuthSource.slice(assertScopeHashStart);
+check(
+  "assertScopeHashAcceptable has no catch around the on-chain read",
+  assertScopeHashStart >= 0 &&
+    !assertScopeHashBody.includes("catch (") &&
+    !assertScopeHashBody.includes("catch("),
+  "assertScopeHashAcceptable must let OnchainScopeUnavailableError propagate " +
+    "out of onchain.getOnchainScopeHash rather than catching it, or a chain " +
+    "outage would silently fall through to the canonical-derivation check " +
+    "instead of failing token minting/consent closed",
+);
+
 const paymentIntentService = read("services/execution/src/payment-intents/PaymentIntentService.ts");
 const trustGateSource = read("shared/src/gate/gate.ts");
 const approveStart = paymentIntentService.indexOf("public async approve(");

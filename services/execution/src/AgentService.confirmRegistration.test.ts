@@ -22,6 +22,7 @@ function agentRow(overrides: Record<string, unknown> = {}) {
     registered_tx: null,
     registered_at: null,
     created_at: new Date(),
+    attestation_mode: "onchain_custodial",
     ...overrides,
   };
 }
@@ -71,6 +72,7 @@ const ctx: ServiceCallContext = { tenantId: newTenantId(), actor: "system" };
 
 const okRelayer: AgentRegistrationRelayer = {
   configured: true,
+  supportedModes: ["onchain_custodial"],
   submitRegistration: vi.fn(async () => ({ txHash: "0xtx" })),
 };
 
@@ -126,5 +128,37 @@ describe("AgentService.confirmRegistration — RFC 0002 Phase C", () => {
       code: "agent_proposal_invalid_state",
     });
     expect(sawUpdate()).toBe(false);
+  });
+
+  it("passes the stored tenant_signer_address + tenant_signature for tenant_signed mode", async () => {
+    const { pool } = makeFakePool((sql) =>
+      /UPDATE agents/.test(sql)
+        ? { rows: [agentRow({ state: "active", registered_tx: "0xtenanttx" })], rowCount: 1 }
+        : {
+            rows: [
+              agentRow({
+                attestation_mode: "tenant_signed",
+                tenant_signer_address: "0x" + "ab".repeat(20),
+                tenant_signature: "0xsig",
+              }),
+            ],
+            rowCount: 1,
+          },
+    );
+    const tenantSignedRelayer: AgentRegistrationRelayer = {
+      configured: true,
+      supportedModes: ["tenant_signed"],
+      submitRegistration: vi.fn(async () => ({ txHash: "0xtenanttx" })),
+    };
+    const { deps } = makeDeps(pool, tenantSignedRelayer);
+    await new AgentService(deps).confirmRegistration(ctx, AGENT_ID);
+
+    expect(tenantSignedRelayer.submitRegistration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "tenant_signed",
+        tenantSignerAddress: "0x" + "ab".repeat(20),
+        tenantSignature: "0xsig",
+      }),
+    );
   });
 });

@@ -171,8 +171,64 @@ Decision: **register off-chain immediately, confirm on-chain asynchronously.**
    user-submits-the-tx variants later without a schema change. Only the relay
    strategy differs.
 
-The KMS signer construction + Base RPC wiring is the deferred live-wiring step
-(as with the escrow/x402 rails and the `resolveEscrowState` reader).
+**Amendment (increment 2, three-tier model).** The single `pending_onchain`
+flow above turned out to conflate two different needs: an agent that only
+ever reads tenant data does not need an on-chain attestation at all, while an
+agent that can move money always does. `POST /v1/agents` now takes an
+explicit `attestation_mode`:
+
+1. `none` -- tier-1 unattested. Skips on-chain registration entirely; the
+   agent is `active` immediately. Gated to roles whose full scope set is
+   read-only and contained in the MCP unattested scope set (`ledger:read`,
+   `wiki:read`, `raw:read`), enforced by the same constant
+   `services/mcp/src/auth.ts` checks per-request, so registration-time and
+   request-time enforcement cannot drift apart.
+2. `tenant_signed` -- the tenant holds its own signing key and submits the
+   attestation itself.
+3. `onchain_custodial` -- Brain's KMS-backed relayer signs on the tenant's
+   behalf, exactly the flow items 1 to 3 above originally described. The
+   response's `custodial` field is `true` only for this mode, a
+   machine-readable custody disclosure rather than an implied default.
+
+`tenant_signed` and `onchain_custodial` both still land `pending_onchain`.
+Increment 3 built the `onchain_custodial` relayer
+(`KmsCustodialRegistrationRelayer`, `services/execution/src/relayers/kms-custodial.ts`):
+when `BRAIN_AGENT_RELAYER_MODE=custodial` is configured with a signer key,
+RPC URL, and registry address, `onchain_custodial` now succeeds and a
+background worker (`agent-registration-worker.ts`) drives
+`AgentService.confirmRegistration` for every `pending_onchain` row until it
+either confirms on-chain (`active`) or exhausts its bounded retry ceiling
+(`failed`).
+
+**Increment 4 (complete) built the `tenant_signed` relayer**
+(`TenantSignedRegistrationRelayer`, `services/execution/src/relayers/tenant-signed.ts`).
+`BrainMCPAgentRegistry._requireQuorum` has no bootstrap branch, so a tenant
+address can only ever become a tenant signer through the registry's
+`initialAdmin` bootstrap path -- tier 2 is therefore precisely "customer-signed
+agent attestations, on a Brain-bootstrapped signer set": Brain sends exactly
+ONE custodial `setTenantSigner` transaction (idempotent, mirroring the
+custodial relayer's own bootstrap phase) to seat the tenant's DESIGNATED
+CUSTOMER address, and every `registerAgent` attestation after that is signed
+by the customer, never by Brain. `TenantSignedRegistrationRelayer` hard-
+asserts Brain's own `initialAdmin` address can never appear as the
+`authSigner` for a tier-2 registration.
+
+Designating the signer (`POST /v1/tenants/{tenant_id}/onchain-signer`,
+`services/api/src/onboarding/onchain-signer.ts`) requires the address to
+already be linked to the tenant in `wallet_identities`
+(`POST /v1/tenants/{tenant_id}/wallets`) AND a fresh SIWX proof over that
+exact address -- a login-linked wallet does not, by itself, authorize
+becoming a registry signer. Because the EIP-712 `AgentRegistration` digest
+covers the server-minted `agentId`, registration is two HTTP steps: `POST
+/agents` with `attestation_mode: "tenant_signed"` creates the row
+`pending_onchain` and returns the exact typed-data payload to sign;
+`POST /agents/{agent_id}/attestation` verifies the returned signature
+recovers to the tenant's designated signer BEFORE storing it, then the SAME
+background worker used for `onchain_custodial` confirms it on-chain. A
+tenant that has designated its own signer can no longer register
+`onchain_custodial` agents (`409 onchain_custodial_signer_designated`) --
+see `docs/contracts/production-agents.md` for the full tier comparison and
+custody disclosure.
 
 ## 9. Sandbox → live promotion
 
@@ -200,9 +256,12 @@ read its own (empty) ledger and generate shadow proposals.
   Production enablement additionally requires a verification-token delivery path
   owned by API or platform. If the raw token is hidden and no delivery dependency
   is configured, signup fails closed before provisioning.
-- **Phase C. Agent registration + relayer interface.** `POST /v1/agents`,
-  `pending_onchain` lifecycle, the `brain.agents.onchainRegister` job + a
-  fail-closed relayer interface (signer deferred).
+- **Phase C. Agent registration + relayer interface (COMPLETE).** `POST
+/v1/agents`, `pending_onchain` lifecycle, the fail-closed relayer
+  interface. Tier 3 (`onchain_custodial`, the KMS-backed relayer +
+  confirmation worker, increment 3) and tier 2 (`tenant_signed`, the
+  customer-signed relayer with a one-time Brain bootstrap transaction,
+  increment 4) are both IMPLEMENTED.
 - **Phase D. Wallet identities + SIWX linking.** `wallet_identities`, extend
   SIWX to resolve humans + link wallets; unify the address→principal lookup.
 - **Phase E. API spec + SDK + docs.** Update `Brain_API_Specification.yaml`,
@@ -213,13 +272,14 @@ Each phase is additive, flag-gated, fails closed, and lands green
 
 ## 11. Decisions (decision log)
 
-| #       | Decision                    | Resolution                                                                                                                                                            |
-| ------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **O-1** | Signup gating               | **Open, sandbox-first.** Anyone can provision a tenant; it lands sandbox/fail-closed; real money stays behind H-24 + audit.                                           |
-| **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login. |
-| **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                              |
-| **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                               |
-| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                                |
+| #       | Decision                    | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **O-1** | Signup gating               | **Open, sandbox-first.** Anyone can provision a tenant; it lands sandbox/fail-closed; real money stays behind H-24 + audit.                                                                                                                                                                                                                                                                                                                                                            |
+| **O-2** | Identity model              | **Two principals, linked:** email (+password) for the human owner/management; SIWX wallet + on-chain attestation for the agent. A human may also link a wallet login.                                                                                                                                                                                                                                                                                                                  |
+| **O-3** | On-chain agent registration | **Off-chain `pending_onchain` + async KMS relayer** (fail-closed; deferred signer). Swappable to gasless-at-signup / user-submits later.                                                                                                                                                                                                                                                                                                                                               |
+| **O-4** | New tenant default posture  | **`sandbox = TRUE`**; existing/seeded tenants stay non-sandbox (column defaults FALSE).                                                                                                                                                                                                                                                                                                                                                                                                |
+| **O-5** | Human login scopes          | Management/read + approve only. **never** `*:execute` or `payment_intent:propose` by default (those belong to agents).                                                                                                                                                                                                                                                                                                                                                                 |
+| **O-6** | Attestation tiers           | **Three explicit `attestation_mode` values** (`none`, `tenant_signed`, `onchain_custodial`), not one `pending_onchain` flow. `none` is gated to read-only roles by the same constant the MCP surface checks per-request; `onchain_custodial` is live behind `BRAIN_AGENT_RELAYER_MODE=custodial`; `tenant_signed` is live behind `BRAIN_AGENT_RELAYER_MODE=tenant_signed` (increment 4, complete) -- a tenant with a designated signer can no longer fall back to `onchain_custodial`. |
 
 ## 12. Non-goals (this RFC)
 

@@ -12,6 +12,44 @@
 import type { Scope } from "@brain/shared";
 import { internalAgentDefinitions } from "./registry.js";
 
+/**
+ * Every role `scopesForAgentRole` gives a distinct, deliberate scope set
+ * (i.e. every non-default switch case below). Unknown roles fall through to
+ * the `default` branch and get a read-heavy scope set silently; callers that
+ * must reject an unrecognized role outright (RFC 0002 Phase C, increment 2:
+ * POST /v1/agents) validate against this list instead of trusting
+ * scopesForAgentRole to fail on a typo.
+ */
+export const KNOWN_AGENT_ROLES: readonly string[] = [
+  "dispute",
+  "fraud_anomaly",
+  "vendor_risk",
+  "reconciliation",
+  "payment",
+  "anomaly",
+  "partner",
+  "partner_execute",
+];
+
+/**
+ * Scopes an agent may hold and still skip the on-chain BrainMCPAgentRegistry
+ * check (RFC 0002 Phase C, increment 1 -- the tier-1 "unattested read-only
+ * agent" path). Deliberately small and read-only: nothing in this set can
+ * move money or write Ledger/Raw state.
+ *
+ * Lives here, not in services/mcp, because services/mcp depends on
+ * @brain/internal-agents (for scopesForAgentRole) and services/execution
+ * (for the agent repository) -- putting this constant in services/mcp would
+ * make it unreachable from services/execution/src/routes.ts (POST /v1/agents,
+ * increment 2) without an import cycle. services/mcp/src/auth.ts re-exports
+ * this exact binding so its own existing imports are unchanged.
+ */
+export const MCP_UNATTESTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
+  "ledger:read",
+  "wiki:read",
+  "raw:read",
+]);
+
 export function scopesForAgentRole(role: string): Scope[] {
   switch (role) {
     case "dispute":

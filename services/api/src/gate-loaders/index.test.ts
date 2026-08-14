@@ -94,6 +94,7 @@ import {
   makeResolveEvidence,
   makeResolveRole,
   makeResolveSubjectOwnerTenant,
+  makeResolveTenantOnchainSigner,
   makeResolveTenantFlags,
   makeSumActiveReservations,
   resolvePrincipalFromCtx,
@@ -145,6 +146,26 @@ describe("makeResolveTenantFlags", () => {
     setScopedRows([{ require_behavior_hash: true }]);
     const out = await makeResolveTenantFlags(POOL)(ctx(), "tnt_01TEST000000000000000000000");
     expect(out).toEqual({ requireBehaviorHash: true });
+  });
+});
+
+describe("makeResolveTenantOnchainSigner", () => {
+  it("returns null when no row or a null column", async () => {
+    setScopedRows([]);
+    const out = await makeResolveTenantOnchainSigner(POOL)(
+      ctx(),
+      "tnt_01TEST000000000000000000000",
+    );
+    expect(out).toBeNull();
+  });
+
+  it("returns the designated signer address from the row", async () => {
+    setScopedRows([{ onchain_signer_address: "0x" + "ab".repeat(20) }]);
+    const out = await makeResolveTenantOnchainSigner(POOL)(
+      ctx(),
+      "tnt_01TEST000000000000000000000",
+    );
+    expect(out).toBe("0x" + "ab".repeat(20));
   });
 });
 

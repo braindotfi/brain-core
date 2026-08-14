@@ -290,10 +290,20 @@ export class AgentService implements IAgentService {
     return row !== null ? rowToRecord(row) : null;
   }
 
+  /**
+   * `attestationMode` defaults to "onchain_custodial" -- the pre-existing
+   * behavior of always requiring BrainMCPAgentRegistry confirmation before
+   * `active`. Passing "none" (RFC 0002 Phase C, increment 1: tier-1
+   * unattested) registers the agent already `active`, with `registered_at`
+   * stamped now and no `registered_tx` -- there is no on-chain confirmation
+   * to wait for.
+   */
   public async register(
     ctx: ServiceCallContext,
     input: Omit<AgentRecord, "state" | "registered_at">,
+    attestationMode: string = "onchain_custodial",
   ): Promise<AgentRecord> {
+    const isUnattested = attestationMode === "none";
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
       insertAgent(c, {
         id: input.id,
@@ -303,8 +313,10 @@ export class AgentService implements IAgentService {
         display_name: input.display_name,
         scope_hash: input.scope_hash !== null ? Buffer.from(input.scope_hash, "hex") : null,
         onchain_address: input.onchain_address,
-        state: "pending_onchain",
-        registered_tx: input.registered_tx,
+        state: isUnattested ? "active" : "pending_onchain",
+        registered_tx: isUnattested ? null : input.registered_tx,
+        attestation_mode: attestationMode,
+        ...(isUnattested ? { registeredAt: new Date() } : {}),
       }),
     );
     return rowToRecord(row);
@@ -340,12 +352,44 @@ export class AgentService implements IAgentService {
         "agent on-chain registration relayer is not configured",
       );
     }
+    // A pending_onchain row can only carry an attested mode (register()
+    // writes "none" agents already active), but the column is a plain TEXT
+    // check constraint, not a TS union, so narrow defensively rather than
+    // trusting the DB value at the relayer boundary.
+    if (
+      existing.attestation_mode !== "tenant_signed" &&
+      existing.attestation_mode !== "onchain_custodial"
+    ) {
+      throw brainError(
+        "agent_rail_unavailable",
+        "agent " +
+          agentId +
+          " has attestation_mode " +
+          existing.attestation_mode +
+          ", not an attested mode",
+      );
+    }
 
     const { txHash } = await this.deps.relayer.submitRegistration({
       agentId,
       tenantId: ctx.tenantId,
       onchainAddress: existing.onchain_address ?? "",
       scopeHash: existing.scope_hash !== null ? existing.scope_hash.toString("hex") : "",
+      mode: existing.attestation_mode as "tenant_signed" | "onchain_custodial",
+      // tier 2 only: the customer's already-verified signature, collected via
+      // POST /agents/{id}/attestation (repository.storeTenantAttestationSignature).
+      // Omitted entirely for onchain_custodial, and the relayer must fail
+      // closed if tenant_signed reaches it with either still null
+      // (attestation not submitted yet) -- exactOptionalPropertyTypes means
+      // the key itself, not just an undefined value, must be left out.
+      ...(existing.attestation_mode === "tenant_signed" &&
+      existing.tenant_signer_address !== null &&
+      existing.tenant_signature !== null
+        ? {
+            tenantSignerAddress: existing.tenant_signer_address,
+            tenantSignature: existing.tenant_signature,
+          }
+        : {}),
     });
 
     const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>

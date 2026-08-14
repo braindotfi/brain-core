@@ -65,6 +65,7 @@ function agentInsertingDeps(): ExecutionDeps {
               state: values[7],
               registered_tx: values[8],
               registered_at: values[9],
+              attestation_mode: values[10],
             },
           ],
           rowCount: 1,
@@ -91,7 +92,7 @@ function agentInsertingDeps(): ExecutionDeps {
   };
 }
 
-describe("POST /execution/agents/register — scope_hash canonicality", () => {
+describe("POST /execution/agents/register - scope_hash canonicality", () => {
   it("rejects a non-canonical scope_hash for the supplied role", async () => {
     const app = await buildApp(agentInsertingDeps());
     const res = await app.inject({
@@ -142,6 +143,80 @@ describe("POST /execution/agents/register — scope_hash canonicality", () => {
     });
     expect(res.statusCode).toBe(201);
     expect((res.json() as { scope_hash: string | null }).scope_hash).toBeNull();
+    await app.close();
+  });
+
+  it("defaults to attestation_mode=onchain_custodial and state=pending_onchain when omitted", async () => {
+    const app = await buildApp(agentInsertingDeps());
+    const canonical = computeAgentScopeHash(scopesForAgentRole("payment")).slice(2);
+    const res = await app.inject({
+      method: "POST",
+      url: "/execution/agents/register",
+      payload: {
+        agent_id: newAgentId(),
+        role: "payment",
+        display_name: "Default Mode Agent",
+        scope_hash: canonical,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as {
+      attestation_mode: string;
+      state: string;
+      registered_tx: string | null;
+    };
+    expect(body.attestation_mode).toBe("onchain_custodial");
+    expect(body.state).toBe("pending_onchain");
+    await app.close();
+  });
+});
+
+describe("POST /execution/agents/register - RFC 0002 Phase C tier-1 (attestation_mode)", () => {
+  it("registers a tier-1 unattested agent already active, with no registered_tx", async () => {
+    const app = await buildApp(agentInsertingDeps());
+    const canonical = computeAgentScopeHash(scopesForAgentRole("anomaly")).slice(2);
+    const res = await app.inject({
+      method: "POST",
+      url: "/execution/agents/register",
+      payload: {
+        agent_id: newAgentId(),
+        role: "anomaly",
+        display_name: "Tier-1 Agent",
+        scope_hash: canonical,
+        attestation_mode: "none",
+        // Even if a caller supplies one, tier-1 must not record it -- there
+        // is no on-chain confirmation to point to.
+        registered_tx: "0xshouldbeignored",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as {
+      state: string;
+      attestation_mode: string;
+      registered_tx: string | null;
+      registered_at: string | null;
+    };
+    expect(body.state).toBe("active");
+    expect(body.attestation_mode).toBe("none");
+    expect(body.registered_tx).toBeNull();
+    expect(body.registered_at).not.toBeNull();
+    await app.close();
+  });
+
+  it("rejects an unknown attestation_mode", async () => {
+    const app = await buildApp(agentInsertingDeps());
+    const res = await app.inject({
+      method: "POST",
+      url: "/execution/agents/register",
+      payload: {
+        agent_id: newAgentId(),
+        role: "anomaly",
+        display_name: "Bad Mode Agent",
+        attestation_mode: "not_a_real_mode",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("request_body_invalid");
     await app.close();
   });
 });

@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import type { Pool, PoolClient } from "pg";
 import { newTenantId } from "@brain/shared";
-import { listEligibleAgents } from "../src/routes/oauth.js";
+import { listEligibleAgents, loadActiveAgent } from "../src/routes/oauth.js";
 
 interface FixtureRow {
   id: string;
@@ -68,5 +68,40 @@ describe("listEligibleAgents", () => {
 
     expect(eligible.map((a) => a.id)).toEqual([external.id]);
     expect(eligible.some((a) => a.id === internal.id)).toBe(false);
+  });
+});
+
+describe("loadActiveAgent", () => {
+  // The grant path, not the listing: a tampered agent_id posted straight to
+  // /authorize/consent never passes through listEligibleAgents, so this is the
+  // filter that actually stops an internal agent being delegated.
+  it("does not resolve an internal-kind agent", async () => {
+    const tenantId = newTenantId();
+    const internal: FixtureRow = {
+      id: "agent_01J0000000000000000000000A",
+      display_name: "Brain BFF Service Agent",
+      role: "payment",
+      scope_hash: Buffer.from("ab".repeat(32), "hex"),
+      kind: "internal",
+    };
+
+    const agent = await loadActiveAgent(fakePool([internal]), tenantId, internal.id);
+
+    expect(agent).toBeNull();
+  });
+
+  it("still resolves an external-kind agent", async () => {
+    const tenantId = newTenantId();
+    const external: FixtureRow = {
+      id: "agent_01J0000000000000000000000B",
+      display_name: "Partner Agent",
+      role: "partner",
+      scope_hash: Buffer.from("cd".repeat(32), "hex"),
+      kind: "external",
+    };
+
+    const agent = await loadActiveAgent(fakePool([external]), tenantId, external.id);
+
+    expect(agent?.id).toBe(external.id);
   });
 });

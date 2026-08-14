@@ -25,7 +25,19 @@ import {
   type Scope,
   type ServiceCallContext,
 } from "@brain/shared";
+import { scopesForAgentRole, MCP_UNATTESTED_SCOPES } from "@brain/internal-agents";
 import type { Pool } from "pg";
+
+/**
+ * Re-exported so every existing importer of MCP_UNATTESTED_SCOPES from this
+ * module (services/mcp/src/index.ts, and this file own callers below) keeps
+ * working unchanged. The canonical definition moved to
+ * services/internal-agents/src/agent-role-scopes.ts (RFC 0002 Phase C,
+ * increment 2) so services/execution/src/routes.ts can import the SAME
+ * binding for POST /v1/agents without an import cycle -- services/mcp already
+ * depends on services/execution, so the reverse direction is not available.
+ */
+export { MCP_UNATTESTED_SCOPES };
 
 export interface AgentRecord {
   id: string;
@@ -34,12 +46,32 @@ export interface AgentRecord {
   scope_hash: Buffer | null;
   onchain_address: string | null;
   role: string;
+  /* "none" = tier-1 unattested (see MCP_UNATTESTED_SCOPES above);
+   * "tenant_signed" / "onchain_custodial" both still require the
+   * BrainMCPAgentRegistry check this file otherwise always ran. */
+  attestation_mode: string;
 }
 
 export interface OnchainScopeChecker {
   /** Returns the on-chain scope hash for the agent, or null if the agent
    *  is not registered. The hex string excludes the leading 0x. */
   getOnchainScopeHash(agentId: string): Promise<string | null>;
+}
+
+/**
+ * Thrown by an `OnchainScopeChecker` implementation when the on-chain READ
+ * ITSELF failed (RPC/network/decode fault) -- distinct from a clean "not
+ * registered" result, which still returns `null`. Before this type existed
+ * both cases collapsed to `null`, so a chain outage silently downgraded to
+ * "agent has no on-chain scope" instead of a diagnosable failure. Callers
+ * that must fail closed on an outage (McpAuthVerifier.verify,
+ * assertScopeHashAcceptable) let this propagate rather than catching it.
+ */
+export class OnchainScopeUnavailableError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "OnchainScopeUnavailableError";
+  }
 }
 
 export interface AuthVerifier {
@@ -138,8 +170,68 @@ export class McpAuthVerifier implements AuthVerifier {
         details: { agent_id: agent.id },
       });
     }
+
+    // Tier-1 unattested read-only path (RFC 0002 Phase C, increment 1). Skips
+    // the BrainMCPAgentRegistry read below ONLY when all four clauses hold --
+    // each closes a distinct bypass, so none may be dropped or merged.
+    if (agent.attestation_mode === "none") {
+      // Clause 1 (this `if`): the agent row itself must be enrolled as
+      // unattested. A tenant_signed/onchain_custodial agent always takes the
+      // on-chain path below, whatever its role or JWT scopes look like.
+      const roleScopes = scopesForAgentRole(agent.role);
+      // Clause 2: the agent's REGISTERED role must be read-only and fully
+      // contained in MCP_UNATTESTED_SCOPES. Without this, registering an
+      // agent under a money-path role (e.g. "payment") with
+      // attestation_mode="none" would skip the chain for a scope set that
+      // can move money.
+      const roleIsUnattestedEligible =
+        roleScopes.length > 0 && roleScopes.every((s) => MCP_UNATTESTED_SCOPES.has(s));
+      // Clause 3: the DB scope_hash must be exactly the canonical derivation
+      // for that role, not a stale, hand-planted, or previously on-chain
+      // value that happens to still be stored. Prevents scope carried over
+      // from a broader grant from riding the unattested path.
+      const canonicalHex = computeAgentScopeHash(roleScopes).slice(2).toLowerCase();
+      const offchainHexLower = Buffer.from(agent.scope_hash).toString("hex").toLowerCase();
+      const scopeHashIsCanonical = offchainHexLower === canonicalHex;
+      // Clause 4: the JWT actually presented on THIS request must also be
+      // fully contained in MCP_UNATTESTED_SCOPES. The registered role can be
+      // read-only while a specific token still carries a wider grant (e.g. a
+      // legacy token minted before the role narrowed); reject that here
+      // rather than trusting the role alone.
+      const requestScopesAreUnattestedEligible = principal.scopes.every((s) =>
+        MCP_UNATTESTED_SCOPES.has(s),
+      );
+      if (roleIsUnattestedEligible && scopeHashIsCanonical && requestScopesAreUnattestedEligible) {
+        return {
+          agent,
+          ctx: {
+            tenantId: principal.tenantId,
+            actor: principal.id,
+          },
+        };
+      }
+      // Any clause failing falls through to the strict on-chain path below --
+      // deliberately, so a misconfigured tier-1 agent is never silently
+      // waved through; it gets the same registry check as a custodial agent.
+    }
+
     const offchainHex = Buffer.from(agent.scope_hash).toString("hex");
-    const onchainHex = await this.cachedOnchain.getOnchainScopeHash(agent.id);
+    let onchainHex: string | null;
+    try {
+      onchainHex = await this.cachedOnchain.getOnchainScopeHash(agent.id);
+    } catch (err) {
+      if (err instanceof OnchainScopeUnavailableError) {
+        // Not a posture change: an outage already denied every call before
+        // this error type existed (getOnchainScopeHash collapsed it to null,
+        // which the branch right below already rejected). Only the
+        // diagnosis changes -- operators can now tell "chain unreachable"
+        // apart from "chain confirms not registered".
+        throw brainError("agent_not_registered_onchain", "on-chain scope check unavailable", {
+          details: { agent_id: agent.id, reason: "onchain_unavailable" },
+        });
+      }
+      throw err;
+    }
     if (onchainHex === null) {
       throw brainError("agent_not_registered_onchain", "agent not registered on-chain", {
         details: { agent_id: agent.id },
@@ -163,7 +255,7 @@ export class McpAuthVerifier implements AuthVerifier {
   private async loadAgent(principal: Principal): Promise<AgentRecord | null> {
     return withTenantScope(this.pool, principal.tenantId, async (c) => {
       const { rows } = await c.query<AgentRecord>(
-        `SELECT id, tenant_id, state, scope_hash, onchain_address, role
+        `SELECT id, tenant_id, state, scope_hash, onchain_address, role, attestation_mode
            FROM agents WHERE id = $1 LIMIT 1`,
         [principal.id],
       );
@@ -233,14 +325,40 @@ export async function assertScopeHashAcceptable(params: {
   scopeHash: Buffer | null;
   expectedScopes: readonly Scope[];
   onchain: OnchainScopeChecker;
+  /**
+   * RFC 0002 Phase C, increment 1. "none" (tier-1 unattested) skips the
+   * on-chain read entirely and requires only the canonical derivation --
+   * mirrors the McpAuthVerifier.verify tier-1 branch above. Any other value
+   * (e.g. "tenant_signed", "onchain_custodial") keeps the existing
+   * on-chain-preferred rule below unchanged.
+   */
+  attestationMode: string;
 }): Promise<void> {
-  const { agentId, scopeHash, expectedScopes, onchain } = params;
+  const { agentId, scopeHash, expectedScopes, onchain, attestationMode } = params;
   if (scopeHash === null) {
     throw brainError("agent_scope_hash_missing", "agent has no scope attestation", {
       details: { agent_id: agentId },
     });
   }
   const offchainHex = Buffer.from(scopeHash).toString("hex");
+  const canonicalHex = computeAgentScopeHash(expectedScopes).slice(2).toLowerCase();
+  if (attestationMode === "none") {
+    if (offchainHex.toLowerCase() !== canonicalHex) {
+      throw brainError(
+        "agent_scope_hash_mismatch",
+        "scope hash is not the canonical derivation for this unattested role",
+        {
+          details: { agent_id: agentId, offchain_hash: offchainHex, canonical_hash: canonicalHex },
+        },
+      );
+    }
+    return;
+  }
+  // This call is deliberately unwrapped: OnchainScopeUnavailableError must
+  // propagate out of it so a chain outage fails token minting/consent closed
+  // instead of silently falling through to the canonical-derivation check
+  // below. (Pinned: check-invariants.mjs, "assertScopeHashAcceptable has no
+  // catch around the on-chain read".)
   const onchainHex = await onchain.getOnchainScopeHash(agentId);
   if (onchainHex !== null) {
     if (onchainHex.toLowerCase() !== offchainHex.toLowerCase()) {
@@ -254,7 +372,6 @@ export async function assertScopeHashAcceptable(params: {
     }
     return;
   }
-  const canonicalHex = computeAgentScopeHash(expectedScopes).slice(2).toLowerCase();
   if (offchainHex.toLowerCase() !== canonicalHex) {
     throw brainError(
       "agent_scope_hash_mismatch",

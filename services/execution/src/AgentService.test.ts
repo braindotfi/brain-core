@@ -6,7 +6,7 @@ import type { ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 
 // ---------------------------------------------------------------------------
-// Constants — valid Brain IDs generated at module load
+// Constants - valid Brain IDs generated at module load
 // ---------------------------------------------------------------------------
 
 const TENANT = newTenantId();
@@ -21,7 +21,7 @@ const ctx: ServiceCallContext = {
 };
 
 // ---------------------------------------------------------------------------
-// Fake pool — handles BEGIN/COMMIT/ROLLBACK/set_config transparently
+// Fake pool - handles BEGIN/COMMIT/ROLLBACK/set_config transparently
 // ---------------------------------------------------------------------------
 
 function makeFakePool(
@@ -92,6 +92,80 @@ function makeDeps(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe("AgentService.register - RFC 0002 Phase C attestation_mode", () => {
+  /** Echoes INSERT INTO agents back (RETURNING *), mirroring repository.insertAgent's
+   *  positional param order: id, tenant_id, kind, role, display_name, scope_hash,
+   *  onchain_address, state, registered_tx, registered_at, attestation_mode. */
+  function agentInsertingPool(): Pool {
+    return makeFakePool((sql, values) => {
+      if (sql.includes("INSERT INTO agents")) {
+        return {
+          rows: [
+            {
+              id: values[0],
+              tenant_id: values[1],
+              kind: values[2],
+              role: values[3],
+              display_name: values[4],
+              scope_hash: values[5],
+              onchain_address: values[6],
+              state: values[7],
+              registered_tx: values[8],
+              registered_at: values[9],
+              attestation_mode: values[10],
+              created_at: new Date(),
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+  }
+
+  it("defaults to onchain_custodial and state=pending_onchain when no mode is passed", async () => {
+    const svc = new AgentService({
+      pool: agentInsertingPool(),
+      audit: new InMemoryAuditEmitter(),
+      evaluatePolicy: makeEvaluatePolicy("allow"),
+    });
+    const record = await svc.register(ctx, {
+      id: newAgentId(),
+      kind: "external",
+      role: "partner",
+      display_name: "Custodial Agent",
+      scope_hash: null,
+      onchain_address: null,
+      registered_tx: null,
+    });
+    expect(record.state).toBe("pending_onchain");
+  });
+
+  it("mode='none' registers the agent already active, with no registered_tx", async () => {
+    const svc = new AgentService({
+      pool: agentInsertingPool(),
+      audit: new InMemoryAuditEmitter(),
+      evaluatePolicy: makeEvaluatePolicy("allow"),
+    });
+    const record = await svc.register(
+      ctx,
+      {
+        id: newAgentId(),
+        kind: "external",
+        role: "anomaly",
+        display_name: "Tier-1 Agent",
+        scope_hash: null,
+        onchain_address: null,
+        registered_tx: "0xshouldbeignored",
+      },
+      "none",
+    );
+    expect(record.state).toBe("active");
+    expect(record.registered_tx).toBeNull();
+    expect(record.registered_at).not.toBeNull();
+  });
+});
 
 describe("AgentService.propose", () => {
   it("maps allow → approved", async () => {

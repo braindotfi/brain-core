@@ -15,7 +15,7 @@
 
 import { createPublicClient, http, keccak256, toBytes } from "viem";
 import { baseSepolia } from "viem/chains";
-import type { OnchainScopeChecker } from "@brain/mcp";
+import { OnchainScopeUnavailableError, type OnchainScopeChecker } from "@brain/mcp";
 
 const BRAIN_MCP_AGENT_REGISTRY_ABI = [
   {
@@ -63,10 +63,20 @@ export function createAuthOnchainScopeChecker(opts: ViemScopeCheckerOptions): On
         });
         if (registration.registeredAt === 0n || registration.revokedAt !== 0n) return null;
         return registration.scopeHash.slice(2).toLowerCase();
-      } catch {
-        // Fail closed (no on-chain scope) rather than crash the consent path
-        // -- identical reasoning to viemScopeChecker.ts.
-        return null;
+      } catch (err) {
+        // Throw rather than fail closed to null -- identical reasoning to
+        // viemScopeChecker.ts. Collapsing an RPC/decode fault to null let a
+        // chain outage silently read as "agent has no on-chain scope",
+        // which the consent and token routes then treated identically to a
+        // genuinely unregistered agent instead of an unverifiable one.
+        const name = err instanceof Error ? err.name : "UnknownError";
+        const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+        const transient = /Http|Timeout|Connection|fetch|network|socket/i.test(
+          `${name} ${message}`,
+        );
+        throw new OnchainScopeUnavailableError(
+          `${transient ? "rpc" : "registry"}: ${name}: ${message}`,
+        );
       }
     },
   };

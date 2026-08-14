@@ -238,6 +238,12 @@ export const BRAIN_ERROR_CODES = [
   "auth_email_unverified",
   "wallet_already_linked",
 
+  // RFC 0002 Phase C, increment 4: tier 2 (tenant_signed) agent attestation
+  "onchain_signer_wallet_not_linked",
+  "tenant_signer_not_designated",
+  "onchain_custodial_signer_designated",
+  "agent_attestation_signature_invalid",
+
   // Production tenancy, sessions, and invites
   "session_identity_unlinked",
   "invite_invalid",
@@ -350,6 +356,11 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   auth_invalid_credentials: 401,
   auth_email_unverified: 403,
   wallet_already_linked: 409,
+  // RFC 0002 Phase C, increment 4.
+  onchain_signer_wallet_not_linked: 400,
+  tenant_signer_not_designated: 400,
+  onchain_custodial_signer_designated: 409,
+  agent_attestation_signature_invalid: 400,
   session_identity_unlinked: 403,
   invite_invalid: 403,
   invite_expired: 403,

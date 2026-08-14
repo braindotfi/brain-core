@@ -1,6 +1,6 @@
 # MCP Authentication
 
-External agents authenticate to Brain's MCP server with a **JWT issued by `auth.brain.fi`**, verified against that service's published JWKS. Authorization then layers on top: the agent's on-chain registration in `BrainMCPAgentRegistry` supplies a `scopeHash` attestation that the server cross-checks against the `agents.scope_hash` DB column before any tool call is allowed.
+External agents authenticate to Brain's MCP server with a **JWT issued by `auth.brain.fi`**, verified against that service's published JWKS. Authorization then layers on top: for most agents, the on-chain registration in `BrainMCPAgentRegistry` supplies a `scopeHash` attestation that the server cross-checks against the `agents.scope_hash` DB column before any tool call is allowed. A narrow, read-only class of agents carries no on-chain attestation and is handled separately, under "Attested vs Unattested Agents" below.
 
 ### The Auth Chain
 
@@ -20,13 +20,16 @@ External agents authenticate to Brain's MCP server with a **JWT issued by `auth.
                  ▼
 ┌─────────────────────────────────────────────────┐
 │  MCP dispatcher                                 │
-│  Checks run for principal_type=agent:           │
+│  Always, for principal_type=agent:              │
 │  1. Agent record in `agents` is `active`        │
-│  2. Agent's DB `scope_hash` matches on-chain    │
-│     `scopeHash` in BrainMCPAgentRegistry         │
-│     (verified once, cached 60 s per agent)      │
-│  3. JWT `tenant_id` equals the DB agent row's   │
+│  2. JWT `tenant_id` equals the DB agent row's   │
 │     `tenant_id`                                 │
+│  3. The agent row has a `scope_hash` at all     │
+│  Then, by the row's `attestation_mode`:         │
+│   - attested: DB `scope_hash` matches on-chain  │
+│     `scopeHash` in BrainMCPAgentRegistry        │
+│     (verified once, cached 60 s per agent)      │
+│   - unattested: four-clause check, no chain read│
 └────────────────┬────────────────────────────────┘
                  │
                  ▼
@@ -36,6 +39,25 @@ External agents authenticate to Brain's MCP server with a **JWT issued by `auth.
 │  scope against the agent's granted scopes       │
 └─────────────────────────────────────────────────┘
 ```
+
+### Attested vs Unattested Agents
+
+Every agent row carries an `attestation_mode`: `onchain_custodial` (the default), `tenant_signed`, or `none`. Only `none` changes the auth chain above. Three checks always run first and unconditionally, before attestation mode is even read:
+
+1. Agent record in `agents` is `active`.
+2. JWT `tenant_id` equals the agent's tenant.
+3. The agent row has a `scope_hash` at all (a row with no scope attestation is rejected outright).
+
+An **attested** agent (`tenant_signed` or `onchain_custodial`, which today means every existing agent) then takes the path this doc describes in full below: the `agents` row's `scope_hash` column must match the on-chain hash in `BrainMCPAgentRegistry`, verified once and cached 60 seconds per agent. That comparison is server-side and does not involve the JWT, which carries no `scope_hash` claim.
+
+An **unattested** agent (`attestation_mode = "none"`) skips the on-chain read entirely, but only when ALL FOUR of these hold. Any one failing sends the request down the attested path instead, so a misconfigured unattested agent gets the strict on-chain check, never a silent pass:
+
+1. The agent row's `attestation_mode` is `"none"`.
+2. The agent's **registered role** resolves to a scope set that is fully contained in a small read-only allowlist: `ledger:read`, `wiki:read`, `raw:read`. A role that can propose or execute anything, such as `payment`, is never eligible no matter how `attestation_mode` is set.
+3. The agent's stored `scope_hash` is exactly the canonical hash derived from that role's scopes, not a stale or hand-planted value.
+4. The scopes on the **JWT actually presented for this call** are also fully contained in that same read-only allowlist. A wider-scoped token, even from an otherwise-eligible agent, is rejected onto the attested path.
+
+This is a real capability, not a formality: an unattested agent can still call `payment_intent.list` (reads `ledger:read`) and `raw.artifact.get` (reads `raw:read`), so it can list a tenant's pending payment intents and read ingested document bytes without ever touching `BrainMCPAgentRegistry`. Tenants that grant `attestation_mode = "none"` to an agent are trusting Brain's own account/scope enforcement for that read access, not an on-chain attestation.
 
 ### JWT Structure
 
@@ -86,7 +108,7 @@ struct AgentRegistration {
 }
 ```
 
-The MCP auth verifier (`services/mcp/src/auth.ts`) runs these checks, in order, for every agent-principal request:
+The MCP auth verifier (`services/mcp/src/auth.ts`) runs these checks, in order, for every agent-principal request. Steps 3 and 4 are the attested path; an agent that satisfies all four unattested clauses above stops after step 2:
 
 | Step | Check                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------ |

@@ -190,6 +190,7 @@ interface EligibleAgentRow {
   readonly display_name: string;
   readonly role: string;
   readonly scope_hash: Buffer | null;
+  readonly attestation_mode: string;
 }
 
 // Consent only ever offers or grants kind=external agents (the tenants
@@ -208,7 +209,7 @@ export async function listEligibleAgents(
 ): Promise<EligibleAgentRow[]> {
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
-      `SELECT id, display_name, role, scope_hash FROM agents
+      `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
         WHERE tenant_id = $1 AND state = 'active' AND scope_hash IS NOT NULL
           AND kind = 'external'
         ORDER BY display_name`,
@@ -218,14 +219,17 @@ export async function listEligibleAgents(
   });
 }
 
-async function loadActiveAgent(
+// Exported for the same reason listEligibleAgents is: this is the grant path,
+// so the kind = 'external' filter here is the one that actually stops a
+// tampered agent_id, and it needs its own regression test.
+export async function loadActiveAgent(
   pool: Pool,
   tenantId: string,
   agentId: string,
 ): Promise<EligibleAgentRow | null> {
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
-      `SELECT id, display_name, role, scope_hash FROM agents
+      `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
         WHERE tenant_id = $1 AND id = $2 AND state = 'active' AND kind = 'external' LIMIT 1`,
       [tenantId, agentId],
     );
@@ -504,6 +508,7 @@ export async function registerOauthRoutes(
           scopeHash: agent.scope_hash,
           expectedScopes: registeredScopes,
           onchain: deps.onchain,
+          attestationMode: agent.attestation_mode,
         });
       } catch {
         await deps.audit.emit({

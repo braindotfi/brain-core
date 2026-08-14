@@ -75,6 +75,7 @@ describe("AgentPageGenerator", () => {
     onchain_address: "0xdef",
     state: "active",
     registered_at: new Date("2026-05-01T00:00:00Z"),
+    registered_tx: "0xtx123",
     created_at: new Date("2026-04-01T00:00:00Z"),
   };
 
@@ -86,7 +87,25 @@ describe("AgentPageGenerator", () => {
       { subjectId: "agent_1", slug: "/agents/agent_1" },
     );
     expect(out.body_md).toContain("Treasury Bot");
+    expect(out.body_md).toContain("Registered on-chain: 2026-05-01");
     expect(out.subject_id).toBe("agent_1");
+  });
+
+  // RFC 0002 Phase C honesty fix: a tier-1 unattested agent is `active` with
+  // registered_at set but no registered_tx (no BrainMCPAgentRegistry
+  // confirmation ever happened). The page must not claim "Registered
+  // on-chain" from registered_at alone.
+  it("does not claim on-chain registration for a tier-1 unattested agent (registered_tx null)", async () => {
+    const unattested: AgentView = { ...agent, registered_tx: null };
+    const reader: AgentReader = { byId: async () => unattested };
+    const gen = new AgentPageGenerator();
+    const out = await gen.render(
+      { ctx, client: ledgerOnlyClient(), agentReader: reader },
+      { subjectId: "agent_1", slug: "/agents/agent_1" },
+    );
+    expect(out.body_md).not.toContain("Registered on-chain");
+    expect(out.body_md).toContain("Active");
+    expect(out.body_md).toContain("2026-05-01");
   });
 });
 

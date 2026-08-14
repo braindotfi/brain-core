@@ -40,14 +40,23 @@ export class AgentPageGenerator implements PageGenerator {
     if (agent === null) throw subjectNotFound(this.pageType, "agent", id);
     const recentIntents = await fetchRecentPaymentIntents(deps, id);
 
+    // Only registered_tx (an actual BrainMCPAgentRegistry confirmation) proves
+    // on-chain registration. registered_at alone is not enough: a tier-1
+    // unattested agent (RFC 0002 Phase C) is `active` with registered_at set
+    // but no on-chain record, so gating the on-chain claim on registered_at
+    // alone would make this tenant's own memory assert a registration that
+    // never happened.
+    const onchainRegisteredAt = agent.registered_tx !== null ? agent.registered_at : null;
     const currentTruth =
       `**${agent.display_name}**\n` +
       `Kind: \`${agent.kind}\` · Role: \`${agent.role}\`\n` +
       `State: \`${agent.state}\`\n` +
       (agent.onchain_address !== null ? `On-chain address: \`${agent.onchain_address}\`\n` : "") +
-      (agent.registered_at !== null
-        ? `Registered: ${agent.registered_at.toISOString().slice(0, 10)}`
-        : "Not yet registered on-chain");
+      (onchainRegisteredAt !== null
+        ? `Registered on-chain: ${onchainRegisteredAt.toISOString().slice(0, 10)}`
+        : agent.registered_at !== null
+          ? `Active since ${agent.registered_at.toISOString().slice(0, 10)} (unattested; no on-chain registration)`
+          : "Not yet registered on-chain");
 
     const recentActivity = bullet(
       recentIntents.map(
@@ -75,9 +84,11 @@ export class AgentPageGenerator implements PageGenerator {
           : "_No risk flags._";
 
     const timeline =
-      agent.registered_at !== null
-        ? `Registered on-chain: ${agent.registered_at.toISOString().slice(0, 10)}`
-        : "_Awaiting on-chain registration._";
+      onchainRegisteredAt !== null
+        ? `Registered on-chain: ${onchainRegisteredAt.toISOString().slice(0, 10)}`
+        : agent.registered_at !== null
+          ? `Active (unattested) since ${agent.registered_at.toISOString().slice(0, 10)}`
+          : "_Awaiting on-chain registration._";
 
     const revision = revisionFromTouches([
       { id: agent.id, updated_at: agent.created_at },

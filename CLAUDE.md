@@ -703,6 +703,62 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
 - `POST /audit/anchor/publish` derives its per-tenant cooldown from the latest
   `audit_anchors` row rather than in-process state, so it survives restart, is
   not per-replica, and a failed publish no longer consumes the window.
+- RFC 0002 Phase C increment 2 adds self-serve `POST /agents`, accepting
+  `execution:admin` OR `policy:write`. The server mints `agent_id` and derives
+  `scope_hash` from `role`; it rejects a caller-supplied `agent_id`,
+  `scope_hash`, or `state` outright. `attestation_mode: "none"` (tier-1
+  unattested) is gated to roles whose scopes are a subset of the same
+  `MCP_UNATTESTED_SCOPES` constant `services/mcp/src/auth.ts` checks
+  per-request (now exported from `@brain/internal-agents` so both sides import
+  the identical binding). `tenant_signed` and `onchain_custodial` both return
+  `agent_rail_unavailable` until the on-chain registration relayer ships in
+  increments 3 and 4.
+- RFC 0002 Phase C increment 3 lands the `onchain_custodial` relayer.
+  `KmsCustodialRegistrationRelayer` (`services/execution/src/relayers/kms-custodial.ts`)
+  ports the two-phase `setTenantSigner` (idempotent bootstrap) then
+  `registerAgent` ceremony from `scripts/ops/register-prod-agent.ts`, gated by
+  `BRAIN_AGENT_RELAYER_MODE=custodial` plus its own signer key
+  (`BRAIN_AGENT_RELAYER_PRIVATE_KEY`, deliberately never defaulted to
+  `AUDIT_PUBLISHER_KEY`). A new background worker
+  (`agent-registration-worker.ts`) claims `pending_onchain` agents cross-tenant
+  and drives `AgentService.confirmRegistration`, with a bounded exponential
+  backoff and a 12-attempt ceiling before a row terminally fails
+  (`services/execution/migrations/0032_agents_attestation_attempts.sql`).
+  `POST /agents` now accepts `onchain_custodial` (landing `pending_onchain`)
+  whenever a configured relayer is wired; with none configured, or for
+  `tenant_signed`, it still returns `agent_rail_unavailable`. See
+  `docs/contracts/production-agents.md` for the custodial disclosure: a
+  custodially-registered tenant has Brain's own key seated as its on-chain
+  signer, not its own.
+- RFC 0002 Phase C increment 4 (final) lands the `tenant_signed` relayer,
+  completing Phase C. `BrainMCPAgentRegistry._requireQuorum` has no bootstrap
+  branch, so tier 2 is precisely "customer-signed agent attestations, on a
+  Brain-bootstrapped signer set": `TenantSignedRegistrationRelayer`
+  (`services/execution/src/relayers/tenant-signed.ts`, sharing the two-phase
+  ceremony's fee floors, balance guard, and phase-2 idempotency read with
+  `KmsCustodialRegistrationRelayer` via `relayers/registry-shared.ts`) sends
+  exactly ONE Brain-signed bootstrap `setTenantSigner` transaction to seat the
+  tenant's designated CUSTOMER address, then every `registerAgent` attestation
+  is customer-signed; it hard-asserts Brain's own key can never be the
+  `authSigner`. `POST /v1/tenants/{tenant_id}/onchain-signer`
+  (`services/api/src/onboarding/onchain-signer.ts`) designates that address,
+  gated on it already being linked via `wallet_identities`
+  (`tenants.onchain_signer_address`, `services/api/migrations/0021`) AND a
+  fresh SIWX proof (`verifySiwxProof`, factored out of `services/api/src/auth/siwx.ts`
+  so sign-in and designation share one verifier). Because the EIP-712 digest
+  covers the server-minted `agentId`, registration is two steps: `POST
+/agents` with `attestation_mode: "tenant_signed"` now returns the typed-data
+  payload to sign once a relayer and a designated signer both exist, and
+  `POST /agents/{agent_id}/attestation`
+  (`services/execution/migrations/0033_agents_tenant_attestation.sql`) verifies
+  the signature recovers to that signer BEFORE storing it, then the SAME
+  `agent-registration-worker.ts` confirms it on-chain. `BRAIN_AGENT_RELAYER_MODE`
+  gains `tenant_signed` (boot-fenced identically to `custodial`); `POST
+/agents` refuses `onchain_custodial` with `409
+onchain_custodial_signer_designated` once a tenant has designated its own
+  signer, naming `tenant_signed` as the alternative rather than silently
+  downgrading custody. See `docs/contracts/production-agents.md` for the full
+  tier comparison and both custody disclosures.
 
 Pending Dmitriy sign-off
 

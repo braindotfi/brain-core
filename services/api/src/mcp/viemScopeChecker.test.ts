@@ -7,6 +7,7 @@ vi.mock("viem", async (importOriginal) => {
 });
 
 import { createViemScopeChecker } from "./viemScopeChecker.js";
+import { OnchainScopeUnavailableError } from "@brain/mcp";
 
 function setupReadContract(result: unknown) {
   const readContract = vi.fn().mockResolvedValue(result);
@@ -68,6 +69,20 @@ describe("createViemScopeChecker", () => {
 
     const checker = createViemScopeChecker(opts);
     expect(await checker.getOnchainScopeHash("agent_unknown")).toBeNull();
+  });
+
+  // RFC 0002 Phase C fail-open fix: an RPC/decode fault must throw, not
+  // collapse to the same null a genuinely unregistered agent returns above.
+  it("throws OnchainScopeUnavailableError (does not fail open to null) when the read rejects", async () => {
+    const readContract = vi.fn().mockRejectedValue(new Error("boom"));
+    vi.mocked(viem.createPublicClient).mockReturnValue({
+      readContract,
+    } as unknown as ReturnType<typeof viem.createPublicClient>);
+
+    const checker = createViemScopeChecker(opts);
+    await expect(checker.getOnchainScopeHash("agent_abc")).rejects.toBeInstanceOf(
+      OnchainScopeUnavailableError,
+    );
   });
 
   // R-32 regression: the checker's ABI must mirror the on-chain 7-field

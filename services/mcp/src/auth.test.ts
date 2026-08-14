@@ -50,6 +50,11 @@ function activeAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     scope_hash: SCOPE_HASH_BUF,
     onchain_address: "0xdeadbeef",
     role: "payment",
+    // Default matches the DB column default (services/execution/migrations
+    // /0031_agents_attestation_mode.sql): the on-chain path is the norm, so
+    // that's what every pre-existing test in this file exercises unless it
+    // opts into the tier-1 branch explicitly (see auth.tier1.test.ts).
+    attestation_mode: "onchain_custodial",
     ...overrides,
   };
 }

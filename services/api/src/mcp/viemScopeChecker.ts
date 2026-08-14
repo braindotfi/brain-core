@@ -1,5 +1,6 @@
 import { createPublicClient, http, keccak256, toBytes } from "viem";
 import { baseSepolia } from "viem/chains";
+import { OnchainScopeUnavailableError } from "@brain/mcp";
 
 export interface OnchainScopeChecker {
   getOnchainScopeHash(agentId: string): Promise<string | null>;
@@ -112,14 +113,26 @@ export function createViemScopeChecker(opts: ViemScopeCheckerOptions): ViemScope
           return null;
         }
         return registration.scopeHash.slice(2).toLowerCase();
-      } catch {
-        // Fail closed (deny) instead of throwing. The decode can fail when the
-        // deployed registry's AgentRegistration layout skews from this ABI —
-        // e.g. a registry deployed BEFORE `behaviorHash` was added to the struct
-        // (the field this ABI now includes) returns a 6-field tuple, and viem
-        // overruns decoding it as 7. An unverifiable scope must never crash the
-        // MCP auth path; treat it as "no on-chain scope".
-        return null;
+      } catch (err) {
+        // The decode can fail when the deployed registry's AgentRegistration
+        // layout skews from this ABI -- e.g. a registry deployed BEFORE
+        // `behaviorHash` was added to the struct (the field this ABI now
+        // includes) returns a 6-field tuple, and viem overruns decoding it as
+        // 7. That case, and any RPC/network fault, both throw here now rather
+        // than returning null: collapsing them to null let a chain OUTAGE
+        // silently downgrade to "agent has no on-chain scope", which callers
+        // then treat identically to a genuinely unregistered agent. Callers
+        // that must fail closed on an outage (McpAuthVerifier.verify,
+        // assertScopeHashAcceptable) catch this distinct type; the registered-
+        // vs-revoked "clean null" case above is unaffected.
+        const name = err instanceof Error ? err.name : "UnknownError";
+        const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+        const transient = /Http|Timeout|Connection|fetch|network|socket/i.test(
+          `${name} ${message}`,
+        );
+        throw new OnchainScopeUnavailableError(
+          `${transient ? "rpc" : "registry"}: ${name}: ${message}`,
+        );
       }
     },
   };

@@ -70,6 +70,7 @@ import {
   registerWalletRoutes,
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
+import { registerOnchainSignerRoutes } from "./onboarding/onchain-signer.js";
 import {
   ensureBffServiceAgent,
   ensureTenantBootstrapped,
@@ -205,6 +206,10 @@ import {
   ProposalDecisionService,
   resolveEvidenceRefs,
   unsupportedEvidenceKinds,
+  UnconfiguredRegistrationRelayer,
+  KmsCustodialRegistrationRelayer,
+  TenantSignedRegistrationRelayer,
+  startAgentRegistrationWorker,
 } from "@brain/execution";
 import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
@@ -294,6 +299,7 @@ import {
   makeSumActiveReservations,
   makeResolveEvidence,
   makeDetectDuplicates,
+  makeResolveTenantOnchainSigner,
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
@@ -323,6 +329,7 @@ import { assertMoneyPathLoadersWiredInProduction } from "./composition/payment-l
 import { assertOutboxDispatchGuardWiredInProduction } from "./composition/outbox-dispatch-guard-fence.js";
 import { assertDemoProvisionFences } from "./composition/demo-provision-fence.js";
 import { assertServiceTokenFences } from "./composition/service-token-fence.js";
+import { assertAgentRelayerFences } from "./composition/agent-relayer-fence.js";
 import {
   assertMcpDevBypassFence,
   isMcpDevBypassAllowed,
@@ -540,6 +547,17 @@ async function main(): Promise<void> {
     testnetAttested: cfg.BRAIN_SERVICE_TOKEN_TESTNET_ATTESTED,
   });
 
+  // Refuse to boot in production with BRAIN_AGENT_RELAYER_MODE=custodial but
+  // the signer key, RPC URL, or registry address missing -- logic + tests
+  // live in composition/agent-relayer-fence.ts.
+  assertAgentRelayerFences({
+    nodeEnv: cfg.NODE_ENV,
+    mode: cfg.BRAIN_AGENT_RELAYER_MODE,
+    privateKeyConfigured: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY !== undefined,
+    rpcUrlConfigured: (cfg.BASE_RPC_URL ?? cfg.RPC_URL) !== undefined,
+    registryAddressConfigured: cfg.MCP_AGENT_REGISTRY_ADDRESS !== undefined,
+  });
+
   let wikiPool = pool;
   if (cfg.BRAIN_WIKI_DB_URL !== undefined) {
     wikiPool = createPool({
@@ -721,6 +739,7 @@ async function main(): Promise<void> {
               onchain_address: row.onchain_address,
               state: row.state,
               registered_at: row.registered_at,
+              registered_tx: row.registered_tx,
               created_at: row.created_at,
             };
       }),
@@ -1130,10 +1149,40 @@ async function main(): Promise<void> {
   });
   const rails: RailRegistry = railsBuild.rails;
 
+  // RFC 0002 Phase C, increments 3-4: the on-chain agent registration
+  // relayer. "off" (default) keeps the fail-closed
+  // UnconfiguredRegistrationRelayer, so POST /agents and
+  // AgentService.confirmRegistration behave exactly as they did before
+  // either relayer existed. "custodial" and "tenant_signed" both use
+  // BRAIN_AGENT_RELAYER_PRIVATE_KEY -- deliberately its OWN var, never
+  // AUDIT_PUBLISHER_KEY -- see that var's doc comment in
+  // shared/src/config.ts for why sharing must not be the default. A
+  // deployment wires exactly one attested relayer at a time.
+  const agentRegistrationRelayer =
+    cfg.BRAIN_AGENT_RELAYER_MODE === "custodial"
+      ? new KmsCustodialRegistrationRelayer({
+          privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
+          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+          audit,
+        })
+      : cfg.BRAIN_AGENT_RELAYER_MODE === "tenant_signed"
+        ? new TenantSignedRegistrationRelayer({
+            privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
+            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
+            audit,
+          })
+        : new UnconfiguredRegistrationRelayer();
+
+  const resolveTenantOnchainSigner = makeResolveTenantOnchainSigner(pool);
+
   const executionDeps: ExecutionDeps = {
     pool,
     audit,
     rails,
+    relayer: agentRegistrationRelayer,
+    resolveTenantOnchainSigner,
     evaluatePolicy: evaluateLegacyPolicy,
     evaluatePaymentIntent,
     resolveAgent,
@@ -1470,6 +1519,7 @@ async function main(): Promise<void> {
           scope_hash: null,
           onchain_address: null,
           role: "dev",
+          attestation_mode: "onchain_custodial",
         })
       : (() => {
           // Boot-time registry self-check. `getOnchainScopeHash` fails closed to
@@ -1504,7 +1554,24 @@ async function main(): Promise<void> {
     evaluatePolicy: evaluateLegacyPolicy,
     resolveAgentAuthority: (_ctx, agentId) =>
       internalAgentDefinitions[agentId]?.default_authority ?? null,
+    relayer: agentRegistrationRelayer,
   });
+
+  // RFC 0002 Phase C, increment 3: drive confirmRegistration for pending_onchain
+  // agents. Only runs when a real relayer is wired -- with BRAIN_AGENT_RELAYER_MODE
+  // left at its "off" default (or misconfigured outside production, where the
+  // boot fence above does not throw) the cycle would just claim rows and fail
+  // every one closed, burning the attempt ceiling for nothing.
+  const agentRegistrationWorker =
+    composition.workers.has("execution") && agentRegistrationRelayer.configured
+      ? startAgentRegistrationWorker({
+          agentService,
+          withPrivileged,
+          metrics,
+          log,
+        })
+      : undefined;
+  if (agentRegistrationWorker !== undefined) log.info("agent registration worker started");
 
   // H-07 Proof builder (shared with the HTTP /v1/proof/{action_id} route).
   // Hoisted so the MCP brain://proofs/{action_id} resource and the HTTP route
@@ -2415,6 +2482,17 @@ async function main(): Promise<void> {
           );
           // Authenticated wallet-link route (owner JWT) → wallet_identities.
           await v1.register(async (child) => registerWalletRoutes(child, { pool, audit }));
+          // RFC 0002 Phase C, increment 4: tenant on-chain signer designation
+          // (tier 2 prerequisite). Requires an address already linked via the
+          // wallet route just above, so it lives behind the same flag.
+          await v1.register(async (child) =>
+            registerOnchainSignerRoutes(child, {
+              pool,
+              audit,
+              redis,
+              chainId: cfg.BRAIN_BASE_CHAIN_ID,
+            }),
+          );
         }
 
         if (cfg.BRAIN_DEMO_MODE) {

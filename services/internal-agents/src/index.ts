@@ -18,7 +18,11 @@ export {
   allManifests,
 } from "./registry.js";
 export * from "./registration.js";
-export { scopesForAgentRole } from "./agent-role-scopes.js";
+export {
+  scopesForAgentRole,
+  KNOWN_AGENT_ROLES,
+  MCP_UNATTESTED_SCOPES,
+} from "./agent-role-scopes.js";
 // Collections proposal reconciliation (#535): shared with the reconciler
 // worker so a background days_overdue refresh cannot diverge from build-time
 // recommendation logic.

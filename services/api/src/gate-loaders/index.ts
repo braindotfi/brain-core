@@ -73,6 +73,28 @@ export function makeResolveTenantFlags(
   };
 }
 
+/**
+ * RFC 0002 Phase C, increment 4: read a tenant's designated on-chain signer
+ * address (set via POST /v1/tenants/{tenant_id}/onchain-signer). Wired into
+ * ExecutionDeps.resolveTenantOnchainSigner so services/execution never
+ * queries the api-owned `tenants` table directly -- same shape as
+ * makeResolveTenantFlags above.
+ */
+export function makeResolveTenantOnchainSigner(
+  pool: Pool,
+): (ctx: ServiceCallContext, tenantId: string) => Promise<string | null> {
+  return async (ctx, tenantId) => {
+    const row = await withTenantScope(pool, ctx.tenantId, async (c) => {
+      const res = await c.query<{ onchain_signer_address: string | null }>(
+        `SELECT onchain_signer_address FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+      return res.rows[0] ?? null;
+    });
+    return row?.onchain_signer_address ?? null;
+  };
+}
+
 export function makeResolveAccount(
   ledger: LedgerService,
 ): (ctx: ServiceCallContext, accountId: string) => Promise<GateAccount | null> {

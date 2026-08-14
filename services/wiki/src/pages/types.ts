@@ -45,6 +45,15 @@ export interface AgentView {
   onchain_address: string | null;
   state: string;
   registered_at: Date | null;
+  /**
+   * Non-null only once BrainMCPAgentRegistry actually confirmed the agent
+   * (the on-chain registration tx hash). A tier-1 unattested agent
+   * (RFC 0002 Phase C) can be `active` with `registered_at` set but no
+   * on-chain record at all -- the agent page must not claim an on-chain
+   * registration from `registered_at` alone, or the tenant's own memory
+   * would assert a registration that never happened.
+   */
+  registered_tx: string | null;
   created_at: Date;
 }
 
