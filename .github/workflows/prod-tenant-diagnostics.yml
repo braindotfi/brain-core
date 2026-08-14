@@ -223,9 +223,13 @@ jobs:
                 FROM proposals p
                WHERE p.tenant_id = :'tenant_id'
                  AND p.status = 'pending'
-                 AND COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'agent_role', ''),
-                              NULLIF(p.action->>'agent_kind', ''), NULLIF(p.action->>'agent_id', ''),
-                              NULLIF(p.action->>'kind', ''), 'unknown') = 'compliance'
+                 AND (
+                   p.action->>'type' = 'compliance'
+                   OR p.action->>'agent_role' = 'compliance'
+                   OR p.action->>'agent_kind' = 'compliance'
+                   OR p.action->>'agent_id' = 'compliance'
+                   OR p.action->>'kind' = 'compliance'
+                 )
                ORDER BY p.created_at DESC, p.id DESC
                LIMIT 1
             ),
