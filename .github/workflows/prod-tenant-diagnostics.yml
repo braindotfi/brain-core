@@ -177,6 +177,7 @@ jobs:
           fi
 
           if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" == "true" ]]; then
+            cd ~/brain-core
             docker exec -i brain-prod-postgres psql -U brain -d brain \
               -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
               < scripts/ops/report-compliance-proposal-duplicates.sql
