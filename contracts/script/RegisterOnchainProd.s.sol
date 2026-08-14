@@ -73,9 +73,7 @@ contract RegisterOnchainProd is Script {
             true,
             deployer,
             _sign(
-                pk,
-                registry.domainSeparator(),
-                keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, deployer, true, nonce))
+                pk, registry.domainSeparator(), keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, deployer, true, nonce))
             )
         );
     }
@@ -96,9 +94,7 @@ contract RegisterOnchainProd is Script {
         signers[0] = deployer;
         bytes[] memory signatures = new bytes[](1);
         signatures[0] = _sign(
-            pk,
-            registry.domainSeparator(),
-            keccak256(abi.encode(_POLICY_TYPEHASH, tenantId, version, policyHash))
+            pk, registry.domainSeparator(), keccak256(abi.encode(_POLICY_TYPEHASH, tenantId, version, policyHash))
         );
         registry.registerPolicy(tenantId, version, policyHash, signers, signatures);
     }
@@ -117,9 +113,7 @@ contract RegisterOnchainProd is Script {
             true,
             deployer,
             _sign(
-                pk,
-                registry.domainSeparator(),
-                keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, deployer, true, nonce))
+                pk, registry.domainSeparator(), keccak256(abi.encode(_SIGNER_TYPEHASH, tenantId, deployer, true, nonce))
             )
         );
     }
@@ -154,11 +148,7 @@ contract RegisterOnchainProd is Script {
         );
     }
 
-    function _nativeKey(address holder, address recipient)
-        private
-        view
-        returns (BrainSmartAccount.SessionKey memory)
-    {
+    function _nativeKey(address holder, address recipient) private view returns (BrainSmartAccount.SessionKey memory) {
         address[] memory targets = new address[](1);
         targets[0] = recipient;
         // Mirrors the OLD account's key exactly: NATIVE, 0.001 per tx,
