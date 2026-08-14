@@ -44,6 +44,47 @@ const enqueueInput = {
 };
 
 describe("OutboxService.enqueue", () => {
+  // execution_outbox.payload is plaintext JSONB, covered by a tamper-evidence
+  // payload_hash (so it cannot be scrubbed after settlement) and read back by
+  // the worker forever. A credential in it is a permanent cleartext secret in
+  // the database. This is the choke point every enqueue routes through.
+  it("refuses to persist a payload carrying a provider credential", async () => {
+    const svc = new OutboxService();
+    const { client, calls } = fakeClient(() => [{ id: "exo_new" }]);
+    await expect(
+      svc.enqueue(client, TENANT, {
+        ...enqueueInput,
+        payload: { ...enqueueInput.payload, access_token: "access-sandbox-live" },
+      }),
+    ).rejects.toThrow(/forbidden field "access_token"/);
+    // Fails BEFORE the INSERT, so the transaction the caller wraps this in
+    // (approved -> dispatching) rolls back and no money moves.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects nested credentials too, and allows a clean rail payload", async () => {
+    const svc = new OutboxService();
+    const { client } = fakeClient(() => [{ id: "exo_new" }]);
+    await expect(
+      svc.enqueue(client, TENANT, {
+        ...enqueueInput,
+        payload: { ...enqueueInput.payload, provider: { routing_number: "021000021" } },
+      }),
+    ).rejects.toThrow(/forbidden field "routing_number"/);
+    await expect(
+      svc.enqueue(client, TENANT, {
+        ...enqueueInput,
+        payload: {
+          kind: "ach_outbound",
+          source_account_id: "acct_1",
+          destination_counterparty_id: "cp_1",
+          amount: "100.00",
+          currency: "USD",
+        },
+      }),
+    ).resolves.toEqual({ id: "exo_new", created: true });
+  });
+
   it("inserts a pending row and returns created:true", async () => {
     const svc = new OutboxService();
     const { client, calls } = fakeClient((sql) =>

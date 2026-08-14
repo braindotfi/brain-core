@@ -223,12 +223,13 @@
           "required_scope": null,
           "enforcement": "public_skip_auth",
           "request_shape": "{}",
-          "response_shape": "200 { nonce, session_id, domain }",
+          "response_shape": "200 { nonce, session_id, domain, chain_id }",
           "example_request": { "body": {} },
           "example_response": {
             "nonce": "328917",
             "session_id": "token_example",
-            "domain": "api.brain.fi"
+            "domain": "api.brain.fi",
+            "chain_id": 84532
           },
           "openapi": "documented:/auth/siwx/challenge"
         },

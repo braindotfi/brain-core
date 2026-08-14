@@ -26,6 +26,7 @@
 
 import { createHash } from "node:crypto";
 import { newExecutionOutboxId, type TenantScopedClient } from "@brain/shared";
+import { assertNoForbiddenFields, DEFAULT_AGENT_TRACE_POLICY } from "../redaction.js";
 
 /** Minimal query surface the service needs (a tenant-scoped or privileged client). */
 type OutboxClient = Pick<TenantScopedClient, "query">;
@@ -136,6 +137,17 @@ export class OutboxService {
     tenantId: string,
     input: EnqueueInput,
   ): Promise<EnqueueResult> {
+    // `payload` is persisted as plaintext JSONB and is never scrubbed after
+    // settlement (payload_hash is a tamper-evidence digest over it, so it
+    // cannot be), which makes this row the most durable thing in the money
+    // path. Provider credentials therefore must not reach it: they are
+    // resolved at dispatch time by the worker instead (OutboxWorkerDeps.
+    // resolveDispatchCredentials) and live only in memory for the length of
+    // one rail call. This is the choke point every enqueue routes through, so
+    // the assertion belongs here rather than at each payload-building site.
+    // It throws inside the caller's approved -> dispatching transaction, so a
+    // regression rolls the whole hand-off back and no money moves.
+    assertNoForbiddenFields(DEFAULT_AGENT_TRACE_POLICY, input.payload);
     const id = newExecutionOutboxId();
     const hash = payloadHash(input.payload);
     const { rows } = await client.query<{ id: string }>(

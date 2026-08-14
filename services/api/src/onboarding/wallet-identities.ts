@@ -21,6 +21,7 @@ import {
   brainError,
   requireScope,
   withTenantScope,
+  type AuditEmitter,
   type Scope,
   type TenantScopedClient,
 } from "@brain/shared";
@@ -56,8 +57,17 @@ function isUniqueViolation(err: unknown): boolean {
  * Link a wallet to a (tenant, principal). Idempotent-safe at the DB: a wallet
  * already linked (here or in any tenant) → `wallet_already_linked` (409), never a
  * silent re-home. Runs under the caller's tenant scope (RLS WITH CHECK).
+ *
+ * `wallet_identities` is a permanent authentication factor (SIWX resolves it
+ * straight to a signed-in principal), so a successful link emits an
+ * identity-layer audit event same as `auth.login` / `user.email_verified`. A
+ * failed (duplicate-address) link throws before the emit, so no event.
  */
-export async function linkWallet(pool: Pool, input: WalletLinkInput): Promise<void> {
+export async function linkWallet(
+  pool: Pool,
+  audit: AuditEmitter,
+  input: WalletLinkInput,
+): Promise<void> {
   const address = input.address.toLowerCase();
   try {
     await withTenantScope(pool, input.tenantId, async (c: TenantScopedClient) => {
@@ -73,6 +83,15 @@ export async function linkWallet(pool: Pool, input: WalletLinkInput): Promise<vo
     }
     throw err;
   }
+
+  await audit.emit({
+    tenantId: input.tenantId,
+    layer: "identity",
+    actor: input.principalId,
+    action: "wallet.linked",
+    inputs: { address, principal_type: input.principalType },
+    outputs: { principal_id: input.principalId },
+  });
 }
 
 /**
@@ -124,7 +143,7 @@ const linkBody = z.object({
  */
 export async function registerWalletRoutes(
   app: FastifyInstance,
-  deps: { pool: Pool },
+  deps: { pool: Pool; audit: AuditEmitter },
 ): Promise<void> {
   app.post(
     "/tenants/:tenant_id/wallets",
@@ -159,7 +178,7 @@ export async function registerWalletRoutes(
         throw brainError("request_body_invalid", "principal_id is required for an agent link");
       }
 
-      await linkWallet(deps.pool, {
+      await linkWallet(deps.pool, deps.audit, {
         tenantId: principal.tenantId,
         address: parsed.data.address,
         principalType,
