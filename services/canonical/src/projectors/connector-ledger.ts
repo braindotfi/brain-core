@@ -968,6 +968,47 @@ export function projectCustomerAssertedCsvLedger(
         },
       });
     }
+
+    if (recordType === "bank_transactions") {
+      const id = str(row["transaction_id"]);
+      const accountKey = str(row["account_id"]);
+      const amount = decimal(row["amount"]);
+      const date = str(row["date"]);
+      const rawDirection = str(row["direction"]);
+      const direction =
+        rawDirection === "inflow" || rawDirection === "outflow" ? rawDirection : null;
+      if (
+        id === null ||
+        accountKey === null ||
+        amount === null ||
+        date === null ||
+        direction === null
+      ) {
+        skipped(diag, "customer_asserted_bank_transaction_missing_required_field");
+        continue;
+      }
+      const description = str(row["description"]) ?? id;
+      out.push({
+        kind: "transaction",
+        input: {
+          sourceSystem,
+          sourceNaturalKey: id,
+          accountSourceKey: accountKey,
+          counterpartySourceKey: null,
+          amount,
+          currency: currency(row["currency"]),
+          direction,
+          transactionDate: date,
+          postedDate: date,
+          status: "posted",
+          descriptionRaw: description,
+          descriptionNormalized: description,
+          reconciliationStatus: "unreconciled",
+          extensions: { customer_asserted_csv: { record_type: recordType, transaction_id: id } },
+          common: sourceCommon,
+        },
+      });
+    }
   }
   return out;
 }

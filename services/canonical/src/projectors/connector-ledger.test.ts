@@ -652,6 +652,70 @@ describe("connector ledger canonical projectors", () => {
     ]);
   });
 
+  it("projects declared bank transaction CSV rows with the account and direction from the row", () => {
+    const out = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "bank_transactions",
+        records: [
+          {
+            transaction_id: "txn_9001",
+            account_id: "acct_operations",
+            date: "2026-07-01",
+            description: "Wire to Acme Legal",
+            amount: "4820.00",
+            direction: "outflow",
+            currency: "USD",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(out).toEqual([
+      expect.objectContaining({
+        kind: "transaction",
+        input: expect.objectContaining({
+          sourceSystem: "customer_asserted_csv",
+          sourceNaturalKey: "txn_9001",
+          accountSourceKey: "acct_operations",
+          counterpartySourceKey: null,
+          direction: "outflow",
+          transactionDate: "2026-07-01",
+          descriptionRaw: "Wire to Acme Legal",
+        }),
+      }),
+    ]);
+  });
+
+  it("skips a bank transaction row with an invalid direction value", () => {
+    const diag = { skippedRows: {} };
+    const out = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "bank_transactions",
+        records: [
+          {
+            transaction_id: "txn_9002",
+            account_id: "acct_operations",
+            date: "2026-07-01",
+            description: "Unclear",
+            amount: "100.00",
+            direction: "sideways",
+            currency: "USD",
+          },
+        ],
+      },
+      common,
+      diag,
+    );
+
+    expect(out).toEqual([]);
+    expect(diag.skippedRows).toEqual({
+      customer_asserted_bank_transaction_missing_required_field: 1,
+    });
+  });
+
   it("never turns a counterparty first_seen field into a ledger obligation date", () => {
     const out = projectCustomerAssertedCsvLedger(
       {
