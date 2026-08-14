@@ -374,7 +374,6 @@ describe("PaymentIntentService.create — proposal-layer idempotency (BRAIN-94)"
     insertError?: unknown;
   }): { pool: Pool; calls: { sql: string; values: unknown[] }[] } {
     const calls: { sql: string; values: unknown[] }[] = [];
-    let insertCount = 0;
     const client = {
       query: vi.fn((sql: string, values?: unknown[]) => {
         calls.push({ sql, values: values ?? [] });
@@ -394,7 +393,6 @@ describe("PaymentIntentService.create — proposal-layer idempotency (BRAIN-94)"
           });
         }
         if (sql.includes("INSERT INTO ledger_payment_intents")) {
-          insertCount += 1;
           if (opts.insertError !== undefined) return Promise.reject(opts.insertError);
           return Promise.resolve({ rows: [insertedRow()], rowCount: 1 });
         }
