@@ -43,12 +43,25 @@ export const MCP_METHODS = [
   "tools/list",
   "tools/call",
   "resources/list",
+  "resources/templates/list",
   "resources/read",
   "prompts/list",
   "prompts/get",
 ] as const;
 
 export type McpMethod = (typeof MCP_METHODS)[number];
+
+// JSON-RPC notifications the server recognizes. A notification carries no
+// `id` (see JsonRpcRequest.id) and never gets a JSON-RPC response -- see
+// dispatcher.ts. Registering them here just documents the accepted set;
+// dispatch()'s no-response behavior applies to ANY id-less request,
+// recognized or not.
+export const MCP_NOTIFICATION_METHODS = [
+  "notifications/initialized",
+  "notifications/cancelled",
+] as const;
+
+export type McpNotificationMethod = (typeof MCP_NOTIFICATION_METHODS)[number];
 
 export interface InitializeResult {
   protocolVersion: string;
@@ -86,6 +99,17 @@ export interface ResourceDescriptor {
 
 export interface ResourceListResult {
   resources: ResourceDescriptor[];
+}
+
+export interface ResourceTemplateDescriptor {
+  uriTemplate: string;
+  name: string;
+  description: string;
+  mimeType: string;
+}
+
+export interface ResourceTemplateListResult {
+  resourceTemplates: ResourceTemplateDescriptor[];
 }
 
 export interface ResourceReadResult {
@@ -133,5 +157,27 @@ export const JSON_RPC_METHOD_NOT_FOUND = -32601;
 export const JSON_RPC_INVALID_PARAMS = -32602;
 export const JSON_RPC_INTERNAL_ERROR = -32603;
 
-export const PROTOCOL_VERSION = "2024-11-05";
+// Protocol versions this server understands, oldest first. 2024-11-05 has no
+// authorization spec; this server implements the RFC 9728 resource-metadata
+// discovery and `WWW-Authenticate: resource_metadata` challenge that only
+// exist from 2025-03-26 onward, so all three stay supported: a client that
+// asked for the old version still gets a real answer instead of a forced
+// downgrade into an auth flow it cannot use.
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"] as const;
+export type McpProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
+
+export function isSupportedProtocolVersion(value: string): value is McpProtocolVersion {
+  return (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(value);
+}
+
+/**
+ * The version this server advertises when the client's requested version is
+ * unsupported (or no version was requested at all). Per the MCP spec: "If the
+ * server supports the requested protocol version, it MUST respond with the
+ * same version. Otherwise, the server MUST respond with another protocol
+ * version it supports. This SHOULD be the latest version supported by the
+ * server." -- so this is deliberately the newest entry in
+ * SUPPORTED_PROTOCOL_VERSIONS, not the oldest.
+ */
+export const PROTOCOL_VERSION: McpProtocolVersion = "2025-06-18";
 export const SERVER_INFO = { name: "brain-mcp", version: "0.3.0" } as const;

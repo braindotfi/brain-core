@@ -28,6 +28,7 @@ import {
 import type { Pool } from "pg";
 import { dispatch, invalidParams, type JsonRpcHandler } from "./dispatcher.js";
 import {
+  isSupportedProtocolVersion,
   PROTOCOL_VERSION,
   SERVER_INFO,
   type InitializeResult,
@@ -36,6 +37,7 @@ import {
   type PromptListResult,
   type ResourceListResult,
   type ResourceReadResult,
+  type ResourceTemplateListResult,
   type ToolCallResult,
   type ToolListResult,
 } from "./types.js";
@@ -47,7 +49,7 @@ import type {
   ToolContext,
   ToolResult,
 } from "./tools/types.js";
-import { listResources, readResource } from "./resources.js";
+import { listResources, listResourceTemplates, readResource } from "./resources.js";
 import { getPrompt, listPrompts } from "./prompts.js";
 import type { AuthVerifier } from "./auth.js";
 
@@ -77,7 +79,7 @@ export class BrainMcpServer {
    * authenticated by `authPlugin` upstream — the only verification this
    * function does is the MCP-specific agent-record + scope-hash check.
    */
-  public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse> {
+  public async handle(payload: unknown, principal: Principal): Promise<JsonRpcResponse | null> {
     const requestId = newRequestId();
 
     // Agent principals are verified against the MCP agent registry before any
@@ -130,14 +132,24 @@ export class BrainMcpServer {
     };
 
     const handlers: Record<string, JsonRpcHandler> = {
-      initialize: async () => this.initialize(),
+      initialize: async (params) => this.initialize(params),
       ping: async () => ({}),
       "tools/list": async () => this.toolsList(principal.scopes),
       "tools/call": async (params) => this.toolsCall(toolCtx, params, principal.scopes),
       "resources/list": async () => listResources(),
+      "resources/templates/list": async () => listResourceTemplates(),
       "resources/read": async (params) => this.resourcesRead(toolCtx, params, principal.scopes),
       "prompts/list": async () => listPrompts(),
       "prompts/get": async (params) => this.promptsGet(params),
+      // Notifications (no `id`, never get a response -- see dispatcher.ts).
+      // Brain's MCP server is stateless per-request, so there is nothing to
+      // update on `initialized`/`cancelled`; registering them explicitly
+      // documents that they are recognized rather than silently falling
+      // through to "method not found" (harmless for a notification either
+      // way, since no response goes out regardless, but this keeps intent
+      // visible).
+      "notifications/initialized": async () => undefined,
+      "notifications/cancelled": async () => undefined,
     };
 
     return dispatch(payload, { handlers }, { requestId });
@@ -145,9 +157,23 @@ export class BrainMcpServer {
 
   // ---------- method implementations ----------------------------------
 
-  private initialize(): InitializeResult {
+  /**
+   * Protocol version negotiation (MCP spec, Lifecycle section): if the
+   * client's requested `protocolVersion` is one this server supports, echo
+   * it back unchanged. Otherwise respond with the latest version this
+   * server supports and let the client decide whether to continue or
+   * disconnect -- never silently downgrade to the oldest supported version,
+   * since that would walk a client back to 2024-11-05, which predates the
+   * RFC 9728 authorization flow this server actually implements.
+   */
+  private initialize(params: Record<string, unknown>): InitializeResult {
+    const requested = params.protocolVersion;
+    const protocolVersion =
+      typeof requested === "string" && isSupportedProtocolVersion(requested)
+        ? requested
+        : PROTOCOL_VERSION;
     return {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion,
       serverInfo: SERVER_INFO,
       capabilities: {
         tools: { listChanged: false },
@@ -293,7 +319,7 @@ export class BrainMcpServer {
 
   /** Test-only: forces a list response without going through dispatcher. */
   public _testInitialize(): InitializeResult {
-    return this.initialize();
+    return this.initialize({});
   }
 
   /** Used by promise-list assertions: how many tools the registry exposes. */
@@ -306,6 +332,7 @@ export class BrainMcpServer {
   protected _typeRefs(): {
     list: PromptListResult;
     res: ResourceListResult;
+    resTemplates: ResourceTemplateListResult;
     tools: ToolListResult;
   } {
     return {} as never;

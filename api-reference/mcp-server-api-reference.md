@@ -11,7 +11,7 @@ Authorization: Bearer <jwt>
 Content-Type: application/json
 ```
 
-The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto the internal `/v1/agents/mcp` route. Either form reaches the same JSON-RPC surface; new integrations should use the canonical host.
+The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto the internal `/v1/agents/mcp` route.
 
 | Environment    | Canonical host          | Internal / compatibility route               |
 | -------------- | ----------------------- | -------------------------------------------- |
@@ -20,22 +20,31 @@ The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto th
 
 Sandbox and production are wired to Base Sepolia for agent registration, scope
 verification, policy registration, and audit anchoring. This is separate from
-the settlement rail's own mainnet gating.
+the settlement rail's own mainnet gating. The on-chain scope checker
+(`services/api/src/mcp/viemScopeChecker.ts`) is pinned to Base Sepolia for every
+environment; there is no code path that switches it to Base mainnet.
+
+{% hint style="warning" %}
+Only the production row is live today. Neither `mcp.brain.dev` nor `api.sandbox.brain.fi` resolves yet, so do not point integrations at the sandbox host.
+{% endhint %}
 
 ### Methods
 
 The methods the JSON-RPC entry accepts (matches the spec's `JsonRpcRequest.method` enum):
 
-| Method           | Purpose                                                    |
-| ---------------- | ---------------------------------------------------------- |
-| `initialize`     | Capability negotiation                                     |
-| `ping`           | Liveness                                                   |
-| `tools/list`     | List tools the agent has scope for                         |
-| `tools/call`     | Invoke a tool                                              |
-| `resources/list` | List resources (and resource templates) the agent can read |
-| `resources/read` | Read a resource by URI                                     |
-| `prompts/list`   | List the canned prompts                                    |
-| `prompts/get`    | Render a canned prompt with arguments                      |
+| Method                     | Purpose                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `initialize`               | Capability negotiation                               |
+| `ping`                     | Liveness                                             |
+| `tools/list`               | List tools (the full registry, not scope-filtered)   |
+| `tools/call`               | Invoke a tool                                        |
+| `resources/list`           | List the concrete (non-templated) readable resources |
+| `resources/templates/list` | List the templated resources                         |
+| `resources/read`           | Read a resource by URI                               |
+| `prompts/list`             | List the canned prompts                              |
+| `prompts/get`              | Render a canned prompt with arguments                |
+
+A request with no `id` member is a JSON-RPC notification (e.g. the mandatory `notifications/initialized` handshake message); it gets no response at all, not even an empty JSON-RPC envelope -- the HTTP layer answers `202 Accepted` with an empty body.
 
 Once a request reaches JSON-RPC dispatch, the HTTP layer returns `200` and application errors live in the JSON-RPC response's `error` field. **Authentication and authorization fail _before_ dispatch**, so they return an HTTP `401`/`403` Brain error envelope (not a `200` with a JSON-RPC `error`). See [Error Codes](#error-codes).
 
@@ -50,11 +59,21 @@ Five Ledger reads, two Wiki reads, two Raw tools (`raw.contribute` and
 reserved for internal Brain workers running under tenant policy and the section 6
 gate.
 
+`tools/list` returns the full registry regardless of the caller's granted scopes -- a tool the agent is not scoped for is still listed; only `tools/call` enforces the per-tool scope gate.
+
+None of the 17 tools accept a `tenant_id` argument. The tenant is always derived from the JWT.
+
 [**→ Tool reference**](../mcp-server/tools.md)
 
-### The 7 Resource Templates
+### 1 Concrete Resource, 6 Resource Templates
 
-Resource templates addressable by `brain://` URIs:
+The one genuinely readable resource, returned by `resources/list`:
+
+```
+brain://payments/action_types
+```
+
+The six templated resources, returned only by `resources/templates/list` (each has a `{...}` placeholder that must be substituted with a real id before it can be read):
 
 ```
 brain://ledger/accounts/{account_id}
@@ -62,7 +81,6 @@ brain://ledger/transactions/{transaction_id}
 brain://ledger/obligations/{obligation_id}
 brain://ledger/payment-intents/{id}
 brain://wiki/pages/{slug}
-brain://payments/action_types
 brain://proofs/{action_id}
 ```
 
@@ -76,11 +94,14 @@ brain://proofs/{action_id}
 
 ### Authentication
 
-JWT (Fastify JWT plugin) plus three pre-call checks before any method dispatches:
+A JWT issued by `auth.brain.fi` and verified via its published JWKS, plus checks the MCP auth verifier (`services/mcp/src/auth.ts`) runs before any method dispatches:
 
-1. The agent record is **active** in `BrainMCPAgentRegistry`.
-2. The JWT's `scope_hash` claim matches the agent's on-chain `scopeHash` (60-second cache, Base RPC fallback).
-3. The JWT's `tenantId` claim equals the agent's registered `tenantId`.
+1. The agent record in the `agents` table is **active**.
+2. The JWT's `tenant_id` equals that DB row's `tenant_id`.
+3. The agent is registered and not revoked in `BrainMCPAgentRegistry`.
+4. The DB row's `scope_hash` matches the on-chain `scopeHash` (60-second cache, Base Sepolia RPC).
+
+There is no `scope_hash` claim on the JWT itself; the scope-hash comparison above is entirely server-side, between the DB column and the on-chain value.
 
 Per-tool scope (e.g. `payment_intent:propose`) is enforced at invocation time.
 
@@ -90,23 +111,23 @@ Per-tool scope (e.g. `payment_intent:propose`) is enforced at invocation time.
 
 There are **two error surfaces**, depending on where the request fails:
 
-- **Pre-dispatch auth failures**. The route guard (`services/mcp/src/transport/http.ts`) checks the JWT/principal type, then the auth verifier (`services/mcp/src/auth.ts`, invoked at the top of `server.handle`) checks on-chain registration, scope-hash, and tenant **before** any method is dispatched. These throw `BrainError`s that propagate out of the handler, so the client receives an HTTP `401`/`403` **Brain error envelope** (`{ "error_code": ..., "message": ... }`), _not_ a JSON-RPC response. The relevant codes: `auth_token_missing`, `auth_token_invalid`, `auth_token_expired`, `auth_scope_insufficient`, `auth_tenant_mismatch`, `agent_not_registered`, `agent_not_registered_onchain`, `agent_scope_hash_missing`, `agent_scope_hash_mismatch`.
+- **Pre-dispatch auth failures**. The route guard (`services/mcp/src/transport/http.ts`) checks the JWT/principal type, then the auth verifier (`services/mcp/src/auth.ts`, invoked at the top of `server.handle`) checks on-chain registration, scope-hash, and tenant **before** any method is dispatched. These throw `BrainError`s that propagate out of the handler, so the client receives an HTTP `401`/`403` **Brain error envelope** -- `{ "error": { "code": ..., "message": ..., "details": ..., "request_id": ..., "docs_url": ... } }` per Brain Engineering Standards section 4.1 -- _not_ a JSON-RPC response. The relevant codes: `auth_token_missing`, `auth_token_invalid`, `auth_token_expired`, `auth_scope_insufficient`, `auth_tenant_mismatch`, `agent_not_registered`, `agent_not_registered_onchain`, `agent_scope_hash_missing`, `agent_scope_hash_mismatch`.
 - **Post-auth JSON-RPC errors**. Once dispatch begins, the HTTP status is `200` and the failure is carried in the JSON-RPC `error` field using the Brain-specific codes below (`-32001..-32005`) plus the standard JSON-RPC codes.
 
-| Code     | Meaning                                                                                        |
-| -------- | ---------------------------------------------------------------------------------------------- |
-| `-32001` | Auth token missing, invalid, or expired (`auth_token_missing/invalid/expired`)                 |
-| `-32002` | Scope insufficient (also tenant mismatch) (`auth_scope_insufficient` / `auth_tenant_mismatch`) |
-| `-32003` | Agent not registered or inactive (`agent_not_registered`, `agent_not_registered_onchain`)      |
-| `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)       |
-| `-32005` | Agent `scope_hash` mismatch against on-chain registration (`agent_scope_hash_mismatch`)        |
-| `-32600` | Invalid request (standard JSON-RPC)                                                            |
-| `-32601` | Method not found                                                                               |
-| `-32602` | Invalid params                                                                                 |
-| `-32603` | Internal error                                                                                 |
-| `-32700` | Parse error                                                                                    |
+| Code     | Meaning                                                                                                                                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-32001` | Auth token missing, invalid, or expired (`auth_token_missing/invalid/expired`)                                                                                                                          |
+| `-32002` | Scope insufficient (also tenant mismatch) (`auth_scope_insufficient` / `auth_tenant_mismatch`)                                                                                                          |
+| `-32003` | Agent not registered or inactive (`agent_not_registered`, `agent_not_registered_onchain`)                                                                                                               |
+| `-32004` | Pre-execution gate failed. Covers every `gate_*` sub-code (`payment_intent_gate_failed`)                                                                                                                |
+| `-32005` | Agent `scope_hash` mismatch against on-chain registration (`agent_scope_hash_mismatch`)                                                                                                                 |
+| `-32600` | Invalid request (standard JSON-RPC)                                                                                                                                                                     |
+| `-32601` | Method not found                                                                                                                                                                                        |
+| `-32602` | Invalid params, including the not-found family (`ledger_row_not_found`, `payment_intent_not_found`, `wiki_page_not_found`, etc.), `payment_intent_invalid_state`, and `payment_intent_approval_invalid` |
+| `-32603` | Internal error                                                                                                                                                                                          |
+| `-32700` | Parse error                                                                                                                                                                                             |
 
-The mapping is enforced in `services/mcp/src/types.ts` and `dispatcher.ts`. Every Brain HTTP error code that surfaces _inside_ JSON-RPC dispatch routes deterministically into one of these five Brain-specific JSON-RPC codes. (The `-3200x` codes above only apply once a call has authenticated; pre-dispatch auth failures use the HTTP envelope described above.)
+The mapping is enforced in `services/mcp/src/dispatcher.ts`. Every Brain HTTP error code that surfaces _inside_ JSON-RPC dispatch routes deterministically into one of these Brain-specific JSON-RPC codes. (The `-3200x` codes above only apply once a call has authenticated; pre-dispatch auth failures use the HTTP envelope described above.)
 
 ### A First Call
 
@@ -123,7 +144,6 @@ Content-Type: application/json
   "params": {
     "name": "wiki.question",
     "arguments": {
-      "tenant_id": "acme",
       "question":  "What's our cash position right now?"
     }
   }

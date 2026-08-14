@@ -40,6 +40,11 @@ function mockServer(): BrainMcpServer {
   } as unknown as BrainMcpServer;
 }
 
+/** A server stub that always resolves the way BrainMcpServer.handle does for a notification. */
+function mockNotificationServer(): BrainMcpServer {
+  return { handle: vi.fn(async () => null) } as unknown as BrainMcpServer;
+}
+
 /** Fake auth plugin that stamps `request.principal` from an `x-test-tenant` header. */
 async function withFakeAuth(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request: FastifyRequest) => {
@@ -62,11 +67,12 @@ async function withFakeAuth(app: FastifyInstance): Promise<void> {
 async function buildApp(opts: {
   tenantRateLimiter?: InMemorySlidingWindowRateLimiter;
   resourceMetadataUrl?: string;
+  server?: BrainMcpServer;
 }): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
   await withFakeAuth(app);
-  await registerMcpRoute(app, mockServer(), {
+  await registerMcpRoute(app, opts.server ?? mockServer(), {
     ...(opts.tenantRateLimiter !== undefined ? { tenantRateLimiter: opts.tenantRateLimiter } : {}),
     ...(opts.resourceMetadataUrl !== undefined
       ? { resourceMetadataUrl: opts.resourceMetadataUrl }
@@ -275,6 +281,99 @@ describe("registerMcpRoute — RFC 9728 WWW-Authenticate discovery", () => {
       });
       expect(r.statusCode).toBe(401);
       expect(r.headers["www-authenticate"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("registerMcpRoute — JSON-RPC notifications (BRAIN-101)", () => {
+  it("returns 202 with an empty body for a notification (no id)", async () => {
+    const app = await buildApp({ server: mockNotificationServer() });
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-tenant": TENANT_A, "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+      });
+      expect(r.statusCode).toBe(202);
+      expect(r.body).toBe("");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves an ordinary id-bearing request on the normal 200 JSON-RPC path", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-tenant": TENANT_A, "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as { jsonrpc: string; id: number; result: unknown };
+      expect(body.id).toBe(1);
+      expect(body.result).toBeDefined();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("registerMcpRoute — MCP-Protocol-Version header (BRAIN-100)", () => {
+  it("rejects an unsupported MCP-Protocol-Version with 400", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: {
+          "x-test-tenant": TENANT_A,
+          "content-type": "application/json",
+          "mcp-protocol-version": "1999-01-01",
+        },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(400);
+      const body = r.json() as { error: { code: string } };
+      expect(body.error.code).toBe("request_params_invalid");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts a supported MCP-Protocol-Version header", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: {
+          "x-test-tenant": TENANT_A,
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not require the header at all (no session to check it against)", async () => {
+    const app = await buildApp({});
+    try {
+      const r = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        headers: { "x-test-tenant": TENANT_A, "content-type": "application/json" },
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(r.statusCode).toBe(200);
     } finally {
       await app.close();
     }
