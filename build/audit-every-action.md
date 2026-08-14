@@ -41,7 +41,7 @@ The available filters are `layer`, `actor`, `since`, `until`, `limit`, and
 ### Verify a Payment Proof
 
 ```typescript
-const proof = await brain.proof.get("pi_8231");
+const proof = await brain.proof("pi_8231");
 
 console.log(proof.merkle_root);
 console.log(proof.merkle_proof);

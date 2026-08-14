@@ -70,7 +70,7 @@ const intent = await brain.payments.create({
 ### Get a Verifiable Proof
 
 ```typescript
-const proof = await brain.proof.get("pi_8231");
+const proof = await brain.proof("pi_8231");
 
 console.log(proof.merkle_root);
 console.log(proof.merkle_proof);
@@ -104,12 +104,17 @@ app.post("/webhooks/brain", verifyBrainSignature, (request, response) => {
 
 ### Handle a Failure
 
-Payment and gate failures use lowercase snake-case error codes.
+Payment and gate failures use lowercase snake-case error codes, returned in
+the standard error envelope:
 
 ```json
 {
-  "status": "failed",
-  "reason": "insufficient_balance"
+  "error": {
+    "code": "insufficient_balance",
+    "message": "source account balance is insufficient for this payment",
+    "request_id": "req_8231",
+    "docs_url": "https://docs.brain.fi/resources/errors#insufficient_balance"
+  }
 }
 ```
 
