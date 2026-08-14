@@ -189,6 +189,9 @@ Done
   A payable question for a customer with no open payables but open AR invoices
   states both directions, using authoritative AR `ledger_invoices` rows rather
   than implying no overall relationship exists.
+  Unscoped total-accounts-receivable questions use that same complete AR invoice
+  source (`metadata.scenario='ar'` with customer counterparties), never the
+  partial receivable-obligation projection.
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
