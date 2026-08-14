@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryAuditEmitter, MemoryBlobAdapter, MockMetrics, newTenantId } from "@brain/shared";
 import { runInterpretCycle } from "./interpretWorker.js";
@@ -69,6 +70,10 @@ function interpretationLogInsert(calls: Call[], rawArtifactId: string): Call | u
   );
 }
 
+const AR_AGING_XLSX_FIXTURE = readFileSync(
+  new URL("../interpreters/__fixtures__/ar_aging_2026-06-30.xlsx", import.meta.url),
+);
+
 describe("runInterpretCycle", () => {
   it("promotes a landed stripe page to raw_parsed and logs the interpretation", async () => {
     const tenantId = newTenantId();
@@ -133,6 +138,33 @@ describe("runInterpretCycle", () => {
     const log = interpretationLogInsert(calls, "raw_UPLOAD");
     expect(log!.values[4]).toBeNull();
     expect(audit.events.map((event) => event.action)).toContain("raw.parsed.write");
+  });
+
+  it("classifies XLSX uploads as CSV before running the passive interpreter", async () => {
+    const tenantId = newTenantId();
+    const blob = new MemoryBlobAdapter();
+    await blob.put(`${tenantId}/upload.xlsx`, AR_AGING_XLSX_FIXTURE, {
+      immutable: true,
+      metadata: {},
+    });
+    const { pool, calls } = fakePool([
+      artifactRow(tenantId, {
+        id: "raw_XLSX_UPLOAD",
+        source_type: "xlsx_upload",
+        source_schema: UPLOAD_DOCUMENT_SCHEMA,
+        source_ref: { filename: "ar-aging.xlsx" },
+        object_type: null,
+        mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        blob_uri: `${tenantId}/upload.xlsx`,
+      }),
+    ]);
+
+    await runInterpretCycle({ pool, blob, audit: new InMemoryAuditEmitter() });
+
+    const insert = calls.find((c) => c.text.startsWith("INSERT INTO raw_parsed"));
+    expect(insert).toBeDefined();
+    expect(insert!.values[3]).toBe(DOCUMENT_RECORDS_UPLOAD_PARSER);
+    expect(JSON.parse(insert!.values[5] as string)).toMatchObject({ object_type: "ar_aging" });
   });
 
   it("logs an empty page without writing a parsed row (and never re-polls it)", async () => {

@@ -154,10 +154,10 @@ Authorization: Bearer <token>
   "entity_id": "cp_aws",
   "chain": [
     {
-      "raw_parsed_id": "rp_001",
-      "parser": "invoice_v2",
+      "version_valid_from": "2026-05-28T12:00:00.000Z",
+      "provenance": "document_extracted",
       "confidence": 0.98,
-      "extracted_fields": ["counterparty.name", "counterparty.tax_id"]
+      "source_evidence": ["rp_001"]
     }
   ]
 }
@@ -192,13 +192,18 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "entity_id":   "cp_aws",
-  "corrections": { "name": "Amazon Web Services, Inc." },
-  "note":        "Updated to legal name from latest contract"
+  "target": "entity",
+  "entity_id": "ent_01J0000000000000000000000A",
+  "kind": "policy",
+  "attributes": { "name": "Updated policy name" },
+  "confidence": 1
 }
 ```
 
-The body is `oneOf`: an `EntityAnnotation` (above) or a `RelationAnnotation` (`relation_id` instead of `entity_id`).
+The body is `oneOf`: an `EntityAnnotation` with `target: "entity"`, optional
+`entity_id`, required `kind` (`policy` or `agent`), `attributes`, and optional
+`confidence`; or a `RelationAnnotation` with `target: "relation"`, required
+`src`, `dst`, and `kind`, plus `attributes` and optional `confidence`.
 
 ```json
 { "annotation_id": "ann_001", "new_version_id": "cp_aws_v3" }
@@ -209,11 +214,14 @@ The body is `oneOf`: an `EntityAnnotation` (above) or a `RelationAnnotation` (`r
 The JSON Schema(s) describing every Wiki entity kind:
 
 ```http
-GET /v1/wiki/schema?kind=counterparty
+GET /v1/wiki/schema?kind=entity/counterparty
 Authorization: Bearer <token>
 ```
 
-Returns `{ counterparty: <JSON Schema document>, ... }`. Omit `kind` for the full set.
+`kind` must be prefixed `entity/` or `relation/`; an unprefixed value returns
+`400 request_params_invalid`. The response uses the same prefixed keys, such as
+`{ "entity/counterparty": <JSON Schema document> }`. Omit `kind` for the full
+set of prefixed entity and relation schemas.
 
 ### Memory Pages
 

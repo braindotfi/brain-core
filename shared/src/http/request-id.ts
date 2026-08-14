@@ -34,6 +34,11 @@ const plugin: FastifyPluginAsync = async (fastify) => {
     const id = supplied ?? newRequestId();
     // Fastify's FastifyRequest.id is writable; use that as the canonical slot.
     (request as unknown as { id: string }).id = id;
+    // Fastify creates request.log before onRequest hooks run, so changing
+    // request.id alone leaves log records correlated only by Fastify's internal
+    // reqId. Rebind the child logger with the Brain request id used in error
+    // envelopes and support lookups.
+    request.log = request.log.child({ request_id: id });
     beginRequestAuditContext(id);
     reply.header(HEADER, id);
   });

@@ -99,6 +99,9 @@ function makeDeps(opts: {
   completeThrows?: boolean;
   failExecutionThrows?: boolean;
   beforeDispatch?: Parameters<typeof processClaimedRow>[0]["beforeDispatch"];
+  resolveDispatchCredentials?: Parameters<
+    typeof processClaimedRow
+  >[0]["resolveDispatchCredentials"];
 }): {
   deps: Parameters<typeof runOutboxCycle>[0];
   outbox: FakeOutbox;
@@ -138,10 +141,61 @@ function makeDeps(opts: {
       fn: (c: { query: () => Promise<{ rows: never[]; rowCount: number }> }) => Promise<T>,
     ) => fn({ query: async () => ({ rows: [], rowCount: 0 }) }),
     ...(opts.beforeDispatch !== undefined ? { beforeDispatch: opts.beforeDispatch } : {}),
+    ...(opts.resolveDispatchCredentials !== undefined
+      ? { resolveDispatchCredentials: opts.resolveDispatchCredentials }
+      : {}),
     workerId: "worker_test",
   };
   return { deps, outbox, executor, audit };
 }
+
+describe("processClaimedRow credential resolution", () => {
+  // The Plaid access_token reaches the rail, but only through the in-memory
+  // action. `row.payload` is what OutboxService persisted and what the worker
+  // re-reads on every retry, so mutating it would put the secret back in the
+  // database by the next markDispatched/markFailed write.
+  it("merges dispatch-time credentials into the action without mutating the row", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const row = makeRow();
+    const { deps } = makeDeps({
+      dispatch: async () => ({ receipt: { rail: "ach", ach_trace: "t", stub: true } }),
+      resolveDispatchCredentials: async () => ({ access_token: "access-sandbox-live" }),
+    });
+    const rail: Rail = {
+      kind: "bank_ach",
+      dispatch: vi.fn(async (input) => {
+        seen = input.action as Record<string, unknown>;
+        return { receipt: { rail: "ach", ach_trace: "t", stub: true } };
+      }),
+    };
+    deps.rails = { get: vi.fn(() => rail) } as unknown as RailRegistry;
+
+    await processClaimedRow(deps, row);
+
+    expect(seen?.["access_token"]).toBe("access-sandbox-live");
+    expect(row.payload["access_token"]).toBeUndefined();
+    expect(seen).not.toBe(row.payload);
+  });
+
+  it("dispatches the stored payload unchanged when no resolver is wired", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const row = makeRow();
+    const { deps } = makeDeps({});
+    const rail: Rail = {
+      kind: "bank_ach",
+      dispatch: vi.fn(async (input) => {
+        seen = input.action as Record<string, unknown>;
+        return { receipt: { rail: "ach", ach_trace: "t", stub: true } };
+      }),
+    };
+    deps.rails = { get: vi.fn(() => rail) } as unknown as RailRegistry;
+
+    await processClaimedRow(deps, row);
+
+    expect(seen).toEqual(row.payload);
+    expect(seen?.["access_token"]).toBeUndefined();
+  });
+});
 
 describe("processClaimedRow", () => {
   it("settles a clean dispatch: receipt valid → audit-after + completeExecution + markSettled", async () => {

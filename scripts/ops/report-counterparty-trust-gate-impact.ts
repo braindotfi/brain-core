@@ -18,6 +18,10 @@ import { Pool } from "pg";
 
 interface ImpactRow {
   tenant_id: string;
+  tenant_kind: "production" | "demo";
+  sandbox: boolean;
+  created_via: string;
+  review_required: boolean;
   counterparty_id: string;
   counterparty_name: string;
   trust_status: "paused";
@@ -55,6 +59,10 @@ async function main(): Promise<void> {
     await pool.query("BEGIN TRANSACTION READ ONLY");
     const { rows } = await pool.query<ImpactRow>(
       `SELECT cp.owner_id AS tenant_id,
+              t.kind AS tenant_kind,
+              t.sandbox,
+              t.created_via,
+              (t.kind = 'production' AND t.sandbox = FALSE) AS review_required,
               cp.id AS counterparty_id,
               cp.name AS counterparty_name,
               cp.trust_status,
@@ -62,6 +70,7 @@ async function main(): Promise<void> {
               array_agg(pi.id ORDER BY pi.created_at) AS payment_intent_ids,
               array_agg(DISTINCT pi.status ORDER BY pi.status) AS statuses
          FROM ledger_counterparties cp
+         JOIN tenants t ON t.id = cp.owner_id
          JOIN ledger_payment_intents pi
            ON pi.owner_id = cp.owner_id
           AND pi.destination_counterparty_id = cp.id
@@ -71,15 +80,29 @@ async function main(): Promise<void> {
             'approved', 'paused', 'dispatching'
           )
           AND ($1::text IS NULL OR cp.owner_id = $1)
-        GROUP BY cp.owner_id, cp.id, cp.name, cp.trust_status
+        GROUP BY cp.owner_id, t.kind, t.sandbox, t.created_via, cp.id, cp.name, cp.trust_status
         ORDER BY cp.owner_id, cp.name, cp.id`,
       [tenantId ?? null],
     );
     await pool.query("COMMIT");
 
     const total = rows.reduce((sum, row) => sum + Number(row.payment_intent_count), 0);
+    const reviewRows = rows.filter((row) => row.review_required);
+    const reviewIntents = reviewRows.reduce(
+      (sum, row) => sum + Number(row.payment_intent_count),
+      0,
+    );
+    const exemptRows = rows.filter((row) => !row.review_required);
+    const exemptIntents = exemptRows.reduce(
+      (sum, row) => sum + Number(row.payment_intent_count),
+      0,
+    );
     process.stdout.write(`paused_counterparty_groups=${rows.length}\n`);
     process.stdout.write(`affected_payment_intents=${total}\n`);
+    process.stdout.write(`non_demo_review_groups=${reviewRows.length}\n`);
+    process.stdout.write(`non_demo_review_payment_intents=${reviewIntents}\n`);
+    process.stdout.write(`demo_or_sandbox_groups=${exemptRows.length}\n`);
+    process.stdout.write(`demo_or_sandbox_payment_intents=${exemptIntents}\n`);
     for (const row of rows) {
       process.stdout.write(`${JSON.stringify(row)}\n`);
     }

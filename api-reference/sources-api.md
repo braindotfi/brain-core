@@ -6,6 +6,8 @@ The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. So
 | ------------------------------------------------------------------ | --------------------------------------------------------- |
 | Push an artifact (file, URL, or provider webhook payload) into Raw | `POST /v1/raw/ingest`, `POST /v1/raw/webhooks/{provider}` |
 | Read or tombstone a Raw artifact                                   | `GET /v1/raw/{raw_id}`, `DELETE /v1/raw/{raw_id}`         |
+| Trigger asynchronous document extraction                           | `POST /v1/raw/{raw_id}/extract`                           |
+| Read extraction status                                             | `GET /v1/raw/{raw_id}/extraction`                         |
 | Read the deterministic parser output for an artifact               | `GET /v1/raw/{raw_id}/parsed`                             |
 | Promote parsed Raw into typed Ledger rows                          | `POST /v1/ledger/normalize` (see Ledger API)              |
 
@@ -96,10 +98,11 @@ file=@payables_invoices.csv
 mime_type=text/csv
 ```
 
-Required headers are validated per object type. A CSV with an unsupported or
-undeclared schema returns `422 raw_source_unsupported`; it is never sent to the
-LLM document extractor. Legacy AR-aging and payroll-register uploads remain
-supported by their existing deterministic parsers.
+Required headers are validated per object type. Ingestion itself returns `201`.
+An unsupported or undeclared CSV schema fails asynchronously and is reported by
+`GET /v1/raw/{raw_id}/extraction` as `status: "failed"` with an error object. It
+is never sent to the LLM document extractor. Legacy AR-aging and payroll-register
+uploads remain supported by their existing deterministic parsers.
 
 ### Source Types
 
@@ -195,6 +198,43 @@ Authorization: Bearer <token>
 ```
 
 Parsed rows are append-only; a re-run with a new `parser_version` produces a new row rather than mutating the old one.
+
+### Trigger and Inspect Document Extraction
+
+Start asynchronous extraction for an existing Raw artifact:
+
+```http
+POST /v1/raw/{raw_id}/extract
+Authorization: Bearer <token with raw:write>
+Content-Type: application/json
+
+{ "retry": false }
+```
+
+The route returns `202` while the job is queued or running, and `200` for an
+existing terminal success. A failed terminal job is returned as a `502` with its
+stored extraction error. Set `retry: true` to explicitly requeue a terminal job.
+
+Poll its current state with `raw:read`:
+
+```http
+GET /v1/raw/{raw_id}/extraction
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "job_id": "extract_001",
+  "raw_id": "raw_8231",
+  "status": "succeeded",
+  "parsed_id": "rp_001",
+  "confidence": 0.98,
+  "error": null,
+  "next_attempt_at": null,
+  "created_at": "2026-05-28T12:00:00Z",
+  "updated_at": "2026-05-28T12:00:30Z"
+}
+```
 
 ### Promoting Raw to Ledger
 

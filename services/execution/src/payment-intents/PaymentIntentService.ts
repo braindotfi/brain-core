@@ -252,18 +252,6 @@ export interface PaymentIntentServiceDeps {
     },
   ) => Promise<OnchainDispatchParams | null>;
   /**
-   * Optional: resolve per-source encrypted credentials for ACH intents.
-   * Credentials are merged into the outbox payload (after the gate; never in
-   * the gate trace or audit-before/after). Only injected for rails that need
-   * provider secrets (e.g. Plaid access_token). Never logs or emits credentials.
-   */
-  sourceCredentialResolver?: {
-    resolve(
-      ctx: ServiceCallContext,
-      sourceAccountId: string,
-    ): Promise<{ credentials: object; source_type: string } | null>;
-  };
-  /**
    * Optional: metrics sink forwarded into the §6 gate (item 11). When wired the
    * gate emits brain.gate.check.count, brain.gate.outcome.count, and
    * brain.gate.duration_ms on every evaluation. Absent ⇒ no emission.
@@ -390,6 +378,23 @@ export class PaymentIntentService implements IPaymentIntentService {
     }
   }
 
+  /**
+   * Validate the source account before the payment-intent insert reaches the
+   * ledger foreign key. A well-formed but unknown account is a caller error,
+   * not an internal database failure.
+   */
+  private async assertSourceAccountExists(
+    ctx: ServiceCallContext,
+    input: CreatePaymentIntentInput,
+  ): Promise<void> {
+    const account = await this.deps.resolveAccount(ctx, input.source_account_id);
+    if (account === null) {
+      throw brainError("ledger_row_not_found", "source account not found", {
+        details: { source_account_id: input.source_account_id },
+      });
+    }
+  }
+
   public async create(
     ctx: ServiceCallContext,
     input: CreatePaymentIntentInput,
@@ -399,6 +404,8 @@ export class PaymentIntentService implements IPaymentIntentService {
     if (!/^\d+(\.\d+)?$/.test(input.amount) || input.amount === "0") {
       throw brainError("request_body_invalid", "amount must be a positive decimal string");
     }
+
+    await this.assertSourceAccountExists(ctx, input);
 
     // RFC 0004 §5.2: an intent is no more confident than the Ledger evidence it
     // cites. Cap its confidence at the referenced obligation's so a low-
@@ -501,6 +508,24 @@ export class PaymentIntentService implements IPaymentIntentService {
       ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
       outcome: decision.outcome,
     });
+
+    if (status === "approved") {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: ctx.actor,
+        action: "payment_intent.auto_approved",
+        inputs: { payment_intent_id: row.id },
+        outputs: {
+          status: "approved",
+          approval_mode: "policy_auto_allow",
+          policy_decision_id: decision.id,
+        },
+        policyDecisionId: decision.id,
+        ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
+        outcome: decision.outcome,
+      });
+    }
 
     return toRecord(row);
   }
@@ -1061,17 +1086,12 @@ export class PaymentIntentService implements IPaymentIntentService {
       payload["amount_units"] = String(BigInt(intPart) * 1_000_000n + BigInt(fracPart));
     }
 
-    // For ACH intents, merge the provider credentials (e.g. Plaid access_token)
-    // into the outbox payload so the worker can dispatch without a second lookup.
-    // Credentials are never included in the gate trace, audit-before, or audit-after.
-    if (intent.action_type === "ach_outbound" && this.deps.sourceCredentialResolver !== undefined) {
-      const creds = await this.deps.sourceCredentialResolver.resolve(ctx, intent.source_account_id);
-      if (creds !== null) {
-        const c = creds.credentials as Record<string, unknown>;
-        if (typeof c["access_token"] === "string") payload["access_token"] = c["access_token"];
-        if (typeof c["account_id"] === "string") payload["account_id"] = c["account_id"];
-      }
-    }
+    // ACH provider credentials are deliberately NOT merged here. They used to
+    // be, which wrote a live Plaid access_token into execution_outbox.payload
+    // in cleartext for the durable life of the row. The outbox worker resolves
+    // them at dispatch time instead (OutboxWorkerDeps.resolveDispatchCredentials),
+    // so the secret exists only in memory for one rail call and the durable
+    // record stays credential-free. OutboxService.enqueue asserts that.
 
     // Atomic hand-off: claim approved → dispatching AND enqueue the outbox row
     // in the same transaction. If the conditional transition matches no row the
@@ -1252,6 +1272,7 @@ export class PaymentIntentService implements IPaymentIntentService {
           `completeExecution: intent ${args.paymentIntentId} moved before executed transition`,
         );
       }
+      await transitionExecution(c, args.executionId, "in_flight", "completed");
       await LedgerPaymentIntents.appendExecutionReceiptId(
         c,
         args.paymentIntentId,

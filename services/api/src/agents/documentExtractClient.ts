@@ -1,6 +1,12 @@
 import { brainError, type ServiceCallContext } from "@brain/shared";
 import { signAgentRequest } from "./sign-agent-request.js";
 
+// Bounds the whole agent round trip: up to 30s deterministic/OCR text
+// extraction, up to 30s LLM field extraction, plus network overhead. Without
+// this, a slow or hung agent-side call had no timeout anywhere in the chain
+// and could leave the caller waiting indefinitely with no error.
+const DOCUMENT_EXTRACT_TIMEOUT_MS = 90_000;
+
 export interface DocumentExtractClientOptions {
   /** Shared HMAC secret for the X-Brain-Auth header. */
   signingSecret?: string;
@@ -47,8 +53,14 @@ export class DocumentExtractClient {
         method: "POST",
         headers,
         body,
+        signal: AbortSignal.timeout(DOCUMENT_EXTRACT_TIMEOUT_MS),
       });
     } catch (cause) {
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        throw brainError("dependency_unavailable", "document extraction agent timed out", {
+          cause,
+        });
+      }
       throw brainError("internal_server_error", "document extraction agent unreachable", { cause });
     }
 

@@ -38,7 +38,7 @@ test("reports each absent compose-required secret without printing values", () =
               AUTH_COOKIE_SECRET: ${"${AUTH_COOKIE_SECRET:?required}"}
               BRAIN_MCP_READER_DB_PASSWORD: ${"${BRAIN_MCP_READER_DB_PASSWORD:?required}"}
       `,
-      env: "AUTH_COOKIE_SECRET=\n",
+      env: "AUTH_COOKIE_SECRET=\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
     },
     (composePath, envPath) => {
       assert.throws(
@@ -64,7 +64,7 @@ test("passes once all compose-required secrets are populated", () => {
               AUTH_COOKIE_SECRET: ${"${AUTH_COOKIE_SECRET:?required}"}
               BRAIN_MCP_READER_DB_PASSWORD: ${"${BRAIN_MCP_READER_DB_PASSWORD:?required}"}
       `,
-      env: "AUTH_COOKIE_SECRET=present-cookie-secret\nBRAIN_MCP_READER_DB_PASSWORD=reader-password\n",
+      env: "AUTH_COOKIE_SECRET=present-cookie-secret\nBRAIN_MCP_READER_DB_PASSWORD=reader-password\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
     },
     (composePath, envPath) => {
       assert.match(run(composePath, envPath), /required compose and boot-fence secrets present: 2/);
@@ -112,7 +112,7 @@ test("enforces enabled application boot fences without affecting disabled integr
   withFiles(
     {
       compose: "services: {}\n",
-      env: "BRAIN_API_KEY_AUTH_ENABLED=true\nEMAIL_ENABLED=false\n",
+      env: "BRAIN_API_KEY_AUTH_ENABLED=true\nEMAIL_ENABLED=false\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
     },
     (composePath, envPath) => {
       assert.throws(
@@ -120,6 +120,42 @@ test("enforces enabled application boot fences without affecting disabled integr
         (error) => {
           assert.match(error.stderr, /missing secret: BRAIN_API_KEY_PEPPER/);
           assert.doesNotMatch(error.stderr, /EMAIL_TOKEN_SECRET/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
+test("requires app.brain.fi in the target CORS allowlist during the transition", () => {
+  withFiles(
+    {
+      compose: "services: {}\n",
+      env: "CORS_ALLOWED_ORIGINS=https://mvp.brain.fi,https://app.brain.fi,https://console.brain.fi\n",
+    },
+    (composePath, envPath) => {
+      assert.match(
+        run(composePath, envPath),
+        /required CORS transition origin present: https:\/\/app\.brain\.fi/,
+      );
+    },
+  );
+});
+
+test("fails before a deploy when the transition CORS origin is absent", () => {
+  withFiles(
+    {
+      compose: "services: {}\n",
+      env: "CORS_ALLOWED_ORIGINS=https://mvp.brain.fi,https://console.brain.fi\n",
+    },
+    (composePath, envPath) => {
+      assert.throws(
+        () => run(composePath, envPath),
+        (error) => {
+          assert.match(
+            error.stderr,
+            /missing required CORS origin: https:\/\/app\.brain\.fi in CORS_ALLOWED_ORIGINS/,
+          );
           return true;
         },
       );

@@ -96,10 +96,15 @@ audit treatment to an HTTP call, they are the same code paths.
 MCP supports stdio, SSE, and Streamable HTTP. Brain ships **HTTP single-
 shot** at v0.3:
 
-- One HTTP POST = one JSON-RPC request.
-- Response body = one JSON-RPC response.
+- One HTTP POST = one JSON-RPC request that expects a response, and one
+  JSON-RPC response back -- except a JSON-RPC _notification_ (a request
+  with no `id`, e.g. the mandatory `notifications/initialized`
+  handshake message), which per the JSON-RPC 2.0 spec gets no response
+  body at all: the server answers `202 Accepted` with nothing in it.
 - No server-initiated notifications (no resource subscriptions; no
-  progress events).
+  progress events). This is about the server pushing to the client,
+  which Brain still does not do; it is unrelated to the client-sent
+  notifications point above.
 - No session state; auth is per-request via the Bearer JWT.
 
 This is the simplest viable subset and matches Brain's existing
@@ -146,7 +151,7 @@ or audit transition.
 
 ## Tool Surface (V0.3)
 
-Sixteen tools across six capability groups. Each tool name is an
+Seventeen tools across six capability groups. Each tool name is an
 `{layer}.{noun}.{verb}` string; that's the convention.
 
 ### `ledger:read` Capability
@@ -166,11 +171,12 @@ Sixteen tools across six capability groups. Each tool name is an
 | `wiki.question` | `askWiki` orchestrator    | Returns answer + cited evidence ids. |
 | `wiki.page.get` | `WikiPageService.getPage` | Markdown body of a page.             |
 
-### `raw:write` Capability
+### `raw:write` and `raw:read` Capabilities
 
-| Tool             | Maps to                                                           | Notes                            |
-| ---------------- | ----------------------------------------------------------------- | -------------------------------- |
-| `raw.contribute` | `IRawEvidenceService.ingest` with `source_type=agent_contributed` | Caps confidence at 0.5 per §3.2. |
+| Tool               | Maps to                                                                | Notes                                                                                        |
+| ------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `raw.contribute`   | `IRawEvidenceService.ingest` with `source_type=agent_contributed`      | Caps confidence at 0.5 per §3.2. Needs `raw:write`.                                          |
+| `raw.artifact.get` | Direct read against `raw_artifacts` / `raw_parsed` via the reader pool | Tenant-scoped provenance + parsed evidence read. Never returns `blob_uri`. Needs `raw:read`. |
 
 ### `payment_intent:propose` and `execution:propose` Capabilities
 
@@ -213,9 +219,15 @@ Resources are read-only typed identifiers. Brain exposes:
 | `brain://ledger/obligations/{obligation_id}`   | Obligation row                     |
 | `brain://ledger/payment-intents/{id}`          | PaymentIntent row + PolicyDecision |
 | `brain://wiki/pages/{slug}`                    | Wiki page (markdown body)          |
-| `brain://audit/events/{id}`                    | Audit event with inclusion proof   |
 | `brain://payments/action_types`                | PaymentIntent action_type catalog  |
 | `brain://proofs/{action_id}`                   | Canonical H-07 proof for an action |
+
+Only `brain://payments/action_types` has no `{...}` placeholder, so it is
+the sole entry `resources/list` returns; the other six are templated and
+only appear from `resources/templates/list`. There is no
+`brain://audit/events/{id}` resource -- audit events are read through the
+HTTP `GET /audit/event/:id` route and the `brain://proofs/{action_id}`
+resource below, not a dedicated MCP resource of their own.
 
 The action-type catalog (item 14) is a static document of the propose
 vocabulary: each `action_type` plus the extra fields the propose tool
@@ -291,11 +303,24 @@ agent calls a tool and no audit event lands.
 
 ## Capability Negotiation
 
-The `initialize` handshake response advertises:
+The server supports three protocol versions: `2024-11-05`, `2025-03-26`,
+and `2025-06-18` (`SUPPORTED_PROTOCOL_VERSIONS` in `services/mcp/src/types.ts`).
+`2024-11-05` predates the RFC 9728 authorization flow this server actually
+implements (the `WWW-Authenticate: resource_metadata` challenge and
+protected-resource metadata), so all three stay supported rather than
+rejecting the oldest one outright.
+
+On `initialize`, if the client's requested `protocolVersion` is one of the
+three, the server echoes it back unchanged. Otherwise -- including when no
+version was requested at all -- it responds with the latest version it
+supports (`2025-06-18`) and leaves the decision to continue or disconnect
+to the client, per the spec's negotiation rule. It never falls back to the
+oldest supported version, since that would silently walk a modern client
+into a revision with no authorization spec.
 
 ```json
 {
-  "protocolVersion": "2024-11-05",
+  "protocolVersion": "2025-06-18",
   "serverInfo": {
     "name": "brain-mcp",
     "version": "0.3.0"
@@ -309,21 +334,29 @@ The `initialize` handshake response advertises:
 ```
 
 `listChanged` and `subscribe` are false because Brain v0.3 doesn't push
-notifications to the client. A client that asks for them gets a
-graceful empty response.
+server-initiated notifications to the client (see the Transport section
+above). A client that asks for them gets a graceful empty response.
+
+On HTTP requests after `initialize`, the server accepts (but does not
+require) an `MCP-Protocol-Version` header. Brain's MCP server is
+stateless per-request -- there is no session to compare the header
+against a version actually negotiated earlier -- so it only rejects a
+header naming a version outside the three supported ones, with `400`
+and `request_params_invalid`.
 
 ## Failure-Mode Semantics
 
 Mapped onto the JSON-RPC error code space + Brain's error registry:
 
-| Brain code                   | JSON-RPC code | When                                                                 |
-| ---------------------------- | ------------- | -------------------------------------------------------------------- |
-| `auth_token_missing`         | -32001        | No JWT or invalid bearer                                             |
-| `auth_scope_insufficient`    | -32002        | Tool requires a scope the agent doesn't hold                         |
-| `agent_not_registered`       | -32003        | JWT valid but agent row missing/revoked                              |
-| `request_body_invalid`       | -32602        | JSON-RPC `params` failed schema validation                           |
-| `payment_intent_gate_failed` | -32004        | Only relevant when proposing a payment that fails policy on creation |
-| internal                     | -32603        | Anything else                                                        |
+| Brain code                                                                              | JSON-RPC code | When                                                                                                  |
+| --------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------- |
+| `auth_token_missing`                                                                    | -32001        | No JWT or invalid bearer                                                                              |
+| `auth_scope_insufficient`                                                               | -32002        | Tool requires a scope the agent doesn't hold                                                          |
+| `agent_not_registered`                                                                  | -32003        | JWT valid but agent row missing/revoked                                                               |
+| `request_body_invalid`                                                                  | -32602        | JSON-RPC `params` failed schema validation                                                            |
+| `*_not_found` family, `payment_intent_invalid_state`, `payment_intent_approval_invalid` | -32602        | A well-formed id or request that does not resolve to anything, or does not apply to the current state |
+| `payment_intent_gate_failed`                                                            | -32004        | Only relevant when proposing a payment that fails policy on creation                                  |
+| internal                                                                                | -32603        | Anything else                                                                                         |
 
 Standard JSON-RPC -32700 (parse error) and -32601 (method not found) are
 also surfaced for malformed transport / unknown method names.

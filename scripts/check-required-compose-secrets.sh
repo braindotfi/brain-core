@@ -140,15 +140,35 @@ if [[ "$relayer_mode" == "custodial" || "$relayer_mode" == "tenant_signed" ]]; t
 fi
 
 missing=0
-while IFS= read -r key; do
-  if [[ -z "$(value_for "$key")" ]]; then
-    echo "missing secret: $key" >&2
-    missing=1
-  fi
-done < <(printf '%s\n' "${required_keys[@]:-}" | sort)
+if [[ ${#required_keys[@]} -gt 0 ]]; then
+  while IFS= read -r key; do
+    if [[ -z "$(value_for "$key")" ]]; then
+      echo "missing secret: $key" >&2
+      missing=1
+    fi
+  done < <(printf '%s\n' "${required_keys[@]}" | sort)
+fi
 
 if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
+required_cors_origin="https://app.brain.fi"
+cors_origins="$(value_for CORS_ALLOWED_ORIGINS)"
+cors_origin_present=0
+IFS=',' read -r -a cors_origin_list <<< "$cors_origins"
+for cors_origin in "${cors_origin_list[@]:-}"; do
+  cors_origin="$(trim_value "$cors_origin")"
+  if [[ "$cors_origin" == "$required_cors_origin" ]]; then
+    cors_origin_present=1
+    break
+  fi
+done
+
+if [[ "$cors_origin_present" -ne 1 ]]; then
+  echo "missing required CORS origin: $required_cors_origin in CORS_ALLOWED_ORIGINS" >&2
+  exit 1
+fi
+
 echo "required compose and boot-fence secrets present: ${#required_keys[@]}"
+echo "required CORS transition origin present: $required_cors_origin"

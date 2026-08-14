@@ -245,8 +245,11 @@ before any status transition.
 
 `acknowledge` records that a human saw a non-money finding without acting.
 `reject` closes a proposal. `undo` reverses an eligible prior decision. There is
-no execute call here or anywhere on the API: approval authorizes Brain's internal
-settlement path, it does not dispatch the rail itself.
+no execute call on the proposal surface: approval authorizes Brain's internal
+settlement path, it does not dispatch the rail itself. The API does expose
+`POST /v1/payment-intents/{id}/execute`, but it requires
+`payment_intent:execute`, a scope that no externally issued user, agent, or API
+key credential can carry.
 
 ## Resolve Proposal Evidence
 

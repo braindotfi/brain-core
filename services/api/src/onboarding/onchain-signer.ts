@@ -51,6 +51,13 @@ export interface OnchainSignerRoutesDeps {
   redis: Redis;
   /** EIP-4361 `domain` claim -- must match registerSiwxRoutes' domain. Defaults to "api.brain.fi". */
   domain?: string;
+  /**
+   * Required EIP-4361 `chainId` -- must match registerSiwxRoutes' chainId
+   * (`BRAIN_BASE_CHAIN_ID`), so a message this route rejects is exactly the
+   * set `/auth/siwx` rejects. Not optional: a defaulted chain id here would
+   * silently unpin the designation proof if the service chain ever moves.
+   */
+  chainId: number;
 }
 
 async function isWalletLinkedToTenant(
@@ -125,7 +132,7 @@ export async function registerOnchainSignerRoutes(
       // address being designated -- being a linked login wallet is not
       // itself proof of intent to become a registry signer.
       const provenAddress = await verifySiwxProof(
-        { domain, redis: deps.redis },
+        { domain, chainId: deps.chainId, redis: deps.redis },
         {
           message: parsed.data.message,
           signature: parsed.data.signature,

@@ -170,6 +170,18 @@ function redirectWithError(
   return "";
 }
 
+/**
+ * BRAIN-98: the /token rate-limit key, keyed on client_id + ip (same shape
+ * as /revoke's keyGenerator). Exported as a named function, rather than
+ * inlined, so it is directly unit-testable without a running Fastify app or
+ * a DB.
+ */
+export function tokenRateLimitKey(req: FastifyRequest): string {
+  const body = req.body as Record<string, unknown> | undefined;
+  const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : "anon";
+  return `${clientId}:${req.ip}`;
+}
+
 // ---- agents table reads (defense-in-depth: RLS scopes the connection,
 // tenant_id is also filtered explicitly, matching authority.ts's pattern) ----
 
@@ -181,11 +193,25 @@ interface EligibleAgentRow {
   readonly attestation_mode: string;
 }
 
-async function listEligibleAgents(pool: Pool, tenantId: string): Promise<EligibleAgentRow[]> {
+// Consent only ever offers or grants kind=external agents (the tenants
+// registered third-party partner agents). kind=internal rows are Brain own
+// built-in service identities -- e.g. the BFF service agent
+// ensureBffServiceAgent creates (services/api/src/onboarding/service-token.ts)
+// -- and must never be delegable to a third-party OAuth client: every propose
+// that client later makes would be attributed to that trusted internal
+// identity in the audit log, gate trace and proposal rows. Both the listing
+// below and loadActiveAgent (the actual grant path) apply the same filter, so
+// a tampered agent_id posted directly to /authorize/consent cannot select an
+// internal agent the UI never offered.
+export async function listEligibleAgents(
+  pool: Pool,
+  tenantId: string,
+): Promise<EligibleAgentRow[]> {
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
       `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
         WHERE tenant_id = $1 AND state = 'active' AND scope_hash IS NOT NULL
+          AND kind = 'external'
         ORDER BY display_name`,
       [tenantId],
     );
@@ -193,7 +219,10 @@ async function listEligibleAgents(pool: Pool, tenantId: string): Promise<Eligibl
   });
 }
 
-async function loadActiveAgent(
+// Exported for the same reason listEligibleAgents is: this is the grant path,
+// so the kind = 'external' filter here is the one that actually stops a
+// tampered agent_id, and it needs its own regression test.
+export async function loadActiveAgent(
   pool: Pool,
   tenantId: string,
   agentId: string,
@@ -201,7 +230,7 @@ async function loadActiveAgent(
   return withTenantScope(pool, tenantId, async (client: TenantScopedClient) => {
     const { rows } = await client.query<EligibleAgentRow>(
       `SELECT id, display_name, role, scope_hash, attestation_mode FROM agents
-        WHERE tenant_id = $1 AND id = $2 AND state = 'active' LIMIT 1`,
+        WHERE tenant_id = $1 AND id = $2 AND state = 'active' AND kind = 'external' LIMIT 1`,
       [tenantId, agentId],
     );
     return rows[0] ?? null;
@@ -923,11 +952,17 @@ export async function registerOauthRoutes(
       max: 60,
       timeWindow: "1 minute",
       hook: "preHandler" as const, // needs request.body -> parsed after onRequest
-      keyGenerator: (req: FastifyRequest) => {
-        const body = req.body as Record<string, unknown> | undefined;
-        const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : undefined;
-        return clientId ?? req.ip;
-      },
+      // Keyed on client_id + ip, same as /revoke below and for the same
+      // reason (Opus review, BRAIN-98): this hook runs BEFORE the handler
+      // validates a code or refresh_token, so client_id alone is a bucket
+      // any caller can spend against a victim client just by reading its
+      // client_id out of a public /authorize URL and POSTing invalid grant
+      // requests naming it -- every legitimate code exchange and refresh for
+      // that client then 429s for the window. The previous comment here
+      // claiming client_id-only was safe because the key only gates a caller
+      // who already holds a valid code or refresh token was wrong: the
+      // bucket is consumed before any such ownership check runs.
+      keyGenerator: tokenRateLimitKey,
     },
   };
 
@@ -964,10 +999,10 @@ export async function registerOauthRoutes(
       // 60 junk requests/minute carrying a real public client's id and rate-
       // limit every legitimate holder of that client's tokens out of
       // revocation -- a targeted DoS on the one endpoint meant for incident
-      // remediation. /token's tokenRateLimitConfig is left as client_id-only:
-      // that key only ever gates a caller who ALSO holds a valid code or
-      // refresh token bound to that client, so the same forgery has no
-      // matching payload to pair with it there.
+      // remediation. /token's tokenRateLimitConfig (tokenRateLimitKey above)
+      // now uses the identical client_id + ip key for the same reason
+      // (BRAIN-98): it used to be client_id-only, which was a bug, not a
+      // deliberate ceiling -- see tokenRateLimitKey's comment.
       keyGenerator: (req: FastifyRequest) => {
         const body = req.body as Record<string, unknown> | undefined;
         const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : "anon";

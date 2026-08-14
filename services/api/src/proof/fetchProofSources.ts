@@ -52,6 +52,8 @@ function sourceTrustLevel(sourceType: string | null): "high" | "medium" | "low" 
       return "high";
     case "agent_contributed":
     case "csv_upload":
+    case "xlsx_upload":
+    case "txt_upload":
     case "pdf_upload":
     case "email_inbound":
     case "other":

@@ -1,136 +1,119 @@
 ---
-description: Define a policy in plain English. Brain enforces it on every proposed action.
+description: Define and sign a structured policy that Brain evaluates for every action.
 ---
 
 # Give an Agent a Spending Limit
 
-Goal: write a sentence in English describing what an agent (or human user) can do with a tenant's money. Brain compiles it to a deterministic rule, signs it with the tenant's key, and enforces it on every proposed action.
+Goal: author a structured policy, collect the required signatures, then evaluate
+actions against the active policy.
 
-### The Simplest Policy
+### Compose a Policy
+
+Policy authoring uses the structured JSON DSL. Brain does not currently compile
+plain English into a policy.
 
 ```typescript
-const policy = await brain.policy.compose("acme", {
-  text:
-    "Allow invoice payments under $5,000 to approved vendors. " +
-    "Require CFO approval above $5,000. " +
-    "Block payments to new counterparties without review.",
+const policy = await brain.policy.compose("tnt_acme", {
+  version: 1,
+  lists: {
+    trusted_vendors: ["cp_acme_legal"],
+  },
+  rules: [
+    {
+      id: "small-trusted-payments",
+      applies_to: ["outbound_payment"],
+      when: {
+        counterparty_in: "trusted_vendors",
+        amount_lte: { currency: "USD", value: 5000 },
+      },
+      execute: "auto",
+    },
+    {
+      id: "other-payments-require-review",
+      applies_to: ["outbound_payment"],
+      when: {},
+      require: ["signer"],
+      execute: "confirm",
+    },
+  ],
 });
 
-await brain.policy.sign(policy.id);
+console.log(policy.policyId, policy.state, policy.signingPayload);
 ```
 
-That's the whole flow. From this point on, every `brain.pay` call evaluates against this policy.
+### Submit Signatures
 
-{% hint style="warning" %}
-**Plain-English authoring is the intended experience, but not yet wired.** Today, policies are authored as **structured JSON DSL**, not prose; there is no natural-language compile step on either the SDK or the HTTP API. The real SDK call is `brain.policy.compose(tenantId, dsl)`: it **validates the DSL** and returns the EIP-712 signing payload, which you then submit via `brain.policy.sign(...)` (also exposed as `activate`), which takes signatures, not a policy id. Non-SDK callers POST the same DSL to `/policy/{tenant_id}/compose`. See the [Policy API](../api-reference/policy-api.md#compose-a-candidate-policy) for the JSON shape. Treat the `{ text: "…" }` form below as illustrative of intent until NL authoring ships.
-{% endhint %}
-
-### Reviewing What Got Compiled
-
-The compiler returns the structured rules and a human-readable explanation. Always review before activating.
+Sign the returned payload with the authorized tenant member keys, then submit
+the resulting signatures.
 
 ```typescript
-console.log(policy.explanation);
-// This policy will:
-//  - Auto-approve payments under $5,000 to vendors marked as approved
-//  - Escalate payments at or above $5,000 to anyone with the CFO role
-//  - Reject all payments to counterparties not yet on the approved list
-
-console.log(policy.rules);
-// [
-//   { if: "amount < 5000 && counterparty.known", then: "auto" },
-//   { if: "amount >= 5000 && counterparty.known", then: "needs_approval", approvers: ["role:cfo"] },
-//   { if: "!counterparty.known", then: "rejected", reason: "new_counterparty_review_required" }
-// ]
-```
-
-If the explanation matches your intent, activate. If not, edit the text and recompile.
-
-### Trying It Before You Ship It
-
-Dry-run a hypothetical action against the active policy.
-
-```typescript
-const decision = await brain.policy.evaluate("acme", {
-  type:           "pay_invoice",
-  amount:         7800,
-  currency:       "USD",
-  counterpartyId: "cp_vendor_x",
+const result = await brain.policy.sign("tnt_acme", {
+  policyId: policy.policyId,
+  signatures: [
+    { address: signerAddress, signature: signerSignature },
+  ],
 });
 
-console.log(decision.outcome);     // "auto" | "needs_approval" | "rejected"
-console.log(decision.matchedRule); // which rule fired
-console.log(decision.approvers);   // populated if needs_approval
+console.log(result.activated, result.policy.version);
 ```
 
-`evaluate` doesn't create a payment intent. It just shows you what would happen. Useful for testing edge cases before activating.
+`compose` returns `policyId`, `state`, and `signingPayload`. Policy activation
+happens as a side effect of `sign` once the required signatures are present.
 
-{% hint style="info" %}
-`decision.outcome` returns the SDK aliases `auto | needs_approval | rejected`. Over HTTP/MCP the same decision is the canonical `allow | confirm | reject`, and the rule's `then` (`execute`) field uses `auto | confirm | reject`. The three vocabularies map 1:1; see [Policy → decision vocabulary across surfaces](../api-reference/policy-api.md#decision-vocabulary-across-surfaces).
-{% endhint %}
-
-### Approvers
-
-Approvers are referenced by role or user.
+### Test an Action
 
 ```typescript
-"Allow invoice payments under $5,000.
- Require CFO approval above $5,000.
- Require both CFO and CEO approval above $50,000."
-```
-
-| Reference               | Matches                               |
-| ----------------------- | ------------------------------------- |
-| `role:cfo`              | Anyone in your team with the CFO role |
-| `role:cfo + role:ceo`   | Both must sign                        |
-| `user:user_cfo`         | A specific user                       |
-| `any:role:cfo,role:ceo` | Either CFO or CEO                     |
-
-### Approving Counterparties
-
-Many policies key off "approved vendors." A counterparty's trust standing is the server-controlled `verified_status` field (`unverified`, `self_attested`, `document_verified`, `sanctions_cleared`). It is not a value you set directly through the SDK: manual counterparty edits are identity-only, and trust fields are managed server-side through verification and the Console.
-
-Once a counterparty is verified, payments to it fall under the "approved vendor" branch of the policy.
-
-### Multiple Environments
-
-Policies are per-tenant, per-environment. Sandbox and production each have their own active policy. You'll typically:
-
-| Environment    | Policy approach                                                   |
-| -------------- | ----------------------------------------------------------------- |
-| **Sandbox**    | Loose (high limits, few required approvers) for testing           |
-| **Production** | Tight (low limits, multiple approvers, narrower vendor allowlist) |
-
-### Updating a Policy
-
-Policies are versioned. New text creates a new version that supersedes the old one.
-
-```typescript
-const v2 = await brain.policy.compose("acme", {
-  text: "..."  // new policy text
+const decision = await brain.policy.evaluate("tnt_acme", {
+  kind: "outbound_payment",
+  amount: { currency: "USD", value: "7800" },
+  counterparty_id: "cp_acme_legal",
+  agent_role: "payment",
 });
 
-await brain.policy.sign(v2.id);
+console.log(decision.outcome);
+console.log(decision.matched_rule_id);
+console.log(decision.required_approvers);
 ```
 
-The old version is automatically deactivated. Past actions remain bound to the version that was active when they were proposed; you can always see which version evaluated which action by reading the action's metadata.
+`outcome` is exactly `allow`, `confirm`, or `reject`. It is not an SDK alias
+layer. This request records a `policy.evaluate` audit event, but it does not
+create a payment intent.
 
-### What Policy Can Express
+### Approval Requirements
 
-| Concept                           | Example                                        |
-| --------------------------------- | ---------------------------------------------- |
-| **Amount thresholds**             | "above $5,000", "between $1,000 and $10,000"   |
-| **Counterparty status**           | "approved vendors", "new counterparties"       |
-| **Counterparty type**             | "to employees", "to tax authorities"           |
-| **Account balance preconditions** | "if the account balance is at least $50,000"   |
-| **Time windows**                  | "between 9am and 5pm Pacific", "weekdays only" |
-| **Approval requirements**         | "require approval from", "with sign-off by"    |
-| **Outright denial**               | "block", "do not allow", "reject"              |
+Policy `require` contains the roles whose approvals the rule needs.
 
-### What Policy Can't Express in Plain English (Yet)
+```typescript
+const dualApprovalRule = {
+  id: "large-payment",
+  applies_to: ["outbound_payment"],
+  when: {
+    amount_gt: { currency: "USD", value: 50000 },
+  },
+  require: ["cfo", "ceo"],
+  execute: "confirm",
+};
+```
 
-Edge cases that need precise semantics. For these, you can author rules directly. See Policy in the Protocol section for the rule grammar.
+### Update a Policy
+
+Policies are versioned. Compose a new document with the next version, then
+submit signatures for that new `policyId`.
+
+```typescript
+const next = await brain.policy.compose("tnt_acme", {
+  version: 2,
+  lists: {},
+  rules: [dualApprovalRule],
+});
+
+await brain.policy.sign("tnt_acme", {
+  policyId: next.policyId,
+  signatures: [{ address: signerAddress, signature: signerSignature }],
+});
+```
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>💸 Pay an Invoice</strong></td><td>Watch the policy you just wrote enforce itself.</td><td><a href="pay-an-invoice-safely.md">pay-an-invoice-safely.md</a></td><td></td></tr><tr><td><strong>📜 Audit Trail</strong></td><td>Every policy decision lands in the audit log.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>
+- [Pay an Invoice Safely](pay-an-invoice-safely.md)
+- [Audit Every Action](audit-every-action.md)

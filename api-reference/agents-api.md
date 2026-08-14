@@ -151,14 +151,14 @@ Content-Type: application/json
 
 ```json
 {
-  "status":              "proposal_created",
+  "status": "proposal_created",
   "routing_decision_id": "rd_001",
-  "run_id":              "run_001",
-  "selected_agent_id":   "collections",
-  "action":              { "type": "outbound_payment", ... },
-  "shadow_mode":         false,
-  "proposed":            { "id": "pi_a1b2c3", "status": "pending_approval", "policy_decision_id": "pd_7331" },
-  "reason":              "matched dunning rule for inv_8231"
+  "run_id": "run_001",
+  "selected_agent_id": "collections",
+  "action": "draft_followup",
+  "shadow_mode": false,
+  "proposed": { "id": "pi_a1b2c3", "status": "pending_approval", "policy_decision_id": "pd_7331" },
+  "reason": "matched dunning rule for inv_8231"
 }
 ```
 
@@ -193,10 +193,12 @@ Content-Type: application/json
 
 ### Kill-Switch
 
-| Endpoint                          | Purpose                                                                       |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `POST /v1/agents/{agent_id}/halt` | Pause every in-flight intent for the agent and set its state to `quarantined` |
-| `POST /v1/agents/halt-category`   | Emergency-stop every agent in a category. Body `{ "category": "business" }`   |
+| Endpoint                                               | Purpose                                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `POST /v1/agents/{agent_id}/halt`                      | Pause every in-flight intent for the agent and set its state to `quarantined` |
+| `POST /v1/agents/{agent_id}/restore`                   | Restore a quarantined agent record to `active`                                |
+| `POST /v1/agents/{agent_id}/contribution-hold/release` | Clear the agent's contribution hold so later contributions can extract        |
+| `POST /v1/agents/halt-category`                        | Emergency-stop every agent in a category. Body `{ "category": "business" }`   |
 
 Both routes are tenant-root and emit audit events. Halting an agent atomically pauses its in-flight PaymentIntents (the rail dispatcher re-reads state immediately before submission and aborts cleanly if the intent was paused).
 

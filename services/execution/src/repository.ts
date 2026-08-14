@@ -128,6 +128,66 @@ export async function refreshCollectionsProposal(
   existing: ProposalRow,
   input: Omit<InsertProposalInput, "id" | "tenantId" | "proposingAgent">,
 ): Promise<ProposalRow> {
+  return refreshProposalRow(client, existing, input, "collections proposal");
+}
+
+const AGENT_PROPOSAL_LOCK_NAMESPACE = 0x41474e54; // "AGNT"
+
+/**
+ * Serialize proposal refreshes for agent types with a stable subject key.
+ * Collections keeps its dedicated invoice path because its reconciler uses it
+ * directly. The other covered agents use the subject dispatch in AgentService.
+ */
+export async function lockPendingProposalForSubject(
+  client: TenantScopedClient,
+  tenantId: string,
+  agentId: string,
+  subjectField: string,
+  subjectValue: string,
+): Promise<void> {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(${AGENT_PROPOSAL_LOCK_NAMESPACE}, hashtext($1))`,
+    [`${tenantId}:${agentId}:${subjectField}:${subjectValue}`],
+  );
+}
+
+/** Find the actionable proposal for one agent subject, if one exists. */
+export async function findPendingProposalForSubject(
+  client: TenantScopedClient,
+  agentId: string,
+  subjectField: string,
+  subjectValue: string,
+): Promise<ProposalRow | null> {
+  const { rows } = await client.query<ProposalRow>(
+    `SELECT *
+      FROM proposals
+      WHERE proposing_agent = $1
+        AND status = 'pending'
+        AND action->>$2 = $3
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [agentId, subjectField, subjectValue],
+  );
+  return rows[0] ?? null;
+}
+
+/** Refresh a pending proposal after a later re-evaluation of the same subject. */
+export async function refreshPendingProposal(
+  client: TenantScopedClient,
+  existing: ProposalRow,
+  input: Omit<InsertProposalInput, "id" | "tenantId" | "proposingAgent">,
+): Promise<ProposalRow> {
+  return refreshProposalRow(client, existing, input, "proposal");
+}
+
+/** Shared refresh body for Collections and generalized agent subjects. */
+async function refreshProposalRow(
+  client: TenantScopedClient,
+  existing: ProposalRow,
+  input: Omit<InsertProposalInput, "id" | "tenantId" | "proposingAgent">,
+  label: string,
+): Promise<ProposalRow> {
   if (existing.status !== input.status) {
     assertProposalTransition(existing.status, input.status);
   }
@@ -155,7 +215,7 @@ export async function refreshCollectionsProposal(
   );
   const row = rows[0];
   if (row === undefined) {
-    throw new Error(`collections proposal ${existing.id} stopped being pending during refresh`);
+    throw new Error(`${label} ${existing.id} stopped being pending during refresh`);
   }
   return row;
 }

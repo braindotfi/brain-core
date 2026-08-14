@@ -21,7 +21,7 @@ npm install @brainfinance/sdk
 
 ### Get a Key
 
-Sign up at [console.brain.fi](https://console.brain.fi), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
+Sign up at [app.brain.fi](https://app.brain.fi/), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
 
 ```bash
 # .env

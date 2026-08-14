@@ -84,6 +84,20 @@ export interface OutboxWorkerDeps {
     ctx: ServiceCallContext,
     row: OutboxRow,
   ) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  /**
+   * Resolve the provider credentials a rail needs (e.g. the Plaid access_token
+   * for `ach_outbound`) at DISPATCH time. The returned fields are merged into
+   * the in-memory action handed to the rail and are never written back to the
+   * row, so `execution_outbox.payload` -- which is plaintext JSONB, hashed for
+   * tamper-evidence and never scrubbed after settlement -- holds no secret.
+   * Absent, or returning nothing, leaves the action as stored; a rail that
+   * needs a credential then fails its own validation, which is the correct
+   * fail-closed outcome (no money moves).
+   */
+  resolveDispatchCredentials?: (
+    ctx: ServiceCallContext,
+    row: OutboxRow,
+  ) => Promise<Record<string, unknown> | null>;
   /** Stable id for this worker process (recorded in locked_by). */
   workerId: string;
 }
@@ -223,15 +237,22 @@ export async function processClaimedRow(
     }
   }
 
-  // 1 — dispatch the rail.
+  // 1 — dispatch the rail. Credentials (if this rail needs any) are resolved
+  // here and merged into a throwaway copy of the payload; `row.payload` itself
+  // is never mutated and never written back, so nothing durable gains a secret.
   let receipt: Record<string, unknown>;
   try {
     const rail = deps.rails.get(row.rail);
+    const credentials =
+      deps.resolveDispatchCredentials !== undefined
+        ? await deps.resolveDispatchCredentials(ctx, row)
+        : null;
+    const action = credentials === null ? row.payload : { ...row.payload, ...credentials };
     const result = await rail.dispatch({
       tenantId: row.tenant_id,
       proposalId: row.payment_intent_id,
       executionId,
-      action: row.payload,
+      action,
       idempotencyKey: row.idempotency_key,
     });
     receipt = result.receipt;

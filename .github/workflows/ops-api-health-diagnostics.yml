@@ -1,0 +1,123 @@
+name: ops-api-health-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: api health diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              echo "VM_ENV_FILE=.env.staging" >> "$GITHUB_ENV"
+              echo "COMPOSE_PROJECT=brain-staging" >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              echo "VM_ENV_FILE=.env.prod" >> "$GITHUB_ENV"
+              echo "COMPOSE_PROJECT=brain-prod" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed api diagnostics
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+
+          echo "::group::api signup env presence"
+          if [[ ! -f "$VM_ENV_FILE" ]]; then
+            echo "env_file=$VM_ENV_FILE"
+            echo "env_file_status=missing"
+            exit 1
+          fi
+          echo "env_file=$VM_ENV_FILE"
+          for key in \
+            BRAIN_SELF_SERVE_SIGNUP \
+            EMAIL_ENDPOINT \
+            EMAIL_API_KEY \
+            EMAIL_FROM
+          do
+            line="$(grep -E "^${key}=" "$VM_ENV_FILE" | tail -n 1 || true)"
+            if [[ -z "$line" ]]; then
+              echo "${key}=missing"
+            elif [[ "$line" == "${key}=" ]]; then
+              echo "${key}=blank"
+            else
+              echo "${key}=present"
+            fi
+          done
+          echo "::endgroup::"
+
+          echo "::group::api compose status"
+          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents ps api || true
+          echo "::endgroup::"
+
+          echo "::group::api local health"
+          curl -sS --max-time 5 http://localhost:3000/health || true
+          echo
+          echo "::endgroup::"
+
+          echo "::group::api redacted logs"
+          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
+            logs --tail=160 api 2>&1 \
+            | sed -E \
+                -e 's/(AUTH_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's/(EMAIL_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's/(BRAIN_[A-Z0-9_]*PASSWORD=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's#(postgres(ql)?://)[^[:space:]]+#\1[redacted]#g' \
+                -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
+            || true
+          echo "::endgroup::"
+          REMOTE

@@ -42,7 +42,9 @@ const PAYROLL_HEADER_KEYWORDS = [
 ] as const;
 
 export function defaultSourceSchemaForUpload(sourceType: string): string | null {
-  if (sourceType === "pdf_upload" || sourceType === "csv_upload") return UPLOAD_DOCUMENT_SCHEMA;
+  if (sourceType === "pdf_upload" || sourceType === "csv_upload" || sourceType === "xlsx_upload") {
+    return UPLOAD_DOCUMENT_SCHEMA;
+  }
   return null;
 }
 

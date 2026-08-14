@@ -590,12 +590,13 @@ export interface paths {
         put?: never;
         /**
          * Trigger document extraction for a raw artifact
-         * @description Requires `raw:write`. Enqueues or re-enqueues an async document
+         * @description Requires `raw:write`. Enqueues an async document
          *     extraction job for the referenced artifact. In the composed API process,
          *     the route also drains the queued job through extraction and downstream
          *     projection before returning when the worker dependencies are available.
-         *     A terminal succeeded job for the same raw artifact and content hash is
-         *     reused.
+         *     A terminal job for the same raw artifact and content hash is reused.
+         *     Send `{ "retry": true }` to explicitly re-enqueue a terminal job.
+         *     Use `GET /raw/{raw_id}/extraction` to read the latest job status.
          */
         post: operations["extractRawDocument"];
         delete?: never;
@@ -712,7 +713,7 @@ export interface paths {
         /**
          * Trigger a sync for a source
          * @description Requires `raw:write`. Stub connectors (netsuite, email_inbound,
-         *     csv_upload, pdf_upload, alchemy_wallet, eth_address) return
+         *     csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address) return
          *     immediately with `notes: "stub"` rather than performing a real sync.
          *     The returned `job_id` can be polled with
          *     `GET /sources/{source_id}/sync/{job_id}`.
@@ -1901,29 +1902,40 @@ export interface paths {
          * MCP JSON-RPC entry for external agents
          * @description Single-shot HTTP transport for the Brain MCP (Model Context
          *     Protocol) surface. The request body is a JSON-RPC 2.0 envelope;
-         *     the response is a JSON-RPC 2.0 envelope (always HTTP 200 unless
-         *     the transport itself fails — application-level errors are
-         *     carried inside the `error` field).
+         *     the response is a JSON-RPC 2.0 envelope over HTTP 200, EXCEPT a
+         *     JSON-RPC notification (a request with no `id`, e.g. the mandatory
+         *     `notifications/initialized` handshake message), which per spec
+         *     gets no JSON-RPC response at all — this route answers those
+         *     with `202 Accepted` and an empty body instead.
          *
          *     Authentication: standard Brain JWT bearer with
-         *     `principal_type=agent`. Before any method is dispatched the MCP
-         *     server verifies (a) the agent record is `active`, (b) the JWT's
-         *     `scope_hash` matches the on-chain hash registered in
-         *     `BrainMCPAgentRegistry`, and (c) tenant equality. These
-         *     pre-dispatch checks fail with an HTTP 401/403 Brain error
-         *     envelope — NOT a JSON-RPC response. The JSON-RPC `McpErrorCode`
-         *     range (-32001..-32005) is reserved for failures raised *after*
-         *     authentication, inside method dispatch — chiefly per-tool scope
-         *     checks (-32002) and §6 gate failures (-32004).
+         *     `principal_type=agent`, issued by `auth.brain.fi` and verified
+         *     via its JWKS. There is no `scope_hash` claim on the JWT itself.
+         *     Before any method is dispatched the MCP server verifies (a) the
+         *     agent record is `active`, (b) the JWT's `tenant_id` matches that
+         *     DB row's `tenant_id`, (c) the agent is registered and not revoked
+         *     in `BrainMCPAgentRegistry`, and (d) the DB row's `scope_hash`
+         *     matches the on-chain hash. These pre-dispatch checks fail with an
+         *     HTTP 401/403 Brain error envelope — NOT a JSON-RPC response. The
+         *     JSON-RPC `McpErrorCode` range (-32001..-32005) is reserved for
+         *     failures raised *after* authentication, inside method dispatch —
+         *     chiefly per-tool scope checks (-32002) and §6 gate failures
+         *     (-32004). The not-found family (e.g. `ledger_row_not_found`) maps
+         *     to the standard -32602 (invalid params), not -32603.
          *
          *     Supported methods (v0.3):
-         *       * `initialize`, `ping`
-         *       * `tools/list`, `tools/call` — 12 tools across ledger, wiki,
-         *         raw evidence, payment intents (propose/cancel/list), and
-         *         agent action proposals
-         *       * `resources/list`, `resources/read` — 7 resource templates
+         *       * `initialize` (negotiates protocolVersion; supports
+         *         2024-11-05, 2025-03-26, 2025-06-18), `ping`
+         *       * `tools/list`, `tools/call` — 17 tools across ledger, wiki,
+         *         raw evidence read and contribute, payment intents
+         *         (propose/cancel/list), proposals, evidence, and agent action
+         *         proposals. `tools/list` returns the full registry regardless
+         *         of the caller's granted scopes.
+         *       * `resources/list` — the one concrete (non-templated) resource
+         *       * `resources/templates/list` — the six templated resources
          *         (ledger accounts/transactions/obligations/payment-intents,
-         *         wiki pages, payments action_types catalog, action proofs)
+         *         wiki pages, action proofs), each with a `{...}` placeholder
+         *       * `resources/read`
          *       * `prompts/list`, `prompts/get` — 5 canned prompts
          *
          *     Tools enforce per-call scopes (e.g. `ledger:read`,
@@ -3922,10 +3934,10 @@ export interface components {
             error_description?: string;
         };
         /**
-         * @description One reconciled, provider-named artifact source vocabulary: the eight connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
+         * @description One reconciled, provider-named artifact source vocabulary: the connectable source types plus the non-connector ingestion origins (agent contributions, human Wiki annotations, and `other`, the universal fallback for sources with no native connector).
          * @enum {string}
          */
-        RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
+        RawSourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "xlsx_upload" | "txt_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "agent_contributed" | "wiki_annotation" | "other";
         RawIngestResponse: {
             raw_id?: string;
             sha256?: string;
@@ -3984,7 +3996,7 @@ export interface components {
          * @description Connectable source-connector vocabulary for POST /sources. A subset of RawSourceType — excludes the non-connector origins (agent_contributed, wiki_annotation, other).
          * @enum {string}
          */
-        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
+        SourceType: "plaid" | "stripe" | "netsuite" | "email_inbound" | "csv_upload" | "xlsx_upload" | "txt_upload" | "pdf_upload" | "alchemy_wallet" | "eth_address" | "merge_accounting" | "finch";
         /**
          * @description Derived source freshness. `fresh` means the source synced within the
          *     last 24 hours. `stale` means the last sync is older than 24 hours.
@@ -4013,7 +4025,7 @@ export interface components {
                 [key: string]: unknown;
             };
             error_message: string | null;
-            /** @description True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub". */
+            /** @description True for connector types without a concrete adapter (netsuite, email_inbound, csv_upload, xlsx_upload, txt_upload, pdf_upload, alchemy_wallet, eth_address). Sync on a stub source returns immediately with notes:"stub". */
             is_stub: boolean;
             /** Format: date-time */
             created_at: string;
@@ -5065,12 +5077,15 @@ export interface components {
             /** @enum {string} */
             jsonrpc: "2.0";
             /**
-             * @description Request id echoed in the response. Omit for notifications
-             *     (Brain's MCP surface treats notifications as no-ops at v0.3).
+             * @description Request id echoed in the response. OMIT this member entirely for
+             *     a notification (e.g. the mandatory notifications/initialized
+             *     handshake message) -- per JSON-RPC 2.0, a notification gets no
+             *     response at all, and this route answers it with 202 Accepted and
+             *     an empty body rather than a JSON-RPC envelope.
              */
             id?: string | number | null;
             /** @enum {string} */
-            method: "initialize" | "ping" | "tools/list" | "tools/call" | "resources/list" | "resources/read" | "prompts/list" | "prompts/get";
+            method: "initialize" | "ping" | "tools/list" | "tools/call" | "resources/list" | "resources/templates/list" | "resources/read" | "prompts/list" | "prompts/get" | "notifications/initialized" | "notifications/cancelled";
             /**
              * @description Method-specific parameters. For `tools/call`, this is
              *     `{ name: string, arguments: object }`. For `resources/read`,
@@ -5120,7 +5135,13 @@ export interface components {
          */
         McpErrorCode: -32700 | -32600 | -32601 | -32602 | -32603 | -32001 | -32002 | -32003 | -32004 | -32005;
         InitializeResult: {
-            /** @example 2024-11-05 */
+            /**
+             * @description Negotiated per the MCP spec: if the client's requested
+             *     protocolVersion is one of 2024-11-05, 2025-03-26, or 2025-06-18,
+             *     the server echoes it back. Otherwise (including when none was
+             *     requested) it responds with the latest it supports, 2025-06-18.
+             * @example 2025-06-18
+             */
             protocolVersion: string;
             serverInfo: {
                 /** @example brain-mcp */
@@ -5457,6 +5478,8 @@ export interface operations {
                         session_id?: string;
                         /** @description EIP-4361 domain claim the message must bind to, e.g. api.brain.fi */
                         domain?: string;
+                        /** @description EIP-4361 chainId claim the message must bind to, e.g. 84532 */
+                        chain_id?: number;
                     };
                 };
             };
@@ -6646,7 +6669,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Re-enqueue a terminal extraction job for the same artifact bytes. */
+                    retry?: boolean;
+                };
+            };
+        };
         responses: {
             /** @description Document extraction job completed or reused */
             200: {

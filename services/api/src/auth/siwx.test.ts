@@ -51,11 +51,17 @@ const HS256_KEY = {
   alg: "HS256",
 };
 
+// Matches the chainId makeSignedMessage signs by default (8453) so existing
+// fixtures verify unchanged; individual tests override either side to
+// exercise the mismatch path.
+const TEST_CHAIN_ID = 8453;
+
 async function buildApp(
   registry: AgentRegistryLookup,
   opts?: {
     demoMode?: boolean;
     resolveWalletIdentity?: (address: string) => Promise<ResolvedWalletIdentity | null>;
+    chainId?: number;
   },
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -73,6 +79,7 @@ async function buildApp(
     registry,
     redis: makeRedisStub(),
     tokenTtlSeconds: 60,
+    chainId: TEST_CHAIN_ID,
     ...opts,
   });
   return app;
@@ -81,6 +88,7 @@ async function buildApp(
 async function makeSignedMessage(opts: {
   nonce: string;
   domain?: string;
+  chainId?: number;
   privateKey?: `0x${string}`;
 }): Promise<{ message: string; signature: string; address: string }> {
   const pk = opts.privateKey ?? generatePrivateKey();
@@ -91,7 +99,7 @@ async function makeSignedMessage(opts: {
     statement: "Sign in to Brain as an external agent",
     uri: `https://${opts.domain ?? TEST_DOMAIN}`,
     version: "1",
-    chainId: 8453,
+    chainId: opts.chainId ?? 8453,
     nonce: opts.nonce,
     issuedAt: new Date().toISOString(),
   });
@@ -111,18 +119,21 @@ describe("POST /auth/siwx/challenge", () => {
     app = await buildApp(new StubAgentRegistry());
   });
 
-  it("returns nonce + session_id + domain", async () => {
+  it("returns nonce + session_id + domain + chain_id", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/auth/siwx/challenge",
       payload: {},
     });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as Record<string, string>;
+    const body = res.json() as Record<string, unknown>;
     expect(typeof body["nonce"]).toBe("string");
-    expect((body["nonce"] ?? "").length).toBeGreaterThanOrEqual(8);
+    expect((body["nonce"] as string).length).toBeGreaterThanOrEqual(8);
     expect(typeof body["session_id"]).toBe("string");
     expect(body["domain"]).toBe(TEST_DOMAIN);
+    // Finding 5: without chain_id a client has to guess the EIP-4361
+    // chainId the server pins (prod 84532 vs the example fixture's 8453).
+    expect(body["chain_id"]).toBe(TEST_CHAIN_ID);
   });
 
   it("issues distinct nonces and session ids on each call", async () => {
@@ -283,6 +294,53 @@ describe("POST /auth/siwx — Phase D human wallet login", () => {
     });
     const principal = await signIn(app);
     expect(principal.type).toBe("agent");
+    await app.close();
+  });
+});
+
+describe("POST /auth/siwx — chainId pinning", () => {
+  it("rejects a message signed for the wrong chainId", async () => {
+    const app = await buildApp(new StubAgentRegistry(), { chainId: 8453 });
+    const challenge = (
+      await app.inject({ method: "POST", url: "/auth/siwx/challenge" })
+    ).json() as Record<string, string>;
+    const signed = await makeSignedMessage({
+      nonce: challenge["nonce"] ?? "",
+      chainId: 84532, // Base Sepolia, not the 8453 the route is configured for.
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/siwx",
+      payload: {
+        message: signed.message,
+        signature: signed.signature,
+        session_id: challenge["session_id"],
+      },
+    });
+    expect(res.statusCode).toBe(401);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("auth_siwx_invalid");
+    await app.close();
+  });
+
+  it("still verifies a message signed for the configured chainId", async () => {
+    const app = await buildApp(new StubAgentRegistry(), { chainId: 84532 });
+    const challenge = (
+      await app.inject({ method: "POST", url: "/auth/siwx/challenge" })
+    ).json() as Record<string, string>;
+    const signed = await makeSignedMessage({
+      nonce: challenge["nonce"] ?? "",
+      chainId: 84532,
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/siwx",
+      payload: {
+        message: signed.message,
+        signature: signed.signature,
+        session_id: challenge["session_id"],
+      },
+    });
+    expect(res.statusCode).toBe(200);
     await app.close();
   });
 });

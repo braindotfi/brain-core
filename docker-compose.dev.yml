@@ -240,6 +240,17 @@ services:
       EMAIL_ENDPOINT: ${EMAIL_ENDPOINT:-}
       EMAIL_API_KEY: ${EMAIL_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      # BRAIN-99: explicit here (not inherited from a shared anchor, this
+      # service has none) so the consent-time on-chain scope checker
+      # (services/auth/src/onchain-scope-checker.ts) reads the same registry
+      # and RPC api's dev block resolves to. The api dev block does not set
+      # either var either, so both fall back to shared/src/config.ts's
+      # DEFAULTS unless a developer exports one on the host first -- the
+      # fallbacks below are copied from those same DEFAULTS so an unset
+      # override still boots (dev has no fail-closed requirement, unlike
+      # prod's ${VAR:?...} for the same two below).
+      MCP_AGENT_REGISTRY_ADDRESS: ${MCP_AGENT_REGISTRY_ADDRESS:-0xcE7Ce9dd95c17E1F4E27D49249b6fdb015f3A7e0}
+      BASE_RPC_URL: ${BASE_RPC_URL:-https://sepolia.base.org}
     volumes:
       - .:/app
       - bc_node_modules:/app/node_modules

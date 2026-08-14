@@ -9,48 +9,67 @@
 
 import { brainError } from "@brain/shared";
 import { EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES } from "@brain/execution";
-import type { ResourceDescriptor, ResourceListResult, ResourceReadResult } from "./types.js";
+import type {
+  ResourceDescriptor,
+  ResourceListResult,
+  ResourceReadResult,
+  ResourceTemplateDescriptor,
+  ResourceTemplateListResult,
+} from "./types.js";
 import type { ToolContext } from "./tools/types.js";
 
+/**
+ * The one genuinely readable, concrete resource: no placeholder segment in
+ * its uri, so a client can call `resources/read` on it directly. Everything
+ * with a `{...}` placeholder lives in RESOURCE_TEMPLATE_DESCRIPTORS instead
+ * -- see `resources/templates/list` below. Mixing the two in one
+ * `resources/list` response used to make a generic client treat every
+ * templated uri as literally readable, read it as-is (parseBrainUri accepts
+ * the literal `{account_id}` text as an id), and get back
+ * `ledger_row_not_found` for an id that was never a real id.
+ */
 export const RESOURCE_DESCRIPTORS: ReadonlyArray<ResourceDescriptor> = [
-  {
-    uri: "brain://ledger/accounts/{account_id}",
-    name: "Account",
-    description: "Account row + latest balance.",
-    mimeType: "application/json",
-  },
-  {
-    uri: "brain://ledger/transactions/{transaction_id}",
-    name: "Transaction",
-    description: "Transaction row.",
-    mimeType: "application/json",
-  },
-  {
-    uri: "brain://ledger/obligations/{obligation_id}",
-    name: "Obligation",
-    description: "Obligation row.",
-    mimeType: "application/json",
-  },
-  {
-    uri: "brain://ledger/payment-intents/{id}",
-    name: "PaymentIntent",
-    description: "PaymentIntent row + PolicyDecision id.",
-    mimeType: "application/json",
-  },
-  {
-    uri: "brain://wiki/pages/{slug}",
-    name: "Wiki page",
-    description: "Memory page (markdown body).",
-    mimeType: "text/markdown",
-  },
   {
     uri: "brain://payments/action_types",
     name: "PaymentIntent action types",
     description: "Canonical action_type vocabulary + required fields for payment_intent.propose.",
     mimeType: "application/json",
   },
+];
+
+export const RESOURCE_TEMPLATE_DESCRIPTORS: ReadonlyArray<ResourceTemplateDescriptor> = [
   {
-    uri: "brain://proofs/{action_id}",
+    uriTemplate: "brain://ledger/accounts/{account_id}",
+    name: "Account",
+    description: "Account row + latest balance.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "brain://ledger/transactions/{transaction_id}",
+    name: "Transaction",
+    description: "Transaction row.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "brain://ledger/obligations/{obligation_id}",
+    name: "Obligation",
+    description: "Obligation row.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "brain://ledger/payment-intents/{id}",
+    name: "PaymentIntent",
+    description: "PaymentIntent row + PolicyDecision id.",
+    mimeType: "application/json",
+  },
+  {
+    uriTemplate: "brain://wiki/pages/{slug}",
+    name: "Wiki page",
+    description: "Memory page (markdown body).",
+    mimeType: "text/markdown",
+  },
+  {
+    uriTemplate: "brain://proofs/{action_id}",
     name: "Action proof (H-07)",
     description:
       "Canonical proof for an executed action: §6 gate trace, policy decision, audit before/after, Merkle proof, and on-chain anchor tx hash.",
@@ -95,6 +114,10 @@ export interface ResourceScopeRequirement {
 
 export function listResources(): ResourceListResult {
   return { resources: [...RESOURCE_DESCRIPTORS] };
+}
+
+export function listResourceTemplates(): ResourceTemplateListResult {
+  return { resourceTemplates: [...RESOURCE_TEMPLATE_DESCRIPTORS] };
 }
 
 /**

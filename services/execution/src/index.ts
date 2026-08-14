@@ -229,6 +229,11 @@ export {
   findPendingCollectionsProposalForInvoice,
   refreshCollectionsProposal,
 } from "./repository.js";
+export {
+  lockPendingProposalForSubject,
+  findPendingProposalForSubject,
+  refreshPendingProposal,
+} from "./repository.js";
 export type { ProposalRow } from "./repository.js";
 export { outcomeToStatus } from "./AgentService.js";
 // H-09 agent contribution hold.
@@ -277,6 +282,7 @@ export {
 } from "./rails/session-keys.js";
 export {
   redact,
+  assertNoForbiddenFields,
   DEFAULT_AGENT_TRACE_POLICY,
   type RedactionPolicy,
   type RedactionRule,

@@ -87,7 +87,7 @@ jobs:
           \echo 'metric definitions'
           \echo 'created_event_count counts payment_intent.created audit events in the fixed window.'
           \echo 'created_event_missing_id_count counts those events without an ID in either outputs or inputs.'
-          \echo 'complete_executed_chain_count requires one created event plus approved and executed events for the same tenant and canonical ID.'
+          \echo 'complete_executed_chain_count requires one created event plus a human or automatic approval step and an executed event for the same tenant and canonical ID.'
           \echo 'disconnected_executed_chain_count considers only current ledger_payment_intents.status=executed and excludes pending or rejected intents.'
 
           WITH params AS (
@@ -115,7 +115,9 @@ jobs:
           ), lifecycle_events AS (
             SELECT ci.tenant_id,
                    ci.payment_intent_id,
-                   BOOL_OR(ae.action = 'payment_intent.approved') AS has_approved,
+                   BOOL_OR(ae.action IN ('payment_intent.approved', 'payment_intent.auto_approved'))
+                     OR BOOL_OR(ae.action = 'payment_intent.created' AND ae.outputs->>'status' = 'approved')
+                     AS has_approval_step,
                    BOOL_OR(ae.action = 'payment_intent.executed') AS has_executed
               FROM created_intents ci
               LEFT JOIN audit_events ae
@@ -124,14 +126,19 @@ jobs:
                      NULLIF(ae.outputs->>'payment_intent_id', ''),
                      NULLIF(ae.inputs->>'payment_intent_id', '')
                    ) = ci.payment_intent_id
-               AND ae.action IN ('payment_intent.approved', 'payment_intent.executed')
+               AND ae.action IN (
+                 'payment_intent.created',
+                 'payment_intent.approved',
+                 'payment_intent.auto_approved',
+                 'payment_intent.executed'
+               )
                AND ae.created_at >= ci.created_at
              GROUP BY ci.tenant_id, ci.payment_intent_id
           ), chain_rows AS (
             SELECT ci.tenant_id,
                    ci.payment_intent_id,
                    pi.status AS current_status,
-                   COALESCE(le.has_approved, FALSE) AS has_approved,
+                   COALESCE(le.has_approval_step, FALSE) AS has_approval_step,
                    COALESCE(le.has_executed, FALSE) AS has_executed
               FROM created_intents ci
               LEFT JOIN lifecycle_events le
@@ -153,26 +160,26 @@ jobs:
                  COUNT(*) FILTER (WHERE current_status IS NULL) AS created_intent_missing_ledger_row_count,
                  COUNT(*) FILTER (WHERE current_status = 'executed') AS executed_intent_count,
                  COUNT(*) FILTER (
-                   WHERE current_status = 'executed' AND has_approved AND has_executed
+                   WHERE current_status = 'executed' AND has_approval_step AND has_executed
                  ) AS complete_executed_chain_count,
                  COUNT(*) FILTER (
-                   WHERE current_status = 'executed' AND NOT (has_approved AND has_executed)
+                   WHERE current_status = 'executed' AND NOT (has_approval_step AND has_executed)
                  ) AS disconnected_executed_chain_count,
                  COUNT(*) FILTER (
-                   WHERE current_status = 'executed' AND NOT has_approved
+                   WHERE current_status = 'executed' AND NOT has_approval_step
                  ) AS executed_chain_missing_approval_count,
                  COUNT(*) FILTER (
                    WHERE current_status = 'executed' AND NOT has_executed
                  ) AS executed_chain_missing_execution_event_count,
                  ROUND(
                    100.0 * COUNT(*) FILTER (
-                     WHERE current_status = 'executed' AND has_approved AND has_executed
+                     WHERE current_status = 'executed' AND has_approval_step AND has_executed
                    ) / NULLIF(COUNT(*) FILTER (WHERE current_status = 'executed'), 0),
                    2
                  ) AS complete_executed_chain_percent,
                  ROUND(
                    100.0 * COUNT(*) FILTER (
-                     WHERE current_status = 'executed' AND NOT (has_approved AND has_executed)
+                     WHERE current_status = 'executed' AND NOT (has_approval_step AND has_executed)
                    ) / NULLIF(COUNT(*) FILTER (WHERE current_status = 'executed'), 0),
                    2
                  ) AS disconnected_executed_chain_percent
@@ -209,6 +216,18 @@ jobs:
              AND pi.id = ci.payment_intent_id
            GROUP BY 1
            ORDER BY 1;
+
+          \echo 'execution record state consistency across current executed payment intents'
+          SELECT e.status AS execution_status,
+                 COUNT(*) AS execution_row_count,
+                 COUNT(*) FILTER (WHERE e.completed_at IS NULL) AS missing_completed_at_count
+            FROM executions e
+            JOIN ledger_payment_intents pi
+              ON pi.owner_id = e.tenant_id
+             AND pi.id = e.proposal_id
+           WHERE pi.status = 'executed'
+           GROUP BY e.status
+           ORDER BY e.status;
 
           COMMIT;
           SQL

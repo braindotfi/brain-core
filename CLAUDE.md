@@ -163,6 +163,11 @@ Done
   `flagged` is reserved for risk events that require attention. `wiki.question`
   emits `assistant_activity` with severity `info` and includes the original
   question text at `inputs.question`.
+- A policy allow that creates an already-approved payment intent emits
+  `payment_intent.auto_approved`, distinct from the human
+  `payment_intent.approved` event. Successful payment completion transitions
+  the linked execution from `in_flight` to `completed` in the same tenant
+  transaction that marks the intent executed.
 - Wiki and Assistant question answers treat retrieved evidence as untrusted
   tenant data. Evidence blocks are wrapped in a per-request random boundary,
   evidence text is facts to cite and never instructions to obey, and answer
@@ -264,6 +269,11 @@ Done
   must never leave more than one unresolved proposal open for the same invoice.
   Later sweeps refresh the pending row, while the guarded production cleanup
   marks historical duplicates `superseded` with an audit link to the retained row.
+  Vendor risk, subscription, fraud anomaly, and compliance proposals likewise
+  refresh one pending row per stable agent-specific subject key. Vendor risk
+  uses vendor or counterparty id, subscription and fraud use transaction id,
+  and compliance uses policy-decision or audit-event id. Missing compliance
+  identifiers are never treated as a shared subject.
   The authorized production cleanup run `31434998851` superseded 6,950 rows,
   left 943 pending Collections proposals, and left zero duplicate groups. Run
   cleanup in `report` mode before any future apply.
@@ -818,6 +828,16 @@ Pending Dmitriy sign-off
   complete. Its `BRAIN_API_TOKEN` is a golden-tenant, agent-principal JWT with
   only `raw:write`; rotate it without logging the value through
   `ops-rotate-agents-api-token.yml` before its one-year expiry.
+- DOCX is a fifth deterministic document type alongside CSV/XLSX/text-layer
+  PDF, read via `python-docx` in `extract_text.py`. Both zip-based OOXML
+  formats (XLSX, DOCX) share the same pre-parse zip-bomb guard on declared
+  uncompressed size. The document_extractor's field-extraction LLM call
+  (every document type, not just OCR) carries the same 30s per-request
+  timeout as the OCR vision call; the api's `documentExtractClient` fetch
+  carries a 90s `AbortSignal.timeout`, mapped to `dependency_unavailable`
+  distinct from a genuinely unreachable agent. Previously neither had any
+  bound, so a slow/rate-limited OpenAI response could hang a request
+  indefinitely with no error ever surfacing to the caller.
   Known upload PDFs are classified before parser selection: bank statement PDFs
   must clear the bank-statement confidence floor, while AR aging and payroll
   PDFs emit `document_records_upload_v1`. Legacy `doc_obligation_v1` rows still
@@ -874,6 +894,28 @@ Pending Dmitriy sign-off
 - `/v1/auth/service-token` remains sandbox and testnet only. It rejects
   `tenant.kind='production'`; it is not a competing production user-session
   exchange path and not a competing production agent path.
+- Rail provider credentials never enter `execution_outbox.payload`.
+  `PaymentIntentService.execute` used to merge the source's Plaid
+  `access_token` and `account_id` into the payload for `ach_outbound` intents,
+  which wrote a live bank credential to a plaintext JSONB column for the
+  durable life of the row. The row cannot be scrubbed afterwards, because
+  `payload_hash` is a sha256 tamper-evidence digest over exactly those bytes
+  and `worker.ts` re-reads `row.payload` on every retry and crash recovery.
+  Credentials are now resolved at DISPATCH time by the outbox worker
+  (`OutboxWorkerDeps.resolveDispatchCredentials`, wired in
+  `services/api/src/main.ts` from the same `sourceCredentialResolver`) and
+  merged into a throwaway copy of the action, so the secret exists only in
+  memory for the length of one rail call and the durable record stays
+  credential-free. `OutboxService.enqueue` enforces that for every future
+  payload-building site through `assertNoForbiddenFields`
+  (`services/execution/src/redaction.ts`, the first production caller of
+  `redact`): a forbidden field throws inside the caller's
+  approved -> dispatching transaction, so the whole hand-off rolls back and no
+  money moves. Measured before the fix on 2026-08-11: zero affected rows in
+  both the Azure production database and the legacy VM, so no data repair is
+  owed. Known separate gap, not addressed here: the ACH rail also requires
+  `user.legal_name`, which no payload-building site populates, so an
+  `ach_outbound` dispatch fails `parseAchAction` validation regardless.
 - Agent halt is a fail-closed kill-switch. `/v1/agents/{id}/halt` quarantines
   the agent before pausing approved intents in one tenant-scoped transaction.
   The execution outbox worker rechecks the creator agent row with a locking read
@@ -921,7 +963,36 @@ Pending Dmitriy sign-off
   denies with `counterparty_trust_paused`; missing, malformed, or unloadable
   trust state denies with `counterparty_trust_unknown`. Run
   `scripts/ops/report-counterparty-trust-gate-impact.ts` in read-only mode and
-  complete a focused section 6 re-audit before enabling any environment.
+  complete a focused section 6 re-audit before enabling any environment. The
+  report classifies every affected paused-counterparty group by tenant kind and
+  sandbox posture; only production, non-sandbox groups require named review
+  before an enablement flip.
+  `ops-staging-trust-gate-controlled-smoke.yml` is the staging-only temporary
+  enablement check. It requires the API and worker running-process flags to be
+  off, enables them only long enough to exercise checks 5 and 5.25 against an
+  isolated fixture tenant, then restores and verifies both process flags off
+  with an `always()` cleanup only after the workflow has begun its own
+  mutation. A failed baseline precondition leaves the prior environment state
+  unchanged. The workflow retains the public API responses, the five durable
+  `payment_intent.execute.after` rows, and its full-window non-fixture query in
+  the Actions log. Each remote phase emits a completion
+  sentinel that the workflow asserts, so an incomplete remote heredoc cannot be
+  reported as a successful smoke. The fixture creates its own active source
+  account rather than using an example identifier. After public creation and
+  approval, the Check 4 cases deliberately replace only the isolated fixture
+  row's source-account reference. The mutation locks and updates exactly one
+  `(tenant_id, payment_intent_id)` row and logs its before and after references,
+  so they cannot create an execution outbox row. The missing-counterparty Check 5 case is likewise an isolated fixture-row
+  corruption because the production foreign key correctly prevents either state
+  through public creation. Gate `dryRun` is an internal agent-layer evaluation mode: it skips normal policy
+  persistence and execution audit events, so it is not a substitute for the
+  real `payment_intent.execute.after` evidence required before enablement.
+  A sustained staging enablement is observed with the fixed, staging-only
+  `trust-gate-24h-observation` diagnostic. It requires the exact enablement
+  start time, reads only, and reports process-level API and worker flags,
+  health, `counterparty_trust_unknown` denials, pause-attribution evidence,
+  and normal payment execution outcomes. Production requires a separate impact
+  report, approval, and decision after a healthy staging window.
 - Tier 0 Group B closed the hard approval-floor decision for on-chain money
   movement. `onchain_transfer` and `escrow_release` require at least one
   recorded human approval before dispatch even when policy returns `allow`.
@@ -1102,7 +1173,19 @@ files but before rollback tagging, image pull, migrations, or compose recreate.
 It derives unconditional requirements from `${VAR:?message}` interpolation in
 `docker-compose.prod.yml`, reports only missing variable names, and also checks
 the enabled conditional boot fences for API keys, service tokens, demo
-provisioning, external agents, and surface integrations. Auth's
+provisioning, external agents, and surface integrations. It also checks
+that the target environment's `CORS_ALLOWED_ORIGINS` contains
+`https://app.brain.fi`. During the public-host transition, set
+`CORS_ALLOWED_ORIGINS=https://mvp.brain.fi,https://app.brain.fi` plus every
+other existing origin in both `.env.staging` and `.env.prod` through the
+gated VM configuration process. This is not a repository-managed secret or
+env-file change. The preflight intentionally blocks a deploy if the new origin
+is absent; remove the guard only in the later, deliberate mvp retirement
+change. Use the target-bounded `ops-cors-allowed-origins.yml` workflow to
+append `https://app.brain.fi` without removing existing origins, recreate only
+the API CORS consumer, and verify the public preflight. Its production target
+uses the GitHub `production` environment gate.
+Auth's
 `AUTH_SIGN_KEY`, `AUTH_COOKIE_SECRET`, `EMAIL_ENDPOINT`, and `EMAIL_API_KEY`
 are compose-required as well as boot-fenced. This would have stopped both the
 missing `AUTH_COOKIE_SECRET` and missing `BRAIN_MCP_READER_DB_PASSWORD`
@@ -1219,14 +1302,15 @@ become a `git describe` base.
 
 Update this table on every promote.
 
-| Change                                                                  | On main | On staging | On prod (api.brain.fi)                                                                                |
-| ----------------------------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| Members / approval authority / actor attribution (PR #214, #215)        | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Approval-authority gap fixes (PR #216)                                  | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                 |
-| Production agent principals                                             | Pending | No         | No, pending merge and post-deploy `/v1/tenants` plus `/v1/tenants/{tenant_id}/agent-token` probe      |
+| Change                                                                                              | On main | On staging | On prod (api.brain.fi)                                 |
+| --------------------------------------------------------------------------------------------------- | ------- | ---------- | ------------------------------------------------------ |
+| Members / approval authority / actor attribution through production agent principals (PR #214-#219) | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+| XLSX/TXT raw uploads, explicit terminal extraction retries (PR #617, #618)                          | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+| Docs audit: agent scope, money path, API reference, protocol, build tutorials (PR #619-#623)        | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+
+Promoted 2026-08-14 via `promote-prod` (approved by damonnam), commit
+`e03dd97ebbe15dffa4b9ed902c1defccd48a8369`. Post-deploy `POST /v1/tenants`
+probe pending via `ops-prod-tenants-probe.yml`; record the result here once run.
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.

@@ -16,6 +16,10 @@ on:
           - tenant-identity-lookup
           - wiki-question-trace
           - anchor-reconciliation-correlation
+          - anchor-cycle-runtime-trace
+          - trust-gate-smoke-audit-reconciliation
+          - trust-gate-prior-smoke-execution
+          - trust-gate-24h-observation
       tenant_ids:
         description: "Optional comma-separated canonical tenant ids. Empty reports all staging tenants."
         required: false
@@ -46,6 +50,21 @@ on:
         required: false
         type: string
         default: ""
+      anchor_cycle_since:
+        description: "ISO UTC lower bound for anchor-cycle-runtime-trace only."
+        required: false
+        type: string
+        default: ""
+      anchor_cycle_until:
+        description: "ISO UTC upper bound for anchor-cycle-runtime-trace only."
+        required: false
+        type: string
+        default: ""
+      trust_gate_observation_since:
+        description: "Exact ISO UTC start bound for trust-gate-24h-observation."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -69,13 +88,16 @@ jobs:
       WIKI_QUESTION_SINCE: ${{ inputs.wiki_question_since }}
       WIKI_QUESTION_UNTIL: ${{ inputs.wiki_question_until }}
       WIKI_QUESTION_SEARCH: ${{ inputs.wiki_question_search }}
+      ANCHOR_CYCLE_SINCE: ${{ inputs.anchor_cycle_since }}
+      ANCHOR_CYCLE_UNTIL: ${{ inputs.anchor_cycle_until }}
+      TRUST_GATE_OBSERVATION_SINCE: ${{ inputs.trust_gate_observation_since }}
     steps:
       - name: Validate fixed diagnostic inputs
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, or anchor-reconciliation-correlation"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" && "$DIAGNOSTIC" != "trust-gate-24h-observation" ]]; then
+            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, trust-gate-smoke-audit-reconciliation, trust-gate-prior-smoke-execution, or trust-gate-24h-observation"
             exit 1
           fi
 
@@ -131,6 +153,32 @@ jobs:
             fi
           fi
 
+          if [[ "$DIAGNOSTIC" == "anchor-cycle-runtime-trace" ]]; then
+            for value in "$ANCHOR_CYCLE_SINCE" "$ANCHOR_CYCLE_UNTIL"; do
+              if [[ ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                echo "anchor-cycle-runtime-trace requires exact ISO UTC bounds"
+                exit 1
+              fi
+            done
+            python3 - "$ANCHOR_CYCLE_SINCE" "$ANCHOR_CYCLE_UNTIL" <<'PY'
+          from datetime import datetime
+          import sys
+
+          start = datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")
+          end = datetime.strptime(sys.argv[2], "%Y-%m-%dT%H:%M:%SZ")
+          seconds = (end - start).total_seconds()
+          if seconds <= 0 or seconds > 1_200:
+              raise SystemExit("anchor-cycle-runtime-trace window must be greater than zero and no more than 20 minutes")
+          PY
+          fi
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-24h-observation" ]]; then
+            if [[ ! "$TRUST_GATE_OBSERVATION_SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+              echo "trust-gate-24h-observation requires an exact ISO UTC start bound"
+              exit 1
+            fi
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v4.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -140,35 +188,6 @@ jobs:
 
       - name: Install lockfile dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Compile fixed report for stdin execution
-        if: inputs.diagnostic == 'counterparty-trust-gate-impact'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/staging-diagnostics"
-          report_source=""
-          case "$DIAGNOSTIC" in
-            counterparty-trust-gate-impact)
-              report_source="scripts/ops/report-counterparty-trust-gate-impact.ts"
-              ;;
-            upload-pipeline-state)
-              report_source="scripts/ops/report-upload-pipeline-state.ts"
-              ;;
-            *)
-              echo "unsupported diagnostic: $DIAGNOSTIC"
-              exit 1
-              ;;
-          esac
-          pnpm exec tsc \
-            --target es2022 \
-            --module es2022 \
-            --moduleResolution bundler \
-            --skipLibCheck \
-            --esModuleInterop \
-            --outDir "$RUNNER_TEMP/staging-diagnostics" \
-            "$report_source"
-          echo "REPORT_SCRIPT=$RUNNER_TEMP/staging-diagnostics/$(basename "${report_source%.ts}").js" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         shell: bash
@@ -197,6 +216,9 @@ jobs:
           wiki_question_since_b64="$(printf '%s' "$WIKI_QUESTION_SINCE" | base64 | tr -d '\n')"
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
+          anchor_cycle_since_b64="$(printf '%s' "$ANCHOR_CYCLE_SINCE" | base64 | tr -d '\n')"
+          anchor_cycle_until_b64="$(printf '%s' "$ANCHOR_CYCLE_UNTIL" | base64 | tr -d '\n')"
+          trust_gate_observation_since_b64="$(printf '%s' "$TRUST_GATE_OBSERVATION_SINCE" | base64 | tr -d '\n')"
 
           run_tenant_identity_lookup() {
             ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
@@ -283,6 +305,333 @@ jobs:
 
           if [[ "$DIAGNOSTIC" == "tenant-identity-lookup" ]]; then
             run_tenant_identity_lookup
+            exit 0
+          fi
+
+          run_trust_gate_smoke_audit_reconciliation() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "API_BASE='https://staging-api.brain.fi' bash -s" <<'REMOTE'
+            set -euo pipefail
+            readonly smoke_tenant_id='tnt_01KZW834C21D22K32NEE79FWQE'
+
+            echo 'API database target, redacted'
+            docker exec brain-prod-api node -e '
+              const url = new URL(process.env.DATABASE_URL);
+              console.log(JSON.stringify({
+                database: url.pathname.slice(1),
+                host: url.hostname,
+                port: url.port || "5432",
+                user: decodeURIComponent(url.username),
+              }));
+            '
+
+            echo 'direct PostgreSQL target'
+            docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'connection role and RLS posture'
+            SELECT current_user,
+                   session_user,
+                   current_setting('app.tenant_id', true) AS tenant_context,
+                   r.rolsuper,
+                   r.rolbypassrls
+             FROM pg_roles r
+             WHERE r.rolname = current_user;
+
+            SELECT current_database() AS database,
+                   inet_server_addr() AS server_address,
+                   inet_server_port() AS server_port;
+
+            \echo 'original controlled trust-gate smoke tenant'
+            SELECT tenant_id,
+                   id AS tenant_created_event_id,
+                   created_at AS tenant_created_at
+              FROM audit_events
+             WHERE tenant_id = 'tnt_01KZW834C21D22K32NEE79FWQE'
+               AND action = 'tenant.created'
+             ORDER BY created_at ASC, id ASC;
+
+            \echo 'durable payment intents for the original smoke tenant'
+            SELECT id,
+                   status,
+                   destination_counterparty_id,
+                   created_at,
+                   updated_at
+              FROM ledger_payment_intents
+             WHERE owner_id = 'tnt_01KZW834C21D22K32NEE79FWQE'
+             ORDER BY created_at ASC, id ASC;
+
+            \echo 'all durable payment-intent audit actions for the original smoke tenant'
+            SELECT id,
+                   action,
+                   created_at,
+                   inputs->>'payment_intent_id' AS payment_intent_id,
+                   outputs
+              FROM audit_events
+             WHERE tenant_id = 'tnt_01KZW834C21D22K32NEE79FWQE'
+               AND action LIKE 'payment_intent.%'
+             ORDER BY created_at ASC, id ASC;
+
+            \echo 'durable payment_intent.execute.after events for the original smoke tenant without runner clock bounds'
+            SELECT ae.tenant_id,
+                   ae.id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs->'failed_check' AS failed_check
+              FROM audit_events ae
+             WHERE ae.tenant_id = 'tnt_01KZW834C21D22K32NEE79FWQE'
+               AND ae.action = 'payment_intent.execute.after'
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            COMMIT;
+          SQL
+
+            agent_id="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT id FROM agents WHERE tenant_id = '${smoke_tenant_id}' AND state = 'active' ORDER BY created_at ASC, id ASC LIMIT 1;")"
+            if [[ ! "$agent_id" =~ ^agent_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+              echo "no active agent found for the original smoke tenant" >&2
+              exit 1
+            fi
+
+            # Mint this read-only token in the API container. The token is never printed.
+            agent_token="$(docker exec -w /app/services/api -e SMOKE_TENANT_ID="$smoke_tenant_id" -e SMOKE_AGENT_ID="$agent_id" brain-prod-api node --input-type=module -e '
+              import { JwtSigner, newTokenId } from "@brain/shared";
+              const key = JSON.parse(process.env.AUTH_SIGN_KEY);
+              const signer = new JwtSigner({ issuer: process.env.AUTH_ISSUER, audience: process.env.AUTH_AUDIENCE, key, algorithm: key.alg ?? "HS256" });
+              process.stdout.write(await signer.sign({ id: process.env.SMOKE_AGENT_ID, type: "agent", tenantId: process.env.SMOKE_TENANT_ID, tokenId: newTokenId(), expiresAt: Math.floor(Date.now() / 1000) + 300, scopes: ["audit:read"] }));
+            ')"
+
+            echo 'tenant-scoped API audit response for the original smoke tenant'
+            curl -fsS --connect-timeout 10 --max-time 30 "$API_BASE/v1/audit/events?limit=100" \
+              -H "Authorization: Bearer ${agent_token}" | \
+              docker exec -i brain-prod-api node -e '
+                let body = "";
+                process.stdin.on("data", (chunk) => { body += chunk; });
+                process.stdin.on("end", () => {
+                  const value = JSON.parse(body);
+                  const events = (value.events ?? []).filter((event) => event.action?.startsWith("payment_intent."));
+                  console.log(JSON.stringify({ count: events.length, events }));
+                });
+              '
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-smoke-audit-reconciliation" ]]; then
+            run_trust_gate_smoke_audit_reconciliation
+            exit 0
+          fi
+
+          run_trust_gate_prior_smoke_execution() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+            readonly smoke_tenant_id='tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+            docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'prior controlled-smoke tenant payment intents'
+            SELECT pi.id,
+                   pi.status,
+                   pi.source_account_id,
+                   pi.destination_counterparty_id,
+                   pi.approval_ids,
+                   pi.execution_receipt_ids,
+                   pi.created_at,
+                   pi.updated_at
+              FROM ledger_payment_intents pi
+             WHERE pi.owner_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY pi.created_at ASC, pi.id ASC;
+
+            \echo 'prior controlled-smoke tenant outbox rows and terminal state'
+            SELECT eo.id,
+                   eo.payment_intent_id,
+                   eo.execution_id,
+                   eo.rail,
+                   eo.status,
+                   eo.attempt_count,
+                   eo.last_error,
+                   eo.rail_receipt,
+                   eo.created_at,
+                   eo.dispatched_at,
+                   eo.completed_at
+              FROM execution_outbox eo
+             WHERE eo.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY eo.created_at ASC, eo.id ASC;
+
+            \echo 'prior controlled-smoke tenant execution receipts'
+            SELECT e.id,
+                   e.rail,
+                   e.status,
+                   e.rail_receipt,
+                   e.started_at,
+                   e.completed_at
+              FROM executions e
+             WHERE e.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+             ORDER BY e.started_at ASC, e.id ASC;
+
+            \echo 'prior controlled-smoke tenant execution audit events'
+            SELECT ae.id,
+                   ae.action,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs
+              FROM audit_events ae
+             WHERE ae.tenant_id = 'tnt_01KZX2QQZVES2W2Y05AJHKCGQ0'
+               AND ae.action IN ('payment_intent.execute.before', 'payment_intent.execute.after', 'payment_intent.executed')
+             ORDER BY ae.created_at ASC, ae.id ASC;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-prior-smoke-execution" ]]; then
+            run_trust_gate_prior_smoke_execution
+            exit 0
+          fi
+
+          run_trust_gate_24h_observation() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TRUST_GATE_OBSERVATION_SINCE_B64='$trust_gate_observation_since_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            observation_since="$(printf '%s' "$TRUST_GATE_OBSERVATION_SINCE_B64" | base64 -d)"
+            if [[ ! "$observation_since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+              echo "trust-gate-24h-observation timestamp failed remote validation"
+              exit 1
+            fi
+
+            echo "trust_gate_observation_since=$observation_since"
+            echo "trust_gate_observation_until=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for service in brain-prod-api brain-prod-worker brain-prod-agents; do
+              status="$(docker inspect --format='{{.State.Status}}' "$service")"
+              health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$service")"
+              echo "${service}_state=$status"
+              echo "${service}_health=$health"
+            done
+            echo "api_trust_gate_enabled=$(docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED)"
+            echo "worker_trust_gate_enabled=$(docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED)"
+            echo "worker_git_sha=$(docker exec brain-prod-worker printenv GIT_SHA)"
+            curl -fsS --connect-timeout 10 --max-time 30 https://staging-api.brain.fi/health
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v observation_since="$observation_since" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            \echo 'trust-gate denial summary'
+            SELECT COUNT(*) FILTER (
+                     WHERE outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+                       AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_unknown'
+                   ) AS counterparty_trust_unknown_count,
+                   COUNT(*) FILTER (
+                     WHERE outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+                       AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_paused'
+                   ) AS counterparty_trust_paused_count,
+                   COUNT(*) FILTER (WHERE outputs->>'ok' = 'true') AS successful_execute_after_count,
+                   COUNT(*) FILTER (
+                     WHERE outputs->>'ok' = 'false'
+                       AND COALESCE(outputs->'failed_check'->'detail'->>'reason', '') NOT IN (
+                         'counterparty_trust_unknown', 'counterparty_trust_paused'
+                       )
+                   ) AS non_trust_execute_failure_count
+              FROM audit_events
+             WHERE action = 'payment_intent.execute.after'
+               AND created_at >= :'observation_since'::timestamptz;
+
+            \echo 'counterparty_trust_unknown events'
+            SELECT id,
+                   tenant_id,
+                   created_at,
+                   inputs->>'payment_intent_id' AS payment_intent_id,
+                   outputs->'failed_check' AS failed_check
+              FROM audit_events
+             WHERE action = 'payment_intent.execute.after'
+               AND created_at >= :'observation_since'::timestamptz
+               AND outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+               AND outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_unknown'
+             ORDER BY created_at, id
+             LIMIT 100;
+
+            \echo 'counterparty_trust_paused events with pause attribution'
+            SELECT ae.id,
+                   ae.tenant_id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   pi.destination_counterparty_id,
+                   cp.name AS counterparty_name,
+                   cp.trust_status AS current_trust_status,
+                   pause_event.id AS pause_event_id,
+                   pause_event.created_at AS pause_event_at,
+                   pause_event.actor AS paused_by,
+                   ae.outputs->'failed_check' AS failed_check
+              FROM audit_events ae
+              LEFT JOIN ledger_payment_intents pi
+                ON pi.owner_id = ae.tenant_id
+               AND pi.id = ae.inputs->>'payment_intent_id'
+              LEFT JOIN ledger_counterparties cp
+                ON cp.owner_id = pi.owner_id
+               AND cp.id = pi.destination_counterparty_id
+              LEFT JOIN LATERAL (
+                SELECT trust_event.id,
+                       trust_event.created_at,
+                       trust_event.actor
+                  FROM audit_events trust_event
+                 WHERE trust_event.tenant_id = ae.tenant_id
+                   AND trust_event.action = 'counterparty.trust.paused'
+                   AND trust_event.inputs->>'counterparty_id' = pi.destination_counterparty_id
+                   AND trust_event.created_at <= ae.created_at
+                 ORDER BY trust_event.created_at DESC, trust_event.id DESC
+                 LIMIT 1
+              ) pause_event ON TRUE
+             WHERE ae.action = 'payment_intent.execute.after'
+               AND ae.created_at >= :'observation_since'::timestamptz
+               AND ae.outputs->'failed_check'->>'name' = 'counterparty_trust_allowed'
+               AND ae.outputs->'failed_check'->'detail'->>'reason' = 'counterparty_trust_paused'
+             ORDER BY ae.created_at, ae.id
+             LIMIT 100;
+
+            \echo 'normal payment execution outcomes'
+            SELECT ae.id,
+                   ae.tenant_id,
+                   ae.created_at,
+                   ae.inputs->>'payment_intent_id' AS payment_intent_id,
+                   ae.outputs->>'ok' AS gate_or_execution_ok,
+                   ae.outputs->'failed_check' AS failed_check,
+                   eo.status AS outbox_status,
+                   eo.attempt_count,
+                   eo.last_error,
+                   eo.completed_at AS outbox_completed_at,
+                   e.status AS execution_status,
+                   e.completed_at AS execution_completed_at
+              FROM audit_events ae
+              LEFT JOIN execution_outbox eo
+                ON eo.tenant_id = ae.tenant_id
+               AND eo.payment_intent_id = ae.inputs->>'payment_intent_id'
+              LEFT JOIN executions e
+                ON e.tenant_id = ae.tenant_id
+               AND e.id = eo.execution_id
+             WHERE ae.action = 'payment_intent.execute.after'
+               AND ae.created_at >= :'observation_since'::timestamptz
+             ORDER BY ae.created_at, ae.id
+             LIMIT 200;
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "trust-gate-24h-observation" ]]; then
+            run_trust_gate_24h_observation
             exit 0
           fi
 
@@ -441,6 +790,64 @@ jobs:
             exit 0
           fi
 
+          run_anchor_cycle_runtime_trace() {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "ANCHOR_CYCLE_SINCE_B64='$anchor_cycle_since_b64' ANCHOR_CYCLE_UNTIL_B64='$anchor_cycle_until_b64' bash -s" <<'REMOTE'
+            set -euo pipefail
+            anchor_cycle_since="$(printf '%s' "$ANCHOR_CYCLE_SINCE_B64" | base64 -d)"
+            anchor_cycle_until="$(printf '%s' "$ANCHOR_CYCLE_UNTIL_B64" | base64 -d)"
+            for value in "$anchor_cycle_since" "$anchor_cycle_until"; do
+              if [[ ! "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                echo "anchor-cycle-runtime-trace timestamp failed remote validation"
+                exit 1
+              fi
+            done
+
+            echo "anchor_cycle_window=${anchor_cycle_since}/${anchor_cycle_until}"
+            echo "anchor_cycle_worker_log_lines"
+            docker logs --since "$anchor_cycle_since" --until "$anchor_cycle_until" brain-prod-worker 2>&1 | \
+              grep -E 'anchor cycle closing|anchor publish batch completed|pending anchor retry batch completed|anchor cycle completed' || true
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v anchor_cycle_since="$anchor_cycle_since" \
+              -v anchor_cycle_until="$anchor_cycle_until" <<'SQL'
+            \pset pager off
+            \pset null '(null)'
+            BEGIN TRANSACTION READ ONLY;
+
+            \echo 'anchor rows grouped by onchain transaction'
+            SELECT encode(onchain_tx_hash, 'hex') AS onchain_tx_hash,
+                   COUNT(*) AS anchor_rows,
+                   COUNT(DISTINCT tenant_id) AS tenant_roots,
+                   MIN(created_at) AS first_anchor_row_at,
+                   MAX(created_at) AS last_anchor_row_at,
+                   MIN(period_start) AS earliest_period_start,
+                   MAX(period_end) AS latest_period_end
+              FROM audit_anchors
+             WHERE created_at >= :'anchor_cycle_since'::timestamptz
+               AND created_at <= :'anchor_cycle_until'::timestamptz
+             GROUP BY onchain_tx_hash
+             ORDER BY first_anchor_row_at, onchain_tx_hash;
+
+            \echo 'unpublished anchor rows remaining in window'
+            SELECT COUNT(*) AS pending_rows
+              FROM audit_anchors
+             WHERE created_at >= :'anchor_cycle_since'::timestamptz
+               AND created_at <= :'anchor_cycle_until'::timestamptz
+               AND onchain_tx_hash IS NULL
+               AND onchain_status = 'pending';
+
+            COMMIT;
+          SQL
+          REMOTE
+          }
+
+          if [[ "$DIAGNOSTIC" == "anchor-cycle-runtime-trace" ]]; then
+            run_anchor_cycle_runtime_trace
+            exit 0
+          fi
+
           run_upload_pipeline_report() {
             local tenant_id="$1"
             cat scripts/ops/report-upload-pipeline-state.sql | \
@@ -508,25 +915,72 @@ jobs:
             exit 0
           fi
 
-          run_report() {
+          run_counterparty_trust_impact() {
             local tenant_id="$1"
-            local remote_command
-            # The worker owns the scoped ledger-projector URL assembled by Compose.
-            remote_command="docker exec -i -w /app/services/api brain-prod-worker node --input-type=module -"
-            if [[ -n "$tenant_id" ]]; then
-              remote_command+=" --tenant-id '$tenant_id'"
-            fi
-            cat "$REPORT_SCRIPT" | ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 \
-              "azureuser@$VM_HOST" "$remote_command"
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "TENANT_ID='$tenant_id' bash -s" <<'REMOTE'
+            set -euo pipefail
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset format unaligned
+            \pset tuples_only on
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+            WITH impact AS (
+              SELECT cp.owner_id AS tenant_id,
+                     t.kind AS tenant_kind,
+                     t.sandbox,
+                     t.created_via,
+                     (t.kind = 'production' AND t.sandbox = FALSE) AS review_required,
+                     cp.id AS counterparty_id,
+                     cp.name AS counterparty_name,
+                     cp.trust_status,
+                     COUNT(pi.id) AS payment_intent_count,
+                     array_agg(pi.id ORDER BY pi.created_at) AS payment_intent_ids,
+                     array_agg(DISTINCT pi.status ORDER BY pi.status) AS statuses
+                FROM ledger_counterparties cp
+                JOIN tenants t ON t.id = cp.owner_id
+                JOIN ledger_payment_intents pi
+                  ON pi.owner_id = cp.owner_id
+                 AND pi.destination_counterparty_id = cp.id
+               WHERE cp.trust_status = 'paused'
+                 AND pi.status IN (
+                   'proposed', 'pending_approval', 'awaiting_second_approval',
+                   'approved', 'paused', 'dispatching'
+                 )
+                 AND (NULLIF(:'tenant_id', '') IS NULL OR cp.owner_id = :'tenant_id')
+               GROUP BY cp.owner_id, t.kind, t.sandbox, t.created_via, cp.id, cp.name, cp.trust_status
+            )
+            SELECT jsonb_build_object(
+              'paused_counterparty_groups', COUNT(*),
+              'affected_payment_intents', COALESCE(SUM(payment_intent_count), 0),
+              'non_demo_review_groups', COUNT(*) FILTER (WHERE review_required),
+              'non_demo_review_payment_intents', COALESCE(SUM(payment_intent_count) FILTER (WHERE review_required), 0),
+              'demo_or_sandbox_groups', COUNT(*) FILTER (WHERE NOT review_required),
+              'demo_or_sandbox_payment_intents', COALESCE(SUM(payment_intent_count) FILTER (WHERE NOT review_required), 0),
+              'rows', COALESCE(jsonb_agg(to_jsonb(impact) ORDER BY tenant_id, counterparty_name, counterparty_id), '[]'::jsonb)
+            )
+              FROM impact;
+            COMMIT;
+          SQL
+          REMOTE
           }
 
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" ]]; then
+            echo "diagnostic dispatch did not reach its fixed handler: $DIAGNOSTIC"
+            exit 1
+          fi
+
           if [[ -z "$TENANT_IDS" ]]; then
-            run_report ""
+            run_counterparty_trust_impact ""
             exit 0
           fi
 
           IFS=',' read -r -a tenant_ids <<< "$TENANT_IDS"
           for tenant_id in "${tenant_ids[@]}"; do
             echo "tenant_id=$tenant_id"
-            run_report "$tenant_id"
+            run_counterparty_trust_impact "$tenant_id"
           done

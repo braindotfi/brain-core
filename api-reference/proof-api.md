@@ -23,7 +23,7 @@ Authorization: Bearer <token>
   "agent_id": "ag_payment_v1",
   "behavior_hash": "0x...",
   "outcome": "executed",
-  "policy_version": 4,
+  "policy_version": "4",
   "policy_hash": "0xabc...",
   "matched_rule_id": "rule_invoice_above_5k",
   "gate_checks": [
@@ -33,12 +33,34 @@ Authorization: Bearer <token>
     { "index": 7, "name": "counterparty_not_sanctioned", "passed": true },
     { "index": 13, "name": "audit_chain_healthy", "passed": true }
   ],
-  "evidence": [{ "raw_id": "raw_8231", "parser": "invoice_v2", "confidence": 0.98 }],
+  "evidence": [
+    {
+      "raw_parsed_id": "rp_001",
+      "sha256": "abc123...",
+      "source_type": "pdf_upload",
+      "kind": "invoice",
+      "trust_level": "document_extracted"
+    }
+  ],
   "ledger_snapshot_hash": "0x...",
-  "audit_events": ["audit_evt_001", "audit_evt_002"],
+  "audit_events": [
+    {
+      "id": "audit_evt_001",
+      "action": "payment_intent.created",
+      "layer": "execution",
+      "event_hash": "abc123...",
+      "prev_event_hash": null,
+      "created_at": "2026-05-28T12:00:00Z"
+    }
+  ],
   "merkle_root": "0xabc...",
   "merkle_proof": ["0x111...", "0x222..."],
-  "chain_anchor": { "tx_hash": "0xdef...", "block": 8829110 },
+  "chain_anchor": {
+    "tx_hash": "0xdef...",
+    "block_number": 8829110,
+    "contract_address": "0xabc...",
+    "chain": "base-sepolia"
+  },
   "rail_receipt": { "rail": "bank_ach", "provider_id": "..." },
   "human_explanation": "Paid invoice inv_8231 for $7,800.00 to Amazon Web Services on Mercury operating account..."
 }
@@ -46,20 +68,20 @@ Authorization: Bearer <token>
 
 ### Fields
 
-| Field                            | Description                                                                                        |
-| -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `outcome`                        | `allowed` \| `confirmed` \| `rejected` \| `executed` \| `failed` \| `shadow_completed`             |
-| `behavior_hash`                  | The agent's runtime `behaviorHash`. Must equal the value registered on-chain (§6 check 1.5)        |
-| `policy_version` / `policy_hash` | The policy version evaluated and its content hash                                                  |
-| `matched_rule_id`                | The DSL rule that fired                                                                            |
-| `gate_checks[]`                  | Every numbered + hardening check, in execution order, with `passed: boolean` and optional `reason` |
-| `evidence[]`                     | The Raw-parsed rows the agent and the gate consulted                                               |
-| `ledger_snapshot_hash`           | Hash of the Ledger state Policy decided against (the snapshot the §6 7.5 check re-validates)       |
-| `audit_events[]`                 | Every audit event id covering this action                                                          |
-| `merkle_root` / `merkle_proof`   | The Merkle inclusion proof for the audit-chain leaves                                              |
-| `chain_anchor`                   | The on-chain anchor for the containing batch. `null` until the batch lands on Base                 |
-| `rail_receipt`                   | The typed rail receipt (`ach` / `wire` / `erp` / `onchain` schemas)                                |
-| `human_explanation`              | One-paragraph plain-English summary, deterministically generated                                   |
+| Field                            | Description                                                                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `outcome`                        | `allowed` \| `confirmed` \| `rejected` \| `executed` \| `failed` \| `shadow_completed`                                              |
+| `behavior_hash`                  | The agent's runtime `behaviorHash`. Must equal the value registered on-chain (§6 check 1.5)                                         |
+| `policy_version` / `policy_hash` | The policy version evaluated and its content hash                                                                                   |
+| `matched_rule_id`                | The DSL rule that fired                                                                                                             |
+| `gate_checks[]`                  | Every numbered and hardening check, in execution order, with `passed: boolean` and optional `detail` object                         |
+| `evidence[]`                     | Objects with `raw_parsed_id`, `sha256`, `source_type`, `kind`, and `trust_level`                                                    |
+| `ledger_snapshot_hash`           | Hash of the Ledger state Policy decided against (the snapshot the §6 7.5 check re-validates)                                        |
+| `audit_events[]`                 | Objects with `id`, `action`, `layer`, event-chain hashes, and `created_at`                                                          |
+| `merkle_root` / `merkle_proof`   | The Merkle inclusion proof for the audit-chain leaves                                                                               |
+| `chain_anchor`                   | The on-chain anchor for the containing batch with `tx_hash`, `block_number`, `contract_address`, and `chain`; `null` until it lands |
+| `rail_receipt`                   | The typed rail receipt (`ach` / `wire` / `erp` / `onchain` schemas)                                                                 |
+| `human_explanation`              | One-paragraph plain-English summary, deterministically generated                                                                    |
 
 ### Verifying a Proof
 

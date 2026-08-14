@@ -66,6 +66,15 @@ export interface SiwxOptions {
   readonly signer: JwtSigner;
   /** EIP-4361 `domain` claim. Defaults to `"api.brain.fi"`. */
   readonly domain?: string;
+  /**
+   * Required EIP-4361 `chainId` the signed message must carry, pinned to
+   * `BRAIN_BASE_CHAIN_ID` (the same knob every other on-chain rail in this
+   * service reads). Not exploitable today given the `domain` binding and the
+   * single-use nonce, but an unpinned chain id on a signed auth message is a
+   * real audit finding, and this machinery gets reused at the authorization
+   * server.
+   */
+  readonly chainId: number;
   readonly registry: AgentRegistryLookup;
   /**
    * RFC 0002 Phase D: resolve a wallet to a linked tenant principal. When a
@@ -100,10 +109,15 @@ const NONCE_KEY = (sessionId: string): string => `siwx:nonce:${sessionId}`;
  * omitted, the message's own `nonce` field is trusted. Throws
  * `request_body_invalid` for a malformed message/signature and
  * `auth_siwx_invalid` for every verification failure (expired/missing
- * session, malformed EIP-4361 payload, bad signature).
+ * session, malformed EIP-4361 payload, chainId mismatch, bad signature).
+ *
+ * The chainId pin (#633) lives here rather than in the `/auth/siwx` handler
+ * precisely because of this second caller: the designation route signs the
+ * same EIP-4361 shape, so it must reject an off-chain-id message for the same
+ * reason the sign-in route does.
  */
 export async function verifySiwxProof(
-  opts: { readonly domain: string; readonly redis: Redis },
+  opts: { readonly domain: string; readonly chainId: number; readonly redis: Redis },
   input: { readonly message: unknown; readonly signature: unknown; readonly sessionId: unknown },
 ): Promise<string> {
   const { message, signature, sessionId } = input;
@@ -132,6 +146,20 @@ export async function verifySiwxProof(
     throw brainError("auth_siwx_invalid", "SIWX message is not a valid EIP-4361 payload", {
       cause,
     });
+  }
+
+  // Pin the signed chainId to the configured Base chain. siwe's `verify`
+  // does not check chainId itself, and an unpinned chain id on a signed
+  // auth message is a genuine finding even though the domain binding and
+  // single-use nonce close the practical replay today.
+  if (parsed.chainId !== opts.chainId) {
+    throw brainError(
+      "auth_siwx_invalid",
+      "SIWX message chainId does not match the configured chain",
+      {
+        details: { expected_chain_id: opts.chainId, actual_chain_id: parsed.chainId },
+      },
+    );
   }
 
   // siwe's `verify` *usually* returns `{success: false}` for bad
@@ -180,7 +208,12 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
       const sessionId = brainId("token");
       await opts.redis.setex(NONCE_KEY(sessionId), nonceTtlSecs, nonce);
       reply.status(200);
-      return { nonce, session_id: sessionId, domain };
+      // Finding 5: without this, a client must guess which EIP-4361 chainId
+      // the server pins (opts.chainId, verified below at the /auth/siwx
+      // step) -- prod pins 84532 while the only executable example fixture
+      // in this repo signs 8453. Advertise it so the client can build a
+      // conformant message on the first try.
+      return { nonce, session_id: sessionId, domain, chain_id: opts.chainId };
     },
   );
 
@@ -226,7 +259,7 @@ export async function registerSiwxRoutes(app: FastifyInstance, opts: SiwxOptions
 
       const body = req.body as Record<string, unknown>;
       const address = await verifySiwxProof(
-        { domain, redis: opts.redis },
+        { domain, chainId: opts.chainId, redis: opts.redis },
         { message: body["message"], signature: body["signature"], sessionId: body["session_id"] },
       );
 
