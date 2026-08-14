@@ -870,8 +870,10 @@ async function main(): Promise<void> {
         }
       : undefined;
 
-  // Resolve Plaid credentials at execute time: look up the ledger account's
-  // external_account_id, then call the source service to decrypt credentials.
+  // Resolve Plaid credentials at DISPATCH time (see the outbox worker wiring
+  // below): look up the ledger account's external_account_id, then call the
+  // source service to decrypt credentials. Deliberately NOT passed to
+  // PaymentIntentService -- credentials must not enter execution_outbox.payload.
   const sourceCredentialResolver = {
     async resolve(
       ctx: ServiceCallContext,
@@ -1007,7 +1009,6 @@ async function main(): Promise<void> {
     resolveObligationProvenance,
     ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
     ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
-    sourceCredentialResolver,
     metrics,
     enqueue: routingEnqueue,
     recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
@@ -1269,6 +1270,27 @@ async function main(): Promise<void> {
     beforeDispatchConfigured: outboxBeforeDispatch !== undefined,
   });
 
+  // Provider credentials are fetched here, one rail call before they are used,
+  // and merged into the in-memory action only. Nothing durable ever holds them:
+  // execution_outbox.payload is plaintext JSONB covered by a tamper-evidence
+  // hash, so it cannot be scrubbed after settlement and must never take a
+  // secret in the first place (OutboxService.enqueue asserts that).
+  const outboxResolveDispatchCredentials = async (
+    ctx: ServiceCallContext,
+    row: { payload: Record<string, unknown> },
+  ): Promise<Record<string, unknown> | null> => {
+    if (row.payload["kind"] !== "ach_outbound") return null;
+    const sourceAccountId = row.payload["source_account_id"];
+    if (typeof sourceAccountId !== "string") return null;
+    const creds = await sourceCredentialResolver.resolve(ctx, sourceAccountId);
+    if (creds === null) return null;
+    const c = creds.credentials as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    if (typeof c["access_token"] === "string") out["access_token"] = c["access_token"];
+    if (typeof c["account_id"] === "string") out["account_id"] = c["account_id"];
+    return Object.keys(out).length > 0 ? out : null;
+  };
+
   const outboxWorker = composition.workers.has("execution")
     ? startOutboxWorker(
         {
@@ -1278,6 +1300,7 @@ async function main(): Promise<void> {
           audit,
           withPrivileged,
           beforeDispatch: outboxBeforeDispatch,
+          resolveDispatchCredentials: outboxResolveDispatchCredentials,
           workerId: `outbox-worker-${process.pid}`,
         },
         { intervalMs: 1_000 },
@@ -2099,7 +2122,6 @@ async function main(): Promise<void> {
           resolveObligationProvenance,
           ...(resolveEscrowState !== undefined ? { resolveEscrowState } : {}),
           ...(resolveOnchainParams !== undefined ? { resolveOnchainParams } : {}),
-          sourceCredentialResolver,
           metrics,
           enqueue: routingEnqueue,
           recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),

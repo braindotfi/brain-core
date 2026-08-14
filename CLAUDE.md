@@ -838,6 +838,28 @@ Pending Dmitriy sign-off
 - `/v1/auth/service-token` remains sandbox and testnet only. It rejects
   `tenant.kind='production'`; it is not a competing production user-session
   exchange path and not a competing production agent path.
+- Rail provider credentials never enter `execution_outbox.payload`.
+  `PaymentIntentService.execute` used to merge the source's Plaid
+  `access_token` and `account_id` into the payload for `ach_outbound` intents,
+  which wrote a live bank credential to a plaintext JSONB column for the
+  durable life of the row. The row cannot be scrubbed afterwards, because
+  `payload_hash` is a sha256 tamper-evidence digest over exactly those bytes
+  and `worker.ts` re-reads `row.payload` on every retry and crash recovery.
+  Credentials are now resolved at DISPATCH time by the outbox worker
+  (`OutboxWorkerDeps.resolveDispatchCredentials`, wired in
+  `services/api/src/main.ts` from the same `sourceCredentialResolver`) and
+  merged into a throwaway copy of the action, so the secret exists only in
+  memory for the length of one rail call and the durable record stays
+  credential-free. `OutboxService.enqueue` enforces that for every future
+  payload-building site through `assertNoForbiddenFields`
+  (`services/execution/src/redaction.ts`, the first production caller of
+  `redact`): a forbidden field throws inside the caller's
+  approved -> dispatching transaction, so the whole hand-off rolls back and no
+  money moves. Measured before the fix on 2026-08-11: zero affected rows in
+  both the Azure production database and the legacy VM, so no data repair is
+  owed. Known separate gap, not addressed here: the ACH rail also requires
+  `user.legal_name`, which no payload-building site populates, so an
+  `ach_outbound` dispatch fails `parseAchAction` validation regardless.
 - Agent halt is a fail-closed kill-switch. `/v1/agents/{id}/halt` quarantines
   the agent before pausing approved intents in one tenant-scoped transaction.
   The execution outbox worker rechecks the creator agent row with a locking read
