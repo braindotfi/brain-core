@@ -210,7 +210,7 @@ jobs:
             SET LOCAL statement_timeout = '5s';
             SET LOCAL lock_timeout = '1s';
 
-            WITH target AS (
+            WITH candidates AS (
               SELECT p.id,
                      p.created_at,
                      p.status,
@@ -219,7 +219,9 @@ jobs:
                      p.policy_version,
                      p.policy_trace,
                      p.required_approvers,
-                     p.action
+                     p.action,
+                     COALESCE(p.action->>'narrative', p.action->>'summary', p.action->>'description') AS narrative_text,
+                     COALESCE(p.action->>'headline', p.action->>'summary', p.action->>'narrative', p.action->>'description') AS headline_text
                 FROM proposals p
                WHERE p.tenant_id = :'tenant_id'
                  AND p.status = 'pending'
@@ -230,7 +232,30 @@ jobs:
                    OR p.action->>'agent_id' = 'compliance'
                    OR p.action->>'kind' = 'compliance'
                  )
-               ORDER BY p.created_at DESC, p.id DESC
+            ),
+            candidate_refs AS (
+              SELECT DISTINCT c.id,
+                     matches.match[1] AS ref
+                FROM candidates c
+                CROSS JOIN LATERAL regexp_matches(
+                  COALESCE(c.narrative_text, '') || ' ' || COALESCE(c.headline_text, ''),
+                  '((?:inv|cp)_[0-9A-HJKMNP-TV-Z]{26})',
+                  'g'
+                ) AS matches(match)
+            ),
+            target AS (
+              SELECT c.id,
+                     c.created_at,
+                     c.status,
+                     c.proposing_agent,
+                     c.policy_decision,
+                     c.policy_version,
+                     c.policy_trace,
+                     c.required_approvers,
+                     c.action
+                FROM candidates c
+               WHERE EXISTS (SELECT 1 FROM candidate_refs cr WHERE cr.id = c.id)
+               ORDER BY c.created_at DESC, c.id DESC
                LIMIT 1
             ),
             action_refs AS (
