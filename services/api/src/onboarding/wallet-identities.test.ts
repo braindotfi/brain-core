@@ -1,7 +1,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { errorHandlerPlugin, requestIdPlugin, type Principal } from "@brain/shared";
+import {
+  errorHandlerPlugin,
+  requestIdPlugin,
+  InMemoryAuditEmitter,
+  type Principal,
+} from "@brain/shared";
 import {
   linkWallet,
   PostgresWalletIdentityReader,
@@ -59,7 +64,8 @@ const ADDR = "0xAbCdEf0000000000000000000000000000000001";
 describe("linkWallet — RFC 0002 Phase D", () => {
   it("inserts a lowercased address scoped to the caller's tenant", async () => {
     const { pool, calls } = makeScopedPool();
-    await linkWallet(pool, {
+    const audit = new InMemoryAuditEmitter();
+    await linkWallet(pool, audit, {
       tenantId: TENANT,
       address: ADDR,
       principalType: "human",
@@ -74,10 +80,29 @@ describe("linkWallet — RFC 0002 Phase D", () => {
     expect(calls.some((c) => c.sql === "COMMIT")).toBe(true);
   });
 
-  it("maps a duplicate address to wallet_already_linked (and rolls back)", async () => {
+  it("emits exactly one identity-layer audit event on a successful link", async () => {
+    const { pool } = makeScopedPool();
+    const audit = new InMemoryAuditEmitter();
+    await linkWallet(pool, audit, {
+      tenantId: TENANT,
+      address: ADDR,
+      principalType: "human",
+      principalId: "user_01J0000000000000000000000A",
+    });
+    expect(audit.events).toHaveLength(1);
+    const [event] = audit.events;
+    expect(event?.tenantId).toBe(TENANT);
+    expect(event?.layer).toBe("identity");
+    expect(event?.action).toBe("wallet.linked");
+    expect(event?.inputs).toMatchObject({ address: ADDR.toLowerCase() });
+    expect(event?.outputs).toMatchObject({ principal_id: "user_01J0000000000000000000000A" });
+  });
+
+  it("maps a duplicate address to wallet_already_linked (and rolls back), no audit event", async () => {
     const { pool, calls } = makeScopedPool({ failOn: /INSERT INTO wallet_identities/ });
+    const audit = new InMemoryAuditEmitter();
     await expect(
-      linkWallet(pool, {
+      linkWallet(pool, audit, {
         tenantId: TENANT,
         address: ADDR,
         principalType: "agent",
@@ -85,18 +110,21 @@ describe("linkWallet — RFC 0002 Phase D", () => {
       }),
     ).rejects.toMatchObject({ code: "wallet_already_linked" });
     expect(calls.some((c) => c.sql === "ROLLBACK")).toBe(true);
+    expect(audit.events).toHaveLength(0);
   });
 
   it("rethrows a non-unique DB error", async () => {
     const { pool } = makeScopedPool({ failOn: /INSERT/, failCode: "08006" });
+    const audit = new InMemoryAuditEmitter();
     await expect(
-      linkWallet(pool, {
+      linkWallet(pool, audit, {
         tenantId: TENANT,
         address: ADDR,
         principalType: "human",
         principalId: "user_x",
       }),
     ).rejects.toMatchObject({ code: "08006" });
+    expect(audit.events).toHaveLength(0);
   });
 });
 
@@ -134,21 +162,26 @@ describe("POST /tenants/:tenant_id/wallets — RFC 0002 Phase D link route", () 
     };
   }
 
-  async function buildApp(pool: Pool, principal: Principal): Promise<FastifyInstance> {
+  async function buildApp(
+    pool: Pool,
+    principal: Principal,
+    audit: InMemoryAuditEmitter = new InMemoryAuditEmitter(),
+  ): Promise<FastifyInstance> {
     const app = Fastify({ logger: false });
     await app.register(requestIdPlugin);
     await app.register(errorHandlerPlugin);
     app.addHook("onRequest", async (req) => {
       req.principal = principal;
     });
-    await registerWalletRoutes(app, { pool });
+    await registerWalletRoutes(app, { pool, audit });
     await app.ready();
     return app;
   }
 
   it("links the owner's own wallet (principal_id defaults to the caller, lowercased)", async () => {
     const { pool, calls } = makeScopedPool();
-    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const audit = new InMemoryAuditEmitter();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]), audit);
     const res = await app.inject({
       method: "POST",
       url: `/tenants/${TENANT}/wallets`,
@@ -160,6 +193,8 @@ describe("POST /tenants/:tenant_id/wallets — RFC 0002 Phase D link route", () 
     expect(body.address).toBe(ADDR.toLowerCase());
     expect(body.principal_id).toBe("user_owner");
     expect(calls.some((c) => /INSERT INTO wallet_identities/.test(c.sql))).toBe(true);
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]?.action).toBe("wallet.linked");
     await app.close();
   });
 
@@ -201,9 +236,10 @@ describe("POST /tenants/:tenant_id/wallets — RFC 0002 Phase D link route", () 
     await app.close();
   });
 
-  it("maps a duplicate wallet to 409 wallet_already_linked", async () => {
+  it("maps a duplicate wallet to 409 wallet_already_linked, with no audit event", async () => {
     const { pool } = makeScopedPool({ failOn: /INSERT INTO wallet_identities/ });
-    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]));
+    const audit = new InMemoryAuditEmitter();
+    const app = await buildApp(pool, ownerPrincipal(TENANT, ["policy:write"]), audit);
     const res = await app.inject({
       method: "POST",
       url: `/tenants/${TENANT}/wallets`,
@@ -211,6 +247,7 @@ describe("POST /tenants/:tenant_id/wallets — RFC 0002 Phase D link route", () 
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("wallet_already_linked");
+    expect(audit.events).toHaveLength(0);
     await app.close();
   });
 });

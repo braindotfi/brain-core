@@ -2372,7 +2372,7 @@ async function main(): Promise<void> {
             }),
           );
           // Authenticated wallet-link route (owner JWT) → wallet_identities.
-          await v1.register(async (child) => registerWalletRoutes(child, { pool }));
+          await v1.register(async (child) => registerWalletRoutes(child, { pool, audit }));
         }
 
         if (cfg.BRAIN_DEMO_MODE) {
