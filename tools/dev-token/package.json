@@ -11,7 +11,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "jose": "^5.9.3"
+    "jose": "^6.2.8"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
