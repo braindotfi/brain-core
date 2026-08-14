@@ -79,14 +79,15 @@ export class PolicyService {
     const decision = highRiskAgentActionFallback(evaluate(active.content, action), action, raw);
     const snapshotHash = sha256Action(raw);
     const subjectId = legacySubjectId(raw, snapshotHash);
+    const sourceRefs = sourceRefsForLegacyAction(raw);
     const id = newPolicyDecisionId();
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       await c.query(
         `INSERT INTO policy_decisions
            (id, tenant_id, policy_id, policy_version, subject_type, subject_id,
-            outcome, matched_rule_id, required_approvers, ledger_snapshot_hash, trace)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            outcome, matched_rule_id, required_approvers, ledger_snapshot_hash, trace, source_refs)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           id,
           ctx.tenantId,
@@ -99,6 +100,7 @@ export class PolicyService {
           decision.required_approvers,
           snapshotHash,
           JSON.stringify(decision.trace),
+          JSON.stringify(sourceRefs),
         ],
       );
     });
@@ -116,6 +118,7 @@ export class PolicyService {
         subject_id: subjectId,
         action_kind: action.kind,
         policy_version: active.version,
+        source_refs: sourceRefs,
       },
       outputs: {
         decision_id: id,
@@ -365,6 +368,85 @@ function isCounterpartyTrustStatus(
 function rawString(raw: Record<string, unknown>, key: string): string | null {
   const value = raw[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+type SourceEntityRef = { kind: string; ref: string };
+
+const SOURCE_ENTITY_KINDS = new Set([
+  "account",
+  "agent_action",
+  "counterparty",
+  "document",
+  "invoice",
+  "obligation",
+  "payment_intent",
+  "proposal",
+  "raw_artifact",
+  "transaction",
+]);
+
+interface SourceRefs {
+  source_action_id?: string;
+  source_proposal_id?: string;
+  payment_intent_id?: string;
+  source_entity_refs?: SourceEntityRef[];
+  amount?: { currency: string; value: string };
+}
+
+function sourceRefsForLegacyAction(raw: Record<string, unknown>): SourceRefs {
+  const sourceRefs: SourceRefs = {};
+  const sourceActionId = rawString(raw, "source_action_id") ?? rawString(raw, "action_id");
+  const sourceProposalId = rawString(raw, "source_proposal_id") ?? rawString(raw, "proposal_id");
+  const paymentIntentId = rawString(raw, "payment_intent_id");
+  if (sourceActionId !== null) sourceRefs.source_action_id = sourceActionId;
+  if (sourceProposalId !== null) sourceRefs.source_proposal_id = sourceProposalId;
+  if (paymentIntentId !== null) sourceRefs.payment_intent_id = paymentIntentId;
+
+  const entityRefs = sourceEntityRefs(raw);
+  if (entityRefs.length > 0) sourceRefs.source_entity_refs = entityRefs;
+
+  if (isAmountShape(raw["amount"])) {
+    sourceRefs.amount = { currency: raw["amount"].currency, value: raw["amount"].value };
+  }
+  return sourceRefs;
+}
+
+function sourceEntityRefs(raw: Record<string, unknown>): SourceEntityRef[] {
+  const refs: SourceEntityRef[] = [];
+  for (const key of [
+    "source_entity_refs",
+    "subject_refs",
+    "affected_entities",
+    "offending_record_refs",
+  ]) {
+    const value = raw[key];
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+      const kind = item["kind"];
+      const ref = item["ref"];
+      if (
+        typeof kind === "string" &&
+        SOURCE_ENTITY_KINDS.has(kind) &&
+        typeof ref === "string" &&
+        ref.length > 0
+      ) {
+        refs.push({ kind, ref });
+      }
+    }
+  }
+  for (const [key, kind] of [
+    ["counterparty_id", "counterparty"],
+    ["vendor_id", "counterparty"],
+    ["invoice_id", "invoice"],
+    ["obligation_id", "obligation"],
+    ["account_id", "account"],
+    ["payment_intent_id", "payment_intent"],
+  ] as const) {
+    const ref = rawString(raw, key);
+    if (ref !== null) refs.push({ kind, ref });
+  }
+  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.ref}`, ref])).values()];
 }
 
 function legacySubjectId(raw: Record<string, unknown>, snapshotHash: string): string {

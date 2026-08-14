@@ -9,7 +9,14 @@ const tenantB = newTenantId();
 
 describe("runComplianceScanCycle", () => {
   it("runs one compliance proposal per row and respects cooldown", async () => {
-    const row = finding({ tenant_id: tenantA, finding_id: "pi_1" });
+    const row = finding({
+      tenant_id: tenantA,
+      finding_id: "pi_1",
+      source_refs: {
+        source_action_id: "act_1",
+        source_entity_refs: [{ kind: "counterparty", ref: "cp_1" }],
+      },
+    });
     const scanPool = scanPoolWith([row]);
     const appPool = cooldownPool();
     const run = vi.fn(
@@ -47,6 +54,10 @@ describe("runComplianceScanCycle", () => {
           policy_decision_id: "pd_1",
           audit_event_id: "evt_1",
           payment_intent_id: "pi_1",
+          source_refs: {
+            source_action_id: "act_1",
+            source_entity_refs: [{ kind: "counterparty", ref: "cp_1" }],
+          },
         }),
       }),
     );
@@ -216,6 +227,7 @@ function finding(override: Partial<ComplianceFindingRow>): ComplianceFindingRow 
     policy_decision_id: "pd_1",
     audit_event_id: "evt_1",
     payment_intent_id: "pi_1",
+    source_refs: {},
     subject_type: "payment_intent",
     subject_id: "pi_1",
     policy_outcome: "confirm",

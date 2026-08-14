@@ -301,4 +301,65 @@ describe("PolicyService.evaluateLegacy", () => {
       subject_id: "bal_123",
     });
   });
+
+  it("captures allowlisted source references for a stable subject", async () => {
+    const audit = new InMemoryAuditEmitter();
+    const { pool, queries } = poolWithActivePolicy({
+      version: 1,
+      rules: [{ id: "agent-auto", applies_to: ["agent_action"], when: {}, execute: "auto" }],
+    });
+    const svc = new PolicyService({ pool, audit });
+
+    await svc.evaluateLegacy(ctx, {
+      kind: "agent_action",
+      proposal_id: "prop_1",
+      source_action_id: "act_1",
+      payment_intent_id: "pi_1",
+      subject_refs: [
+        { kind: "counterparty", ref: "cp_1" },
+        { kind: "note", ref: "never-store-freeform-metadata" },
+      ],
+      invoice_id: "inv_1",
+      amount: { currency: "USD", value: "125.00" },
+    });
+
+    const insert = queries.find((q) => q.sql.includes("INSERT INTO policy_decisions"));
+    const sourceRefs = JSON.parse(String(insert?.values[11]));
+    expect(sourceRefs).toEqual({
+      source_action_id: "act_1",
+      source_proposal_id: "prop_1",
+      payment_intent_id: "pi_1",
+      source_entity_refs: [
+        { kind: "counterparty", ref: "cp_1" },
+        { kind: "invoice", ref: "inv_1" },
+        { kind: "payment_intent", ref: "pi_1" },
+      ],
+      amount: { currency: "USD", value: "125.00" },
+    });
+    expect(audit.events[0]?.inputs).toMatchObject({ source_refs: sourceRefs });
+  });
+
+  it("keeps hash fallback subjects while preserving available partial source references", async () => {
+    const { pool, queries } = poolWithActivePolicy({
+      version: 1,
+      rules: [{ id: "agent-auto", applies_to: ["agent_action"], when: {}, execute: "auto" }],
+    });
+    const svc = new PolicyService({ pool, audit: new InMemoryAuditEmitter() });
+
+    await svc.evaluateLegacy(ctx, {
+      kind: "agent_action",
+      payment_intent_id: "pi_1",
+      source_entity_refs: [{ kind: "counterparty", ref: "cp_1" }],
+    });
+
+    const insert = queries.find((q) => q.sql.includes("INSERT INTO policy_decisions"));
+    expect(insert?.values[5]).toMatch(/^agent_action_/);
+    expect(JSON.parse(String(insert?.values[11]))).toEqual({
+      payment_intent_id: "pi_1",
+      source_entity_refs: [
+        { kind: "counterparty", ref: "cp_1" },
+        { kind: "payment_intent", ref: "pi_1" },
+      ],
+    });
+  });
 });
