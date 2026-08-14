@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      compliance_proposal_duplicate_report:
+        description: "When true, report one tenant's pending Compliance proposal subject groups."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -67,7 +72,9 @@ jobs:
       PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
       TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
+      COMPLIANCE_PROPOSAL_DUPLICATE_REPORT: ${{ inputs.compliance_proposal_duplicate_report }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate tenant id
         shell: bash
         run: |
@@ -101,6 +108,10 @@ jobs:
             echo "ingestion_lineage must be true or false"
             exit 1
           fi
+          if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" != "true" && "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" != "false" ]]; then
+            echo "compliance_proposal_duplicate_report must be true or false"
+            exit 1
+          fi
 
       - name: Configure SSH
         shell: bash
@@ -117,8 +128,12 @@ jobs:
           wiki_question_since_b64="$(printf '%s' "$WIKI_QUESTION_SINCE" | base64 | tr -d '\n')"
           wiki_question_until_b64="$(printf '%s' "$WIKI_QUESTION_UNTIL" | base64 | tr -d '\n')"
           wiki_question_search_b64="$(printf '%s' "$WIKI_QUESTION_SEARCH" | base64 | tr -d '\n')"
+          if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy scripts/ops/report-compliance-proposal-duplicates.sql \
+              "azureuser@$VM_HOST:~/brain-core/scripts/ops/report-compliance-proposal-duplicates.sql"
+          fi
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -155,6 +170,17 @@ jobs:
           if [[ "$INGESTION_LINEAGE" != "true" && "$INGESTION_LINEAGE" != "false" ]]; then
             echo "ingestion_lineage failed remote validation"
             exit 1
+          fi
+          if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" != "true" && "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" != "false" ]]; then
+            echo "compliance_proposal_duplicate_report failed remote validation"
+            exit 1
+          fi
+
+          if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" == "true" ]]; then
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
+              < scripts/ops/report-compliance-proposal-duplicates.sql
+            exit 0
           fi
 
           echo "::group::worker runtime"
