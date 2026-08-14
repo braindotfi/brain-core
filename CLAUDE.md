@@ -1224,14 +1224,15 @@ become a `git describe` base.
 
 Update this table on every promote.
 
-| Change                                                                  | On main | On staging | On prod (api.brain.fi)                                                                                |
-| ----------------------------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| Members / approval authority / actor attribution (PR #214, #215)        | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Approval-authority gap fixes (PR #216)                                  | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Tenant bootstrap member (PR #218)                                       | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Bootstrap member session split: member_token in provision-run (PR #219) | Yes     | Yes        | NO, prior probe failed: provision-run 500 internal_server_error before prod migrations were automated |
-| Production tenancy, sessions, and invites                               | Pending | No         | No, pending merge and post-deploy `/v1/tenants` probe                                                 |
-| Production agent principals                                             | Pending | No         | No, pending merge and post-deploy `/v1/tenants` plus `/v1/tenants/{tenant_id}/agent-token` probe      |
+| Change                                                                                              | On main | On staging | On prod (api.brain.fi)                                 |
+| --------------------------------------------------------------------------------------------------- | ------- | ---------- | ------------------------------------------------------ |
+| Members / approval authority / actor attribution through production agent principals (PR #214-#219) | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+| XLSX/TXT raw uploads, explicit terminal extraction retries (PR #617, #618)                          | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+| Docs audit: agent scope, money path, API reference, protocol, build tutorials (PR #619-#623)        | Yes     | Yes        | Yes, live as of `deploy/prod/20260814T014300Z-e03dd97` |
+
+Promoted 2026-08-14 via `promote-prod` (approved by damonnam), commit
+`e03dd97ebbe15dffa4b9ed902c1defccd48a8369`. Post-deploy `POST /v1/tenants`
+probe pending via `ops-prod-tenants-probe.yml`; record the result here once run.
 
 Provision-run returns `tokens.member.token` for user-principal member and
 approval workflows and `tokens.agent.token` for propose-only agent workflows.
