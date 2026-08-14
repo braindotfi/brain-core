@@ -13,8 +13,19 @@ Content-Type: application/json
 
 The canonical public host is **`mcp.brain.fi`**, which maps root traffic onto the internal `/v1/agents/mcp` route.
 
+| Environment    | Canonical host          | Internal / compatibility route               |
+| -------------- | ----------------------- | -------------------------------------------- |
+| **Production** | `https://mcp.brain.fi`  | `https://api.brain.fi/v1/agents/mcp`         |
+| **Sandbox**    | `https://mcp.brain.dev` | `https://api.sandbox.brain.fi/v1/agents/mcp` |
+
+Sandbox and production are wired to Base Sepolia for agent registration, scope
+verification, policy registration, and audit anchoring. This is separate from
+the settlement rail's own mainnet gating. The on-chain scope checker
+(`services/api/src/mcp/viemScopeChecker.ts`) is pinned to Base Sepolia for every
+environment; there is no code path that switches it to Base mainnet.
+
 {% hint style="warning" %}
-There is no separate sandbox host. `mcp.brain.dev` and a Base-mainnet production distinction are aspirational: the on-chain scope checker (`services/api/src/mcp/viemScopeChecker.ts`) is hardcoded to Base Sepolia regardless of environment, and there is no code path that switches it to Base mainnet. Do not point integrations at `mcp.brain.dev`; it is not live.
+Only the production row is live today. Neither `mcp.brain.dev` nor `api.sandbox.brain.fi` resolves yet, so do not point integrations at the sandbox host.
 {% endhint %}
 
 ### Methods
@@ -39,7 +50,14 @@ Once a request reaches JSON-RPC dispatch, the HTTP layer returns `200` and appli
 
 ### The 17 Tools
 
-Five Ledger reads, two Wiki reads, one Raw contribute, one Raw artifact read, three PaymentIntent tools (`payment_intent.propose`, `payment_intent.cancel`, `payment_intent.list`), three proposal tools (`proposals.list`, `proposals.get`, `proposals.decide`), one evidence resolve (`evidence.resolve`), and one agent action propose. **There is no `payment_intent.execute` tool, and there will never be one**. Execution is reserved for internal Brain workers running under tenant policy and the §6 gate.
+Five Ledger reads, two Wiki reads, two Raw tools (`raw.contribute` and
+`raw.artifact.get`), three PaymentIntent tools (`payment_intent.propose`,
+`payment_intent.cancel`, `payment_intent.list`), three proposal tools
+(`proposals.list`, `proposals.get`, `proposals.decide`), one evidence resolve
+(`evidence.resolve`), and one agent action propose. **There is no
+`payment_intent.execute` tool, and there will never be one**. Execution is
+reserved for internal Brain workers running under tenant policy and the section 6
+gate.
 
 `tools/list` returns the full registry regardless of the caller's granted scopes -- a tool the agent is not scoped for is still listed; only `tools/call` enforces the per-tool scope gate.
 
@@ -61,7 +79,7 @@ The six templated resources, returned only by `resources/templates/list` (each h
 brain://ledger/accounts/{account_id}
 brain://ledger/transactions/{transaction_id}
 brain://ledger/obligations/{obligation_id}
-brain://ledger/payment-intents/{payment_intent_id}
+brain://ledger/payment-intents/{id}
 brain://wiki/pages/{slug}
 brain://proofs/{action_id}
 ```
@@ -93,7 +111,7 @@ Per-tool scope (e.g. `payment_intent:propose`) is enforced at invocation time.
 
 There are **two error surfaces**, depending on where the request fails:
 
-- **Pre-dispatch auth failures**. The route guard (`services/mcp/src/transport/http.ts`) checks the JWT/principal type, then the auth verifier (`services/mcp/src/auth.ts`, invoked at the top of `server.handle`) checks on-chain registration, scope-hash, and tenant **before** any method is dispatched. These throw `BrainError`s that propagate out of the handler, so the client receives an HTTP `401`/`403` **Brain error envelope** -- `{ "error": { "code": ..., "message": ..., "details": ..., "request_id": ..., "docs_url": ... } }` per Brain Engineering Standards §4.1 -- _not_ a JSON-RPC response. The relevant codes: `auth_token_missing`, `auth_token_invalid`, `auth_token_expired`, `auth_scope_insufficient`, `auth_tenant_mismatch`, `agent_not_registered`, `agent_not_registered_onchain`, `agent_scope_hash_missing`, `agent_scope_hash_mismatch`.
+- **Pre-dispatch auth failures**. The route guard (`services/mcp/src/transport/http.ts`) checks the JWT/principal type, then the auth verifier (`services/mcp/src/auth.ts`, invoked at the top of `server.handle`) checks on-chain registration, scope-hash, and tenant **before** any method is dispatched. These throw `BrainError`s that propagate out of the handler, so the client receives an HTTP `401`/`403` **Brain error envelope** -- `{ "error": { "code": ..., "message": ..., "details": ..., "request_id": ..., "docs_url": ... } }` per Brain Engineering Standards section 4.1 -- _not_ a JSON-RPC response. The relevant codes: `auth_token_missing`, `auth_token_invalid`, `auth_token_expired`, `auth_scope_insufficient`, `auth_tenant_mismatch`, `agent_not_registered`, `agent_not_registered_onchain`, `agent_scope_hash_missing`, `agent_scope_hash_mismatch`.
 - **Post-auth JSON-RPC errors**. Once dispatch begins, the HTTP status is `200` and the failure is carried in the JSON-RPC `error` field using the Brain-specific codes below (`-32001..-32005`) plus the standard JSON-RPC codes.
 
 | Code     | Meaning                                                                                                                                                                                                 |

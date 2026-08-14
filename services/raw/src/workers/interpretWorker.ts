@@ -181,7 +181,7 @@ export async function runInterpretCycle(
       const output = interpreter(bytes, {
         rawArtifactId: row.id,
         tenantId: row.tenant_id,
-        sourceType: row.source_type,
+        sourceType: sourceTypeForInterpreter(row.source_type),
         sourceSchema: row.source_schema,
         sourceRef: row.source_ref,
         sourceId: row.source_id,
@@ -250,6 +250,10 @@ export async function runInterpretCycle(
       }
     }
   }
+}
+
+function sourceTypeForInterpreter(sourceType: string): string {
+  return sourceType === "xlsx_upload" ? "csv_upload" : sourceType;
 }
 
 export function startInterpretWorker(

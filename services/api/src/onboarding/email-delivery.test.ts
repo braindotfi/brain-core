@@ -70,6 +70,42 @@ describe("buildVerificationEmailDelivery", () => {
     expect(body.text).toContain("verify-token-123");
     expect(body.html).toContain("verify-token-123");
   });
+
+  it("keeps the client-facing detail generic but attaches the provider's raw rejection as cause", async () => {
+    // The provider's real reason (e.g. "sender identity not verified") must
+    // reach server-side logs via cause, without changing what a public,
+    // unauthenticated POST /v1/signup caller sees in details.provider_error.
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ errors: [{ message: "sender identity not verified" }] }), {
+          status: 422,
+          statusText: "Unprocessable Entity",
+        }),
+    );
+    const deliverVerificationEmail = buildVerificationEmailDelivery({
+      selfServeSignupEnabled: true,
+      exposeVerificationToken: false,
+      emailEndpoint: "https://esp.example.test/send",
+      emailApiKey: "test-api-key",
+      fetchImpl,
+    });
+
+    const attempt = deliverVerificationEmail?.({
+      tenantId: "tnt_01J0000000000000000000000Z",
+      userId: "user_01J0000000000000000000000A",
+      email: "founder@example.com",
+      token: "verify-token-123",
+      expiresAt: new Date("2026-07-09T00:00:00.000Z"),
+    });
+
+    await expect(attempt).rejects.toMatchObject({
+      code: "dependency_unavailable",
+      details: { provider_error: "Unprocessable Entity" },
+      cause: expect.objectContaining({
+        message: expect.stringContaining("sender identity not verified"),
+      }),
+    });
+  });
 });
 
 describe("buildSetPasswordEmailDelivery", () => {
@@ -112,7 +148,7 @@ describe("buildSetPasswordEmailDelivery", () => {
     expect(body.text).not.toContain("verification token");
   });
 
-  it("propagates a non-ok ESP response as dependency_unavailable", async () => {
+  it("propagates a non-ok ESP response as dependency_unavailable, with the raw body as cause", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response("nope", { status: 500 }));
     const deliver = buildSetPasswordEmailDelivery({
       emailEndpoint: "https://esp.example.test/send",
@@ -128,6 +164,9 @@ describe("buildSetPasswordEmailDelivery", () => {
         token: "raw-token-abc",
         expiresAt: new Date(),
       }),
-    ).rejects.toMatchObject({ code: "dependency_unavailable" });
+    ).rejects.toMatchObject({
+      code: "dependency_unavailable",
+      cause: expect.objectContaining({ message: expect.stringContaining("nope") }),
+    });
   });
 });

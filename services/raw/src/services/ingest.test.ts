@@ -248,7 +248,7 @@ describe("ingestOne", () => {
     expect(audit.events[0]!.inputs.source_schema).toBe("acme_neobank.warehouse_tx.v1");
   });
 
-  it("defaults BrainMVB upload source types to the registered upload schema", async () => {
+  it("defaults structured upload source types to the registered upload schema", async () => {
     const { pool, client } = makeFakePool();
     const blob = new MemoryBlobAdapter();
     const audit = new InMemoryAuditEmitter();
@@ -268,6 +268,48 @@ describe("ingestOne", () => {
     expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
     expect(client.inserts[0]?.[9]).toBe(UPLOAD_DOCUMENT_SCHEMA);
     expect(audit.events[0]!.inputs.source_schema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+  });
+
+  it("defaults XLSX uploads to the deterministic upload schema", async () => {
+    const { pool, client } = makeFakePool();
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      { pool: pool as unknown as Pool, blob, audit },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "xlsx_upload",
+        sourceRef: { filename: "ar-aging.xlsx" },
+        body: Buffer.from("PK fake xlsx body"),
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    );
+
+    expect(result.sourceSchema).toBe(UPLOAD_DOCUMENT_SCHEMA);
+    expect(client.inserts[0]?.[9]).toBe(UPLOAD_DOCUMENT_SCHEMA);
+  });
+
+  it("leaves text uploads out of the passive structured interpreter", async () => {
+    const { pool, client } = makeFakePool();
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      { pool: pool as unknown as Pool, blob, audit },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "txt_upload",
+        sourceRef: { filename: "note.txt" },
+        body: Buffer.from("Vendor invoice note"),
+        mimeType: "text/plain",
+      },
+    );
+
+    expect(result.sourceSchema).toBeNull();
+    expect(client.inserts[0]?.[9]).toBeNull();
   });
 
   it("runs the post-ingest hook after upload schema stamping and raw audit", async () => {
@@ -327,6 +369,33 @@ describe("ingestOne", () => {
     expect(client.parsedChecks).toEqual([
       [expect.any(String), ["document_records_upload_v1", CUSTOMER_ASSERTED_CSV_PARSER], ["1.0.3"]],
     ]);
+  });
+
+  it("queues text uploads for the document extraction agent", async () => {
+    const { pool, client } = makeFakePool({ autoExtract: true });
+    const blob = new MemoryBlobAdapter();
+    const audit = new InMemoryAuditEmitter();
+
+    const result = await ingestOne(
+      {
+        pool: pool as unknown as Pool,
+        blob,
+        audit,
+        extractionJobs: { documentExtractorConfigured: true },
+      },
+      {
+        tenantId: newTenantId(),
+        actor: newUserId(),
+        sourceType: "txt_upload",
+        sourceRef: { filename: "vendor-note.txt" },
+        body: Buffer.from("Invoice note"),
+        mimeType: "text/plain",
+      },
+    );
+
+    expect(result.extractionJob).not.toBeNull();
+    expect(client.jobs).toHaveLength(1);
+    expect(client.parsedChecks).toEqual([[expect.any(String)]]);
   });
 
   it("dedups by envelope idempotency_key before inserting", async () => {

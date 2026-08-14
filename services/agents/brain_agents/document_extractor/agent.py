@@ -40,6 +40,11 @@ _PAYLOAD_KEYS = (
 _MAX_OCR_BYTES: Final = 10 * 1024 * 1024
 _MAX_OCR_PDF_PAGES: Final = 5
 _OCR_TIMEOUT_SECONDS: Final = 30.0
+# The field-extraction call runs for every document type (CSV/XLSX/DOCX/PDF,
+# and OCR'd text), so it needs the same per-request bound as the OCR vision
+# call -- otherwise a slow/rate-limited OpenAI response hangs the request
+# with no timeout anywhere in the chain up to the api's fetch() call.
+_EXTRACTION_TIMEOUT_SECONDS: Final = 30.0
 _OCR_CONFIDENCE_CAP: Final = 0.5
 _OCR_IMAGE_MIMES: Final = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp"})
 
@@ -102,6 +107,7 @@ class DocumentExtractorAgent:
             ],
             response_format={"type": "json_object"},
             temperature=0,
+            timeout=_EXTRACTION_TIMEOUT_SECONDS,
         )
         raw = response.choices[0].message.content or "{}"
         try:

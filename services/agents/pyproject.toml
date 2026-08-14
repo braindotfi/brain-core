@@ -17,9 +17,11 @@ dependencies = [
   "httpx>=0.27.0",
   "pydantic-settings>=2.14.2",
   # Deterministic document -> text for the document_extractor (RFC 0004).
-  # CSV/plain text need only the stdlib; XLSX via openpyxl; text-layer PDFs
-  # via pypdf. Image and scanned PDF OCR uses the OpenAI vision model.
+  # CSV/plain text need only the stdlib; XLSX via openpyxl; DOCX via
+  # python-docx; text-layer PDFs via pypdf. Image and scanned PDF OCR uses
+  # the OpenAI vision model.
   "openpyxl>=3.1.0",
+  "python-docx>=1.1.0",
   "pypdf>=6.15.0",  # Includes the available fixes for PDF parsing denial-of-service advisories.
 ]
 
@@ -83,6 +85,11 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
 # §12.2: type hints on every public function; mypy --strict in CI.
+
+[[tool.mypy.overrides]]
+# python-docx ships no py.typed marker and no published stub package.
+module = ["docx.*"]
+ignore_missing_imports = true
 
 # ---------- pytest ----------
 [tool.pytest.ini_options]

@@ -1,13 +1,10 @@
 ---
-description: >-
-  AI that runs finance for you. Brain is the financial intelligence layer for
-  businesses, transforming financial activity into memory, intelligence, and
-  autonomous execution.
+description: Your AI finance department.  Powered by a financial brain for AI agents.
 ---
 
-# Welcome to Brain
+# Welcome to Brain 🧠
 
-You point Brain at a business's existing financial sources (banks, ERP, invoicing tools, on-chain wallets) and you get back a continuously updated, policy-aware record that humans and autonomous software can both read, reason over, and act on safely.
+Brain is the memory and intelligence layer for autonomous finance. It gives AI agents the context, financial intelligence, and rules to run an entire finance department for businesses. You point Brain at a business's existing financial sources (banks, ERP, invoicing tools, on-chain wallets, etc.) and you get back a continuously updated, policy-aware record that humans and autonomous software can both read, reason over, and act on safely.
 
 Brain holds neither funds nor rail access. It sits between an account holder and their financial world as the structured intelligence layer: ingest, normalize, remember, govern, execute, prove.
 

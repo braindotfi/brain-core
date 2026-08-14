@@ -1,0 +1,91 @@
+name: ops-prod-tenants-probe
+
+# Post-deploy verification for the production tenancy path (CLAUDE.md
+# "Deployment" section): confirms POST /v1/tenants on api.brain.fi actually
+# returns a user-principal member session, not just that /health matches a
+# commit. Runs entirely over SSH on the VM so BRAIN_PLATFORM_SERVICE_SECRET
+# (host-only, in .env.prod, never in GitHub secrets) is read and used
+# locally and never appears in Actions logs. The probe tenant uses a
+# founder email ending in @brain.invalid (the documented undeliverable
+# placeholder pattern), so it creates no real customer record and sends no
+# real email.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe POST /v1/tenants on production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Probe POST /v1/tenants
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+
+          if [[ ! -f .env.prod ]]; then
+            echo "::error::.env.prod not found on VM"
+            exit 1
+          fi
+
+          secret=$(grep -E '^BRAIN_PLATFORM_SERVICE_SECRET=' .env.prod | head -n1 | cut -d'=' -f2-)
+          if [[ -z "$secret" ]]; then
+            echo "::error::BRAIN_PLATFORM_SERVICE_SECRET is not set in .env.prod -- production tenancy is not configured"
+            exit 1
+          fi
+
+          probe_ref="ops-probe-$(date -u +%Y%m%dT%H%M%SZ)"
+          body=$(cat <<JSON
+          {"founder":{"email":"ops-probe+${probe_ref}@brain.invalid","display_name":"Deploy Verification Probe"},"company_name":"Ops Deploy Probe (safe to ignore)","founder_external_ref":"${probe_ref}"}
+          JSON
+          )
+
+          resp=$(curl -sS -w '\nHTTP_STATUS:%{http_code}' -X POST https://api.brain.fi/v1/tenants \
+            -H "X-Platform-Service-Auth: $secret" \
+            -H 'Content-Type: application/json' \
+            -d "$body")
+          unset secret
+
+          status=$(echo "$resp" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2)
+          payload=$(echo "$resp" | sed '$d')
+
+          tenant_id=$(echo "$payload" | grep -o '"tenant_id":"[^"]*"' | head -n1 || true)
+          has_session_token=$(echo "$payload" | grep -o '"session":{"token"' | head -n1 || true)
+          has_member=$(echo "$payload" | grep -o '"member":{' | head -n1 || true)
+          error_code=$(echo "$payload" | grep -o '"code":"[^"]*"' | head -n1 || true)
+
+          echo "HTTP status: $status"
+          echo "tenant_id present: ${tenant_id:-<none>}"
+          echo "member object present: ${has_member:+yes}"
+          echo "session.token present: ${has_session_token:+yes}"
+          [[ -n "$error_code" ]] && echo "error code: $error_code"
+
+          # Never print the raw payload: on success it carries a live bearer
+          # session token and refresh token.
+
+          if [[ "$status" != "200" && "$status" != "201" ]]; then
+            echo "::error::probe did not return a success status"
+            exit 1
+          fi
+          if [[ -z "$has_member" || -z "$has_session_token" ]]; then
+            echo "::error::response did not include both a member object and a session token -- not a user-principal member session"
+            exit 1
+          fi
+          echo "PROBE OK: POST /v1/tenants returns a user-principal member session (tenant ${tenant_id})"
+          REMOTE

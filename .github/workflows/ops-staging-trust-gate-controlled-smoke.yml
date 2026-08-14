@@ -47,10 +47,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv GIT_SHA")"
+          baseline_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          printf 'baseline_worker_sha=%s\n' "$(docker exec brain-prod-worker printenv GIT_SHA)"
+          printf 'baseline_api_flag=%s\n' "$(docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED)"
+          printf 'baseline_worker_flag=%s\n' "$(docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED)"
+          printf '%s\n' 'trust_gate_baseline_remote_complete'
+          REMOTE
+          )"
+          printf '%s\n' "$baseline_output"
+          if ! printf '%s\n' "$baseline_output" | grep -Fxq 'trust_gate_baseline_remote_complete'; then
+            echo "Staging trust-gate baseline remote step did not complete" >&2
+            exit 1
+          fi
+          worker_sha="$(printf '%s\n' "$baseline_output" | sed -n 's/^baseline_worker_sha=//p')"
+          api_flag="$(printf '%s\n' "$baseline_output" | sed -n 's/^baseline_api_flag=//p')"
+          worker_flag="$(printf '%s\n' "$baseline_output" | sed -n 's/^baseline_worker_flag=//p')"
           git merge-base --is-ancestor "$TRUST_GATE_BASE_SHA" "$worker_sha"
-          api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED")"
-          worker_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED")"
           if [[ "$api_flag" != "false" || "$worker_flag" != "false" ]]; then
             echo "Expected API and worker trust gate OFF before controlled smoke, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2
             exit 1
@@ -182,7 +195,7 @@ jobs:
             printf 'missing_source_account_api_log request_id=%s\n%s\n' "$request_id" "$matched_log"
           }
           create_approved_intent() {
-            local destination="$1" response intent_id status request_body
+            local destination="$1" response intent_id status request_body approval_status approval_response
             request_body="{\"action_type\":\"ach_outbound\",\"source_account_id\":\"${source_account_id}\",\"destination_counterparty_id\":\"${destination}\",\"amount\":\"1.00\",\"currency\":\"USD\"}"
             status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-create-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents" -H 'Content-Type: application/json' -H "Authorization: Bearer ${agent_token}" --data "$request_body")"
             response="$(cat /tmp/trust-gate-create-response.json)"
@@ -203,16 +216,27 @@ jobs:
             intent_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(!/^pi_[0-9A-HJKMNP-TV-Z]{26}$/.test(v.id??""))process.exit(1);process.stdout.write(v.id)})')"
             status="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>process.stdout.write(String(JSON.parse(b).status??"")))')"
             if [[ "$status" != pending_approval ]]; then echo "Expected pending_approval for $intent_id, got $status" >&2; exit 1; fi
-            curl -fsS --connect-timeout 10 --max-time 30 -X POST "$API_BASE/v1/payment-intents/$intent_id/approve" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{}' >/dev/null
+            approval_status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-approve-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents/$intent_id/approve" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{}')"
+            approval_response="$(cat /tmp/trust-gate-approve-response.json)"
+            printf 'payment_intent_approve_request payment_intent_id=%s\npayment_intent_approve_response_status=%s\npayment_intent_approve_response=%s\n' "$intent_id" "$approval_status" "$approval_response" >&2
+            if [[ "$approval_status" != 200 ]]; then
+              echo "Expected 200 while approving smoke payment intent $intent_id, got $approval_status" >&2
+              exit 1
+            fi
             printf '%s' "$intent_id"
           }
           expect_execute_failure() {
-            local label="$1" intent_id="$2" expected_index="$3" expected_name="$4" expected_reason="${5:-}" status
+            local label="$1" intent_id="$2" expected_index="$3" expected_name="$4" expected_reason="${5:-}" status response
             status="$(curl -sS --connect-timeout 10 --max-time 30 -o /tmp/trust-gate-response.json -w '%{http_code}' -X POST "$API_BASE/v1/payment-intents/$intent_id/execute" -H "Authorization: Bearer ${agent_token}")"
-            cat /tmp/trust-gate-response.json | EXPECTED_INDEX="$expected_index" EXPECTED_NAME="$expected_name" EXPECTED_REASON="$expected_reason" docker exec -i -e EXPECTED_INDEX -e EXPECTED_NAME -e EXPECTED_REASON brain-prod-api node -e '
-              let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b),d=v.error?.details??v.details??{};if(process.env.EXPECTED_INDEX!==String(d.check_index)||process.env.EXPECTED_NAME!==d.check_name||(process.env.EXPECTED_REASON&&process.env.EXPECTED_REASON!==d.reason))process.exit(1)})'
-            if [[ "$status" != 409 ]]; then echo "Expected 409 for $label, got $status" >&2; cat /tmp/trust-gate-response.json >&2; exit 1; fi
-            printf 'matrix=%s payment_intent_id=%s http_status=%s failed_check=%s reason=%s response=%s\n' "$label" "$intent_id" "$status" "$expected_index" "${expected_reason:-none}" "$(cat /tmp/trust-gate-response.json)"
+            response="$(cat /tmp/trust-gate-response.json)"
+            printf 'payment_intent_execute_request matrix=%s payment_intent_id=%s\npayment_intent_execute_response_status=%s\npayment_intent_execute_response=%s\n' "$label" "$intent_id" "$status" "$response"
+            if [[ "$status" != 409 ]]; then echo "Expected 409 for $label, got $status" >&2; exit 1; fi
+            if ! printf '%s' "$response" | EXPECTED_INDEX="$expected_index" EXPECTED_NAME="$expected_name" EXPECTED_REASON="$expected_reason" docker exec -i -e EXPECTED_INDEX -e EXPECTED_NAME -e EXPECTED_REASON brain-prod-api node -e '
+              let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b),d=v.error?.details??v.details??{};if(process.env.EXPECTED_INDEX!==String(d.check_index)||process.env.EXPECTED_NAME!==d.check_name||(process.env.EXPECTED_REASON&&process.env.EXPECTED_REASON!==d.reason))process.exit(1)})'; then
+              echo "Unexpected gate failure details for $label" >&2
+              exit 1
+            fi
+            printf 'matrix=%s payment_intent_id=%s http_status=%s failed_check=%s reason=%s\n' "$label" "$intent_id" "$status" "$expected_index" "${expected_reason:-none}"
           }
           transition() { curl -fsS --connect-timeout 10 --max-time 30 -X POST "$API_BASE/v1/ledger/counterparties/$counterparty_id/trust/$1" -H 'Content-Type: application/json' -H "Authorization: Bearer ${member_token}" --data '{"reason":"controlled trust-gate smoke"}' >/dev/null; }
           make_fixture_counterparty_missing() {
@@ -224,17 +248,33 @@ jobs:
             docker exec brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -c "BEGIN; SET LOCAL session_replication_role = replica; UPDATE ledger_payment_intents SET destination_counterparty_id = '${missing_counterparty_id}' WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}'; COMMIT;"
             printf 'fixture_counterparty_reference_removed payment_intent_id=%s\n' "$intent_id"
           }
+          make_fixture_source_account_missing() {
+            local intent_id="$1" mutation
+            # Public creation now requires a real source account. This isolated
+            # post-approval fixture mutation reaches Check 4 without allowing
+            # the payment intent to be dispatched. The query locks and updates
+            # exactly the one isolated tenant-owned intent, then returns the
+            # before and after account references as inspectable evidence.
+            mutation="$(docker exec brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=1 -c "BEGIN; SET LOCAL session_replication_role = replica; WITH prior AS (SELECT source_account_id AS before_source_account_id FROM ledger_payment_intents WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}' FOR UPDATE), updated AS (UPDATE ledger_payment_intents SET source_account_id = '${missing_account_id}' WHERE owner_id = '${smoke_tenant_id}' AND id = '${intent_id}' RETURNING source_account_id AS after_source_account_id) SELECT json_build_object('tenant_id', '${smoke_tenant_id}', 'payment_intent_id', '${intent_id}', 'matched_rows', (SELECT count(*) FROM prior), 'updated_rows', (SELECT count(*) FROM updated), 'before_source_account_id', (SELECT before_source_account_id FROM prior), 'after_source_account_id', (SELECT after_source_account_id FROM updated)); COMMIT;")"
+            printf 'fixture_source_account_mutation=%s\n' "$mutation"
+            if ! printf '%s' "$mutation" | EXPECTED_TENANT_ID="$smoke_tenant_id" EXPECTED_INTENT_ID="$intent_id" EXPECTED_BEFORE_ACCOUNT_ID="$source_account_id" EXPECTED_AFTER_ACCOUNT_ID="$missing_account_id" docker exec -i -e EXPECTED_TENANT_ID -e EXPECTED_INTENT_ID -e EXPECTED_BEFORE_ACCOUNT_ID -e EXPECTED_AFTER_ACCOUNT_ID brain-prod-api node -e '
+              let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(v.tenant_id!==process.env.EXPECTED_TENANT_ID||v.payment_intent_id!==process.env.EXPECTED_INTENT_ID||v.matched_rows!==1||v.updated_rows!==1||v.before_source_account_id!==process.env.EXPECTED_BEFORE_ACCOUNT_ID||v.after_source_account_id!==process.env.EXPECTED_AFTER_ACCOUNT_ID)process.exit(1)})'; then
+              echo "Fixture source-account mutation did not affect exactly one expected tenant-owned payment intent" >&2
+              exit 1
+            fi
+          }
 
           reproduce_missing_source_account
 
-          # Each passing trust state stops at deliberately missing Check 4, after policy, and cannot dispatch.
-          unreviewed_intent="$(create_approved_intent "$counterparty_id")"; expect_execute_failure unreviewed "$unreviewed_intent" 4 source_account_allowed 'account not found'
+          # Public creation uses the real fixture account. States that should pass
+          # trust are then changed only in the isolated row to stop at Check 4.
+          unreviewed_intent="$(create_approved_intent "$counterparty_id")"; make_fixture_source_account_missing "$unreviewed_intent"; expect_execute_failure unreviewed "$unreviewed_intent" 4 source_account_allowed 'account not found'
           transition grant
-          trusted_intent="$(create_approved_intent "$counterparty_id")"; expect_execute_failure trusted "$trusted_intent" 4 source_account_allowed 'account not found'
+          trusted_intent="$(create_approved_intent "$counterparty_id")"; make_fixture_source_account_missing "$trusted_intent"; expect_execute_failure trusted "$trusted_intent" 4 source_account_allowed 'account not found'
           transition pause
           paused_intent="$(create_approved_intent "$counterparty_id")"; expect_execute_failure paused "$paused_intent" 5.25 counterparty_trust_allowed counterparty_trust_paused
           transition acknowledge
-          acknowledged_intent="$(create_approved_intent "$counterparty_id")"; expect_execute_failure acknowledged "$acknowledged_intent" 4 source_account_allowed 'account not found'
+          acknowledged_intent="$(create_approved_intent "$counterparty_id")"; make_fixture_source_account_missing "$acknowledged_intent"; expect_execute_failure acknowledged "$acknowledged_intent" 4 source_account_allowed 'account not found'
           missing_counterparty_id='cp_01ARZ3NDEKTSV4RRFFQ69G5FAV'
           missing_intent="$(create_approved_intent "$counterparty_id")"; make_fixture_counterparty_missing "$missing_intent"; expect_execute_failure missing_counterparty "$missing_intent" 5 counterparty_allowed 'counterparty not found'
           intent_ids="$unreviewed_intent,$trusted_intent,$paused_intent,$acknowledged_intent,$missing_intent"
@@ -316,25 +356,36 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS "$HEALTH_URL"
-          api_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED")"
-          worker_flag="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED")"
           window_end="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "runtime_flag_after_api=$api_flag"
-          echo "runtime_flag_after_worker=$worker_flag"
-          echo "trust_gate_window_start=$WINDOW_START"
-          echo "trust_gate_window_end=$window_end"
-          echo "trust_gate_confirmation_complete=true"
-          window_rows="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c \"SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz ORDER BY created_at ASC;\"")"
-          printf '%s\n' "$window_rows"
-          if [[ -n "${SMOKE_TENANT_ID:-}" ]]; then
-            foreign_event_count="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c \"SELECT count(*) FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${window_end}'::timestamptz AND tenant_id <> '${SMOKE_TENANT_ID}';\"")"
-            echo "window_non_fixture_execute_after_count=$foreign_event_count"
-            if [[ "$foreign_event_count" != 0 ]]; then
-              echo "A non-fixture payment_intent.execute.after event occurred during the temporary trust-gate window" >&2
-              exit 1
-            fi
+          confirmation_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "WINDOW_START='$WINDOW_START' WINDOW_END='$window_end' SMOKE_TENANT_ID='${SMOKE_TENANT_ID:-}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          api_flag="$(docker exec brain-prod-api printenv BRAIN_TRUST_GATE_ENABLED)"
+          worker_flag="$(docker exec brain-prod-worker printenv BRAIN_TRUST_GATE_ENABLED)"
+          printf 'runtime_flag_after_api=%s\n' "$api_flag"
+          printf 'runtime_flag_after_worker=%s\n' "$worker_flag"
+          printf 'trust_gate_window_start=%s\n' "$WINDOW_START"
+          printf 'trust_gate_window_end=%s\n' "$WINDOW_END"
+          docker exec brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 -c "SELECT tenant_id, id, created_at, inputs->>'payment_intent_id' AS payment_intent_id, outputs->'failed_check' AS failed_check FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${WINDOW_END}'::timestamptz ORDER BY created_at ASC;"
+          if [[ -n "$SMOKE_TENANT_ID" ]]; then
+            foreign_event_count="$(docker exec brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM audit_events WHERE action = 'payment_intent.execute.after' AND created_at >= '${WINDOW_START}'::timestamptz AND created_at <= '${WINDOW_END}'::timestamptz AND tenant_id <> '${SMOKE_TENANT_ID}';")"
+            printf 'window_non_fixture_execute_after_count=%s\n' "$foreign_event_count"
           else
-            echo "window isolation query not asserted because no smoke tenant was created"
+            printf '%s\n' 'window_isolation_query_not_asserted_no_smoke_tenant'
+          fi
+          printf '%s\n' 'trust_gate_confirmation_remote_complete'
+          REMOTE
+          )"
+          printf '%s\n' "$confirmation_output"
+          if ! printf '%s\n' "$confirmation_output" | grep -Fxq 'trust_gate_confirmation_remote_complete'; then
+            echo "Staging trust-gate confirmation remote step did not complete" >&2
+            exit 1
+          fi
+          api_flag="$(printf '%s\n' "$confirmation_output" | sed -n 's/^runtime_flag_after_api=//p')"
+          worker_flag="$(printf '%s\n' "$confirmation_output" | sed -n 's/^runtime_flag_after_worker=//p')"
+          foreign_event_count="$(printf '%s\n' "$confirmation_output" | sed -n 's/^window_non_fixture_execute_after_count=//p')"
+          if [[ -n "${SMOKE_TENANT_ID:-}" && "$foreign_event_count" != 0 ]]; then
+            echo "A non-fixture payment_intent.execute.after event occurred during the temporary trust-gate window" >&2
+            exit 1
           fi
           if [[ "$TRUST_GATE_SMOKE_MUTATION_STARTED" == true && ( "$api_flag" != false || "$worker_flag" != false ) ]]; then
             echo "Failed to restore staging trust gate OFF, api=${api_flag:-unset} worker=${worker_flag:-unset}" >&2

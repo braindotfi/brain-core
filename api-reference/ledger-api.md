@@ -8,12 +8,16 @@ Query the deterministic structured records the Brain protocol produces from Raw 
 | Account detail (+ latest balance) | `GET /v1/ledger/accounts/{account_id}`                               |
 | List balances (point-in-time)     | `GET  /v1/ledger/balances`                                           |
 | List counterparties               | `GET  /v1/ledger/counterparties`                                     |
+| Create a manual counterparty      | `POST /v1/ledger/counterparties`                                     |
+| Update counterparty identity      | `PATCH /v1/ledger/counterparties/{counterparty_id}`                  |
 | Grant counterparty trust          | `POST /v1/ledger/counterparties/{counterparty_id}/trust/grant`       |
 | Pause counterparty trust          | `POST /v1/ledger/counterparties/{counterparty_id}/trust/pause`       |
 | Restore counterparty trust        | `POST /v1/ledger/counterparties/{counterparty_id}/trust/restore`     |
 | Acknowledge counterparty review   | `POST /v1/ledger/counterparties/{counterparty_id}/trust/acknowledge` |
 | List invoices                     | `GET  /v1/ledger/invoices`                                           |
+| Invoice detail                    | `GET  /v1/ledger/invoices/{invoice_id}`                              |
 | List obligations                  | `GET  /v1/ledger/obligations`                                        |
+| Governed resolved views           | `GET /v1/ledger/{obligations,counterparties,accounts}/{id}/resolved` |
 | List transactions                 | `GET  /v1/ledger/transactions`                                       |
 | Transaction detail                | `GET  /v1/ledger/transactions/{transaction_id}`                      |
 | Promote Raw → Ledger              | `POST /v1/ledger/normalize`                                          |
@@ -122,6 +126,35 @@ Authorization: Bearer <token>
 
 `type` enum: `merchant | vendor | customer | employer | employee | bank | wallet | exchange | tax_authority | agent | other`. `verified_status`: `unverified | self_attested | document_verified | sanctions_cleared`. `trust_status`: `unreviewed | trusted | paused | acknowledged`. Each counterparty carries `risk_level` (`low | medium | high | sanctioned`), `aliases[]`, and `linked_accounts[]`. Filter list results with `trust_status` when needed.
 
+### Create or Update a Counterparty
+
+Create a manual counterparty with `ledger:write`:
+
+```http
+POST /v1/ledger/counterparties
+Authorization: Bearer <user token>
+Content-Type: application/json
+
+{ "name": "Example Vendor", "type": "vendor", "contact_email": "ap@example.test" }
+```
+
+`name` and `type` are required. Optional identity fields are `display_name`,
+`category`, `contact_email`, `country`, `tax_id`, and `aliases`. The route returns
+`201` for a new record or `200` when its idempotent create result already exists.
+
+Update editable identity fields with a user principal and `ledger:write`:
+
+```http
+PATCH /v1/ledger/counterparties/{counterparty_id}
+Authorization: Bearer <user token>
+Content-Type: application/json
+
+{ "display_name": "Example Vendor Ltd." }
+```
+
+The patch cannot modify payment or trust fields. It returns
+`{ "counterparty": { ... } }`.
+
 ### Counterparty Trust
 
 Trust transitions apply uniformly to every counterparty type, including vendors
@@ -170,6 +203,28 @@ classification rather than treating every non-AP row as receivable.
 inventory. `GET /v1/ledger/obligations?direction=receivable` contains only
 receivables that have an obligation projection, so it is not an interchangeably
 complete AR list.
+
+Fetch an individual invoice with:
+
+```http
+GET /v1/ledger/invoices/{invoice_id}
+Authorization: Bearer <token>
+```
+
+It returns the tenant-scoped invoice row or `404`.
+
+### Governed Resolved Views
+
+The resolved views retain all source observations and present the current
+governed value, field-level authority, and conflicts for one record. Each route
+requires `ledger:read` and returns `404` when the record is absent or belongs to
+another tenant.
+
+| Record       | Endpoint                                                   |
+| ------------ | ---------------------------------------------------------- |
+| Obligation   | `GET /v1/ledger/obligations/{obligation_id}/resolved`      |
+| Counterparty | `GET /v1/ledger/counterparties/{counterparty_id}/resolved` |
+| Account      | `GET /v1/ledger/accounts/{account_id}/resolved`            |
 
 ### Promote Raw → Ledger
 

@@ -21,7 +21,7 @@ export class HttpEmailClient implements EmailClient {
     subject: string;
     html: string;
     text: string;
-  }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  }): Promise<{ ok: boolean; messageId?: string; error?: string; rawBody?: string }> {
     const from =
       args.tenantId !== undefined
         ? ((await this.options.senderResolver?.senderForTenant(args.tenantId)) ?? this.options.from)
@@ -40,20 +40,32 @@ export class HttpEmailClient implements EmailClient {
         text: args.text,
       }),
     });
-    const body = await parseJson(response);
+    // Read the body once as text; parse it as JSON from that text rather than
+    // calling response.json() (which would consume the body a second time).
+    const text = await response.text();
+    const body = parseJson(text);
     return {
       ok: response.ok,
       ...(typeof body?.messageId === "string" ? { messageId: body.messageId } : {}),
       ...(!response.ok
-        ? { error: typeof body?.error === "string" ? body.error : response.statusText }
+        ? {
+            error: typeof body?.error === "string" ? body.error : response.statusText,
+            // Providers disagree on their error field name (SendGrid uses
+            // errors[], Postmark uses Message, ...), so `error` above is
+            // often just the generic HTTP reason phrase. Callers that need
+            // the provider's actual rejection reason (e.g. to log it
+            // server-side without exposing it to a public caller) read this
+            // instead.
+            ...(text.length > 0 ? { rawBody: text } : {}),
+          }
         : {}),
     };
   }
 }
 
-async function parseJson(response: Response): Promise<Record<string, unknown> | null> {
+function parseJson(text: string): Record<string, unknown> | null {
   try {
-    const body = (await response.json()) as unknown;
+    const body = JSON.parse(text) as unknown;
     return body !== null && typeof body === "object" && !Array.isArray(body)
       ? (body as Record<string, unknown>)
       : null;

@@ -10,15 +10,17 @@ root, with a weighted average of 51,474. This is an observed measurement, not a
 fixed gas or cost guarantee. It does not represent a full publisher-wallet cost
 guarantee while wallet-to-anchor reconciliation remains under investigation.
 
-| Operation                           | Endpoint                                        |
-| ----------------------------------- | ----------------------------------------------- |
-| Get the latest anchor               | `GET  /v1/audit/anchor/latest`                  |
-| Walk an entity's history            | `GET  /v1/audit/entity/{entityType}/{entityId}` |
-| Get one event (+ inclusion proof)   | `GET  /v1/audit/event/{event_id}`               |
-| Query events                        | `GET  /v1/audit/events`                         |
-| Export (not implemented, see below) | `POST /v1/audit/export`                         |
-| Independent verification            | `POST /v1/audit/verify`                         |
-| Canonical Proof for an action       | See the [Proof API](proof-api.md)               |
+| Operation                           | Endpoint                                             |
+| ----------------------------------- | ---------------------------------------------------- |
+| Get the latest anchor               | `GET  /v1/audit/anchor/latest`                       |
+| Walk an entity's history            | `GET  /v1/audit/entity/{entityType}/{entityId}`      |
+| Get one event (+ inclusion proof)   | `GET  /v1/audit/event/{event_id}`                    |
+| Query events                        | `GET  /v1/audit/events`                              |
+| Publish an on-demand tenant anchor  | `POST /v1/audit/anchor/publish`                      |
+| Manage outbound webhook endpoints   | `POST`, `GET`, `DELETE /v1/audit/webhooks/endpoints` |
+| Export (not implemented, see below) | `POST /v1/audit/export`                              |
+| Independent verification            | `POST /v1/audit/verify`                              |
+| Canonical Proof for an action       | See the [Proof API](proof-api.md)                    |
 
 ### Get the Latest Anchor
 
@@ -63,15 +65,25 @@ Authorization: Bearer <token>
   "events": [
     {
       "id": "audit_evt_001",
-      "tenant_id": "acme",
       "layer": "agent",
+      "event_type": "payment_intent.created",
+      "category": "payment_intent.created",
+      "severity": "info",
       "actor": "ag_payment_v1",
+      "actor_ref": {
+        "id": "ag_payment_v1",
+        "type": "agent",
+        "display_name": "Payment Agent",
+        "email": null,
+        "lookup": "/v1/execution/agents/ag_payment_v1"
+      },
       "action": "payment_intent.proposed",
       "inputs": { "evidence_ids": ["rp_001"], "policy_version": 4 },
       "outputs": { "payment_intent_id": "pi_a1b2c3" },
+      "policy_version": 4,
       "policy_decision_id": "pd_7331",
-      "before_state": null,
-      "after_state": "proposed",
+      "policy_check_id": "rule_invoice_above_5k",
+      "outcome": "confirm",
       "event_hash": "0x...",
       "prev_event_hash": "0x...",
       "created_at": "2026-05-28T12:00:00Z"
@@ -109,6 +121,31 @@ Authorization: Bearer <token>
 ```
 
 Filters: `layer` (`raw | ledger | wiki | policy | agent | execution | audit`), `actor`, `since`, `until`, `limit` (default 100, max 1000), `cursor`. Returns `{ events: AuditEvent[], next_cursor }`.
+
+### Publish an Anchor
+
+`POST /v1/audit/anchor/publish` publishes the calling tenant's next eligible
+audit window on Base Sepolia. It requires `audit:admin` and enforces a durable
+per-tenant 60-second cooldown. Database-only tenants receive `409`
+`audit_anchor_db_only`; a tenant with no unanchored events receives
+`audit_no_events`.
+
+### Manage Outbound Webhook Endpoints
+
+Register an HTTPS receiver with `audit:write`:
+
+```http
+POST /v1/audit/webhooks/endpoints
+Authorization: Bearer <token with audit:write>
+Content-Type: application/json
+
+{ "url": "https://receiver.example.test/events", "enabled_events": ["payment_intent.executed"] }
+```
+
+The `201` response returns the endpoint secret once. List endpoints with
+`GET /v1/audit/webhooks/endpoints` and `audit:read`; returned secrets are masked
+as `secret_preview`. Delete an endpoint with
+`DELETE /v1/audit/webhooks/endpoints/{id}` and `audit:write`, which returns `204`.
 
 ### Independent Verification
 

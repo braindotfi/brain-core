@@ -70,6 +70,17 @@ Authorization: Bearer <token>
 
 Returns the same `PaymentIntent` shape as above. `404` if unknown or tenant-isolated.
 
+Add `?expand=agent` to include the agent that created the intent when one is
+available:
+
+```http
+GET /v1/payment-intents/{id}?expand=agent
+Authorization: Bearer <token>
+```
+
+The response adds `agent`, either `null` or an object with `id`, `kind`, and
+`display_name`.
+
 ### Status Lifecycle
 
 | Status                     | Meaning                                                         |
@@ -97,6 +108,13 @@ Authorization: Bearer <approver token>
 ```
 
 No request body. Returns `200` with the updated `PaymentIntent`. Approvers are determined by Policy (the `confirm` rule's `required_approvers` / quorum); each approver hits this endpoint independently and the intent flips to `approved` once the quorum is met.
+
+Approval is also checked against the authenticated member. A failed check returns
+`403` with `payment_intent_approval_invalid`. Reasons include `actor_unresolved`,
+`actor_inactive`, `domain_not_authorized`, `actor_limit_exceeded`,
+`self_approval_blocked`, and `second_approval_required`. A member's
+`requiresSecondApproverAboveCents` threshold can require a distinct second
+approver even when Policy requires only one.
 
 ### Reject
 
@@ -146,7 +164,6 @@ The `rail` returned on `execute` is **not** the same vocabulary as the create-ti
 | `erp_writeback` | NetSuite SuiteTalk (fail-closed stub)                                                        |
 | `x402_base`     | USDC-on-Base settlement (mapped from `x402_settle`; unregistered at boot, fail-closed)       |
 | `escrow_base`   | `BrainEscrow` lock release (mapped from `escrow_release`; unregistered at boot, fail-closed) |
-| `notification`  | Surface-to-human (no money path)                                                             |
 
 The `x402_base` and `escrow_base` rails are **shadow-first**: they throw rather than fake-settle until promoted.
 

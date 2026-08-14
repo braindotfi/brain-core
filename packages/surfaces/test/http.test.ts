@@ -505,6 +505,67 @@ test("HttpEmailClient uses tenant sender resolver only when it returns a verifie
   assert.equal(bodies[1]?.from, "approvals@brain.fi");
 });
 
+test("HttpEmailClient surfaces the raw response body on a non-ok send, regardless of the provider's error field name", async () => {
+  // Providers disagree on the error field name (SendGrid: errors[], Postmark:
+  // Message, etc.), so body.error is often absent even on a real rejection.
+  // rawBody must carry the exact text so a caller can log/inspect it, not
+  // just a generic fallback -- this is what surfaces a specific provider
+  // rejection (e.g. "sender not verified") instead of a bare status phrase.
+  const fetchImpl: typeof fetch = async () =>
+    new Response(JSON.stringify({ errors: [{ message: "sender identity not verified" }] }), {
+      status: 422,
+      statusText: "Unprocessable Entity",
+    });
+  const client = new HttpEmailClient({
+    endpoint: "https://esp.example/send",
+    apiKey: "esp-key",
+    from: "approvals@brain.fi",
+    fetchImpl,
+  });
+
+  const result = await client.send({
+    to: "ap@example.com",
+    subject: "Verify",
+    html: "<p>Verify</p>",
+    text: "Verify",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "Unprocessable Entity"); // unchanged: no literal "error" field
+  assert.match(result.rawBody ?? "", /sender identity not verified/);
+});
+
+test("HttpEmailClient omits rawBody on success and leaves it undefined for a body-less failure", async () => {
+  const okFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({ messageId: "msg_1" }), { status: 200 });
+  const okClient = new HttpEmailClient({
+    endpoint: "https://esp.example/send",
+    apiKey: "esp-key",
+    fetchImpl: okFetch,
+  });
+  const okResult = await okClient.send({
+    to: "ap@example.com",
+    subject: "Verify",
+    html: "<p>Verify</p>",
+    text: "Verify",
+  });
+  assert.equal(okResult.rawBody, undefined);
+
+  const emptyFetch: typeof fetch = async () => new Response("", { status: 500 });
+  const emptyClient = new HttpEmailClient({
+    endpoint: "https://esp.example/send",
+    apiKey: "esp-key",
+    fetchImpl: emptyFetch,
+  });
+  const emptyResult = await emptyClient.send({
+    to: "ap@example.com",
+    subject: "Verify",
+    html: "<p>Verify</p>",
+    text: "Verify",
+  });
+  assert.equal(emptyResult.rawBody, undefined);
+});
+
 test("Dual approval does not enqueue until approval recording returns quorum", async () => {
   const proposal = sampleProposal();
   const counters = { audit: 0, execute: 0 };

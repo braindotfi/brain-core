@@ -16,12 +16,36 @@ Compiles to:
 
 ```json
 {
-  "subject": { "agent_capability": "pay_invoice" },
-  "resource": { "counterparty.status": ["approved"] },
+  "version": 3,
+  "lists": {
+    "vendors.trusted": ["counterparty_approved_vendor"]
+  },
   "rules": [
-    { "if": "amount < 5000 && counterparty.known", "then": "allow" },
-    { "if": "amount >= 5000 && counterparty.known", "then": "confirm", "approvers": ["role:cfo"] },
-    { "if": "!counterparty.known", "then": "reject", "reason": "new_counterparty_review_required" }
+    {
+      "id": "pay-trusted-vendors-under-5000",
+      "applies_to": ["outbound_payment"],
+      "when": {
+        "counterparty.in": "vendors.trusted",
+        "amount.lte": { "currency": "USD", "value": "5000" }
+      },
+      "execute": "auto"
+    },
+    {
+      "id": "pay-trusted-vendors-over-5000",
+      "applies_to": ["outbound_payment"],
+      "when": {
+        "counterparty.in": "vendors.trusted",
+        "amount.gt": { "currency": "USD", "value": "5000" }
+      },
+      "require": "cfo_approval",
+      "execute": "confirm"
+    },
+    {
+      "id": "block-untrusted-counterparties",
+      "applies_to": ["outbound_payment"],
+      "when": { "counterparty.not_in": "vendors.trusted" },
+      "execute": "reject"
+    }
   ]
 }
 ```
@@ -32,24 +56,27 @@ The compiler emits both the deterministic compiled policy **and** a human-readab
 
 ### The Five Elements of a Policy
 
-Every policy has five elements.
+Every compiled policy has a version and a set of rules. It can also define named
+counterparty lists, message templates, and allowed actions for each agent.
 
-| Element        | What It Defines                                                              |
-| -------------- | ---------------------------------------------------------------------------- |
-| **Subjects**   | Which agents, capabilities, or roles the policy applies to                   |
-| **Resources**  | Which accounts, counterparties, asset classes, or jurisdictions are in scope |
-| **Actions**    | What is permitted: read, propose, execute, approve                           |
-| **Conditions** | Thresholds, time windows, frequency caps, required approvers                 |
-| **Outcomes**   | `allow`, `reject`, or `confirm`                                              |
+| Element          | What It Defines                                                                  |
+| ---------------- | -------------------------------------------------------------------------------- |
+| **Rule id**      | A stable identifier for the rule                                                 |
+| **`applies_to`** | Action categories such as `outbound_payment`, `ledger_write`, or `any`           |
+| **`when`**       | Conditions such as counterparty lists, amount limits, agent role, or time window |
+| **`require`**    | Optional approval requirement such as `single_signer` or `cfo_approval`          |
+| **`execute`**    | `auto`, `confirm`, or `reject`                                                   |
 
-### The Three Outcomes
+### Execution Modes
 
-Every policy evaluation produces exactly one of three outcomes.
+Every matched rule uses one of three execution modes. The evaluator maps `auto`
+to an allow decision when no approvers are required, or to confirm when a
+`require` clause names approvers.
 
-<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>✅ allow</strong></td><td>The action proceeds. A signed policy verdict is attached to the resulting session-key call via `executeViaSessionKey` or rail call.</td></tr><tr><td><strong>⚠️ confirm</strong></td><td>Human approval is required before the action can execute. The verdict names the required approvers (e.g. <code>role:cfo</code>).</td></tr><tr><td><strong>❌ reject</strong></td><td>The action is blocked. The verdict carries a structured reason (e.g. <code>new_counterparty_review_required</code>).</td></tr></tbody></table>
+<table data-view="cards"><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>auto</strong></td><td>The evaluator returns allow unless the rule also names approvers in <code>require</code>, in which case it returns confirm.</td></tr><tr><td><strong>confirm</strong></td><td>Human approval is required before the action can execute. The rule can name the required approver roles in <code>require</code>.</td></tr><tr><td><strong>reject</strong></td><td>The evaluator blocks the action.</td></tr></tbody></table>
 
 {% hint style="info" %}
-**`confirm` is the default for unmatched conditions.** If the policy compiler cannot determine a clear `allow` or `reject` for a proposed action, the safe default is to require human review. Failure modes are explicit, not silent.
+**`reject` is the default for unmatched conditions.** If no rule matches a proposed action, the policy evaluator returns a reject decision with no matched rule id.
 {% endhint %}
 
 ### Worked Example: the $7,800 Invoice
@@ -90,11 +117,8 @@ The signed structure:
 ```
 PolicyRegistration(
   bytes32 tenantId,
-  uint64  version,
-  bytes32 policyHash,
-  uint64  notBefore,
-  uint64  notAfter,
-  uint256 nonce
+  uint256 version,
+  bytes32 policyHash
 )
 ```
 

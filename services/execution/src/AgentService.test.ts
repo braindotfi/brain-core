@@ -280,6 +280,129 @@ describe("AgentService.propose", () => {
     expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
   });
 
+  it("refreshes a pending vendor_risk proposal for the same vendor instead of inserting another", async () => {
+    const queries: string[] = [];
+    let proposal = makeProposalRow({
+      proposing_agent: "vendor_risk",
+      status: "pending",
+      action: { type: "block_payment", vendor_id: "ven_123", risk_band: "high" },
+    });
+    let inserted = false;
+    const deps = makeDeps("confirm", (sql, values) => {
+      queries.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+        return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("INSERT INTO proposals")) {
+        inserted = true;
+        proposal = { ...proposal, id: String(values[0]), action: JSON.parse(String(values[3])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      if (sql.startsWith("UPDATE proposals")) {
+        proposal = { ...proposal, action: JSON.parse(String(values[1])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const svc = new AgentService(deps);
+
+    const first = await svc.propose(ctx, "vendor_risk", {
+      action: { type: "block_payment", vendor_id: "ven_123", risk_band: "elevated" },
+    });
+    const second = await svc.propose(ctx, "vendor_risk", {
+      action: { type: "block_payment", vendor_id: "ven_123", risk_band: "high" },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+    expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(1);
+    expect(proposal.action).toMatchObject({ vendor_id: "ven_123", risk_band: "high" });
+  });
+
+  it.each(["subscription", "fraud_anomaly"])(
+    "refreshes a pending %s proposal for the same transaction",
+    async (agentId) => {
+      const queries: string[] = [];
+      let proposal = makeProposalRow({ proposing_agent: agentId, status: "pending" });
+      let inserted = false;
+      const deps = makeDeps("confirm", (sql, values) => {
+        queries.push(sql);
+        if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+        if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+          return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith("INSERT INTO proposals")) {
+          inserted = true;
+          proposal = { ...proposal, id: String(values[0]), action: JSON.parse(String(values[3])) };
+          return { rows: [proposal], rowCount: 1 };
+        }
+        if (sql.startsWith("UPDATE proposals")) return { rows: [proposal], rowCount: 1 };
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const svc = new AgentService(deps);
+
+      const first = await svc.propose(ctx, agentId, {
+        action: { type: "notify", transaction_id: "txn_123" },
+      });
+      const second = await svc.propose(ctx, agentId, {
+        action: { type: "notify", transaction_id: "txn_123" },
+      });
+
+      expect(second.id).toBe(first.id);
+      expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+    },
+  );
+
+  it("refreshes compliance by policy decision but never dedupes empty identifiers", async () => {
+    const queries: string[] = [];
+    let proposal = makeProposalRow({
+      proposing_agent: "compliance",
+      status: "pending",
+      action: { type: "notify", policy_decision_id: "pd_789" },
+    });
+    let inserted = false;
+    const deps = makeDeps("confirm", (sql, values) => {
+      queries.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+        return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("INSERT INTO proposals")) {
+        inserted = true;
+        proposal = { ...proposal, id: String(values[0]), action: JSON.parse(String(values[3])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      if (sql.startsWith("UPDATE proposals")) {
+        proposal = { ...proposal, action: JSON.parse(String(values[1])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const svc = new AgentService(deps);
+
+    const first = await svc.propose(ctx, "compliance", {
+      action: { type: "notify", policy_decision_id: "pd_789" },
+    });
+    const second = await svc.propose(ctx, "compliance", {
+      action: { type: "notify", policy_decision_id: "pd_789", severity: "high" },
+    });
+    expect(second.id).toBe(first.id);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+
+    queries.length = 0;
+    inserted = false;
+    const third = await svc.propose(ctx, "compliance", {
+      action: { type: "notify", policy_decision_id: "", audit_event_id: "" },
+    });
+    const fourth = await svc.propose(ctx, "compliance", {
+      action: { type: "notify", policy_decision_id: "", audit_event_id: "" },
+    });
+    expect(fourth.id).not.toBe(third.id);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(2);
+    expect(queries.some((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(false);
+  });
+
   it("returns a proposal with the full action and timestamps", async () => {
     const svc = new AgentService(makeDeps("allow"));
     const action = { kind: "flag_anomaly", tx_id: "tx_abc", reason: "duplicate" };

@@ -571,6 +571,19 @@ async def test_agent_extract_clamps_out_of_range_confidence() -> None:
     assert result["confidence"] == 1.0
 
 
+async def test_agent_extract_uses_per_request_timeout() -> None:
+    """Must fail against pre-fix agent.py, which passes no timeout to the
+    field-extraction call -- an unbounded call can hang the whole request
+    chain (api -> agents -> OpenAI) with no error ever surfacing."""
+    mock_openai = _openai_returning(json.dumps({**_PAYLOAD, "confidence": 0.9}))
+    agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini")
+
+    await agent.extract("some invoice text")
+
+    kwargs = mock_openai.chat.completions.create.await_args.kwargs
+    assert kwargs["timeout"] == 30.0
+
+
 async def test_agent_ocr_image_uses_vision_model() -> None:
     mock_openai = _openai_ocr_returning("INVOICE\nAcme Utilities\nTotal due 120.50")
     agent = DocumentExtractorAgent(mock_openai, "gpt-4o-mini", ocr_model="gpt-4o")
