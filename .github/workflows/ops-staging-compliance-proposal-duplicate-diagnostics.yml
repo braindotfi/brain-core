@@ -1,0 +1,73 @@
+name: ops-staging-compliance-proposal-duplicate-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "One canonical tenant id to inspect. This diagnostic is read-only."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: report staging Compliance proposal duplicates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      DEDUPE_MERGE_SHA: 5f3dbd7a76e635a75bf5dea6f94854a488cf15cf
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate fixed diagnostic input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "tenant_id must be exactly one canonical tenant id"
+            exit 1
+          fi
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed staging read-only query
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="scripts/ops/report-staging-compliance-proposal-duplicates.sql"
+          scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:~/brain-core/$script"
+          diagnostic_output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "cd ~/brain-core
+          docker exec -i brain-prod-postgres psql -U brain -d brain -v ON_ERROR_STOP=1 -v tenant_id='$TENANT_ID' -f - < $script
+          printf '%s\\n' staging_compliance_proposal_duplicate_diagnostic_complete")"
+          printf '%s\n' "$diagnostic_output"
+          if ! printf '%s\n' "$diagnostic_output" | grep -Fxq 'staging_compliance_proposal_duplicate_diagnostic_complete'; then
+            echo "Staging Compliance proposal duplicate diagnostic did not complete" >&2
+            exit 1
+          fi
+
+          worker_sha="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "docker exec brain-prod-worker printenv GIT_SHA")"
+          if git merge-base --is-ancestor "$DEDUPE_MERGE_SHA" "$worker_sha"; then
+            worker_contains_dedupe_merge=true
+          else
+            worker_contains_dedupe_merge=false
+          fi
+          printf 'staging_worker_git_sha=%s\n' "$worker_sha"
+          printf 'staging_worker_contains_dedupe_merge=%s\n' "$worker_contains_dedupe_merge"
