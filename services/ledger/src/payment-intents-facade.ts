@@ -13,6 +13,7 @@
 import {
   appendApprovalId,
   appendExecutionReceiptId,
+  findPaymentIntentByDedupKey,
   findPaymentIntentById,
   insertPaymentIntent,
   listPaymentIntents,
@@ -22,6 +23,8 @@ import {
 
 export const LedgerPaymentIntents = {
   findById: findPaymentIntentById,
+  /** Proposal-layer idempotency lookup (1a.5, BRAIN-94). */
+  findByDedupKey: findPaymentIntentByDedupKey,
   list: listPaymentIntents,
   pauseApprovedByAgent: pauseApprovedPaymentIntentsByAgent,
   insert: insertPaymentIntent,

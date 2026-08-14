@@ -2,13 +2,13 @@
  * §9.5 PaymentIntent state machine.
  *
  *   [proposed] ──> [pending_approval] ──> [awaiting_second_approval] ──> [approved] ──> [dispatching] ──> [executed]
- *       │              │                       │              │               │
- *       │              │                       │              v               v
- *       │              │                       │           [failed]        [failed]
- *       │              │                       v
- *       │              │                  [rejected]
- *       │              v
- *       │         [rejected]
+ *       │              │      │                │              │               │
+ *       │              │      │                │              v               v
+ *       │              │      │                │           [failed]        [failed]
+ *       │              │      │                v
+ *       │              │      │           [rejected]
+ *       │              v      v
+ *       │         [rejected] [cancelled]
  *       v
  *   [cancelled]
  *
@@ -44,7 +44,18 @@ export function isValidPaymentIntentTransition(
         to === "pending_approval" || to === "approved" || to === "rejected" || to === "cancelled"
       );
     case "pending_approval":
-      return to === "awaiting_second_approval" || to === "approved" || to === "rejected";
+      // BRAIN-95: cancel is reachable here too. pending_approval means zero
+      // approval signatures have been recorded yet (approve() only moves
+      // pending_approval -> awaiting_second_approval or -> approved once a
+      // signature lands), so cancelling from here undoes nothing that
+      // already happened -- it is the agent withdrawing its own still-
+      // unreviewed proposal, the same safety valve proposed already has.
+      return (
+        to === "awaiting_second_approval" ||
+        to === "approved" ||
+        to === "rejected" ||
+        to === "cancelled"
+      );
     case "awaiting_second_approval":
       return to === "approved" || to === "rejected";
     case "approved":

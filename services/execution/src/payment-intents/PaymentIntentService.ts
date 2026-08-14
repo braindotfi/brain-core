@@ -53,6 +53,7 @@ import {
 import { LedgerPaymentIntents, LedgerReservations, type PaymentIntentRow } from "@brain/ledger";
 import type { Pool } from "pg";
 import { assertPaymentIntentTransition, type PaymentIntentState } from "./state-machine.js";
+import { isUniqueViolation } from "../agent-runs.js";
 import type { ApprovalService } from "../approvals/ApprovalService.js";
 import {
   insertExecution,
@@ -405,6 +406,18 @@ export class PaymentIntentService implements IPaymentIntentService {
       throw brainError("request_body_invalid", "amount must be a positive decimal string");
     }
 
+    // Proposal-layer idempotency (1a.5, BRAIN-94): a retry carrying the same
+    // dedup key returns the already-created intent unchanged instead of
+    // creating a second one. Checked before any resolver call or policy
+    // evaluation so a retry is cheap and never re-runs policy against a
+    // possibly-changed rule set for what is the same logical proposal.
+    if (input.proposal_dedup_key !== undefined) {
+      const existingByKey = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+        LedgerPaymentIntents.findByDedupKey(c, input.proposal_dedup_key as string),
+      );
+      if (existingByKey !== null) return toRecord(existingByKey);
+    }
+
     await this.assertSourceAccountExists(ctx, input);
 
     // RFC 0004 §5.2: an intent is no more confident than the Ledger evidence it
@@ -452,40 +465,58 @@ export class PaymentIntentService implements IPaymentIntentService {
           ? "approved"
           : "pending_approval";
 
-    const row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.insert(c, {
-        id: newPaymentIntentId(),
-        ownerId: ctx.tenantId,
-        createdByAgentId:
-          input.agent_id ??
-          (ctx.principalType === undefined || ctx.principalType === "agent" ? ctx.actor : null),
-        actionType: input.action_type,
-        sourceAccountId: input.source_account_id,
-        destinationCounterpartyId: input.destination_counterparty_id,
-        amount: input.amount,
-        currency: input.currency,
-        ...(input.obligation_id !== undefined ? { obligationId: input.obligation_id } : {}),
-        ...(input.invoice_id !== undefined ? { invoiceId: input.invoice_id } : {}),
-        status,
-        policyDecisionId: decision.id,
-        evidenceIds: input.evidence_ids ?? [],
-        confidence: persistedConfidence,
-        ...(input.evidence_score !== undefined ? { evidenceScore: input.evidence_score } : {}),
-        ...(input.risk_level !== undefined ? { riskLevel: input.risk_level } : {}),
-        // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
-        // otherwise). The §6 gate re-validates it against the counterparty (6.5).
-        ...(input.action_type === "x402_settle" && input.pay_to !== undefined
-          ? { settlementPayTo: input.pay_to }
-          : {}),
-        // Escrow context — persisted only for escrow_release (DB CHECK enforces
-        // null otherwise). The §6 gate binds it to the on-chain lock (6.6).
-        ...(input.action_type === "escrow_release" &&
-        input.escrow_id !== undefined &&
-        input.job_terms_hash !== undefined
-          ? { escrowId: input.escrow_id, jobTermsHash: input.job_terms_hash }
-          : {}),
-      }),
-    );
+    let row: PaymentIntentRow;
+    try {
+      row = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+        LedgerPaymentIntents.insert(c, {
+          id: newPaymentIntentId(),
+          ownerId: ctx.tenantId,
+          createdByAgentId:
+            input.agent_id ??
+            (ctx.principalType === undefined || ctx.principalType === "agent" ? ctx.actor : null),
+          actionType: input.action_type,
+          sourceAccountId: input.source_account_id,
+          destinationCounterpartyId: input.destination_counterparty_id,
+          amount: input.amount,
+          currency: input.currency,
+          ...(input.obligation_id !== undefined ? { obligationId: input.obligation_id } : {}),
+          ...(input.invoice_id !== undefined ? { invoiceId: input.invoice_id } : {}),
+          status,
+          policyDecisionId: decision.id,
+          evidenceIds: input.evidence_ids ?? [],
+          confidence: persistedConfidence,
+          ...(input.evidence_score !== undefined ? { evidenceScore: input.evidence_score } : {}),
+          ...(input.risk_level !== undefined ? { riskLevel: input.risk_level } : {}),
+          ...(input.proposal_dedup_key !== undefined
+            ? { proposalDedupKey: input.proposal_dedup_key }
+            : {}),
+          // x402 recipient — persisted only for x402_settle (DB CHECK enforces null
+          // otherwise). The §6 gate re-validates it against the counterparty (6.5).
+          ...(input.action_type === "x402_settle" && input.pay_to !== undefined
+            ? { settlementPayTo: input.pay_to }
+            : {}),
+          // Escrow context — persisted only for escrow_release (DB CHECK enforces
+          // null otherwise). The §6 gate binds it to the on-chain lock (6.6).
+          ...(input.action_type === "escrow_release" &&
+          input.escrow_id !== undefined &&
+          input.job_terms_hash !== undefined
+            ? { escrowId: input.escrow_id, jobTermsHash: input.job_terms_hash }
+            : {}),
+        }),
+      );
+    } catch (err) {
+      // Race: a concurrent identical propose committed between the dedup
+      // lookup above and this insert. The partial unique index on
+      // (owner_id, proposal_dedup_key) rejects the loser; return the
+      // winner row instead of surfacing a spurious failure to the retry.
+      if (input.proposal_dedup_key !== undefined && isUniqueViolation(err)) {
+        const existingByKey = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
+          LedgerPaymentIntents.findByDedupKey(c, input.proposal_dedup_key as string),
+        );
+        if (existingByKey !== null) return toRecord(existingByKey);
+      }
+      throw err;
+    }
 
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
@@ -758,15 +789,20 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   public async cancel(ctx: ServiceCallContext, id: string): Promise<PaymentIntent> {
     const intent = await this.requireIntent(ctx, id);
-    if (intent.status !== "proposed") {
+    // BRAIN-95: cancellable from proposed OR pending_approval. pending_approval
+    // carries no recorded approval signature yet (approve() only advances it
+    // to awaiting_second_approval or approved once one lands), so cancelling
+    // from there withdraws the agent still-unreviewed proposal rather
+    // than undoing a decision anyone else already made.
+    if (intent.status !== "proposed" && intent.status !== "pending_approval") {
       throw brainError(
         "payment_intent_invalid_state",
-        `cancel only allowed from 'proposed', current=${intent.status}`,
+        `cancel only allowed from 'proposed' or 'pending_approval', current=${intent.status}`,
       );
     }
-    assertPaymentIntentTransition("proposed", "cancelled");
+    assertPaymentIntentTransition(intent.status as PaymentIntentState, "cancelled");
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.transition(c, id, "proposed", "cancelled"),
+      LedgerPaymentIntents.transition(c, id, intent.status, "cancelled"),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during cancel");

@@ -12,7 +12,11 @@
  *  - status = executed unreachable without policy_decision_id.
  *  - status = executed unreachable without an audit-before AND audit-after pair.
  *  - The §6 13-step gate is the only path from approved → executed.
- *  - Rejection is terminal. Cancellation is reachable from `proposed` only.
+ *  - Rejection is terminal. Cancellation is reachable from `proposed` or
+ *    `pending_approval` (BRAIN-95): pending_approval carries no recorded
+ *    approval signature yet, so cancelling from there withdraws the
+ *    proposing agent still-unreviewed proposal, not a decision anyone
+ *    else already made.
  */
 
 import type { Currency, DecimalString, LedgerCommonFields, ServiceCallContext } from "./types.js";
@@ -107,6 +111,15 @@ export interface CreatePaymentIntentInput {
    * by gate check 6.6.
    */
   job_terms_hash?: string;
+  /**
+   * Proposal-layer idempotency key (1a.5, BRAIN-94). When set, create() first
+   * looks up an existing PaymentIntent with this key (scoped by the partial
+   * unique index on ledger_payment_intents(owner_id, proposal_dedup_key)) and
+   * returns it unchanged instead of creating a second row. A caller retrying
+   * an identical propose call after a lost response supplies the same key on
+   * retry and gets back the original intent rather than a duplicate.
+   */
+  proposal_dedup_key?: string;
 }
 
 export interface ExecuteResult {

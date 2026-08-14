@@ -29,14 +29,17 @@ describe("§9.5 PaymentIntent state machine", () => {
     expect(isValidPaymentIntentTransition("proposed", "failed")).toBe(false);
   });
 
-  it("pending_approval → awaiting_second_approval | approved | rejected only", () => {
+  it("pending_approval → awaiting_second_approval | approved | rejected | cancelled (BRAIN-95)", () => {
     expect(isValidPaymentIntentTransition("pending_approval", "awaiting_second_approval")).toBe(
       true,
     );
     expect(isValidPaymentIntentTransition("pending_approval", "approved")).toBe(true);
     expect(isValidPaymentIntentTransition("pending_approval", "rejected")).toBe(true);
+    // BRAIN-95: pending_approval carries no recorded approval signature yet,
+    // so cancel is reachable here too, matching the MCP tool CANCELLABLE_STATUSES
+    // set that already documented (but the service previously rejected) this.
+    expect(isValidPaymentIntentTransition("pending_approval", "cancelled")).toBe(true);
     expect(isValidPaymentIntentTransition("pending_approval", "executed")).toBe(false);
-    expect(isValidPaymentIntentTransition("pending_approval", "cancelled")).toBe(false);
   });
 
   it("awaiting_second_approval → approved | rejected only", () => {
