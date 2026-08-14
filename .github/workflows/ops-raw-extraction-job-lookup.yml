@@ -1,0 +1,129 @@
+name: ops-raw-extraction-job-lookup
+
+# Read-only diagnostic: look up raw_artifacts + their latest extraction_jobs
+# row for a fixed, explicit list of raw_ids, on staging or production.
+# Companion to ops-api-health-diagnostics.yml / ops-auth-health-diagnostics.yml
+# -- same SSH + docker exec pattern, same container names on both VMs
+# (docker-compose.prod.yml hardcodes brain-prod-*, deployed identically to
+# both VM_HOST and VM_HOST_STAGING).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      raw_ids:
+        description: "Comma-separated raw_... ids to look up."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: raw extraction job lookup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      RAW_IDS: ${{ inputs.raw_ids }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Validate raw_ids
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra ids <<< "$RAW_IDS"
+          if [ "${#ids[@]}" -eq 0 ] || [ "${#ids[@]}" -gt 20 ]; then
+            echo "raw_ids must list 1-20 comma-separated ids"
+            exit 1
+          fi
+          for id in "${ids[@]}"; do
+            if ! [[ "$id" =~ ^raw_[0-9A-Za-z]{1,40}$ ]]; then
+              echo "not a well-formed raw_... id: $id"
+              exit 1
+            fi
+          done
+
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Look up raw artifacts and their latest extraction jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build a Postgres array literal from the validated comma-separated
+          # list, so the SQL side does one clean ID list compare rather than
+          # string-splitting untrusted input itself.
+          ids_pg_array="{$RAW_IDS}"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "IDS_ARRAY='$ids_pg_array' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v ids_array="$IDS_ARRAY" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo '-- raw_artifacts --'
+          SELECT id, tenant_id, source_type, mime_type, bytes, ingested_at, tombstoned_at
+            FROM raw_artifacts
+           WHERE id = ANY(:'ids_array'::text[])
+           ORDER BY ingested_at;
+
+          \echo '-- latest extraction_jobs per raw_id --'
+          SELECT DISTINCT ON (raw_id)
+                 raw_id, id AS job_id, status, error, attempt_count,
+                 locked_at, locked_by, started_at, finished_at,
+                 created_at, updated_at
+            FROM extraction_jobs
+           WHERE raw_id = ANY(:'ids_array'::text[])
+           ORDER BY raw_id, created_at DESC;
+
+          COMMIT;
+          SQL
+          REMOTE
