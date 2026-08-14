@@ -268,6 +268,11 @@ Done
   workflows fail to human review, not silent rejection. The policy VM still
   default-denies unmatched rules; `PolicyService.evaluateLegacy` converts only
   scoped high-risk proposal fallthroughs to `confirm` with a signer requirement.
+- Every legacy policy decision stores an allowlisted `source_refs` snapshot when
+  stable source identifiers, entity references, or an amount are available at
+  evaluation time. It never stores the raw action payload. Compliance forwards
+  that snapshot into its proposal action and affected entities, so a hash
+  fallback `subject_id` does not erase available source traceability.
 - Collections Agent proposals are deduped per `invoice_id`: an overdue sweep
   must never leave more than one unresolved proposal open for the same invoice.
   Later sweeps refresh the pending row, while the guarded production cleanup

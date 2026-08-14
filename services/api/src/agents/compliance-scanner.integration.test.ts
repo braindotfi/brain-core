@@ -265,6 +265,7 @@ suite("compliance scanner integration (requires DATABASE_URL)", () => {
             policy_decision_id: newPolicyDecisionId(),
             audit_event_id: "",
             payment_intent_id: "pi_missing_evidence",
+            source_refs: {},
             subject_type: "payment_intent",
             subject_id: "pi_missing_evidence",
             policy_outcome: "confirm",

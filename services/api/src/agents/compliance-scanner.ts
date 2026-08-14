@@ -25,6 +25,7 @@ export interface ComplianceFindingRow {
   readonly policy_decision_id: string;
   readonly audit_event_id: string;
   readonly payment_intent_id: string | null;
+  readonly source_refs: Record<string, unknown>;
   readonly subject_type: string;
   readonly subject_id: string;
   readonly policy_outcome: string;
@@ -139,6 +140,7 @@ export async function runComplianceScanCycle(
           policy_decision_id: row.policy_decision_id,
           audit_event_id: row.audit_event_id,
           payment_intent_id: row.payment_intent_id,
+          source_refs: row.source_refs,
           subject_type: row.subject_type,
           subject_id: row.subject_id,
           policy_outcome: row.policy_outcome,
@@ -198,6 +200,7 @@ async function listComplianceFindings(
               pd.id AS policy_decision_id,
               COALESCE(ev.id, 'audit_missing:' || pi.id) AS audit_event_id,
               pi.id AS payment_intent_id,
+              pd.source_refs,
               pd.subject_type,
               pd.subject_id,
               pd.outcome AS policy_outcome,
@@ -244,6 +247,7 @@ async function listComplianceFindings(
               pd.id AS policy_decision_id,
               ev.id AS audit_event_id,
               CASE WHEN pd.subject_type = 'payment_intent' THEN pd.subject_id ELSE NULL END AS payment_intent_id,
+              pd.source_refs,
               pd.subject_type,
               pd.subject_id,
               pd.outcome AS policy_outcome,
@@ -277,6 +281,7 @@ async function listComplianceFindings(
               pd.id AS policy_decision_id,
               ae.id AS audit_event_id,
               CASE WHEN pd.subject_type = 'payment_intent' THEN pd.subject_id ELSE NULL END AS payment_intent_id,
+              pd.source_refs,
               pd.subject_type,
               pd.subject_id,
               pd.outcome AS policy_outcome,
@@ -309,6 +314,7 @@ async function listComplianceFindings(
               policy_decision_id,
               audit_event_id,
               payment_intent_id,
+              source_refs,
               subject_type,
               subject_id,
               policy_outcome,
@@ -377,6 +383,7 @@ async function listComplianceFindings(
             policy_decision_id,
             audit_event_id,
             payment_intent_id,
+            source_refs,
             subject_type,
             subject_id,
             policy_outcome,

@@ -30,7 +30,8 @@ function buildComplianceProposal(input: HandlerInput): ProposedAction {
   const policyDecisionId = readString(input.context.policy_decision_id);
   const auditEventId = readString(input.context.audit_event_id);
   const finding = classifyFinding(input);
-  const refs = affectedEntities(input, policyDecisionId, auditEventId);
+  const sourceRefs = readSourceRefs(input.context.source_refs);
+  const refs = affectedEntities(input, policyDecisionId, auditEventId, sourceRefs);
 
   return {
     channel: "agent",
@@ -48,6 +49,7 @@ function buildComplianceProposal(input: HandlerInput): ProposedAction {
       policy_decision_id: policyDecisionId,
       audit_event_id: auditEventId,
       payment_intent_id: readString(input.context.payment_intent_id) || null,
+      source_refs: sourceRefs,
       recommended_remediation: finding.recommendedRemediation,
       narrative: narrativeFor(finding, input),
       summary: summaryFor(finding),
@@ -115,10 +117,12 @@ function affectedEntities(
   input: HandlerInput,
   policyDecisionId: string,
   auditEventId: string,
+  sourceRefs: SourceRefs,
 ): Array<{ kind: string; ref: string }> {
-  const entities = [
+  const entities: Array<{ kind: string; ref: string }> = [
     { kind: "policy_decision", ref: policyDecisionId },
     { kind: "audit_event", ref: auditEventId },
+    ...(sourceRefs.source_entity_refs ?? []),
   ];
   const paymentIntentId = readString(input.context.payment_intent_id);
   if (paymentIntentId.length > 0) {
@@ -128,7 +132,71 @@ function affectedEntities(
   if (approvalId.length > 0) {
     entities.push({ kind: "approval", ref: approvalId });
   }
-  return entities;
+  if (sourceRefs.source_proposal_id !== undefined) {
+    entities.push({ kind: "proposal", ref: sourceRefs.source_proposal_id });
+  }
+  if (sourceRefs.source_action_id !== undefined) {
+    entities.push({ kind: "agent_action", ref: sourceRefs.source_action_id });
+  }
+  return [...new Map(entities.map((entity) => [`${entity.kind}:${entity.ref}`, entity])).values()];
+}
+
+type SourceEntityRef = { kind: string; ref: string };
+
+const SOURCE_ENTITY_KINDS = new Set([
+  "account",
+  "agent_action",
+  "counterparty",
+  "document",
+  "invoice",
+  "obligation",
+  "payment_intent",
+  "proposal",
+  "raw_artifact",
+  "transaction",
+]);
+
+interface SourceRefs {
+  source_action_id?: string;
+  source_proposal_id?: string;
+  payment_intent_id?: string;
+  source_entity_refs?: SourceEntityRef[];
+  amount?: { currency: string; value: string };
+}
+
+function readSourceRefs(value: unknown): SourceRefs {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const sourceActionId = optionalString(record.source_action_id);
+  const sourceProposalId = optionalString(record.source_proposal_id);
+  const paymentIntentId = optionalString(record.payment_intent_id);
+  const refs = Array.isArray(record.source_entity_refs)
+    ? record.source_entity_refs.flatMap((item): SourceEntityRef[] => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+        const kind = optionalString(item.kind);
+        const ref = optionalString(item.ref);
+        return kind !== null && SOURCE_ENTITY_KINDS.has(kind) && ref !== null
+          ? [{ kind, ref }]
+          : [];
+      })
+    : [];
+  return {
+    ...(sourceActionId !== null ? { source_action_id: sourceActionId } : {}),
+    ...(sourceProposalId !== null ? { source_proposal_id: sourceProposalId } : {}),
+    ...(paymentIntentId !== null ? { payment_intent_id: paymentIntentId } : {}),
+    ...(refs.length > 0 ? { source_entity_refs: refs } : {}),
+    ...(isAmount(record.amount) ? { amount: record.amount } : {}),
+  };
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function isAmount(value: unknown): value is { currency: string; value: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return optionalString(record.currency) !== null && optionalString(record.value) !== null;
 }
 
 function narrativeFor(finding: ComplianceFinding, input: HandlerInput): string {

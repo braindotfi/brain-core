@@ -29,7 +29,7 @@ const POLICY: PolicyDocument = {
   ],
 };
 
-function poolWithActivePolicy(content: PolicyDocument): Pool {
+function poolWithActivePolicy(content: PolicyDocument, queries?: string[]): Pool {
   const row = {
     id: "pol_01TEST0000000000000000000",
     tenant_id: "tnt_01TEST0000000000000000000",
@@ -44,6 +44,7 @@ function poolWithActivePolicy(content: PolicyDocument): Pool {
   };
   const client = {
     query: vi.fn((sql: string) => {
+      queries?.push(sql);
       if (
         sql === "BEGIN" ||
         sql === "COMMIT" ||
@@ -98,6 +99,20 @@ describe("PolicyService.evaluateForGate — confidence gating (RFC 0004 §5.2)",
   it("allows an intent at/above the threshold", async () => {
     const decision = await service().evaluateForGate(ctx, intent(0.9));
     expect(decision.outcome).toBe("allow");
+  });
+
+  it("keeps the payment gate decision write independent from legacy source references", async () => {
+    const queries: string[] = [];
+    const svc = new PolicyService({
+      pool: poolWithActivePolicy(POLICY, queries),
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    await svc.evaluateForGate(ctx, intent(0.9));
+
+    const insert = queries.find((sql) => sql.includes("INSERT INTO policy_decisions"));
+    expect(insert).toBeDefined();
+    expect(insert).not.toContain("source_refs");
   });
 
   it("threads evidence score and risk level into the gate policy action", async () => {

@@ -76,6 +76,44 @@ describe("complianceHandler", () => {
     });
   });
 
+  it("preserves source references in the compliance action and affected entities", () => {
+    const proposed = complianceHandler.build({
+      action: "notify",
+      context: {
+        policy_outcome: "reject",
+        policy_decision_id: "pd_2",
+        audit_event_id: "evt_2",
+        source_refs: {
+          source_action_id: "act_1",
+          source_proposal_id: "prop_source_1",
+          payment_intent_id: "pi_1",
+          source_entity_refs: [
+            { kind: "counterparty", ref: "cp_1" },
+            { kind: "invoice", ref: "inv_1" },
+          ],
+          amount: { currency: "USD", value: "125.00" },
+        },
+      },
+      evidence: evidenceFor("pd_2", "evt_2"),
+      definition: complianceDefinition,
+    });
+
+    expect(agentAction(proposed)).toMatchObject({
+      source_refs: {
+        source_action_id: "act_1",
+        source_proposal_id: "prop_source_1",
+        payment_intent_id: "pi_1",
+        amount: { currency: "USD", value: "125.00" },
+      },
+      affected_entities: expect.arrayContaining([
+        { kind: "counterparty", ref: "cp_1" },
+        { kind: "invoice", ref: "inv_1" },
+        { kind: "proposal", ref: "prop_source_1" },
+        { kind: "agent_action", ref: "act_1" },
+      ]),
+    });
+  });
+
   it("classifies audit gap records as critical findings", () => {
     const proposed = complianceHandler.build({
       action: "create_compliance_report",
