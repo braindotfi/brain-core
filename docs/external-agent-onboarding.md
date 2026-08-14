@@ -85,6 +85,11 @@ POST /v1/auth/siwx/nonce
 POST /v1/auth/siwx/verify     ← signs with agentAddress
 ```
 
+The nonce response also returns `chain_id`: the EIP-4361 `chainId` your signed
+message must carry (Base Sepolia in the example above). The server rejects a
+mismatched `chainId` with `auth_siwx_invalid`, so read it from the response
+rather than hardcoding 8453 or 84532.
+
 The verify response returns a JWT with `principal_type=agent` and the agent's
 scopes. The off-chain `agents.scope_hash` must equal the on-chain `scopeHash`
 or every tool call hard-rejects with `agent_scope_hash_mismatch`.
