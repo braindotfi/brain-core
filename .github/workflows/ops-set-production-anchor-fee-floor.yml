@@ -1,0 +1,56 @@
+name: ops-set-production-anchor-fee-floor
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type APPLY_PRODUCTION_ANCHOR_FEE_FLOOR to apply the fixed production fee floors."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: apply production anchor fee floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Apply the fixed anchor fee floors and recreate the publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "APPLY_PRODUCTION_ANCHOR_FEE_FLOOR" ]]
+          remote_script="/tmp/set-production-anchor-fee-floor-${{ github.run_id }}-${{ github.run_attempt }}.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/set-production-anchor-fee-floor.sh \
+            "azureuser@$VM_HOST:$remote_script"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "set -e; chmod 700 '$remote_script'; cd ~/brain-core; '$remote_script' '.env.prod'; rc=\$?; rm -f '$remote_script'; exit \$rc"
+
+      - name: Verify the worker remains running
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "docker inspect --format '{{.State.Running}}' brain-prod-worker | grep -x true"
