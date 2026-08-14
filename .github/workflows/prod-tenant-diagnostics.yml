@@ -221,8 +221,10 @@ jobs:
                      p.required_approvers,
                      p.action,
                      COALESCE(p.action->>'narrative', p.action->>'summary', p.action->>'description') AS narrative_text,
-                     COALESCE(p.action->>'headline', p.action->>'summary', p.action->>'narrative', p.action->>'description') AS headline_text
+                     COALESCE(p.action->>'headline', p.action->>'summary', p.action->>'narrative', p.action->>'description') AS headline_text,
+                     a.role AS joined_agent_role
                 FROM proposals p
+                LEFT JOIN agents a ON a.id = p.proposing_agent AND a.tenant_id = p.tenant_id
                WHERE p.tenant_id = :'tenant_id'
                  AND p.status = 'pending'
                  AND (
@@ -231,6 +233,7 @@ jobs:
                    OR p.action->>'agent_kind' = 'compliance'
                    OR p.action->>'agent_id' = 'compliance'
                    OR p.action->>'kind' = 'compliance'
+                   OR a.role = 'compliance'
                  )
             ),
             candidate_refs AS (
