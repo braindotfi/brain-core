@@ -48,6 +48,11 @@ on:
         required: false
         type: boolean
         default: false
+      compliance_proposal_enrichment_extract:
+        description: "When true, print one pending Compliance proposal plus referenced ledger rows for BrainMVB enrichment verification."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -73,6 +78,7 @@ jobs:
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
       TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
       COMPLIANCE_PROPOSAL_DUPLICATE_REPORT: ${{ inputs.compliance_proposal_duplicate_report }}
+      COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT: ${{ inputs.compliance_proposal_enrichment_extract }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate tenant id
@@ -112,6 +118,10 @@ jobs:
             echo "compliance_proposal_duplicate_report must be true or false"
             exit 1
           fi
+          if [[ "$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT" != "true" && "$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT" != "false" ]]; then
+            echo "compliance_proposal_enrichment_extract must be true or false"
+            exit 1
+          fi
 
       - name: Configure SSH
         shell: bash
@@ -133,7 +143,7 @@ jobs:
               "azureuser@$VM_HOST:~/brain-core/scripts/ops/report-compliance-proposal-duplicates.sql"
           fi
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT='$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -175,12 +185,229 @@ jobs:
             echo "compliance_proposal_duplicate_report failed remote validation"
             exit 1
           fi
+          if [[ "$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT" != "true" && "$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT" != "false" ]]; then
+            echo "compliance_proposal_enrichment_extract failed remote validation"
+            exit 1
+          fi
 
           if [[ "$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT" == "true" ]]; then
             cd ~/brain-core
             docker exec -i brain-prod-postgres psql -U brain -d brain \
               -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
               < scripts/ops/report-compliance-proposal-duplicates.sql
+            exit 0
+          fi
+
+          if [[ "$COMPLIANCE_PROPOSAL_ENRICHMENT_EXTRACT" == "true" ]]; then
+            echo "::group::compliance proposal enrichment extract"
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$TENANT_ID" <<'SQL'
+            \pset pager off
+            \pset tuples_only on
+            \pset format unaligned
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            WITH target AS (
+              SELECT p.id,
+                     p.created_at,
+                     p.status,
+                     p.proposing_agent,
+                     p.policy_decision,
+                     p.policy_version,
+                     p.policy_trace,
+                     p.required_approvers,
+                     p.action
+                FROM proposals p
+               WHERE p.tenant_id = :'tenant_id'
+                 AND p.status = 'pending'
+                 AND COALESCE(NULLIF(p.action->>'type', ''), NULLIF(p.action->>'agent_role', ''),
+                              NULLIF(p.action->>'agent_kind', ''), NULLIF(p.action->>'agent_id', ''),
+                              NULLIF(p.action->>'kind', ''), 'unknown') = 'compliance'
+               ORDER BY p.created_at DESC, p.id DESC
+               LIMIT 1
+            ),
+            action_refs AS (
+              SELECT t.id,
+                     elem.value AS item,
+                     elem.ordinality AS ord
+                FROM target t
+                CROSS JOIN LATERAL jsonb_array_elements(
+                  CASE
+                    WHEN jsonb_typeof(t.action->'evidence_refs') = 'array' THEN t.action->'evidence_refs'
+                    WHEN jsonb_typeof(t.action->'evidence') = 'array' THEN t.action->'evidence'
+                    WHEN jsonb_typeof(t.action->'evidence_ids') = 'array' THEN t.action->'evidence_ids'
+                    ELSE '[]'::jsonb
+                  END
+                ) WITH ORDINALITY AS elem(value, ordinality)
+            ),
+            evidence AS (
+              SELECT ar.id,
+                     jsonb_agg(
+                       jsonb_build_object(
+                         'kind',
+                         CASE
+                           WHEN ref LIKE 'acct_%' THEN 'account'
+                           WHEN ref LIKE 'cp_%' THEN 'counterparty'
+                           WHEN ref LIKE 'doc_%' THEN 'document'
+                           WHEN ref LIKE 'ent_%' THEN 'wiki_entity'
+                           WHEN ref LIKE 'evt_%' THEN 'audit_event'
+                           WHEN ref LIKE 'inv_%' THEN 'invoice'
+                           WHEN ref LIKE 'obl_%' THEN 'obligation'
+                           WHEN ref LIKE 'pd_%' THEN 'policy_decision'
+                           WHEN ref LIKE 'pi_%' THEN 'payment_intent'
+                           WHEN ref LIKE 'pol_%' THEN 'policy'
+                           WHEN ref LIKE 'prs_%' THEN 'raw_parsed'
+                           WHEN ref LIKE 'raw_%' THEN 'raw_artifact'
+                           WHEN ref LIKE 'tx_%' THEN 'transaction'
+                           ELSE COALESCE(NULLIF(kind, ''), 'unknown')
+                         END,
+                         'ref', ref,
+                         'resolvable',
+                         CASE
+                           WHEN ref LIKE 'acct_%' OR ref LIKE 'cp_%' OR ref LIKE 'inv_%'
+                             OR ref LIKE 'obl_%' OR ref LIKE 'tx_%' OR ref LIKE 'wiki:%'
+                           THEN true
+                           ELSE false
+                         END
+                       )
+                       ORDER BY ord
+                     ) AS evidence
+                FROM (
+                  SELECT ar.id,
+                         ar.item,
+                         ar.ord,
+                         CASE
+                           WHEN jsonb_typeof(ar.item) = 'string' THEN trim(both '"' from ar.item::text)
+                           ELSE COALESCE(ar.item->>'ref', ar.item->>'id', ar.item->>'entity_id', ar.item->>'wiki_entity_id')
+                         END AS ref,
+                         CASE WHEN jsonb_typeof(ar.item) = 'object' THEN ar.item->>'kind' ELSE NULL END AS kind
+                    FROM action_refs ar
+                ) ar
+               WHERE ref IS NOT NULL AND ref <> ''
+               GROUP BY ar.id
+            ),
+            narrative_refs AS (
+              SELECT DISTINCT matches.match[1] AS ref
+                FROM target t
+                CROSS JOIN LATERAL regexp_matches(
+                  COALESCE(t.action->>'narrative', t.action->>'summary', t.action->>'description', ''),
+                  '([a-z][a-z0-9]{0,11}_[0-9A-HJKMNP-TV-Z]{26})',
+                  'g'
+                ) AS matches(match)
+            ),
+            invoice_rows AS (
+              SELECT li.*
+                FROM ledger_invoices li
+               WHERE li.owner_id = :'tenant_id'
+                 AND li.id IN (SELECT ref FROM narrative_refs WHERE ref LIKE 'inv_%')
+            ),
+            counterparty_rows AS (
+              SELECT lc.*
+                FROM ledger_counterparties lc
+               WHERE lc.owner_id = :'tenant_id'
+                 AND (
+                   lc.id IN (SELECT counterparty_id FROM invoice_rows WHERE counterparty_id IS NOT NULL)
+                   OR lc.id IN (SELECT ref FROM narrative_refs WHERE ref LIKE 'cp_%')
+                 )
+            ),
+            key_facts AS (
+              SELECT t.id,
+                     jsonb_agg(jsonb_build_object('label', label, 'value', value) ORDER BY ord) AS key_facts
+                FROM target t
+                CROSS JOIN LATERAL (
+                  VALUES
+                    (1, 'Finding Type', t.action->>'finding_type'),
+                    (2, 'Severity', t.action->>'severity'),
+                    (3, 'Rule Id', t.action->>'rule_id'),
+                    (4, 'Policy Decision Id', t.action->>'policy_decision_id'),
+                    (5, 'Audit Event Id', t.action->>'audit_event_id'),
+                    (6, 'Recommended Remediation', t.action->>'recommended_remediation')
+                ) AS facts(ord, label, value)
+               WHERE value IS NOT NULL AND value <> ''
+               GROUP BY t.id
+            )
+            SELECT 'COMPLIANCE_ENRICHMENT_RECORD_JSON_BEGIN';
+            SELECT jsonb_pretty(
+              jsonb_build_object(
+                'tenant_id', :'tenant_id',
+                'source', jsonb_build_object(
+                  'proposal_table', 'proposals',
+                  'proposal_id', t.id,
+                  'created_at', t.created_at,
+                  'status', t.status,
+                  'proposing_agent', t.proposing_agent
+                ),
+                'raw_proposal', jsonb_build_object(
+                  'id', t.id,
+                  'type', 'compliance',
+                  'created_at', t.created_at,
+                  'status', t.status,
+                  'risk_band', CASE WHEN t.action->>'risk_band' IN ('low','standard','elevated','high') THEN t.action->>'risk_band' ELSE NULL END,
+                  'confidence', CASE WHEN t.action->>'confidence' ~ '^(0(\.\d+)?|1(\.0+)?)$' THEN (t.action->>'confidence')::float8 ELSE NULL END,
+                  'mode', CASE WHEN t.action->>'mode' = 'notify_only' THEN 'notify_only' ELSE 'propose' END,
+                  'narrative', COALESCE(t.action->>'narrative', t.action->>'summary', t.action->>'description'),
+                  'evidence', COALESCE(e.evidence, '[]'::jsonb),
+                  'agent', NULL,
+                  'payment_intent_id', NULL,
+                  'action_type', NULL,
+                  'stored_action_type', t.action->>'type',
+                  'details', t.action,
+                  'policy', jsonb_build_object(
+                    'decision', t.policy_decision,
+                    'policy_id', t.action->>'policy_id',
+                    'policy_version', t.policy_version,
+                    'matched_rule_id', t.action->>'matched_rule_id',
+                    'required_approvers', COALESCE(to_jsonb(t.required_approvers), '[]'::jsonb),
+                    'trace', t.policy_trace
+                  ),
+                  'presentation', jsonb_build_object(
+                    'headline', COALESCE(t.action->>'headline', t.action->>'summary', t.action->>'narrative', t.action->>'description'),
+                    'recommendation', COALESCE(t.action->>'recommended_action', t.action->>'recommendation', t.action->>'recommended_payment_decision'),
+                    'key_facts', COALESCE(k.key_facts, '[]'::jsonb)
+                  ),
+                  'available_decisions', jsonb_build_array(jsonb_build_object(
+                    'id', 'acknowledge',
+                    'label', 'Acknowledge',
+                    'meaning', 'Record review of the informational finding without unblocking a blocked action.'
+                  ))
+                ),
+                'ledger_entities', jsonb_build_object(
+                  'narrative_refs', COALESCE((SELECT jsonb_agg(ref ORDER BY ref) FROM narrative_refs), '[]'::jsonb),
+                  'invoices', COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object(
+                      'id', li.id,
+                      'invoice_number', li.invoice_number,
+                      'counterparty_id', li.counterparty_id,
+                      'amount_due', li.amount_due::text,
+                      'currency', li.currency,
+                      'due_date', li.due_date,
+                      'status', li.status,
+                      'metadata', to_jsonb(li)->'metadata'
+                    ) ORDER BY li.id)
+                    FROM invoice_rows li
+                  ), '[]'::jsonb),
+                  'counterparties', COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object(
+                      'id', lc.id,
+                      'name', lc.name,
+                      'display_name', lc.name
+                    ) ORDER BY lc.id)
+                    FROM counterparty_rows lc
+                  ), '[]'::jsonb)
+                )
+              )
+            )
+            FROM target t
+            LEFT JOIN evidence e ON e.id = t.id
+            LEFT JOIN key_facts k ON k.id = t.id;
+            SELECT 'COMPLIANCE_ENRICHMENT_RECORD_JSON_END';
+
+            COMMIT;
+          SQL
+            echo "::endgroup::"
             exit 0
           fi
 
