@@ -1,135 +1,98 @@
 ---
-description: Pull a verifiable trail of what your agent (or user) did.
+description: Read a tenant-scoped, tamper-evident audit trail and verify its inclusion proofs.
 ---
 
 # Audit Every Action
 
-Goal: pull a complete, tamper-evident record of every meaningful event for a tenant. Useful for compliance review, customer disputes, internal reporting, and proving to auditors that the right thing happened.
+Goal: retrieve the authenticated tenant's meaningful audit events for compliance
+review, support work, and proof verification.
 
-Brain's API and off-chain audit service are production available. The public
-anchor contract is deployed on Base Sepolia only, is unaudited, and is not a
-Base mainnet deployment.
+The API and off-chain audit service are production available. The public anchor
+contract runs on Base Sepolia only and is unaudited.
 
-### Reading the Trail
+### Read the Trail
 
 ```typescript
-const events = await brain.audit.list("acme", {
-  from:  "2025-09-01",
-  to:    "2025-09-30",
-  type:  "action.executed",  // optional filter
+const page = await brain.audit.list({
+  layer: "execution",
+  since: "2025-09-01T00:00:00.000Z",
+  until: "2025-09-30T23:59:59.999Z",
+  limit: 100,
 });
 
-events.data.forEach((e) => {
-  console.log(e.timestamp, e.type, e.actor, e.summary);
-});
+for (const event of page.events) {
+  console.log(event.id, event.action, event.created_at);
+}
+console.log(page.nextCursor);
 ```
 
-| Type                  | When                                  |
-| --------------------- | ------------------------------------- |
-| `source.connected`    | A source connected for the tenant     |
-| `transaction.created` | A new transaction landed              |
-| `wiki.query`          | A natural-language question was asked |
-| `policy.evaluated`    | A policy decision was rendered        |
-| `action.proposed`     | An agent proposed an action           |
-| `action.approved`     | A human signed approval               |
-| `action.executed`     | An action settled on its rail         |
-| `audit.anchored`      | A Merkle root was anchored on Base    |
+The available filters are `layer`, `actor`, `since`, `until`, `limit`, and
+`cursor`.
 
-### Verifying a Specific Action
+| Event action | Meaning |
+| --- | --- |
+| `wiki.question` | A Wiki question was processed |
+| `policy.evaluate` | A policy evaluation was recorded |
+| `ledger.transaction.created` | A Ledger transaction was created |
+| `agent.action.proposed` | An agent created a proposal |
+| `payment_intent.approved` | A human approval completed |
+| `payment_intent.executed` | A payment completed |
 
-For any action, you can pull a Merkle proof verifiable on-chain.
+### Verify a Payment Proof
 
 ```typescript
-const proof = await brain.proof(actionId);
+const proof = await brain.proof("pi_8231");
 
-proof.event;        // the event itself
-proof.merklePath;   // sibling hashes from leaf to root
-proof.anchorRoot;   // the Merkle root anchored on Base
-proof.anchorTx;     // the transaction that anchored it
-proof.anchorBlock;  // the Base block number
+console.log(proof.merkle_root);
+console.log(proof.merkle_proof);
+console.log(proof.chain_anchor?.tx_hash);
+console.log(proof.chain_anchor?.block_number);
+console.log(proof.rail_receipt);
 ```
 
-You can hand this to a counterparty or auditor. They can verify it without trusting Brain.
+The proof includes the exact `audit_events` objects used for the proof, rather
+than only event identifiers.
 
-```solidity
-// Public verifier on Base Sepolia
-bool published = brainAuditAnchor.isPublished(tenantIdHash, proof.anchorRoot);
-bool included = brainAuditAnchor.verifyInclusion(
-  proof.anchorRoot,
-  eventLeaf,
-  merklePath
-);
-```
-
-### Pulling the Trace for One Action
-
-Trace IDs link every event tied to one action.
+### Trace an Entity
 
 ```typescript
-const trace = await brain.trace(actionId);
+const trace = await brain.trace("pi_8231");
 
-console.log(trace.events);
-// [
-//   { type: "action.proposed",    timestamp: "..." },
-//   { type: "policy.evaluated",   decision: "needs_approval" },
-//   { type: "action.approved",    actor: "user_cfo" },
-//   { type: "action.executed",    rail: "ach", txHash: null },
-//   { type: "action.settled",     receipt: "..." },
-//   { type: "audit.anchored",     merkleRoot: "0x...", txHash: "0x..." }
-// ]
+for (const entry of trace.entries) {
+  console.log(entry.event.action, entry.event.created_at);
+  console.log(entry.inclusionProof.merkleRoot);
+}
 ```
 
-You can paste a trace ID into the Console to see the same view rendered visually.
+`brain.trace` is an SDK aggregation over the entity history and each event's
+inclusion proof. Its entries are `{ event, inclusionProof }`.
 
-### Exporting for Compliance Review
+### Export Tenant Data
 
-For SOC 2, ISO 27001, or any structured review, export the log as a file.
+`brain.audit.export()` is an intentional SDK stub and the underlying audit
+export endpoint returns 501. Use the tenant export lifecycle instead:
 
-```typescript
-const job = await brain.audit.export("acme", {
-  format: "ndjson",  // or "csv"
-  from:   "2025-01-01",
-  to:     "2025-12-31",
-});
-
-console.log(job.jobId);  // track this export job
+```text
+POST /v1/tenants/{tenant_id}/export
+GET  /v1/tenants/{tenant_id}/export/{job_id}
+GET  /v1/tenants/{tenant_id}/export/{job_id}/download
 ```
 
-The export contains every event in the range plus the Merkle proofs needed to verify any of them after the fact.
-
-### Streaming Events Live
-
-Use webhooks to receive audit events as they happen, then ship them to your SIEM, Datadog, Splunk, or wherever you centralize logs.
-
-### Filtering by Actor
-
-Useful for "what did agent X do today?"
+### Filter by Actor
 
 ```typescript
-const today = await brain.audit.list("acme", {
+const page = await brain.audit.list({
   actor: "agent:payments-v1",
-  from:  new Date(Date.now() - 86400_000).toISOString(),
+  since: new Date(Date.now() - 86_400_000).toISOString(),
+  limit: 100,
 });
+
+for (const event of page.events) {
+  console.log(event.action, event.created_at);
+}
 ```
-
-Or "what did user Y do?"
-
-```typescript
-const trail = await brain.audit.list("acme", {
-  actor: "user:user_cfo",
-  from:  "2025-01-01",
-});
-```
-
-### What You Don't Have to Worry About
-
-| Concern               | Why Brain handles it                                                            |
-| --------------------- | ------------------------------------------------------------------------------- |
-| **Tamper resistance** | Every event is hashed and chained; each tenant-root pair is published once      |
-| **Publisher control** | The current Base Sepolia publisher is one EOA; rotation is a two-step handoff   |
-| **Reorg safety**      | Pending anchors are retried; off-chain status remains authoritative until confirmed |
-| **Privacy**           | Only Merkle roots and hashed tenant IDs are on-chain; no payload data leaks     |
 
 ### What's Next
 
-<table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>🔌 External Agent</strong></td><td>Authorize an MCP-compatible agent and audit its actions the same way.</td><td><a href="let-an-external-agent-in.md">let-an-external-agent-in.md</a></td><td></td></tr><tr><td><strong>📦 Audit and Proof</strong></td><td>How the audit trail works underneath.</td><td><a href="audit-every-action.md">audit-every-action.md</a></td><td></td></tr></tbody></table>
+- [Let an External Agent In](let-an-external-agent-in.md)
+- [Audit and Proof](../protocol/audit-and-proof.md)
