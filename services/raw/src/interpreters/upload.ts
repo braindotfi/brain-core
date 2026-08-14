@@ -351,7 +351,8 @@ type CustomerAssertedCsvType =
   | "payables_invoices"
   | "receivables_invoices"
   | "payroll_runs"
-  | "tax_obligations";
+  | "tax_obligations"
+  | "bank_transactions";
 
 const CUSTOMER_ASSERTED_CSV_TYPES = new Set<CustomerAssertedCsvType>([
   "counterparties",
@@ -359,6 +360,7 @@ const CUSTOMER_ASSERTED_CSV_TYPES = new Set<CustomerAssertedCsvType>([
   "receivables_invoices",
   "payroll_runs",
   "tax_obligations",
+  "bank_transactions",
 ]);
 
 function customerAssertedCsvOutput(
@@ -402,6 +404,15 @@ function customerAssertedCsvOutput(
       "due_date",
       "status",
     ],
+    bank_transactions: [
+      "transaction_id",
+      "account_id",
+      "date",
+      "description",
+      "amount",
+      "direction",
+      "currency",
+    ],
   };
   const missing = requiredHeaders[recordType as CustomerAssertedCsvType].filter(
     (header) => !sheet.headers.includes(header),
@@ -419,6 +430,7 @@ function customerAssertedCsvOutput(
       return record["counterparty_id"] !== "" && record["name"] !== "";
     if (recordType === "payroll_runs") return record["run_id"] !== "";
     if (recordType === "tax_obligations") return record["obligation_id"] !== "";
+    if (recordType === "bank_transactions") return record["transaction_id"] !== "";
     return record["invoice_id"] !== "";
   });
   if (records.length === 0) {

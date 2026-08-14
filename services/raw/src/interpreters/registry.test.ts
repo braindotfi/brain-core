@@ -805,6 +805,55 @@ describe("upload document interpreters", () => {
     });
   });
 
+  it("parses declared customer-asserted bank transaction CSV rows", () => {
+    const out = uploadDocumentInterpreter(
+      Buffer.from(
+        [
+          "transaction_id,account_id,date,description,amount,direction,currency",
+          "txn_9001,acct_operations,2026-07-01,Wire to Acme Legal,4820.00,outflow,USD",
+        ].join("\n"),
+      ),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        objectType: "bank_transactions",
+        mimeType: "text/csv",
+      }),
+    );
+
+    expect(out).toMatchObject({ parser: "customer_asserted_csv_v1", confidence: 1 });
+    expect(out!.extracted).toMatchObject({
+      object_type: "customer_asserted_csv",
+      record_type: "bank_transactions",
+      records: [
+        expect.objectContaining({
+          transaction_id: "txn_9001",
+          account_id: "acct_operations",
+          direction: "outflow",
+        }),
+      ],
+    });
+  });
+
+  it("rejects a declared bank_transactions CSV missing a required header", () => {
+    expect(() =>
+      uploadDocumentInterpreter(
+        Buffer.from(
+          [
+            "transaction_id,account_id,date,description,amount,currency",
+            "txn_9001,acct_operations,2026-07-01,Wire to Acme Legal,4820.00,USD",
+          ].join("\n"),
+        ),
+        ctx({
+          sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+          sourceType: "csv_upload",
+          objectType: "bank_transactions",
+          mimeType: "text/csv",
+        }),
+      ),
+    ).toThrow(/missing required headers: direction/);
+  });
+
   it("rejects invoice-shaped CSV rows without an explicit AP or AR record type", () => {
     expect(() =>
       uploadDocumentInterpreter(
