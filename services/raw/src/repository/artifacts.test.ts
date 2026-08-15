@@ -63,11 +63,13 @@ function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
       const sha = values?.[2] as Buffer;
       const key = sha.toString("hex");
       const incomingSchema = (values?.[9] as string | null) ?? null;
+      const incomingObjectType = (values?.[10] as string | null) ?? null;
       const incomingProjectionStatus =
         (values?.[20] as RawArtifactRow["projection_status"]) ?? null;
       const existing = rows.get(key);
       if (existing !== undefined) {
         existing.source_schema = existing.source_schema ?? incomingSchema;
+        existing.object_type = existing.object_type ?? incomingObjectType;
         existing.projection_status = existing.projection_status ?? incomingProjectionStatus;
         return { rows: [existing], rowCount: 1 };
       }
@@ -83,6 +85,7 @@ function statefulDedupClient(initialRows: RawArtifactRow[] = []): {
         bytes: String(values?.[7]),
         ingested_by: values?.[8] as string,
         source_schema: incomingSchema,
+        object_type: incomingObjectType,
         projection_status: incomingProjectionStatus,
         projection_status_updated_at:
           incomingProjectionStatus !== null ? new Date("2026-01-01T00:00:00Z") : null,
@@ -190,6 +193,68 @@ describe("insertOrReuseArtifact", () => {
     expect(result.deduplicated).toBe(true);
     expect(result.row.id).toBe("raw_existing");
     expect(result.row.source_schema).toBe("brain.upload.document.v1");
+  });
+
+  it("fills a missing object_type when identical bytes are reingested with a declared type", async () => {
+    const { client, log } = statefulDedupClient();
+    const first = await insertOrReuseArtifact(client, {
+      id: "raw_old",
+      tenantId: "t1",
+      sha256Hex: "aa",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+    });
+    const firstObjectType = first.row.object_type;
+    const second = await insertOrReuseArtifact(client, {
+      id: "raw_new",
+      tenantId: "t1",
+      sha256Hex: "aa",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+      envelope: { objectType: "payables_invoices" },
+    });
+
+    expect(firstObjectType).toBeNull();
+    expect(second.deduplicated).toBe(true);
+    expect(second.row.id).toBe("raw_old");
+    expect(second.row.object_type).toBe("payables_invoices");
+    expect(log[0]!.sql).toContain(
+      "object_type = COALESCE(raw_artifacts.object_type, EXCLUDED.object_type)",
+    );
+  });
+
+  it("does not replace an existing object_type when identical bytes are reingested differently", async () => {
+    const existing = {
+      ...stubRow,
+      id: "raw_existing",
+      sha256: Buffer.from("cc", "hex"),
+      object_type: "payables_invoices",
+    };
+    const { client } = statefulDedupClient([existing]);
+    const result = await insertOrReuseArtifact(client, {
+      id: "raw_new",
+      tenantId: "t1",
+      sha256Hex: "cc",
+      sourceType: "csv_upload",
+      sourceRef: {},
+      blobUri: "az://b/upload",
+      mimeType: "text/csv",
+      bytes: 128,
+      ingestedBy: "agent_1",
+      envelope: { objectType: "tax_obligations" },
+    });
+
+    expect(result.deduplicated).toBe(true);
+    expect(result.row.id).toBe("raw_existing");
+    expect(result.row.object_type).toBe("payables_invoices");
   });
 
   it("throws when insert returns no row", async () => {
