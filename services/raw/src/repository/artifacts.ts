@@ -92,6 +92,7 @@ export async function insertOrReuseArtifact(
        ON CONFLICT (tenant_id, sha256) DO UPDATE SET
          source_ref = raw_artifacts.source_ref,
          source_schema = COALESCE(raw_artifacts.source_schema, EXCLUDED.source_schema),
+         object_type = COALESCE(raw_artifacts.object_type, EXCLUDED.object_type),
          projection_status = COALESCE(raw_artifacts.projection_status, EXCLUDED.projection_status),
          projection_status_updated_at = CASE
            WHEN raw_artifacts.projection_status IS NULL AND EXCLUDED.projection_status IS NOT NULL
