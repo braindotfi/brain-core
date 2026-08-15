@@ -805,6 +805,38 @@ describe("upload document interpreters", () => {
     });
   });
 
+  it("trusts the declared header row over a data row whose free-text column collides with AR/payroll keywords", () => {
+    // Regression: "notes" here contains the literal word "invoice" (an AR_HEADER_KEYWORDS
+    // entry) three times, which used to outscore the real header row in the AR/payroll
+    // keyword heuristic and get picked as if IT were the header row.
+    const out = uploadDocumentInterpreter(
+      Buffer.from(
+        [
+          "invoice_id,counterparty_id,amount,currency,issued_date,due_date,status,notes",
+          'INV-CMP-002,cp_new_001,48750.00,USD,2026-08-01,2026-08-15,pending,"Exact duplicate of INV-CMP-001 (same invoice number, vendor, amount, date). Should trigger a duplicate-invoice finding."',
+        ].join("\n"),
+      ),
+      ctx({
+        sourceSchema: UPLOAD_DOCUMENT_SCHEMA,
+        sourceType: "csv_upload",
+        objectType: "payables_invoices",
+        mimeType: "text/csv",
+      }),
+    );
+
+    expect(out).toMatchObject({ parser: "customer_asserted_csv_v1", confidence: 1 });
+    expect(out!.extracted).toMatchObject({
+      record_type: "payables_invoices",
+      records: [
+        expect.objectContaining({
+          invoice_id: "INV-CMP-002",
+          counterparty_id: "cp_new_001",
+          amount: "48750.00",
+        }),
+      ],
+    });
+  });
+
   it("parses declared customer-asserted bank transaction CSV rows", () => {
     const out = uploadDocumentInterpreter(
       Buffer.from(

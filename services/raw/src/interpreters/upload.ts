@@ -955,7 +955,16 @@ function parseSpreadsheet(bytes: Buffer, ctx: UploadContext): ParsedSpreadsheet 
   const rows = isXlsx(bytes, ctx)
     ? rowsFromXlsx(bytes)
     : parseCsv(bytes.toString("utf8")).map((row) => row.map((cell) => cell.trim()));
-  const headerIndex = detectHeaderRow(rows);
+  // A declared customer_asserted type already resolves which row is the header - the
+  // AR/payroll keyword-scoring heuristic below exists only to guess at that when no type
+  // is declared, and free-text columns (e.g. a "notes" column) can make a data row score
+  // higher than the real header row purely by incidentally containing keyword substrings
+  // like "invoice" or "vendor" in prose. Skip the heuristic and trust the first
+  // non-empty row whenever the caller has already told us what kind of record this is.
+  const declaredCustomerAssertedType =
+    typeof ctx.objectType === "string" &&
+    CUSTOMER_ASSERTED_CSV_TYPES.has(ctx.objectType as CustomerAssertedCsvType);
+  const headerIndex = detectHeaderRow(rows, { trustFirstRow: declaredCustomerAssertedType });
   if (headerIndex === -1) {
     return { headers: [], rawHeaders: [], rows, headerIndex, records: [] };
   }
@@ -968,13 +977,14 @@ function parseSpreadsheet(bytes: Buffer, ctx: UploadContext): ParsedSpreadsheet 
   return { headers, rawHeaders, rows, headerIndex, records };
 }
 
-function detectHeaderRow(rows: string[][]): number {
+function detectHeaderRow(rows: string[][], opts: { trustFirstRow?: boolean } = {}): number {
   let fallback = -1;
   let best = { index: -1, score: -1 };
   for (let index = 0; index < Math.min(rows.length, HEADER_SCAN_LIMIT); index += 1) {
     const row = rows[index] ?? [];
     if (!row.some((cell) => cell.trim().length > 0)) continue;
     if (fallback === -1) fallback = index;
+    if (opts.trustFirstRow === true) return index;
     const score = headerRowScore(row);
     if (score > best.score) best = { index, score };
   }
