@@ -110,7 +110,7 @@ jobs:
           SET LOCAL lock_timeout = '1s';
 
           \echo '-- raw_artifacts --'
-          SELECT id, tenant_id, source_type, mime_type, bytes, ingested_at, tombstoned_at
+          SELECT id, tenant_id, source_type, object_type, mime_type, bytes, ingested_at, tombstoned_at
             FROM raw_artifacts
            WHERE id = ANY(:'ids_array'::text[])
            ORDER BY ingested_at;
