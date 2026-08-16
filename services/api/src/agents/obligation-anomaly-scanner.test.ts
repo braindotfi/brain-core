@@ -52,9 +52,9 @@ describe("runObligationAnomalyScanCycle", () => {
         }),
       }),
     );
-    expect(
-      metrics.calls.some((call) => call.name === "brain.invoice_integrity.scan.count"),
-    ).toBe(true);
+    expect(metrics.calls.some((call) => call.name === "brain.invoice_integrity.scan.count")).toBe(
+      true,
+    );
     expect(
       metrics.calls.some(
         (call) => call.name === "brain.invoice_integrity.scan.last_success_unixtime",

@@ -135,7 +135,13 @@ suite("obligation anomaly scanner integration (requires DATABASE_URL)", () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();
     await seedInvoiceIntegrityTenant(pool, tenant);
-    await seedCounterparty(pool, tenant, counterparty, "Vantage Point Consulting", "document_verified");
+    await seedCounterparty(
+      pool,
+      tenant,
+      counterparty,
+      "Vantage Point Consulting",
+      "document_verified",
+    );
     await seedObligation(pool, tenant, newObligationId(), counterparty, "48750.00", "2026-08-15");
     await seedObligation(pool, tenant, newObligationId(), counterparty, "48750.00", "2026-08-15");
 
@@ -165,7 +171,13 @@ suite("obligation anomaly scanner integration (requires DATABASE_URL)", () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();
     await seedInvoiceIntegrityTenant(pool, tenant);
-    await seedCounterparty(pool, tenant, counterparty, "Northgate Supplies Co", "document_verified");
+    await seedCounterparty(
+      pool,
+      tenant,
+      counterparty,
+      "Northgate Supplies Co",
+      "document_verified",
+    );
     await seedObligation(pool, tenant, newObligationId(), counterparty, "4875.00", "2026-08-17");
     await seedObligation(pool, tenant, newObligationId(), counterparty, "4900.00", "2026-08-17");
     await seedObligation(pool, tenant, newObligationId(), counterparty, "4950.00", "2026-08-17");
@@ -182,7 +194,13 @@ suite("obligation anomaly scanner integration (requires DATABASE_URL)", () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();
     await seedInvoiceIntegrityTenant(pool, tenant);
-    await seedCounterparty(pool, tenant, counterparty, "Coastal Logistics Partners", "document_verified");
+    await seedCounterparty(
+      pool,
+      tenant,
+      counterparty,
+      "Coastal Logistics Partners",
+      "document_verified",
+    );
     await seedObligation(pool, tenant, newObligationId(), counterparty, "89999.00", "2026-08-13");
 
     await runObligationAnomalyScanCycle(
@@ -202,7 +220,13 @@ suite("obligation anomaly scanner integration (requires DATABASE_URL)", () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();
     await seedInvoiceIntegrityTenant(pool, tenant);
-    await seedCounterparty(pool, tenant, counterparty, "Meridian Offshore Holdings Ltd", "unverified");
+    await seedCounterparty(
+      pool,
+      tenant,
+      counterparty,
+      "Meridian Offshore Holdings Ltd",
+      "unverified",
+    );
     await seedObligation(pool, tenant, newObligationId(), counterparty, "275000.00", "2026-08-09");
 
     await runObligationAnomalyScanCycle(
@@ -217,7 +241,13 @@ suite("obligation anomaly scanner integration (requires DATABASE_URL)", () => {
     const tenant = newTenantId();
     const counterparty = newCounterpartyId();
     await seedInvoiceIntegrityTenant(pool, tenant);
-    await seedCounterparty(pool, tenant, counterparty, "Ashgrove Manufacturing", "document_verified");
+    await seedCounterparty(
+      pool,
+      tenant,
+      counterparty,
+      "Ashgrove Manufacturing",
+      "document_verified",
+    );
     await seedObligation(pool, tenant, newObligationId(), counterparty, "9200.00", "2026-08-22");
 
     await runObligationAnomalyScanCycle(
@@ -292,9 +322,10 @@ function runStore(pool: Pool): AgentRunStore {
 
 async function seedInvoiceIntegrityTenant(pool: Pool, tenantId: string): Promise<void> {
   await withTenantScope(pool, tenantId, async (client) => {
-    await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo') ON CONFLICT DO NOTHING`, [
-      tenantId,
-    ]);
+    await client.query(
+      `INSERT INTO tenants (id, kind) VALUES ($1, 'demo') ON CONFLICT DO NOTHING`,
+      [tenantId],
+    );
     await client.query(
       `INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
        VALUES ('invoice_integrity', $1, 'internal', 'invoice_integrity', 'Invoice Integrity', 'active', now())
