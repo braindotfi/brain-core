@@ -47,6 +47,8 @@ import { financialHealthDefinition } from "./financial_health/definition.js";
 import { financialHealthHandler } from "./financial_health/handler.js";
 import { purchaseAdvisorDefinition } from "./purchase_advisor/definition.js";
 import { purchaseAdvisorHandler } from "./purchase_advisor/handler.js";
+import { invoiceIntegrityDefinition } from "./invoice_integrity/definition.js";
+import { invoiceIntegrityHandler } from "./invoice_integrity/handler.js";
 import type { InternalAgentHandler } from "./handler.js";
 
 export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
@@ -69,6 +71,7 @@ export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
   travelFinanceDefinition,
   financialHealthDefinition,
   purchaseAdvisorDefinition,
+  invoiceIntegrityDefinition,
 ];
 
 /** Definitions keyed by agent_key — used by the router/worker for action resolution. */
@@ -110,4 +113,5 @@ export const internalAgentHandlers: Readonly<Record<string, InternalAgentHandler
   travel_finance: travelFinanceHandler,
   financial_health: financialHealthHandler,
   purchase_advisor: purchaseAdvisorHandler,
+  invoice_integrity: invoiceIntegrityHandler,
 };

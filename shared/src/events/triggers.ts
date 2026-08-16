@@ -55,6 +55,10 @@ export const DOMAIN_EVENTS = [
   "duplicate_charge.detected", // fraud_anomaly
   // Upload ingestion trigger.
   "ledger.upload.projected",
+  "obligation.duplicate_suspected", // invoice_integrity
+  "obligation.structuring_suspected", // invoice_integrity
+  "obligation.threshold_avoidance_suspected", // invoice_integrity
+  "obligation.high_value_new_vendor", // invoice_integrity
 ] as const;
 
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number];

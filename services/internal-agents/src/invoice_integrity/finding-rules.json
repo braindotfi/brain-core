@@ -1,0 +1,31 @@
+{
+  "agent": "invoice_integrity",
+  "version": 1,
+  "description": "Versioned finding-rule catalog for the Invoice Integrity agent. Detects fraud/compliance-shaped anomalies on uploaded, unpaid obligations before they're paid. Adding or modifying a rule requires re-signing the agent's policy template.",
+  "rules": [
+    {
+      "id": "ii_duplicate_obligation",
+      "finding_kind": "duplicate_obligation",
+      "severity": "high",
+      "description": "Another open obligation shares the same counterparty, amount, currency, and due date."
+    },
+    {
+      "id": "ii_structuring_suspected",
+      "finding_kind": "structuring_suspected",
+      "severity": "high",
+      "description": "Multiple obligations to the same counterparty on the same due date, each below a configured threshold but summing above it."
+    },
+    {
+      "id": "ii_threshold_avoidance",
+      "finding_kind": "threshold_avoidance",
+      "severity": "medium",
+      "description": "An obligation amount sits just below a configured approval threshold."
+    },
+    {
+      "id": "ii_high_value_new_vendor",
+      "finding_kind": "high_value_new_vendor",
+      "severity": "medium",
+      "description": "A high-value obligation is owed to a counterparty with no matching verified counterparty record."
+    }
+  ]
+}
