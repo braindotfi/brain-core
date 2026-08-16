@@ -1,0 +1,131 @@
+name: ops-raw-parsed-touch-for-reprojection
+
+# Forces the canonical projection worker to reprocess specific raw_parsed rows
+# that were already successfully projected once, by bumping extracted_at so
+# PENDING_EXCLUSION's exact-version match against canonical_projection_log no
+# longer holds (services/canonical/src/projectors/worker.ts). Intended for a
+# fix (e.g. #653) that changes projection behavior in a way existing rows
+# should pick up without re-uploading the source document. Scoped to one
+# tenant and an explicit list of raw_artifact ids - never a broad rewrite.
+#
+# WRITE operation, unlike the other ops-*-lookup.yml diagnostics. Same SSH +
+# docker exec pattern and the same production environment approval gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to touch."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      tenant_id:
+        description: "Brain tenant id (tnt_...) - required, scopes every row touched."
+        required: true
+        type: string
+      raw_ids:
+        description: "Comma-separated raw_... ids whose raw_parsed rows should be marked for reprojection."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  touch:
+    name: touch raw_parsed for reprojection
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      RAW_IDS: ${{ inputs.raw_ids }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Validate tenant_id and raw_ids
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TENANT_ID" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $TENANT_ID"
+            exit 1
+          fi
+          IFS=',' read -ra ids <<< "$RAW_IDS"
+          if [ "${#ids[@]}" -eq 0 ] || [ "${#ids[@]}" -gt 20 ]; then
+            echo "raw_ids must list 1-20 comma-separated ids"
+            exit 1
+          fi
+          for id in "${ids[@]}"; do
+            if ! [[ "$id" =~ ^raw_[0-9A-Za-z]{1,40}$ ]]; then
+              echo "not a well-formed raw_... id: $id"
+              exit 1
+            fi
+          done
+
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Bump extracted_at for the given raw_parsed rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ids_pg_array="{$RAW_IDS}"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' IDS_ARRAY='$ids_pg_array' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" \
+            -v ids_array="$IDS_ARRAY" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          UPDATE raw_parsed
+             SET extracted_at = now()
+           WHERE tenant_id = :'tenant_id'
+             AND raw_artifact_id = ANY(:'ids_array'::text[])
+          RETURNING id, raw_artifact_id, extracted_at;
+
+          COMMIT;
+          SQL
+          REMOTE
