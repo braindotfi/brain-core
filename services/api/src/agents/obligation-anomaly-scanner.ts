@@ -110,6 +110,19 @@ export async function runObligationAnomalyScanCycle(
   );
   const capped = selection.totalFair > batchSize;
   const obligations = selection.rows.slice(0, batchSize);
+  deps.log?.info?.(
+    {
+      total_eligible: selection.totalEligible,
+      total_fair: selection.totalFair,
+      selected_count: obligations.length,
+      selected: obligations.map((row) => ({
+        tenant_id: row.tenant_id,
+        obligation_id: row.obligation_id,
+        event_hint: row.event_hint,
+      })),
+    },
+    "obligation anomaly scanner cycle",
+  );
   if (capped) {
     const omittedCount = Math.max(selection.totalEligible - batchSize, 0);
     deps.log?.warn(
@@ -135,7 +148,13 @@ export async function runObligationAnomalyScanCycle(
     const event = eventFor(row);
     const triggerKey = triggerKeyFor(row, event);
     const claimed = await claimCooldown(deps.appPool, row, event, triggerKey, now, cooldownMs);
-    if (!claimed) continue;
+    if (!claimed) {
+      deps.log?.info?.(
+        { tenantId: row.tenant_id, obligationId: row.obligation_id, event },
+        "obligation anomaly scanner skipped obligation (cooldown not claimed)",
+      );
+      continue;
+    }
 
     let status = "failed";
     let runId: string | null = null;
@@ -164,6 +183,10 @@ export async function runObligationAnomalyScanCycle(
       status = result.status;
       runId = result.run_id;
       proposalId = result.proposed?.id ?? null;
+      deps.log?.info?.(
+        { tenantId: row.tenant_id, obligationId: row.obligation_id, event, status, runId, proposalId },
+        "obligation anomaly scanner ran obligation",
+      );
     } catch (err) {
       deps.log?.error(
         { err, tenantId: row.tenant_id, obligationId: row.obligation_id },
