@@ -84,6 +84,16 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+// A customer-asserted invoice/tax-obligation row only ever declares a bare
+// counterparty_id reference; when that key was never separately declared via
+// a counterparties-type upload, apar.ts auto-creates a placeholder
+// counterparty using this hint (falling back to the bare id) so it isn't
+// named after an opaque internal key. Extra columns like this are common in
+// real exports but not required, so this is best-effort.
+function counterpartyNameHint(row: Record<string, unknown>): string | null {
+  return str(row["vendor_name"]) ?? str(row["customer_name"]) ?? str(row["counterparty_name"]);
+}
+
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -838,7 +848,11 @@ export function projectCustomerAssertedCsvLedger(
           dueDate,
           status: str(row["status"]) ?? "open",
           extensions: {
-            customer_asserted_csv: { record_type: recordType, paid_date: str(row["paid_date"]) },
+            customer_asserted_csv: {
+              record_type: recordType,
+              paid_date: str(row["paid_date"]),
+              counterparty_name_hint: counterpartyNameHint(row),
+            },
           },
           common: sourceCommon,
         },
@@ -962,6 +976,7 @@ export function projectCustomerAssertedCsvLedger(
             customer_asserted_csv: {
               record_type: recordType,
               description: str(row["description"]),
+              counterparty_name_hint: counterpartyNameHint(row),
             },
           },
           common: sourceCommon,
