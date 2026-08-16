@@ -85,8 +85,13 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "PATTERN='$PATTERN' SINCE='$SINCE' bash -s" <<'REMOTE'
           set -euo pipefail
+          echo '-- container status (rules out a crash-loop) --'
+          docker inspect brain-prod-worker \
+            --format '{{.State.Status}} restarts={{.RestartCount}} startedAt={{.State.StartedAt}}'
+
+          echo '-- matches for pattern (grep exit 1 on zero matches is not a failure) --'
           docker logs --since "$SINCE" --timestamps brain-prod-worker 2>&1 \
-            | grep -i --color=never -- "$PATTERN" \
+            | { grep -i --color=never -- "$PATTERN" || true; } \
             | tail -n 300
           echo "-- end of matches --"
           REMOTE
