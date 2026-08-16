@@ -1,0 +1,123 @@
+name: ops-invoice-integrity-scan-lookup
+
+# Read-only diagnostic: for one tenant, look up what the obligation anomaly
+# scanner / invoice_integrity agent actually did - agent_trigger_cooldowns
+# rows (did the scanner even claim/attempt an obligation?) and proposals
+# (were any actually created?). Companion to ops-ledger-obligation-lookup.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      tenant_id:
+        description: "Brain tenant id (tnt_...)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  lookup:
+    name: invoice integrity scan lookup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Validate tenant_id
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TENANT_ID" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $TENANT_ID"
+            exit 1
+          fi
+
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Look up invoice_integrity cooldowns and proposals for the tenant
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo '-- agent_trigger_cooldowns (invoice_integrity) --'
+          SELECT trigger_key, event, receivable_id, last_status, run_id, proposal_id,
+                 last_enqueued_at, updated_at
+            FROM agent_trigger_cooldowns
+           WHERE tenant_id = :'tenant_id'
+             AND agent_key = 'invoice_integrity'
+           ORDER BY updated_at DESC;
+
+          \echo '-- proposals (invoice_integrity) --'
+          SELECT id, status, policy_decision, action->>'finding_type' AS finding_type,
+                 action->>'obligation_id' AS obligation_id, created_at
+            FROM proposals
+           WHERE tenant_id = :'tenant_id'
+             AND proposing_agent = 'invoice_integrity'
+           ORDER BY created_at DESC;
+
+          \echo '-- agents row (invoice_integrity) --'
+          SELECT id, kind, role, state, registered_at
+            FROM agents
+           WHERE tenant_id = :'tenant_id'
+             AND id = 'invoice_integrity';
+
+          COMMIT;
+          SQL
+          REMOTE
