@@ -1,0 +1,178 @@
+name: ops-activate-agent-role-policy-rule
+
+# WRITE operation: appends one notify-only policy rule for a given
+# agent.role to a tenant's active policy document, then activates it as the
+# next version - the same net effect as POST /demo/policy/activate
+# (services/api/src/demo/policy-activate-route.ts), used here because that
+# route needs a policy:write-scoped token this ops path doesn't have.
+#
+# Scope is deliberately narrow so this can't become a money-movement
+# backdoor: execute is hardcoded to "confirm" (never "auto") and applies_to
+# is hardcoded to ["agent_action"] (services/policy/src/linter.ts's
+# isMoneyMover explicitly excludes agent_action from every auto-execute
+# ERROR check - ERROR checks only fire for auto+money-mover rules anyway, so
+# this rule is exempt on two independent grounds). The rule mirrors the
+# existing, live fraud_anomaly policy.template.json shape exactly:
+# { applies_to: ["agent_action"], when: { "agent.role": <role> },
+#   require: "account_holder_approval", execute: "confirm" }
+# With an internal agent's default_authority: "notify_only",
+# AgentService.outcomeToStatus forces status "pending" for any non-reject
+# outcome regardless of `require` - this rule exists purely so the policy
+# engine's default-deny fallback (services/policy/src/vm.ts's "no rule
+# matched" case) doesn't reject the proposal outright.
+#
+# The tenant's existing rules are preserved unchanged (appended to, not
+# replaced), so the document-level confidence-floor lint requirement (at
+# least one rule with agent.confidence.gte > 0.5) stays satisfied via the
+# rules already in place.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to touch."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      tenant_id:
+        description: "Brain tenant id (tnt_...) - scopes the write to exactly one tenant's policy."
+        required: true
+        type: string
+      agent_role:
+        description: "Internal agent_key/role to add a notify-only policy rule for (e.g. invoice_integrity)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  activate:
+    name: activate agent-role policy rule
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      AGENT_ROLE: ${{ inputs.agent_role }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Validate tenant_id and agent_role
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TENANT_ID" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $TENANT_ID"
+            exit 1
+          fi
+          if ! [[ "$AGENT_ROLE" =~ ^[a-z_]{1,64}$ ]]; then
+            echo "agent_role must be lowercase snake_case: $AGENT_ROLE"
+            exit 1
+          fi
+
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Append the agent-role rule and activate the new policy version
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' AGENT_ROLE='$AGENT_ROLE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" \
+            -v agent_role="$AGENT_ROLE" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          SELECT content::text AS current_content, quorum_required AS current_quorum
+            FROM policies
+           WHERE tenant_id = :'tenant_id' AND state = 'active'
+           FOR UPDATE \gset
+
+          \if :{?current_content}
+          \else
+            \echo 'no active policy for tenant - aborting'
+            \quit 1
+          \endif
+
+          UPDATE policies
+             SET state = 'deactivated', deactivated_at = now()
+           WHERE tenant_id = :'tenant_id' AND state = 'active';
+
+          INSERT INTO policies (
+            id, tenant_id, version, content, content_hash, quorum_required,
+            state, created_by, activated_at
+          )
+          SELECT
+            'pol_' || replace(gen_random_uuid()::text, '-', ''),
+            :'tenant_id',
+            COALESCE((SELECT MAX(version) FROM policies WHERE tenant_id = :'tenant_id'), 0) + 1,
+            merged.content,
+            digest(convert_to(merged.content::text, 'UTF8'), 'sha256'),
+            :current_quorum,
+            'active',
+            'ops:activate-agent-role-policy-rule',
+            now()
+          FROM (
+            SELECT jsonb_set(
+              :'current_content'::jsonb,
+              '{rules}',
+              (:'current_content'::jsonb -> 'rules') || jsonb_build_array(
+                jsonb_build_object(
+                  'id', :'agent_role' || '_confirm',
+                  'applies_to', jsonb_build_array('agent_action'),
+                  'when', jsonb_build_object('agent.role', :'agent_role'),
+                  'require', 'account_holder_approval',
+                  'execute', 'confirm'
+                )
+              )
+            ) AS content
+          ) merged
+          RETURNING id, version, content;
+
+          COMMIT;
+          SQL
+          REMOTE
