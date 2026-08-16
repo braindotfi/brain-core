@@ -1,0 +1,109 @@
+name: ops-ledger-obligation-lookup
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "staging or production"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      tenant_id:
+        description: "Brain tenant id (tnt_...)"
+        required: true
+        type: string
+
+jobs:
+  lookup:
+    name: raw extraction job lookup
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - name: Validate tenant_id
+        run: |
+          id="${{ inputs.tenant_id }}"
+          if ! [[ "$id" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $id"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Select target
+        run: |
+          case "${{ inputs.target }}" in
+            staging)
+              echo "VM_HOST=${{ secrets.VM_HOST_STAGING }}" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "${{ secrets.VM_SSH_KEY_STAGING }}"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=${{ secrets.VM_HOST_PRODUCTION }}" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "${{ secrets.VM_SSH_KEY_PRODUCTION }}"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+        shell: bash
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+        shell: bash
+
+      - name: Look up canonical and ledger obligation/counterparty counts for the tenant
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='${{ inputs.tenant_id }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo '-- canonical_obligation --'
+          SELECT id, source_system, source_natural_key, direction, type,
+                 canonical_counterparty_id, counterparty_source_key, amount, currency, status
+            FROM canonical_obligation
+           WHERE tenant_id = :'tenant_id'
+           ORDER BY source_natural_key;
+
+          \echo '-- canonical_counterparty --'
+          SELECT id, source_system, source_natural_key, name, type
+            FROM canonical_counterparty
+           WHERE tenant_id = :'tenant_id'
+           ORDER BY source_natural_key;
+
+          \echo '-- ledger_obligations --'
+          SELECT id, type, counterparty_id, amount_due, currency, due_date, status
+            FROM ledger_obligations
+           WHERE owner_id = :'tenant_id'
+           ORDER BY due_date;
+
+          \echo '-- ledger_counterparties --'
+          SELECT id, name, type, verified_status, canonical_counterparty_id
+            FROM ledger_counterparties
+           WHERE owner_id = :'tenant_id'
+           ORDER BY name;
+
+          COMMIT;
+          SQL
+          REMOTE
+        shell: bash
