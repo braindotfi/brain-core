@@ -8,7 +8,31 @@
 
 import { newCanonicalCounterpartyId, newCanonicalObligationId } from "@brain/shared";
 import type { TenantScopedClient } from "@brain/shared";
+import { normalizeName } from "../projectors/merge-apar.js";
 import type { CounterpartyUpsert, ObligationUpsert } from "../projectors/merge-apar.js";
+
+const CUSTOMER_ASSERTED_CSV_SOURCE = "customer_asserted_csv";
+
+/**
+ * The bare counterparty_id a customer-asserted CSV row references has no
+ * guaranteed "contact page" coming the way Merge/document-extraction sources
+ * do (see the comment on upsertCanonicalObligation below) - the user may
+ * never separately upload a counterparties-type CSV declaring it. Returns a
+ * placeholder name derived from any vendor_name/customer_name/counterparty_name
+ * extra column the row carried (see connector-ledger.ts's counterpartyNameHint),
+ * falling back to the bare source key itself.
+ */
+function placeholderCounterpartyName(
+  extensions: Record<string, unknown>,
+  fallback: string,
+): string {
+  const csv = extensions["customer_asserted_csv"];
+  const hint =
+    typeof csv === "object" && csv !== null && !Array.isArray(csv)
+      ? (csv as Record<string, unknown>)["counterparty_name_hint"]
+      : undefined;
+  return typeof hint === "string" && hint.length > 0 ? hint : fallback;
+}
 
 export interface UpsertResult {
   id: string;
@@ -66,7 +90,7 @@ export async function upsertCanonicalObligation(
   // Best-effort resolution of the counterparty reference to the canonical id.
   // Null until that contact page has been projected; a replay fills it (contact
   // pages sort ahead of invoice pages in the worker poll).
-  const counterpartyId =
+  let counterpartyId =
     input.counterpartySourceKey === null
       ? null
       : ((
@@ -76,6 +100,38 @@ export async function upsertCanonicalObligation(
             [tenantId, input.sourceSystem, input.counterpartySourceKey],
           )
         ).rows[0]?.id ?? null);
+
+  // A customer-asserted CSV row only ever carries a bare counterparty_id
+  // string reference - unlike Merge/document-extraction sources, there is no
+  // separate "contact page" guaranteed to arrive on a later replay, since the
+  // user may never upload a counterparties-type CSV declaring it. Auto-create
+  // a placeholder here instead of leaving the obligation stuck unresolved
+  // forever with no visible error. upsertCanonicalCounterparty's ON CONFLICT
+  // on the same (tenant, source_system, source_natural_key) key means a real
+  // declaration later upgrades this placeholder in place, never duplicates it.
+  if (
+    counterpartyId === null &&
+    input.counterpartySourceKey !== null &&
+    input.sourceSystem === CUSTOMER_ASSERTED_CSV_SOURCE
+  ) {
+    const name = placeholderCounterpartyName(input.extensions, input.counterpartySourceKey);
+    const placeholder = await upsertCanonicalCounterparty(c, tenantId, {
+      sourceSystem: input.sourceSystem,
+      sourceNaturalKey: input.counterpartySourceKey,
+      name,
+      normalizedName: normalizeName(name) || null,
+      type: input.direction === "receivable" ? "customer" : "vendor",
+      email: null,
+      extensions: {
+        customer_asserted_csv: {
+          auto_created: true,
+          reason: "unresolved_counterparty_reference",
+        },
+      },
+      common: { provenance: "customer_asserted", confidence: 0.3, sourceIds: [], evidenceIds: [] },
+    });
+    counterpartyId = placeholder.id;
+  }
 
   const { rows } = await c.query<{ id: string; created: boolean }>(
     `INSERT INTO canonical_obligation

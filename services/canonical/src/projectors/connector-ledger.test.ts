@@ -652,6 +652,70 @@ describe("connector ledger canonical projectors", () => {
     ]);
   });
 
+  it("carries a vendor_name/customer_name extra column through as a counterparty name hint", () => {
+    const withVendorName = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "payables_invoices",
+        records: [
+          {
+            invoice_id: "INV-CMP-001",
+            counterparty_id: "cp_new_001",
+            amount: "48750.00",
+            currency: "USD",
+            issued_date: "2026-08-01",
+            due_date: "2026-08-15",
+            status: "pending",
+            vendor_name: "Vantage Point Consulting",
+          },
+        ],
+      },
+      common,
+    );
+    const withoutHint = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "tax_obligations",
+        records: [
+          {
+            obligation_id: "TAX-Q3-2026",
+            counterparty_id: "tax_irs",
+            amount: "58200.00",
+            currency: "USD",
+            due_date: "2026-09-15",
+            status: "open",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(withVendorName).toEqual([
+      expect.objectContaining({
+        kind: "obligation",
+        input: expect.objectContaining({
+          extensions: expect.objectContaining({
+            customer_asserted_csv: expect.objectContaining({
+              counterparty_name_hint: "Vantage Point Consulting",
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(withoutHint).toEqual([
+      expect.objectContaining({
+        kind: "obligation",
+        input: expect.objectContaining({
+          extensions: expect.objectContaining({
+            customer_asserted_csv: expect.objectContaining({
+              counterparty_name_hint: null,
+            }),
+          }),
+        }),
+      }),
+    ]);
+  });
+
   it("projects declared bank transaction CSV rows with the account and direction from the row", () => {
     const out = projectCustomerAssertedCsvLedger(
       {
