@@ -1,10 +1,17 @@
 name: ops-ledger-obligation-lookup
 
+# Read-only diagnostic: look up canonical_obligation/canonical_counterparty
+# and ledger_obligations/ledger_counterparties row counts for one tenant, on
+# staging or production. Companion to ops-raw-extraction-job-lookup.yml --
+# same SSH + docker exec pattern, same container names on both VMs
+# (docker-compose.prod.yml hardcodes brain-prod-*, deployed identically to
+# both VM_HOST and VM_HOST_STAGING).
+
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: "staging or production"
+        description: "Deploy target to inspect."
         required: true
         type: choice
         options:
@@ -15,37 +22,49 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   lookup:
-    name: raw extraction job lookup
+    name: ledger obligation lookup
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target }}
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
     steps:
       - name: Validate tenant_id
+        shell: bash
         run: |
-          id="${{ inputs.tenant_id }}"
-          if ! [[ "$id" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
-            echo "not a well-formed tnt_... id: $id"
+          set -euo pipefail
+          if ! [[ "$TENANT_ID" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $TENANT_ID"
             exit 1
           fi
-        shell: bash
 
       - name: Select target
+        shell: bash
         run: |
-          case "${{ inputs.target }}" in
+          case "$TARGET" in
             staging)
-              echo "VM_HOST=${{ secrets.VM_HOST_STAGING }}" >> "$GITHUB_ENV"
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
               {
                 echo "VM_SSH_KEY<<EOF"
-                echo "${{ secrets.VM_SSH_KEY_STAGING }}"
+                echo "$VM_SSH_KEY_STAGING"
                 echo "EOF"
               } >> "$GITHUB_ENV"
               ;;
             production)
-              echo "VM_HOST=${{ secrets.VM_HOST_PRODUCTION }}" >> "$GITHUB_ENV"
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
               {
                 echo "VM_SSH_KEY<<EOF"
-                echo "${{ secrets.VM_SSH_KEY_PRODUCTION }}"
+                echo "$VM_SSH_KEY_PRODUCTION"
                 echo "EOF"
               } >> "$GITHUB_ENV"
               ;;
@@ -54,20 +73,21 @@ jobs:
               exit 1
               ;;
           esac
-        shell: bash
 
       - name: Configure SSH
+        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
-        shell: bash
 
       - name: Look up canonical and ledger obligation/counterparty counts for the tenant
+        shell: bash
         run: |
+          set -euo pipefail
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='${{ inputs.tenant_id }}' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
           set -euo pipefail
           docker exec -i brain-prod-postgres psql -U brain -d brain \
             -v ON_ERROR_STOP=1 \
@@ -106,4 +126,3 @@ jobs:
           COMMIT;
           SQL
           REMOTE
-        shell: bash
