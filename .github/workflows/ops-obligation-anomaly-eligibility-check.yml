@@ -1,0 +1,195 @@
+name: ops-obligation-anomaly-eligibility-check
+
+# Read-only diagnostic: replays the exact scoring/eligibility CTE chain from
+# services/api/src/agents/obligation-anomaly-scanner.ts's listAnomalousObligations
+# against one tenant's live ledger_obligations, to see precisely which rows
+# score >= 0.5 and are cooldown-eligible right now - independent of whether the
+# background worker has ticked yet. Companion to ops-worker-log-grep.yml and
+# ops-invoice-integrity-scan-lookup.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      tenant_id:
+        description: "Brain tenant id (tnt_...)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: obligation anomaly eligibility check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Validate tenant_id
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TENANT_ID" =~ ^tnt_[0-9A-Za-z]{1,40}$ ]]; then
+            echo "not a well-formed tnt_... id: $TENANT_ID"
+            exit 1
+          fi
+
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Replay scanner eligibility scoring for the tenant
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          WITH base AS (
+             SELECT o.owner_id AS tenant_id,
+                    o.id AS obligation_id,
+                    o.counterparty_id,
+                    cp.name AS counterparty_name,
+                    cp.verified_status AS counterparty_verified_status,
+                    o.type,
+                    o.amount_due,
+                    o.currency,
+                    o.due_date,
+                    o.status
+               FROM ledger_obligations o
+               LEFT JOIN ledger_counterparties cp
+                 ON cp.id = o.counterparty_id AND cp.owner_id = o.owner_id
+              WHERE o.owner_id = :'tenant_id'
+                AND o.status IN ('upcoming', 'due', 'overdue')
+           ),
+           enriched AS (
+             SELECT b.*,
+                    COALESCE(dup.duplicate_count, 0) AS duplicate_count,
+                    COALESCE(struct.group_count, 0) AS structuring_group_count,
+                    struct.group_total,
+                    thr.threshold AS threshold_amount
+               FROM base b
+               LEFT JOIN LATERAL (
+                 SELECT COUNT(*) AS duplicate_count
+                   FROM ledger_obligations d
+                  WHERE d.owner_id = b.tenant_id
+                    AND d.id <> b.obligation_id
+                    AND d.counterparty_id IS NOT DISTINCT FROM b.counterparty_id
+                    AND d.type = b.type
+                    AND d.amount_due = b.amount_due
+                    AND d.currency = b.currency
+                    AND d.due_date = b.due_date
+                    AND d.status IN ('upcoming', 'due', 'overdue')
+               ) dup ON true
+               LEFT JOIN LATERAL (
+                 SELECT COUNT(*) AS group_count, SUM(g.amount_due) AS group_total
+                   FROM ledger_obligations g
+                  WHERE g.owner_id = b.tenant_id
+                    AND g.id <> b.obligation_id
+                    AND b.counterparty_id IS NOT NULL
+                    AND g.counterparty_id = b.counterparty_id
+                    AND g.due_date = b.due_date
+                    AND g.currency = b.currency
+                    AND g.amount_due < 10000
+                    AND g.status IN ('upcoming', 'due', 'overdue')
+               ) struct ON true
+               LEFT JOIN LATERAL (
+                 SELECT t.threshold
+                   FROM unnest(ARRAY(SELECT generate_series(10000, 1000000, 10000))::numeric[]) AS t(threshold)
+                  WHERE b.amount_due < t.threshold
+                    AND b.amount_due >= t.threshold * 0.97
+                  ORDER BY t.threshold ASC
+                  LIMIT 1
+               ) thr ON true
+           ),
+           scored AS (
+             SELECT e.*,
+                    GREATEST(
+                      CASE WHEN e.duplicate_count >= 1 THEN 0.95 ELSE 0 END,
+                      CASE
+                        WHEN e.amount_due < 10000
+                         AND e.structuring_group_count >= 1
+                         AND (e.amount_due + COALESCE(e.group_total, 0)) >= 10000
+                        THEN 0.9
+                        ELSE 0
+                      END,
+                      CASE WHEN e.threshold_amount IS NOT NULL THEN 0.7 ELSE 0 END,
+                      CASE
+                        WHEN e.amount_due >= 10000
+                         AND (e.counterparty_id IS NULL
+                              OR e.counterparty_verified_status IS NULL
+                              OR e.counterparty_verified_status = 'unverified')
+                        THEN 0.6
+                        ELSE 0
+                      END
+                    ) AS anomaly_score
+               FROM enriched e
+           )
+           SELECT s.obligation_id, s.counterparty_name, s.counterparty_verified_status,
+                  s.amount_due, s.due_date, s.status, s.duplicate_count,
+                  s.structuring_group_count, s.threshold_amount, s.anomaly_score,
+                  cd.id IS NOT NULL AS has_cooldown_row, cd.last_status, cd.last_enqueued_at
+             FROM scored s
+             LEFT JOIN agent_trigger_cooldowns cd
+               ON cd.tenant_id = s.tenant_id
+              AND cd.receivable_kind = 'obligation'
+              AND cd.receivable_id = s.obligation_id
+              AND cd.aging_tier = 'invoice_integrity'
+            ORDER BY s.anomaly_score DESC, s.due_date ASC;
+
+          COMMIT;
+          SQL
+          REMOTE
