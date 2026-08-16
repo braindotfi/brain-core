@@ -106,11 +106,20 @@ jobs:
 
           \echo '-- proposals (invoice_integrity) --'
           SELECT id, status, policy_decision, action->>'finding_type' AS finding_type,
-                 action->>'obligation_id' AS obligation_id, created_at
+                 action->>'obligation_id' AS obligation_id, action->>'confidence' AS action_confidence,
+                 created_at
             FROM proposals
            WHERE tenant_id = :'tenant_id'
              AND proposing_agent = 'invoice_integrity'
            ORDER BY created_at DESC;
+
+          \echo '-- policy_trace for the most recent invoice_integrity proposal --'
+          SELECT id, policy_trace
+            FROM proposals
+           WHERE tenant_id = :'tenant_id'
+             AND proposing_agent = 'invoice_integrity'
+           ORDER BY created_at DESC
+           LIMIT 1;
 
           \echo '-- agents row (invoice_integrity) --'
           SELECT id, kind, role, state, registered_at
