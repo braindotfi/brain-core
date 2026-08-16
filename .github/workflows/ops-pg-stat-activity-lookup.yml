@@ -1,0 +1,120 @@
+name: ops-pg-stat-activity-lookup
+
+# Read-only diagnostic: dump pg_stat_activity rows that look stuck (long
+# running, or idle-in-transaction) to check whether a background worker cycle
+# is hung on a DB call rather than merely quiet. A hung (never resolving,
+# never rejecting) promise inside a ManagedWorker cycle would permanently
+# block all future ticks of that same interval with zero error logged - this
+# is the only way to positively confirm that from outside the process.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      min_duration:
+        description: "Minimum query/transaction duration to show (e.g. '5 minutes')."
+        required: true
+        type: string
+        default: "5 minutes"
+
+permissions:
+  contents: read
+
+jobs:
+  lookup:
+    name: pg_stat_activity lookup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      MIN_DURATION: ${{ inputs.min_duration }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Query pg_stat_activity for stuck connections
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "MIN_DURATION='$MIN_DURATION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v min_duration="$MIN_DURATION" <<'SQL'
+          \pset pager off
+          \pset null '(null)'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo '-- long-running or idle-in-transaction backends --'
+          SELECT pid, usename, application_name, state, wait_event_type, wait_event,
+                 now() - xact_start AS xact_age, now() - query_start AS query_age,
+                 now() - state_change AS state_age,
+                 left(query, 200) AS query_snippet
+            FROM pg_stat_activity
+           WHERE datname = current_database()
+             AND pid <> pg_backend_pid()
+             AND (state = 'idle in transaction' OR (state = 'active' AND now() - query_start > :'min_duration'::interval))
+           ORDER BY COALESCE(xact_start, query_start) ASC;
+
+          \echo '-- blocking locks (who is waiting on whom) --'
+          SELECT blocked.pid AS blocked_pid, blocked.usename AS blocked_user,
+                 blocking.pid AS blocking_pid, blocking.usename AS blocking_user,
+                 blocked.wait_event_type, blocked.wait_event,
+                 left(blocked.query, 150) AS blocked_query,
+                 left(blocking.query, 150) AS blocking_query
+            FROM pg_locks bl
+            JOIN pg_stat_activity blocked ON blocked.pid = bl.pid AND NOT bl.granted
+            JOIN pg_locks kl ON kl.locktype = bl.locktype AND kl.database IS NOT DISTINCT FROM bl.database
+             AND kl.relation IS NOT DISTINCT FROM bl.relation AND kl.page IS NOT DISTINCT FROM bl.page
+             AND kl.tuple IS NOT DISTINCT FROM bl.tuple AND kl.transactionid IS NOT DISTINCT FROM bl.transactionid
+             AND kl.pid <> bl.pid AND kl.granted
+            JOIN pg_stat_activity blocking ON blocking.pid = kl.pid;
+
+          COMMIT;
+          SQL
+          REMOTE
