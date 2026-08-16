@@ -3,11 +3,11 @@ import { internalAgentCatalog } from "./registry.js";
 import { AGENT_PAYLOAD_REQUIRED_FIELDS, validateAgentPayload } from "./payloads.js";
 
 describe("agent workflow payloads (2.1)", () => {
-  it("every one of the 19 catalog agents has a payload contract", () => {
+  it("every one of the 20 catalog agents has a payload contract", () => {
     for (const def of internalAgentCatalog) {
       expect(AGENT_PAYLOAD_REQUIRED_FIELDS[def.agent_key], def.agent_key).toBeDefined();
     }
-    expect(Object.keys(AGENT_PAYLOAD_REQUIRED_FIELDS)).toHaveLength(19);
+    expect(Object.keys(AGENT_PAYLOAD_REQUIRED_FIELDS)).toHaveLength(20);
   });
 
   it("every payload contract includes evidence_refs (provenance, INV-1/§1)", () => {

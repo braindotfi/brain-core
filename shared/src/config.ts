@@ -772,6 +772,24 @@ const envSchema = z.object({
     .positive()
     .default(6 * 60 * 60 * 1000),
 
+  // ---- Invoice integrity (obligation anomaly) scanner ----
+  BRAIN_INVOICE_INTEGRITY_SCAN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 60 * 1000),
+  BRAIN_INVOICE_INTEGRITY_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BRAIN_INVOICE_INTEGRITY_SCAN_PER_TENANT_BATCH_SIZE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(25),
+  BRAIN_INVOICE_INTEGRITY_SCAN_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60 * 1000),
+
   // ---- Compliance scanner ----
   BRAIN_COMPLIANCE_SCAN_INTERVAL_MS: z.coerce
     .number()

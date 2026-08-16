@@ -1,5 +1,5 @@
 /**
- * Workflow-specific handler payloads for all 19 agents (Agent Autonomy v3, 2.1).
+ * Workflow-specific handler payloads for all 20 agents (Agent Autonomy v3, 2.1).
  *
  * agentProposal() stays the shared fallback. This registry is the typed contract
  * for each agent's proposal payload: the required fields the plan enumerates per
@@ -154,6 +154,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "recommended_action",
     "evidence_refs",
   ],
+  invoice_integrity: ["obligation_id", "finding_type", "amount", "currency", "evidence_refs"],
 };
 
 export interface AgentPayloadValidation {

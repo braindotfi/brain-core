@@ -116,6 +116,7 @@ import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
 import { startComplianceScanner } from "./agents/compliance-scanner.js";
 import { startDisputeScanner } from "./agents/dispute-scanner.js";
 import { startFraudAnomalyScanner } from "./agents/fraud-anomaly-scanner.js";
+import { startObligationAnomalyScanner } from "./agents/obligation-anomaly-scanner.js";
 import { startPaymentAdvisoryScanner } from "./agents/payment-advisory-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
@@ -3241,6 +3242,27 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  // Obligation anomaly scanner (invoice_integrity): cross-tenant unpaid-obligation
+  // enumeration on the ledger worker pool, then tenant-scoped AgentRunService
+  // proposals for duplicate/structuring/threshold-avoidance/new-vendor findings.
+  const obligationAnomalyScanner = composition.workers.has("ledger")
+    ? startObligationAnomalyScanner(
+        {
+          scanPool: ledgerProjectorPool,
+          appPool: pool,
+          runService: agentRunService,
+          metrics,
+          log,
+        },
+        {
+          intervalMs: cfg.BRAIN_INVOICE_INTEGRITY_SCAN_INTERVAL_MS,
+          batchSize: cfg.BRAIN_INVOICE_INTEGRITY_SCAN_BATCH_SIZE,
+          perTenantBatchSize: cfg.BRAIN_INVOICE_INTEGRITY_SCAN_PER_TENANT_BATCH_SIZE,
+          cooldownMs: cfg.BRAIN_INVOICE_INTEGRITY_SCAN_COOLDOWN_MS,
+        },
+      )
+    : undefined;
+
   // Compliance scanner (BC-1/BC-2): cross-tenant governance-gap enumeration
   // on the ledger worker pool, then tenant-scoped AgentRunService proposals.
   const complianceScanner = composition.workers.has("ledger")
@@ -3774,6 +3796,7 @@ async function main(): Promise<void> {
           paymentAdvisoryScanner,
           vendorRiskScanner,
           fraudAnomalyScanner,
+          obligationAnomalyScanner,
           complianceScanner,
           disputeScanner,
           revenueIntelScanner,

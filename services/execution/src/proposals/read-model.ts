@@ -33,6 +33,7 @@ export const PROPOSAL_TYPES = [
   "bill_management",
   "debt_optimization",
   "savings",
+  "invoice_integrity",
 ] as const;
 
 export type ProposalType = (typeof PROPOSAL_TYPES)[number];
@@ -59,6 +60,7 @@ export const AGENT_ROLE_TO_PROPOSAL_TYPE = {
   bill_management: "bill_management",
   debt_optimization: "debt_optimization",
   savings: "savings",
+  invoice_integrity: "invoice_integrity",
 } as const satisfies Record<string, ProposalType>;
 
 export const ACTION_TYPE_TO_PROPOSAL_TYPE = {
@@ -113,6 +115,10 @@ export const ACTION_TYPE_TO_PROPOSAL_TYPE = {
   create_debt_plan: "debt_optimization",
   recommend_savings_transfer: "savings",
   update_goal_progress: "savings",
+  flag_duplicate_invoice: "invoice_integrity",
+  flag_structuring: "invoice_integrity",
+  flag_threshold_avoidance: "invoice_integrity",
+  flag_unverified_vendor: "invoice_integrity",
 } as const satisfies Record<string, ProposalType>;
 
 type DecisionId = "approve" | "reject" | "acknowledge" | "undo";
@@ -897,6 +903,15 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "priority",
   ],
   savings: ["recommended_action", "goal_id", "amount", "currency", "target_account_id", "progress"],
+  invoice_integrity: [
+    "obligation_id",
+    "counterparty_name",
+    "amount",
+    "currency",
+    "due_date",
+    "finding_type",
+    "related_obligation_ids",
+  ],
 };
 
 function labelForKey(key: string): string {
