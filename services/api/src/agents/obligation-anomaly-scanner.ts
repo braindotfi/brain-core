@@ -184,7 +184,14 @@ export async function runObligationAnomalyScanCycle(
       runId = result.run_id;
       proposalId = result.proposed?.id ?? null;
       deps.log?.info?.(
-        { tenantId: row.tenant_id, obligationId: row.obligation_id, event, status, runId, proposalId },
+        {
+          tenantId: row.tenant_id,
+          obligationId: row.obligation_id,
+          event,
+          status,
+          runId,
+          proposalId,
+        },
         "obligation anomaly scanner ran obligation",
       );
     } catch (err) {
