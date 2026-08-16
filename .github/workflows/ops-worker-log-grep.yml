@@ -1,0 +1,92 @@
+name: ops-worker-log-grep
+
+# Read-only diagnostic: grep recent brain-prod-worker container logs for a
+# caller-supplied pattern. Used to check whether a specific background worker
+# (e.g. obligation-anomaly-scanner) is actually ticking/erroring, which SQL
+# queries against tables it writes to can't show on their own (a worker that
+# crashes before writing leaves no DB trace at all).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to inspect."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      pattern:
+        description: "Case-insensitive grep pattern to search worker logs for."
+        required: true
+        type: string
+      since:
+        description: "Docker logs --since value (e.g. 3h, 30m)."
+        required: true
+        type: string
+        default: "3h"
+
+permissions:
+  contents: read
+
+jobs:
+  grep:
+    name: grep worker logs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      PATTERN: ${{ inputs.pattern }}
+      SINCE: ${{ inputs.since }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Grep worker container logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "PATTERN='$PATTERN' SINCE='$SINCE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          docker logs --since "$SINCE" --timestamps brain-prod-worker 2>&1 \
+            | grep -i --color=never -- "$PATTERN" \
+            | tail -n 300
+          echo "-- end of matches --"
+          REMOTE
