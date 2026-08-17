@@ -113,7 +113,7 @@ export async function insertMember(
        tenant_id, id, email, display_name, role, status, active, approval_domains,
        per_item_limit_cents, requires_second_approver_above_cents
      )
-     VALUES ($1,$2,lower($3),$4,$5,$6,$7,$8,$9)
+     VALUES ($1,$2,lower($3),$4,$5,$6,$7,$8,$9,$10)
      RETURNING tenant_id, id, email, display_name, role, status, active, approval_domains,
                per_item_limit_cents, requires_second_approver_above_cents`,
     [
