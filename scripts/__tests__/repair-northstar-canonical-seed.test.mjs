@@ -65,4 +65,6 @@ test("staging repair workflow has no production target and requires apply confir
   assert.match(workflow, /REPAIR_CANONICAL_NORTHSTAR_SEED/);
   assert.match(workflow, /northstar_canonical_repair_apply_completed/);
   assert.match(workflow, /northstar_canonical_repair_report_completed/);
+  assert.match(workflow, /2>&1/);
+  assert.match(workflow, /Northstar repair command exited with status/);
 });

@@ -68,9 +68,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set +e
           output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "chmod 700 ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh && MODE='$MODE' CONFIRMATION='$CONFIRMATION' bash ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh")"
+            "chmod 700 ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh && MODE='$MODE' CONFIRMATION='$CONFIRMATION' bash ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh" 2>&1)"
+          status=$?
+          set -e
           printf '%s\n' "$output"
+          if [[ "$status" -ne 0 ]]; then
+            echo "Northstar repair command exited with status $status" >&2
+            exit "$status"
+          fi
           if [[ "$MODE" == 'report' ]]; then
             [[ "$(printf '%s\n' "$output" | tail -n 1)" == 'northstar_canonical_repair_report_completed' ]]
           else
