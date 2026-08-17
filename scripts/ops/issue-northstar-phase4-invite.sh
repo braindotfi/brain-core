@@ -38,7 +38,7 @@ ciphertext="$(docker exec \
   brain-prod-api node "$script_path")"
 
 metadata="$(docker exec brain-prod-api cat "$result_path")"
-printf '%s' "$metadata" | node -e '
+printf '%s' "$metadata" | docker exec -i brain-prod-api node -e '
 let text=""; process.stdin.on("data", (chunk) => text += chunk); process.stdin.on("end", () => {
   const value = JSON.parse(text);
   const ok = value.status === "completed" && typeof value.member_id === "string" &&
