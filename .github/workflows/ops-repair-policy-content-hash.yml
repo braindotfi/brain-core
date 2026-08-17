@@ -1,0 +1,96 @@
+name: ops-repair-policy-content-hash
+
+# Runs scripts/ops/repair-policy-content-hash.mjs --apply against a target
+# VM's postgres, through the same `migrate` compose service (Postgres
+# bootstrap superuser `brain`, the only role with UPDATE on
+# policies.content_hash) that promote-prod.yml's "Policy content-hash repair
+# gate" dry-runs before every promote. Dispatched by hand when that gate
+# reports outstanding repairable rows, since the gate itself never writes -
+# see the script's own header for the full safety rationale (dry-run
+# default, never touches a signed row, scoped per-row UPDATE in a
+# transaction). This workflow always passes --apply; there is no reason to
+# dispatch it for a dry run, the gate (or a manual `node
+# scripts/ops/repair-policy-content-hash.mjs` with no flag) already covers
+# that read-only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target to repair."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: repair policy content_hash
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      TARGET: ${{ inputs.target }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Select target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            staging)
+              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+              echo "COMPOSE_PROJECT=brain-staging" >> "$GITHUB_ENV"
+              echo "VM_ENV_FILE=.env.staging" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_STAGING"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            production)
+              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+              echo "COMPOSE_PROJECT=brain-prod" >> "$GITHUB_ENV"
+              echo "VM_ENV_FILE=.env.prod" >> "$GITHUB_ENV"
+              {
+                echo "VM_SSH_KEY<<EOF"
+                echo "$VM_SSH_KEY_PRODUCTION"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "target must be staging or production"
+              exit 1
+              ;;
+          esac
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run repair-policy-content-hash.mjs --apply on the VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "COMPOSE_PROJECT='$COMPOSE_PROJECT' VM_ENV_FILE='$VM_ENV_FILE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+          if [ ! -f "scripts/ops/repair-policy-content-hash.mjs" ]; then
+            echo "scripts/ops/repair-policy-content-hash.mjs not present on this VM - run promote first so it's synced"
+            exit 1
+          fi
+          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" -f docker-compose.prod.yml run --rm --no-deps \
+            -v ~/brain-core/scripts/ops/repair-policy-content-hash.mjs:/app/services/api/ops-repair-policy-content-hash.mjs:ro \
+            migrate node services/api/ops-repair-policy-content-hash.mjs --apply
+          REMOTE
