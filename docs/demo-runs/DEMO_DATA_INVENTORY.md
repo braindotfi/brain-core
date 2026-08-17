@@ -18,7 +18,7 @@ Every value shown to a presenter must originate in the tenant's real core record
 | Ledger: Cash Flow   | posted `ledger_transactions`                                    | Forty-eight monthly revenue and operating-expense records                   |
 | Counterparties      | `ledger_counterparties`                                         | Seven vendors, five customers, one tax authority                            |
 | Inbox               | `proposals`, policy trace, audit events                         | Two evidence-backed Collections recommendations requiring review            |
-| Policy              | one active tenant policy                                        | AP auto-allow below $50,000 for approved vendors, review otherwise          |
+| Policy              | one active tenant policy                                        | AP auto-allow through $10,000 for approved vendors, review otherwise        |
 | Agents              | tenant agent registration                                       | Collections Agent used by pending Collections recommendations               |
 | Forecasting         | accounts, cash-flow history, scheduled obligations, AR invoices | Deterministic cash runway and short-term AP and AR inputs                   |
 | Wiki and Assistant  | tenant-scoped Ledger records                                    | Exact totals, overdue customer list, named vendor balances, cash-flow facts |

@@ -91,7 +91,7 @@ try {
         ),
     ) &&
     result.policy?.state === "active" &&
-    result.policy?.version === 1 &&
+    result.policy?.version === 2 &&
     result.audit.some((row) => row.action === "policy.activated") &&
     result.audit.some((row) => row.action === "agent.action.proposed");
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

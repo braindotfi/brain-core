@@ -23,5 +23,5 @@
     "august_2026_net": "162000.00"
   },
   "inbox": { "pending_collections_proposals": 2 },
-  "policy": { "active_version": 1, "auto_allow_max": "50000.00" }
+  "policy": { "active_version": 2, "auto_allow_max": "10000.00" }
 }

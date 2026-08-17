@@ -1343,7 +1343,11 @@ Pending
       curated tenant and requires an isolated tenant plus `DATABASE_URL`,
       `BRAIN_TENANT_ID`, and `BRAIN_ACTOR`. Its canonical records and expected
       cross-surface totals live in `docs/demo-runs/`; it must not be replaced
-      with the unrelated Golden Path or Brightline demo seeds.
+      with the unrelated Golden Path or Brightline demo seeds. Tenant bootstrap
+      policy version 1 remains immutable; the curated Northstar policy is
+      activated as version 2 and is lint-clean under the production activation
+      gate. It auto-allows only approved low-risk vendor payments through
+      $10,000.00 and requires review above that amount.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.
