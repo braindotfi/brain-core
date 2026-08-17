@@ -22,6 +22,22 @@ try {
     `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount_due), 0)::text AS total, COALESCE(SUM(amount_due) FILTER (WHERE status = 'overdue'), 0)::text AS overdue_total FROM ledger_invoices WHERE owner_id = $1 AND status IN ('sent', 'overdue')`,
     [tenantId],
   );
+  const classifications = await client.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM ledger_invoices
+         WHERE owner_id = $1 AND metadata->>'scenario' = 'ar') AS ar_invoice_count,
+       (SELECT COALESCE(SUM(amount_due), 0)::text FROM ledger_invoices
+         WHERE owner_id = $1 AND metadata->>'scenario' = 'ar') AS ar_invoice_total,
+       (SELECT COUNT(*)::int FROM ledger_invoices
+         WHERE owner_id = $1 AND metadata->>'scenario' IS DISTINCT FROM 'ar') AS non_ar_invoice_count,
+       (SELECT COUNT(*)::int FROM ledger_obligations
+         WHERE owner_id = $1 AND direction = 'payable' AND metadata->>'scenario' = 'ap') AS ap_obligation_count,
+       (SELECT COALESCE(SUM(amount_due), 0)::text FROM ledger_obligations
+         WHERE owner_id = $1 AND direction = 'payable' AND metadata->>'scenario' = 'ap') AS ap_obligation_total,
+       (SELECT COUNT(*)::int FROM ledger_obligations
+         WHERE owner_id = $1 AND direction = 'payable' AND metadata->>'scenario' IS DISTINCT FROM 'ap') AS non_ap_obligation_count`,
+    [tenantId],
+  );
   const cashFlow = await client.query(
     `SELECT COUNT(DISTINCT date_trunc('month', transaction_date))::int AS months, COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0)::text AS annual_net, ROUND(COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0) / 12, 2)::text AS monthly_average, COALESCE(SUM(CASE WHEN transaction_date >= '2026-08-01T00:00:00Z'::timestamptz AND direction = 'inflow' THEN amount ELSE 0 END) - SUM(CASE WHEN transaction_date >= '2026-08-01T00:00:00Z'::timestamptz AND direction = 'outflow' THEN amount ELSE 0 END), 0)::text AS august_net FROM ledger_transactions WHERE owner_id = $1 AND status = 'posted'`,
     [tenantId],
@@ -40,7 +56,19 @@ try {
     [tenantId],
   );
   const policy = await client.query(
-    `SELECT version, state, content->'lists'->'vendors.approved' AS approved_vendors FROM policies WHERE tenant_id = $1 AND state = 'active' ORDER BY version DESC LIMIT 1`,
+    `SELECT version, state,
+            content->'lists'->'vendors.policy_allowlisted' AS policy_allowlisted_vendors,
+            EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(content->'rules') AS rule
+               WHERE rule->>'id' = 'northstar-ap-auto-approved'
+                 AND rule->>'execute' = 'auto'
+                 AND rule->'when'->>'counterparty.in' = 'vendors.policy_allowlisted'
+            ) AS auto_rule_matches_policy_allowlist
+       FROM policies
+      WHERE tenant_id = $1 AND state = 'active'
+      ORDER BY version DESC
+      LIMIT 1`,
     [tenantId],
   );
   const audit = await client.query(
@@ -59,6 +87,7 @@ try {
     },
     payables: payables.rows[0],
     receivables: receivables.rows[0],
+    classifications: classifications.rows[0],
     counterparties: counterparties.rows[0],
     inbox: { count: inbox.rows.length, proposals: inbox.rows },
     policy: policy.rows[0] ?? null,
@@ -74,6 +103,12 @@ try {
     result.receivables?.count === 5 &&
     result.receivables.total === "530500.00000000" &&
     result.receivables.overdue_total === "280000.00000000" &&
+    result.classifications?.ar_invoice_count === 5 &&
+    result.classifications.ar_invoice_total === "530500.00000000" &&
+    result.classifications.non_ar_invoice_count === 0 &&
+    result.classifications.ap_obligation_count === 7 &&
+    result.classifications.ap_obligation_total === "221300.00000000" &&
+    result.classifications.non_ap_obligation_count === 0 &&
     result.counterparties?.count === 12 &&
     result.inbox.count === 2 &&
     result.inbox.proposals.every(
@@ -92,6 +127,7 @@ try {
     ) &&
     result.policy?.state === "active" &&
     result.policy?.version === 2 &&
+    result.policy.auto_rule_matches_policy_allowlist === true &&
     result.audit.some((row) => row.action === "policy.activated") &&
     result.audit.some((row) => row.action === "agent.action.proposed");
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

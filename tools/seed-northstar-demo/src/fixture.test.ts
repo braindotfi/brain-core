@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runActivationLintGate } from "@brain/policy";
+import { evaluate, runActivationLintGate } from "@brain/policy";
 import { buildNorthstarPolicy } from "./index.js";
 import {
   NORTHSTAR_EXPECTED,
@@ -27,5 +27,32 @@ describe("Northstar Labs fixture", () => {
     expect(
       runActivationLintGate(policy, { lintEnforce: true, confidenceEnforce: true }).blocking,
     ).toEqual([]);
+  });
+
+  it("keeps the seeded auto rule reachable through its policy allowlist", () => {
+    const policy = buildNorthstarPolicy(["cp_fathom"]);
+    const decision = evaluate(policy, {
+      kind: "outbound_payment",
+      counterparty_id: "cp_fathom",
+      amount: { currency: "USD", value: "9600.00" },
+      agent_role: "payment",
+      risk_level: "low",
+      counterparty_trust_status: "unreviewed",
+      timestamp: new Date("2026-08-15T12:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      outcome: "allow",
+      matched_rule_id: "northstar-ap-auto-approved",
+    });
+    expect(decision.trace[0]?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "counterparty.in",
+          detail: "vendors.policy_allowlisted",
+          passed: true,
+        }),
+      ]),
+    );
   });
 });
