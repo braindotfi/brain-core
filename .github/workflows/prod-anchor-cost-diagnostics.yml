@@ -184,6 +184,86 @@ jobs:
              AND e.created_at >= :'window_start'::timestamptz
            WHERE t.audit_anchor_mode = 'db_only';
 
+          \echo 'db-only tenant inventory by anchoring-relevant category'
+          SELECT t.kind,
+                 t.sandbox,
+                 t.created_via,
+                 COUNT(*) AS tenant_count,
+                 COUNT(*) FILTER (WHERE e.id IS NOT NULL) AS tenants_with_events_since_window,
+                 COUNT(e.id) AS events_since_window
+            FROM tenants t
+            LEFT JOIN audit_events e
+              ON e.tenant_id = t.id
+             AND e.created_at >= :'window_start'::timestamptz
+           WHERE t.audit_anchor_mode = 'db_only'
+           GROUP BY t.kind, t.sandbox, t.created_via
+           ORDER BY tenant_count DESC, t.kind, t.sandbox, t.created_via;
+
+          \echo 'db-only tenant creation rate by day'
+          SELECT date_trunc('day', t.created_at) AS day,
+                 t.kind,
+                 t.sandbox,
+                 t.created_via,
+                 COUNT(*) AS tenants_created
+            FROM tenants t
+           WHERE t.audit_anchor_mode = 'db_only'
+             AND t.created_at >= :'window_start'::timestamptz
+           GROUP BY 1, 2, 3, 4
+           ORDER BY day, t.kind, t.sandbox, t.created_via;
+
+          \echo 'db-only tenant creation burst by hour'
+          SELECT date_trunc('hour', t.created_at) AS hour,
+                 COUNT(*) AS tenants_created
+            FROM tenants t
+           WHERE t.audit_anchor_mode = 'db_only'
+             AND t.created_at >= :'window_start'::timestamptz
+           GROUP BY 1
+           ORDER BY tenants_created DESC, hour ASC
+           LIMIT 20;
+
+          \echo 'counterfactual db-only tenant roots by hour'
+          WITH hourly AS (
+            SELECT date_trunc('hour', e.created_at) AS hour,
+                   COUNT(DISTINCT e.tenant_id) AS tenant_root_candidates,
+                   COUNT(*) AS audit_events
+              FROM audit_events e
+              JOIN tenants t ON t.id = e.tenant_id
+             WHERE t.audit_anchor_mode = 'db_only'
+               AND e.created_at >= :'window_start'::timestamptz
+             GROUP BY 1
+          )
+          SELECT hour, tenant_root_candidates, audit_events
+            FROM hourly
+           ORDER BY hour;
+
+          \echo 'counterfactual db-only root rate distribution'
+          WITH hourly AS (
+            SELECT date_trunc('hour', e.created_at) AS hour,
+                   COUNT(DISTINCT e.tenant_id)::numeric AS tenant_root_candidates
+              FROM audit_events e
+              JOIN tenants t ON t.id = e.tenant_id
+             WHERE t.audit_anchor_mode = 'db_only'
+               AND e.created_at >= :'window_start'::timestamptz
+             GROUP BY 1
+          )
+          SELECT COUNT(*) AS active_hours,
+                 COALESCE(SUM(tenant_root_candidates), 0) AS total_root_candidates,
+                 COALESCE(AVG(tenant_root_candidates), 0) AS mean_roots_per_active_hour,
+                 percentile_cont(0.5) WITHIN GROUP (ORDER BY tenant_root_candidates)
+                   AS median_roots_per_active_hour,
+                 percentile_cont(0.9) WITHIN GROUP (ORDER BY tenant_root_candidates)
+                   AS p90_roots_per_active_hour,
+                 COALESCE(MAX(tenant_root_candidates), 0) AS max_roots_per_hour
+            FROM hourly;
+
+          \echo 'counterfactual initial db-only onchain backlog'
+          SELECT COUNT(DISTINCT e.tenant_id) AS tenant_roots_to_anchor_on_reinclusion,
+                 COUNT(*) AS covered_audit_events
+            FROM audit_events e
+            JOIN tenants t ON t.id = e.tenant_id
+           WHERE t.audit_anchor_mode = 'db_only'
+             AND e.created_at >= :'window_start'::timestamptz;
+
           COMMIT;
           SQL
           printf '%s\n' "$anchor_rows_json"
