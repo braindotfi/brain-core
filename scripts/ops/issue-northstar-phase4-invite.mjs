@@ -1,8 +1,5 @@
-import { createHash, createPublicKey } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { constants, createHash, createPublicKey, publicEncrypt } from "node:crypto";
+import { writeFileSync } from "node:fs";
 
 const TENANT_ID = "tnt_01M08J9B75QH08MCVA884N57VB";
 const RECIPIENT_EMAIL = "braindotfi+test1@gmail.com";
@@ -71,78 +68,99 @@ const adminHeaders = {
 };
 const listed = await request("/members?limit=100", { headers: adminHeaders });
 if (!Array.isArray(listed?.members)) fail("members response is malformed");
-if (listed.members.some((member) => member?.email === RECIPIENT_EMAIL)) {
-  fail("recipient member already exists; refusing to issue or replace an invite");
-}
+const existing = listed.members.find((member) => member?.email === RECIPIENT_EMAIL);
+const expectedDomains = ["ap", "ar", "treasury", "payroll", "reconciliation"];
+let member;
+let inviteToken;
+let memberChangedAuditId;
+let reissue = false;
 
-const created = await request("/members", {
-  method: "POST",
-  headers: adminHeaders,
-  body: JSON.stringify({
-    email: RECIPIENT_EMAIL,
-    display_name: "Northstar Phase 4 Test Presenter",
-    role: "admin",
-    invite: true,
-    approval: {
-      domains: ["ap", "ar", "treasury", "payroll", "reconciliation"],
-      per_item_limit_cents: "100000000",
-      requires_second_approver_above_cents: null,
-    },
-  }),
-});
-if (
-  typeof created?.invite_token !== "string" ||
-  typeof created?.audit_id !== "string" ||
-  typeof created?.member?.id !== "string" ||
-  created.member.tenantId !== TENANT_ID ||
-  created.member.role !== "admin" ||
-  created.invite_expires_in_hours !== 72
-) {
-  fail("member invite response is malformed or outside the fixed scope");
+if (existing !== undefined) {
+  const expectedExisting =
+    existing.tenantId === TENANT_ID &&
+    existing.role === "admin" &&
+    existing.status === "invited" &&
+    existing.active === false &&
+    existing.approval?.perItemLimit === 100000000 &&
+    existing.approval?.requiresSecondApproverAbove === null &&
+    JSON.stringify([...(existing.approval?.domains ?? [])].sort()) ===
+      JSON.stringify(expectedDomains);
+  if (!expectedExisting || typeof existing.id !== "string") {
+    fail("recipient member exists outside the constrained reissue state");
+  }
+  const reissued = await request(`/members/${existing.id}/invites`, {
+    method: "POST",
+    headers: adminHeaders,
+  });
+  if (typeof reissued?.invite_token !== "string" || typeof reissued?.expires_at !== "string") {
+    fail("member invite reissue response is malformed");
+  }
+  member = existing;
+  inviteToken = reissued.invite_token;
+  reissue = true;
+} else {
+  const created = await request("/members", {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      email: RECIPIENT_EMAIL,
+      display_name: "Northstar Phase 4 Test Presenter",
+      role: "admin",
+      invite: true,
+      approval: {
+        domains: expectedDomains,
+        per_item_limit_cents: "100000000",
+        requires_second_approver_above_cents: null,
+      },
+    }),
+  });
+  if (
+    typeof created?.invite_token !== "string" ||
+    typeof created?.audit_id !== "string" ||
+    typeof created?.member?.id !== "string" ||
+    created.member.tenantId !== TENANT_ID ||
+    created.member.role !== "admin" ||
+    created.invite_expires_in_hours !== 72
+  ) {
+    fail("member invite response is malformed or outside the fixed scope");
+  }
+  member = created.member;
+  inviteToken = created.invite_token;
+  memberChangedAuditId = created.audit_id;
 }
 
 const audit = await request("/audit/events?limit=500", { headers: adminHeaders });
 if (!Array.isArray(audit?.events)) fail("audit response is malformed");
 const memberChanged = audit.events.some(
-  (event) => event?.id === created.audit_id && event?.action === "member.changed",
+  (event) =>
+    event?.action === "member.changed" &&
+    event?.outputs?.after?.id === member.id &&
+    (memberChangedAuditId === undefined || event.id === memberChangedAuditId),
 );
 const memberInvited = audit.events.some(
-  (event) => event?.action === "member.invited" && event?.inputs?.member_id === created.member.id,
+  (event) =>
+    event?.action === "member.invited" &&
+    event?.inputs?.member_id === member.id &&
+    (reissue ? event.inputs?.reissue === true : event.inputs?.reissue !== true),
 );
 if (!memberChanged || !memberInvited) fail("required member audit events were not persisted");
 
-const temporaryDirectory = mkdtempSync(join(tmpdir(), "northstar-invite-key-"));
-const publicKeyPath = join(temporaryDirectory, "recipient-public-key.pem");
-try {
-  writeFileSync(publicKeyPath, PUBLIC_KEY_PEM, { mode: 0o600 });
-  chmodSync(publicKeyPath, 0o600);
-  const encrypted = spawnSync(
-    "openssl",
-    [
-      "pkeyutl",
-      "-encrypt",
-      "-pubin",
-      "-inkey",
-      publicKeyPath,
-      "-pkeyopt",
-      "rsa_padding_mode:oaep",
-      "-pkeyopt",
-      "rsa_oaep_md:sha256",
-    ],
-    { input: created.invite_token },
-  );
-  if (encrypted.status !== 0) fail("invite token encryption failed");
-  writeFileSync(
-    RESULT_PATH,
-    JSON.stringify({
-      member_id: created.member.id,
-      member_changed_audit_id: created.audit_id,
-      invite_expires_in_hours: created.invite_expires_in_hours,
-      status: "completed",
-    }),
-    { mode: 0o600 },
-  );
-  process.stdout.write(encrypted.stdout.toString("base64"));
-} finally {
-  rmSync(temporaryDirectory, { recursive: true, force: true });
-}
+const ciphertext = publicEncrypt(
+  {
+    key: PUBLIC_KEY_PEM,
+    padding: constants.RSA_PKCS1_OAEP_PADDING,
+    oaepHash: "sha256",
+  },
+  Buffer.from(inviteToken, "utf8"),
+).toString("base64");
+writeFileSync(
+  RESULT_PATH,
+  JSON.stringify({
+    member_id: member.id,
+    invite_expires_in_hours: 72,
+    reissue,
+    status: "completed",
+  }),
+  { mode: 0o600 },
+);
+process.stdout.write(ciphertext);

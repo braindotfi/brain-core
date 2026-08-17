@@ -42,7 +42,7 @@ printf '%s' "$metadata" | node -e '
 let text=""; process.stdin.on("data", (chunk) => text += chunk); process.stdin.on("end", () => {
   const value = JSON.parse(text);
   const ok = value.status === "completed" && typeof value.member_id === "string" &&
-    typeof value.member_changed_audit_id === "string" && value.invite_expires_in_hours === 72;
+    typeof value.reissue === "boolean" && value.invite_expires_in_hours === 72;
   process.exit(ok ? 0 : 1);
 });
 '
