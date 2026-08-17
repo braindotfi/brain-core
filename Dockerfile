@@ -45,6 +45,7 @@ COPY clients/sdk/package.json clients/sdk/tsconfig.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/tsconfig.json tools/migrate/
 COPY tools/static-jwks/package.json tools/static-jwks/tsconfig.json tools/static-jwks/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/tsconfig.json tools/seed-golden-path/
+COPY tools/seed-northstar-demo/package.json tools/seed-northstar-demo/tsconfig.json tools/seed-northstar-demo/
 COPY tools/dev-token/package.json tools/dev-token/tsconfig.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/tsconfig.json tools/plaid-sandbox/
 COPY tools/demo-reset/package.json tools/demo-reset/tsconfig.json tools/demo-reset/
@@ -67,6 +68,9 @@ RUN pnpm -C tools/static-jwks run build
 RUN pnpm -C tools/dev-token run build
 # seed-golden-path: demo-data seeder for the `seed` profile (docker-compose.prod.yml).
 RUN pnpm -C tools/seed-golden-path run build
+# Northstar Labs is a purpose-built investor-demo seed. It is invoked only by
+# the staging validation workflow against an isolated tenant.
+RUN pnpm -C tools/seed-northstar-demo run build
 
 # ---- runtime stage ----
 FROM node:24-slim AS runtime
@@ -110,6 +114,7 @@ COPY clients/sdk/package.json clients/sdk/
 COPY tools/migrate/package.json tools/migrate/
 COPY tools/static-jwks/package.json tools/static-jwks/
 COPY tools/seed-golden-path/package.json tools/seed-golden-path/
+COPY tools/seed-northstar-demo/package.json tools/seed-northstar-demo/
 COPY tools/dev-token/package.json tools/dev-token/
 COPY tools/plaid-sandbox/package.json tools/plaid-sandbox/
 COPY tools/demo-reset/package.json tools/demo-reset/
@@ -162,6 +167,7 @@ COPY --from=builder /app/tools/migrate/dist tools/migrate/dist
 COPY --from=builder /app/tools/static-jwks/dist tools/static-jwks/dist
 COPY --from=builder /app/tools/dev-token/dist tools/dev-token/dist
 COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
+COPY --from=builder /app/tools/seed-northstar-demo/dist tools/seed-northstar-demo/dist
 
 # Migration SQL files. The migrate CLI discovers services/<svc>/migrations/*.sql
 # relative to the repo root (cwd). Without these the same runtime image cannot
