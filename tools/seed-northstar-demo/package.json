@@ -1,0 +1,33 @@
+{
+  "name": "@brain/seed-northstar-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Curated Northstar Labs investor demo tenant seed.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "brain-seed-northstar-demo": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "seed": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@brain/ledger": "workspace:*",
+    "@brain/policy": "workspace:*",
+    "@brain/shared": "workspace:*",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/pg": "^8.11.10",
+    "eslint": "^9.12.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

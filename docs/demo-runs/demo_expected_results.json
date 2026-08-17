@@ -1,0 +1,27 @@
+{
+  "tenant_name": "Northstar Labs, Inc.",
+  "as_of": "2026-08-15T12:00:00.000Z",
+  "currency": "USD",
+  "accounts": {
+    "operating_available_cash": "482750.00",
+    "reserve_cash": "1200000.00",
+    "corporate_card_balance": "28640.00"
+  },
+  "open_payables": { "count": 7, "total": "221300.00" },
+  "open_receivables": {
+    "count": 5,
+    "total": "530500.00",
+    "overdue_count": 2,
+    "overdue_total": "280000.00"
+  },
+  "cash_flow": {
+    "months": 12,
+    "revenue_total": "4360000.00",
+    "outflow_total": "3060000.00",
+    "net_total": "1300000.00",
+    "trailing_monthly_average": "108333.33",
+    "august_2026_net": "162000.00"
+  },
+  "inbox": { "pending_collections_proposals": 2 },
+  "policy": { "active_version": 1, "auto_allow_max": "50000.00" }
+}

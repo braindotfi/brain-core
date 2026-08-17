@@ -23,6 +23,7 @@ export {
   recordTransactionRow,
   upsertAccountRow,
   upsertCounterpartyRow,
+  upsertObligationRow,
   normalizeName,
 } from "./service/writes.js";
 export {
