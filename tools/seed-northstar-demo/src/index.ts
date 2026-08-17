@@ -165,7 +165,7 @@ export async function seedNorthstarDemo(
     });
   }
 
-  const receivableObligations = new Map<string, string>();
+  const receivableInvoices = new Map<string, string>();
   for (const [
     counterpartyKey,
     invoiceNumber,
@@ -189,8 +189,7 @@ export async function seedNorthstarDemo(
       provenance: "human_confirmed",
       confidence: 1,
     });
-    receivableObligations.set(invoiceNumber, obligation.row.id);
-    await insertInvoice(pool, tenantId, {
+    const invoiceId = await insertInvoice(pool, tenantId, {
       invoiceNumber,
       counterpartyId: counterparties.get(counterpartyKey)!,
       amount,
@@ -201,6 +200,7 @@ export async function seedNorthstarDemo(
       evidenceIds,
       obligationId: obligation.row.id,
     });
+    receivableInvoices.set(invoiceNumber, invoiceId);
   }
 
   const policy = await seedPolicy(
@@ -226,7 +226,7 @@ export async function seedNorthstarDemo(
     agentId,
     policy.version,
     counterparties,
-    receivableObligations,
+    receivableInvoices,
   );
 
   return {
@@ -271,13 +271,14 @@ async function insertInvoice(
     evidenceIds: string[];
     obligationId: string;
   },
-): Promise<void> {
-  await withTenantScope(pool, tenantId, async (c) => {
+): Promise<string> {
+  return withTenantScope(pool, tenantId, async (c) => {
+    const invoiceId = newInvoiceId();
     await c.query(
       `INSERT INTO ledger_invoices (id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid, currency, issue_date, due_date, status, source_ids, evidence_ids, linked_document_ids, provenance, confidence, canonical_obligation_id)
        VALUES ($1,$2,$3,$4,$5,0,'USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'human_confirmed',1,$11)`,
       [
-        newInvoiceId(),
+        invoiceId,
         tenantId,
         input.invoiceNumber,
         input.counterpartyId,
@@ -290,6 +291,7 @@ async function insertInvoice(
         input.obligationId,
       ],
     );
+    return invoiceId;
   });
 }
 
@@ -336,14 +338,30 @@ async function seedPolicy(
       [NORTHSTAR_SEED_KEY],
     );
     if (existing.rows[0] !== undefined) return existing.rows[0];
-    const next = await c.query<{ version: number }>(
-      `SELECT COALESCE(MAX(version) + 1, 1)::int AS version FROM policies`,
+    const active = await c.query<{ id: string; version: number }>(
+      `SELECT id, version FROM policies WHERE tenant_id = $1 AND state = 'active' LIMIT 1`,
+      [tenantId],
     );
-    const version = next.rows[0]!.version;
+    if (active.rows[0] !== undefined) {
+      if (active.rows[0].version !== 1) {
+        throw new Error(
+          `Tenant ${tenantId} has active policy version ${active.rows[0].version}; Northstar seeding requires the bootstrap policy.`,
+        );
+      }
+      await c.query(
+        `UPDATE policies SET content = $1::jsonb, content_hash = $2, quorum_required = 1, created_by = $3 WHERE id = $4 AND tenant_id = $5`,
+        [
+          JSON.stringify(policy),
+          contentHash(policy as unknown as PolicyDocument),
+          actor,
+          active.rows[0].id,
+          tenantId,
+        ],
+      );
+      return active.rows[0];
+    }
+    const version = 1;
     const id = newPolicyId();
-    await c.query(
-      `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
-    );
     await c.query(
       `INSERT INTO policies (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at, created_at) VALUES ($1,$2,$3,$4::jsonb,$5,1,'active',$6,$7,$7)`,
       [
@@ -382,7 +400,7 @@ async function seedCollectionsProposals(
   agentId: string,
   policyVersion: number,
   counterparties: Map<string, string>,
-  obligations: Map<string, string>,
+  invoices: Map<string, string>,
 ): Promise<string[]> {
   const source = [
     ["helio", "AR-HELIO-2026-07", "184000.00", 42],
@@ -392,7 +410,7 @@ async function seedCollectionsProposals(
   for (const [key, invoiceNumber, amount, daysOverdue] of source) {
     const proposalId = newProposalId();
     const counterpartyId = counterparties.get(key)!;
-    const invoiceId = obligations.get(invoiceNumber)!;
+    const invoiceId = invoices.get(invoiceNumber)!;
     const action = {
       kind: "agent_action",
       type: "collections",
