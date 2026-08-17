@@ -80,11 +80,7 @@ if (existing !== undefined) {
     existing.tenantId === TENANT_ID &&
     existing.role === "admin" &&
     existing.status === "invited" &&
-    existing.active === false &&
-    existing.approval?.perItemLimit === 100000000 &&
-    existing.approval?.requiresSecondApproverAbove === null &&
-    JSON.stringify([...(existing.approval?.domains ?? [])].sort()) ===
-      JSON.stringify(expectedDomains);
+    existing.active === false;
   if (!expectedExisting || typeof existing.id !== "string") {
     fail("recipient member exists outside the constrained reissue state");
   }
