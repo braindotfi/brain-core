@@ -376,7 +376,9 @@ describe("member routes", () => {
           ([sql, values]) =>
             String(sql).startsWith("INSERT INTO members") &&
             Array.isArray(values) &&
-            values.includes("invited"),
+            values.includes("invited") &&
+            values.length === 10 &&
+            String(sql).includes("$10"),
         ),
       ).toBe(true);
       expect(
