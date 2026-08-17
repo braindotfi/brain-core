@@ -13,7 +13,7 @@ These are Phase 5 evaluation cases. They are not hardcoded responses.
 7. What is the trailing monthly average cash flow? Expected: positive $108,333.33.
 8. Which vendor has the largest open payable? Expected: Cascade Compute, $86,400.00.
 9. Why is Collections requesting review? Expected: the Helio and Apex overdue invoices.
-10. Which payments can auto-allow under the active policy? Expected: approved vendors at or below $50,000.00.
+10. Which payments can auto-allow under the active policy? Expected: approved vendors at or below $10,000.00.
 
 ## Additional Evaluation Questions
 

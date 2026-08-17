@@ -12,8 +12,8 @@ seeder has completed successfully against an isolated tenant.
 5. Open Counterparties. Verify named vendors and customers resolve by name.
 6. Open Inbox. Verify exactly two pending Collections recommendations reference
    Helio and Apex with invoice and counterparty evidence.
-7. Open Policy. Verify version 1 is active and review is required outside the
-   approved-vendor, $50,000.00 auto-allow rule.
+7. Open Policy. Verify curated version 2 is active and review is required outside the
+   approved-vendor, $10,000.00 auto-allow rule.
 8. Open Audit. Verify Ledger, policy activation, and proposal-created events exist.
 9. Ask Golden Demo Questions 1 through 10 in the Assistant.
 10. Run safety cases 31 through 34. Confirm no action is executed or fabricated.

@@ -4,7 +4,12 @@ import {
   upsertCounterpartyRow,
   upsertObligationRow,
 } from "@brain/ledger";
-import { contentHash, validatePolicyDocument, type PolicyDocument } from "@brain/policy";
+import {
+  contentHash,
+  runActivationLintGate,
+  validatePolicyDocument,
+  type PolicyDocument,
+} from "@brain/policy";
 import {
   newAgentId,
   newInvoiceId,
@@ -40,6 +45,8 @@ export type NorthstarSeedResult = {
     receivables: number;
   };
 };
+
+type NorthstarPolicyDocument = PolicyDocument & { seed_key: string };
 
 export async function seedNorthstarDemo(
   pool: Pool,
@@ -207,7 +214,9 @@ export async function seedNorthstarDemo(
     pool,
     tenantId,
     actor,
-    ["cascade", "atlas", "meridian", "redwood", "fathom"].map((key) => counterparties.get(key)!),
+    buildNorthstarPolicy(
+      ["cascade", "atlas", "meridian", "redwood", "fathom"].map((key) => counterparties.get(key)!),
+    ),
   );
   await audit.emit({
     tenantId,
@@ -295,13 +304,8 @@ async function insertInvoice(
   });
 }
 
-async function seedPolicy(
-  pool: Pool,
-  tenantId: string,
-  actor: string,
-  approvedVendorIds: string[],
-): Promise<{ id: string; version: number }> {
-  const policy = {
+export function buildNorthstarPolicy(approvedVendorIds: string[]): NorthstarPolicyDocument {
+  return {
     version: 1,
     seed_key: NORTHSTAR_SEED_KEY,
     lists: { "vendors.approved": approvedVendorIds },
@@ -312,7 +316,9 @@ async function seedPolicy(
         when: {
           "counterparty.in": "vendors.approved",
           "amount.lte": { currency: "USD", value: "50000.00" },
+          "agent.risk_level.lte": "low",
         },
+        approval_required_above: { currency: "USD", value: "10000.00" },
         execute: "auto",
       },
       {
@@ -331,48 +337,40 @@ async function seedPolicy(
       },
     ],
   };
-  validatePolicyDocument(policy as unknown as PolicyDocument);
+}
+
+async function seedPolicy(
+  pool: Pool,
+  tenantId: string,
+  actor: string,
+  policy: NorthstarPolicyDocument,
+): Promise<{ id: string; version: number }> {
+  validatePolicyDocument(policy);
+  const activation = runActivationLintGate(policy, {
+    lintEnforce: true,
+    confidenceEnforce: true,
+  });
+  if (activation.blocking.length > 0) {
+    throw new Error(`Northstar policy failed activation lint: ${activation.blocking[0]?.code}`);
+  }
   return withTenantScope(pool, tenantId, async (c) => {
     const existing = await c.query<{ id: string; version: number }>(
       `SELECT id, version FROM policies WHERE content->>'seed_key' = $1 ORDER BY version DESC LIMIT 1`,
       [NORTHSTAR_SEED_KEY],
     );
     if (existing.rows[0] !== undefined) return existing.rows[0];
-    const active = await c.query<{ id: string; version: number }>(
-      `SELECT id, version FROM policies WHERE tenant_id = $1 AND state = 'active' LIMIT 1`,
+    await c.query(
+      `UPDATE policies SET state = 'deactivated', deactivated_at = now() WHERE state = 'active'`,
+    );
+    const next = await c.query<{ version: number }>(
+      `SELECT COALESCE(MAX(version) + 1, 1)::int AS version FROM policies WHERE tenant_id = $1`,
       [tenantId],
     );
-    if (active.rows[0] !== undefined) {
-      if (active.rows[0].version !== 1) {
-        throw new Error(
-          `Tenant ${tenantId} has active policy version ${active.rows[0].version}; Northstar seeding requires the bootstrap policy.`,
-        );
-      }
-      await c.query(
-        `UPDATE policies SET content = $1::jsonb, content_hash = $2, quorum_required = 1, created_by = $3 WHERE id = $4 AND tenant_id = $5`,
-        [
-          JSON.stringify(policy),
-          contentHash(policy as unknown as PolicyDocument),
-          actor,
-          active.rows[0].id,
-          tenantId,
-        ],
-      );
-      return active.rows[0];
-    }
-    const version = 1;
+    const version = next.rows[0]!.version;
     const id = newPolicyId();
     await c.query(
       `INSERT INTO policies (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at, created_at) VALUES ($1,$2,$3,$4::jsonb,$5,1,'active',$6,$7,$7)`,
-      [
-        id,
-        tenantId,
-        version,
-        JSON.stringify(policy),
-        contentHash(policy as unknown as PolicyDocument),
-        actor,
-        NORTHSTAR_AS_OF,
-      ],
+      [id, tenantId, version, JSON.stringify(policy), contentHash(policy), actor, NORTHSTAR_AS_OF],
     );
     return { id, version };
   });

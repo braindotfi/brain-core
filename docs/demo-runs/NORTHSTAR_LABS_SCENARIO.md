@@ -54,7 +54,7 @@ The August 2026 net cash flow is `$162,000.00`.
 
 ## Governance Scenario
 
-The active policy allows an approved vendor payment at or below $50,000.00 and
+The active policy allows an approved vendor payment at or below $10,000.00 and
 requires review for larger payments or unapproved vendors. No seed path bypasses
 policy or gate behavior. Two pending Collections proposals point to the actual
 Helio and Apex overdue invoices, with invoice and counterparty evidence.
