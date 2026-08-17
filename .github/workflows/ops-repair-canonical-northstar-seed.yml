@@ -1,0 +1,78 @@
+name: ops-repair-canonical-northstar-seed
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Read-only report or constrained staging repair."
+        required: true
+        default: report
+        type: choice
+        options:
+          - report
+          - apply
+      confirmation:
+        description: "Required only for apply."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    name: report or repair canonical Northstar staging seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      MODE: ${{ inputs.mode }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+
+      - name: Validate fixed staging repair inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODE" == 'report' || "$MODE" == 'apply' ]]
+          if [[ "$MODE" == 'apply' ]]; then
+            [[ "$CONFIRMATION" == 'REPAIR_CANONICAL_NORTHSTAR_SEED' ]]
+          fi
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy constrained Northstar repair scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/repair-northstar-canonical-seed.mjs \
+            scripts/ops/repair-northstar-canonical-seed.sh \
+            scripts/ops/validate-northstar-staging.mjs \
+            "azureuser@$VM_HOST:~/brain-core/scripts/ops/"
+
+      - name: Run report or repair and assert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 700 ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh && MODE='$MODE' CONFIRMATION='$CONFIRMATION' bash ~/brain-core/scripts/ops/repair-northstar-canonical-seed.sh")"
+          printf '%s\n' "$output"
+          if [[ "$MODE" == 'report' ]]; then
+            [[ "$(printf '%s\n' "$output" | tail -n 1)" == 'northstar_canonical_repair_report_completed' ]]
+          else
+            [[ "$(printf '%s\n' "$output" | tail -n 1)" == 'northstar_canonical_repair_apply_completed' ]]
+          fi
