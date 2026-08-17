@@ -1346,8 +1346,12 @@ Pending
       with the unrelated Golden Path or Brightline demo seeds. Tenant bootstrap
       policy version 1 remains immutable; the curated Northstar policy is
       activated as version 2 and is lint-clean under the production activation
-      gate. It auto-allows only approved low-risk vendor payments through
-      $10,000.00 and requires review above that amount.
+      gate. Northstar receivable invoices carry `metadata.scenario='ar'` and
+      its payable obligations carry `metadata.scenario='ap'`; the staging
+      validator rejects a seed when either marker is absent. Its policy list is
+      `vendors.policy_allowlisted`, which is independent of counterparty trust
+      state. It auto-allows matching low-risk vendor payments through $10,000.00
+      and requires review above that amount.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.

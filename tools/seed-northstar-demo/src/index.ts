@@ -206,6 +206,7 @@ export async function seedNorthstarDemo(
       sourceIds,
       evidenceIds,
       obligationId: obligation.row.id,
+      metadata: { seed_key: NORTHSTAR_SEED_KEY, scenario: "ar", invoice_number: invoiceNumber },
     });
     receivableInvoices.set(invoiceNumber, invoiceId);
   }
@@ -279,13 +280,14 @@ async function insertInvoice(
     sourceIds: string[];
     evidenceIds: string[];
     obligationId: string;
+    metadata: Record<string, unknown>;
   },
 ): Promise<string> {
   return withTenantScope(pool, tenantId, async (c) => {
     const invoiceId = newInvoiceId();
     await c.query(
-      `INSERT INTO ledger_invoices (id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid, currency, issue_date, due_date, status, source_ids, evidence_ids, linked_document_ids, provenance, confidence, canonical_obligation_id)
-       VALUES ($1,$2,$3,$4,$5,0,'USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'human_confirmed',1,$11)`,
+      `INSERT INTO ledger_invoices (id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid, currency, issue_date, due_date, status, source_ids, evidence_ids, linked_document_ids, provenance, confidence, canonical_obligation_id, metadata)
+       VALUES ($1,$2,$3,$4,$5,0,'USD',$6,$7,$8,$9,$10,ARRAY[]::TEXT[],'human_confirmed',1,$11,$12::jsonb)`,
       [
         invoiceId,
         tenantId,
@@ -298,6 +300,7 @@ async function insertInvoice(
         input.sourceIds,
         input.evidenceIds,
         input.obligationId,
+        JSON.stringify(input.metadata),
       ],
     );
     return invoiceId;
@@ -308,13 +311,13 @@ export function buildNorthstarPolicy(approvedVendorIds: string[]): NorthstarPoli
   return {
     version: 1,
     seed_key: NORTHSTAR_SEED_KEY,
-    lists: { "vendors.approved": approvedVendorIds },
+    lists: { "vendors.policy_allowlisted": approvedVendorIds },
     rules: [
       {
         id: "northstar-ap-auto-approved",
         applies_to: ["outbound_payment"],
         when: {
-          "counterparty.in": "vendors.approved",
+          "counterparty.in": "vendors.policy_allowlisted",
           "amount.lte": { currency: "USD", value: "50000.00" },
           "agent.risk_level.lte": "low",
         },
