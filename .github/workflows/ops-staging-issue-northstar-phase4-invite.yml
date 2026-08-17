@@ -1,0 +1,51 @@
+name: ops-staging-issue-northstar-phase4-invite
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  issue:
+    name: issue encrypted Northstar Phase 4 admin invite
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Copy fixed Northstar invite scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/issue-northstar-phase4-invite.mjs \
+            scripts/ops/issue-northstar-phase4-invite.sh \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Issue encrypted invite and assert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 700 /tmp/issue-northstar-phase4-invite.sh && /tmp/issue-northstar-phase4-invite.sh; rc=\$?; rm -f /tmp/issue-northstar-phase4-invite.sh /tmp/issue-northstar-phase4-invite.mjs; exit \$rc")"
+          ciphertext="$(printf '%s\n' "$output" | sed -n '1p')"
+          sentinel="$(printf '%s\n' "$output" | sed -n '2p')"
+          [[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" == "2" ]]
+          [[ "$ciphertext" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
+          [[ "$sentinel" == "northstar_invite_issuance_completed" ]]
+          printf '%s\n' "$ciphertext"
