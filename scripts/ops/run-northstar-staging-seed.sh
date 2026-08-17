@@ -27,5 +27,5 @@ actor_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let
 
 printf 'northstar_phase4_tenant_id=%s\n' "$tenant_id"
 docker exec -e BRAIN_TENANT_ID="$tenant_id" -e BRAIN_ACTOR="$actor_id" brain-prod-api node tools/seed-northstar-demo/dist/cli.js
-docker cp "$VALIDATOR_PATH" brain-prod-api:/app/validate-northstar-staging.mjs
-docker exec -e BRAIN_TENANT_ID="$tenant_id" brain-prod-api node /app/validate-northstar-staging.mjs
+docker cp "$VALIDATOR_PATH" brain-prod-api:/app/tools/seed-northstar-demo/dist/validate-northstar-staging.mjs
+docker exec -e BRAIN_TENANT_ID="$tenant_id" brain-prod-api node tools/seed-northstar-demo/dist/validate-northstar-staging.mjs
