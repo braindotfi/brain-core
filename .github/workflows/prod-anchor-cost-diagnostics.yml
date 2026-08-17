@@ -172,24 +172,35 @@ jobs:
              AND t.audit_anchor_mode = 'onchain';
 
           \echo 'demo and sandbox exclusion check since deploy'
-          SELECT COUNT(*) FILTER (WHERE a.id IS NOT NULL) AS db_only_anchor_rows,
-                 COUNT(DISTINCT t.id) FILTER (WHERE e.id IS NOT NULL) AS db_only_tenants_with_events,
-                 COUNT(e.id) AS db_only_events
-            FROM tenants t
-            LEFT JOIN audit_anchors a
-              ON a.tenant_id = t.id
-             AND a.created_at >= :'window_start'::timestamptz
-            LEFT JOIN audit_events e
-              ON e.tenant_id = t.id
-             AND e.created_at >= :'window_start'::timestamptz
-           WHERE t.audit_anchor_mode = 'db_only';
+          SELECT (
+                   SELECT COUNT(*)
+                     FROM audit_anchors a
+                     JOIN tenants t ON t.id = a.tenant_id
+                    WHERE t.audit_anchor_mode = 'db_only'
+                      AND a.created_at >= :'window_start'::timestamptz
+                 ) AS db_only_anchor_rows,
+                 (
+                   SELECT COUNT(DISTINCT e.tenant_id)
+                     FROM audit_events e
+                     JOIN tenants t ON t.id = e.tenant_id
+                    WHERE t.audit_anchor_mode = 'db_only'
+                      AND e.created_at >= :'window_start'::timestamptz
+                 ) AS db_only_tenants_with_events,
+                 (
+                   SELECT COUNT(*)
+                     FROM audit_events e
+                     JOIN tenants t ON t.id = e.tenant_id
+                    WHERE t.audit_anchor_mode = 'db_only'
+                      AND e.created_at >= :'window_start'::timestamptz
+                 ) AS db_only_events;
 
           \echo 'db-only tenant inventory by anchoring-relevant category'
           SELECT t.kind,
                  t.sandbox,
                  t.created_via,
-                 COUNT(*) AS tenant_count,
-                 COUNT(*) FILTER (WHERE e.id IS NOT NULL) AS tenants_with_events_since_window,
+                 COUNT(DISTINCT t.id) AS tenant_count,
+                 COUNT(DISTINCT t.id) FILTER (WHERE e.id IS NOT NULL)
+                   AS tenants_with_events_since_window,
                  COUNT(e.id) AS events_since_window
             FROM tenants t
             LEFT JOIN audit_events e
