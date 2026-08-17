@@ -64,7 +64,6 @@ if (
 
 const adminHeaders = {
   authorization: `Bearer ${bootstrapSession.token}`,
-  "content-type": "application/json",
 };
 const listed = await request("/members?limit=100", { headers: adminHeaders });
 if (!Array.isArray(listed?.members)) fail("members response is malformed");
@@ -97,7 +96,7 @@ if (existing !== undefined) {
 } else {
   const created = await request("/members", {
     method: "POST",
-    headers: adminHeaders,
+    headers: { ...adminHeaders, "content-type": "application/json" },
     body: JSON.stringify({
       email: RECIPIENT_EMAIL,
       display_name: "Northstar Phase 4 Test Presenter",
