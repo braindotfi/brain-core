@@ -1351,7 +1351,11 @@ Pending
       validator rejects a seed when either marker is absent. Its policy list is
       `vendors.policy_allowlisted`, which is independent of counterparty trust
       state. It auto-allows matching low-risk vendor payments through $10,000.00
-      and requires review above that amount.
+      and requires review above that amount. The seeder intentionally refuses a
+      nonempty tenant. The original presenter tenant can only be repaired through
+      the staging-only `ops-repair-canonical-northstar-seed.yml` workflow, which
+      is fixed to that tenant and updates no rows beyond the five named AR invoice
+      metadata documents and the unsigned version 2 policy allowlist key.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.
