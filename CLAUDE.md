@@ -1338,6 +1338,12 @@ member-resolvable user session.
 Pending
 
 - [ ] Real agent input types from the detectors.
+- [ ] Phase 4 through Phase 6 validation of the purpose-built Northstar Labs
+      VC demo seed. `tools/seed-northstar-demo` is the only entrypoint for the
+      curated tenant and requires an isolated tenant plus `DATABASE_URL`,
+      `BRAIN_TENANT_ID`, and `BRAIN_ACTOR`. Its canonical records and expected
+      cross-surface totals live in `docs/demo-runs/`; it must not be replaced
+      with the unrelated Golden Path or Brightline demo seeds.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.
