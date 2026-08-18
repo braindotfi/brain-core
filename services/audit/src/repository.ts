@@ -4,7 +4,7 @@
  * module provides the read/query surface and the anchor write path.
  */
 
-import type { TenantScopedClient } from "@brain/shared";
+import type { KeysetCursor, TenantScopedClient } from "@brain/shared";
 import type { AuditEventType, AuditSeverity } from "@brain/shared";
 
 export interface AuditEventRow {
@@ -33,6 +33,7 @@ export interface AuditQueryFilters {
   since?: Date;
   until?: Date;
   limit: number;
+  cursor?: KeysetCursor;
 }
 
 export async function queryEvents(
@@ -52,6 +53,10 @@ export async function queryEvents(
   if (f.until !== undefined) {
     values.push(f.until);
     where.push(`created_at <= $${values.length}`);
+  }
+  if (f.cursor !== undefined) {
+    values.push(f.cursor.sort, f.cursor.id);
+    where.push(`(created_at, id) < ($${values.length - 1}::timestamptz, $${values.length})`);
   }
   values.push(f.limit);
   const limitIdx = values.length;
