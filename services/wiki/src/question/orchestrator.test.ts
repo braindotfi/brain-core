@@ -1798,6 +1798,13 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
 
     expect(result.answer).toBe("Northstar Corporate Card balance is $28,640.00.");
+    expect(result.evidence).toEqual([
+      expect.objectContaining({
+        entityType: "account",
+        entityId: "acct_CARD",
+        excerpt: 'card account "Northstar Corporate Card" balance 28640.00 USD',
+      }),
+    ]);
   });
 
   it("binds Collections evidence to the requested counterparty and invoice", async () => {

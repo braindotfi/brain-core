@@ -199,6 +199,9 @@ Done
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
+  Deterministic account-balance answers and cited account evidence use the
+  same account-type-selected value: card balances use `current_balance`, while
+  other accounts prefer `available_balance` when present.
   Active-policy auto-allow payment questions use a sanitized Policy-owned read
   projection and return the actual rule conditions without LLM synthesis.
   Imperative payment requests fail closed without calling the LLM. Generic
