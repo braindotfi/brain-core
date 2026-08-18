@@ -15,8 +15,8 @@ jobs:
       group: deploy-staging-refs/heads/main
       cancel-in-progress: false
     env:
-      VM_HOST: ${ secrets.VM_HOST_STAGING }
-      VM_SSH_KEY: ${ secrets.VM_SSH_KEY_STAGING }
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
       VM_ENV_FILE: .env.staging
       API_BASE: https://staging-api.brain.fi
     steps:
