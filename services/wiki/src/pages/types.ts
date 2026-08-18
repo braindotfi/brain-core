@@ -99,6 +99,7 @@ export interface ProposalView {
 
 export interface ProposalReader {
   listPending(ctx: ServiceCallContext): Promise<readonly ProposalView[]>;
+  listPendingCollections(ctx: ServiceCallContext): Promise<readonly ProposalView[]>;
 }
 
 export interface PageGenerationContext {

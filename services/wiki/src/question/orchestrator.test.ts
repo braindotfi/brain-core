@@ -4174,6 +4174,17 @@ describe("askWiki — Ledger-grounded retrieval", () => {
           required_approvers: [],
         },
       ]),
+      listPendingCollections: vi.fn(async () => [
+        {
+          id: "prop_COLLECTIONS",
+          type: "collections",
+          status: "pending",
+          created_at: "2026-08-15T12:00:00.000Z",
+          headline: "Follow up with Helio Manufacturing",
+          recommendation: "Approve outreach for the overdue invoice.",
+          required_approvers: ["admin"],
+        },
+      ]),
     };
     const llm = new InspectingLlmAdapter(() => {
       throw new Error("Proposal questions must not call the LLM");
@@ -4208,6 +4219,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(outreach.answer).toContain("Follow up with Helio Manufacturing");
     expect(outreach.answer).not.toContain("Review Northwind Cloud");
     expect(outreach.evidence.map((item) => item.entityType)).toEqual(["proposal"]);
+    expect(proposalReader.listPendingCollections).toHaveBeenCalledOnce();
     expect(llm.seen).toEqual([]);
   });
 });
