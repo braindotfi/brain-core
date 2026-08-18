@@ -17,7 +17,7 @@ import {
   listSuggestedQuestions,
   recordDeterministicIntentUsage,
 } from "./orchestrator.js";
-import type { PolicyReader, PolicyView } from "../pages/types.js";
+import type { PolicyReader, PolicyView, ProposalReader } from "../pages/types.js";
 
 /**
  * v0.3 — orchestrator grounds in Ledger rows. The fake client returns
@@ -75,6 +75,7 @@ interface FakeRows {
     type: string;
     risk_level: string | null;
     trust_status?: "unreviewed" | "trusted" | "paused" | "acknowledged";
+    verified_status?: "document_verified" | "unverified" | null;
     normalized_name?: string;
     aliases?: string[];
     created_at?: Date;
@@ -397,6 +398,19 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         if (text.includes("direction = 'payable'")) {
           obligations = obligations.filter((obligation) => obligation.direction === "payable");
         }
+        if (text.includes("cp.type = 'vendor'")) {
+          obligations = obligations.filter(
+            (obligation) =>
+              rows.counterparties.find(
+                (counterparty) => counterparty.id === obligation.counterparty_id,
+              )?.type === "vendor",
+          );
+        }
+        if (text.includes("status IN ('upcoming','due','overdue')")) {
+          obligations = obligations.filter((obligation) =>
+            ["upcoming", "due", "overdue"].includes(obligation.status),
+          );
+        }
         if (text.includes("type = 'payroll'")) {
           obligations = obligations.filter((obligation) => obligation.type === "payroll");
         }
@@ -427,10 +441,19 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             matching_count: String(obligations.length),
             matching_sum: total.toFixed(2),
           };
-          return {
-            rows: obligations.map((obligation) => ({ ...obligation, ...aggregate })) as never[],
-            rowCount: obligations.length,
-          };
+          const aggregateRows = obligations.map((obligation) => ({
+            ...obligation,
+            ...aggregate,
+            ...(text.includes("counterparty_name")
+              ? {
+                  counterparty_name:
+                    rows.counterparties.find(
+                      (counterparty) => counterparty.id === obligation.counterparty_id,
+                    )?.name ?? "unknown",
+                }
+              : {}),
+          }));
+          return { rows: aggregateRows as never[], rowCount: obligations.length };
         }
         if (text.includes("counterparty_name")) {
           return {
@@ -488,6 +511,21 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             }))
             .slice(0, limit);
           return { rows: vendors as never[], rowCount: vendors.length };
+        }
+        if (text.includes("verified_status = 'document_verified'")) {
+          const limit = values?.at(-1);
+          const vendors = rows.counterparties.filter(
+            (counterparty) =>
+              counterparty.type === "vendor" &&
+              counterparty.verified_status === "document_verified",
+          );
+          return {
+            rows:
+              typeof limit === "number"
+                ? (vendors.slice(0, limit) as never[])
+                : (vendors as never[]),
+            rowCount: vendors.length,
+          };
         }
         if (text.includes("SELECT EXISTS") && text.includes("trust_status = 'trusted'")) {
           return {
@@ -1663,10 +1701,10 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       },
     );
 
-    expect(result.deterministicIntentId).toBe("overdue_customer_invoices");
-    expect(result.answer).toContain("Helio Manufacturing");
-    expect(result.answer).toContain("Apex Health");
-    expect(result.answer).not.toContain("Vertex Retail");
+    expect(result.deterministicIntentId).toBe("overdue_customer_invoices_total");
+    expect(result.answer).toContain("$280,000.00");
+    expect(result.answer).toContain("2 invoices");
+    expect(result.evidence.map((item) => item.entityId)).toEqual(["inv_HELIO", "inv_APEX"]);
   });
 
   it("uses only future payables for the next-due invoice question", async () => {
@@ -3949,5 +3987,227 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       "tx_UNRECONCILED_WIRE",
       "tx_UNRECONCILED_RAW",
     ]);
+  });
+
+  it("answers open payable, customer invoice, overdue total, and named invoice questions without the LLM", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [
+        {
+          id: "obl_MERIDIAN",
+          type: "invoice",
+          direction: "payable",
+          amount_due: "12400.00",
+          currency: "USD",
+          due_date: new Date("2026-08-18T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_MERIDIAN",
+        },
+        {
+          id: "obl_PAYROLL",
+          type: "payroll",
+          direction: "payable",
+          amount_due: "40000.00",
+          currency: "USD",
+          due_date: new Date("2026-08-20T00:00:00Z"),
+          status: "due",
+          counterparty_id: "cp_PAYROLL",
+        },
+      ],
+      counterparties: [
+        { id: "cp_MERIDIAN", name: "Meridian Benefits", type: "vendor", risk_level: null },
+        { id: "cp_PAYROLL", name: "Payroll", type: "other", risk_level: null },
+        { id: "cp_HORIZON", name: "Horizon Finance", type: "customer", risk_level: null },
+        { id: "cp_APEX", name: "Apex Health", type: "customer", risk_level: null },
+      ],
+      invoices: [
+        {
+          id: "inv_HORIZON",
+          invoice_number: "AR-HORIZON",
+          amount_due: "184000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-01T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_HORIZON",
+          scenario: "ar",
+        },
+        {
+          id: "inv_APEX",
+          invoice_number: "AR-APEX",
+          amount_due: "96000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-10T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_APEX",
+          scenario: "ar",
+        },
+        {
+          id: "inv_AP",
+          invoice_number: "AP-MERIDIAN",
+          amount_due: "999999.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-07-01T00:00:00Z"),
+          due_date: new Date("2026-08-01T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_MERIDIAN",
+          scenario: "ap",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("Pattern A Ledger questions must not call the LLM");
+    });
+    const ask = (question: string) =>
+      askWiki(
+        {
+          client: fakeClient(rows),
+          llm,
+          embed: new DeterministicEmbeddingAdapter(16),
+          redis: fakeRedis() as unknown as Redis,
+          metrics: new MockMetrics(),
+        },
+        {
+          question,
+          asOf: new Date("2026-08-15T12:00:00Z"),
+          maxEvidenceDepth: 3,
+          tenantId: "tnt_pattern_a",
+          model: "m-pattern-a",
+        },
+      );
+
+    const payables = await ask("List all open payables by vendor.");
+    expect(payables).toMatchObject({ deterministicIntentId: "open_payables_listing" });
+    expect(payables.answer).toContain("Meridian Benefits");
+    expect(payables.answer).not.toContain("Payroll");
+
+    const invoices = await ask("List all open customer invoices.");
+    expect(invoices).toMatchObject({ deterministicIntentId: "open_customer_invoices_listing" });
+    expect(invoices.answer).toContain("AR-HORIZON");
+    expect(invoices.answer).not.toContain("AP-MERIDIAN");
+
+    const overdue = await ask("How much is overdue on receivables?");
+    expect(overdue).toMatchObject({
+      deterministicIntentId: "overdue_customer_invoices_total",
+    });
+    expect(overdue.answer).toContain("$280,000.00");
+
+    const meridian = await ask("What is the payment due to Meridian Benefits?");
+    expect(meridian).toMatchObject({ deterministicIntentId: "payable_by_counterparty" });
+    expect(meridian.answer).toContain("$12,400.00");
+
+    const horizon = await ask("How many open invoices does Horizon Finance have?");
+    expect(horizon).toMatchObject({ deterministicIntentId: "receivable_by_counterparty" });
+    expect(horizon.answer).toContain("1 open customer invoice");
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("lists document-verified vendors without the LLM", async () => {
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("Document-verified vendor questions must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            {
+              id: "cp_VERIFIED",
+              name: "Northwind Cloud",
+              type: "vendor",
+              risk_level: null,
+              verified_status: "document_verified",
+            },
+            {
+              id: "cp_UNVERIFIED",
+              name: "Unverified Vendor",
+              type: "vendor",
+              risk_level: null,
+              verified_status: "unverified",
+            },
+          ],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Which vendors are document verified?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_verified",
+        model: "m-verified",
+      },
+    );
+
+    expect(result).toMatchObject({ deterministicIntentId: "document_verified_vendor_listing" });
+    expect(result.answer).toContain("Northwind Cloud");
+    expect(result.answer).not.toContain("Unverified Vendor");
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("answers pending recommendation and outreach approval questions through the proposal read port", async () => {
+    const proposalReader: ProposalReader = {
+      listPending: vi.fn(async () => [
+        {
+          id: "prop_COLLECTIONS",
+          type: "collections",
+          status: "pending",
+          created_at: "2026-08-15T12:00:00.000Z",
+          headline: "Follow up with Helio Manufacturing",
+          recommendation: "Approve outreach for the overdue invoice.",
+          required_approvers: ["admin"],
+        },
+        {
+          id: "prop_VENDOR_RISK",
+          type: "vendor_risk",
+          status: "pending",
+          created_at: "2026-08-14T12:00:00.000Z",
+          headline: "Review Northwind Cloud",
+          recommendation: "Review the vendor evidence.",
+          required_approvers: [],
+        },
+      ]),
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("Proposal questions must not call the LLM");
+    });
+    const ask = (question: string) =>
+      askWiki(
+        {
+          client: fakeClient({ transactions: [], obligations: [], counterparties: [] }),
+          llm,
+          embed: new DeterministicEmbeddingAdapter(16),
+          redis: fakeRedis() as unknown as Redis,
+          metrics: new MockMetrics(),
+          proposalReader,
+          policyContext: { tenantId: "tnt_proposals", actor: "user_ADMIN" },
+        },
+        {
+          question,
+          asOf: null,
+          maxEvidenceDepth: 3,
+          tenantId: "tnt_proposals",
+          model: "m-proposals",
+        },
+      );
+
+    const pending = await ask("What are the two pending recommendations?");
+    expect(pending).toMatchObject({ deterministicIntentId: "pending_recommendations_listing" });
+    expect(pending.answer).toContain("Follow up with Helio Manufacturing");
+    expect(pending.answer).toContain("Review Northwind Cloud");
+
+    const outreach = await ask("Which recommendation needs approval before outreach?");
+    expect(outreach).toMatchObject({ deterministicIntentId: "outreach_approval_recommendation" });
+    expect(outreach.answer).toContain("Follow up with Helio Manufacturing");
+    expect(outreach.answer).not.toContain("Review Northwind Cloud");
+    expect(outreach.evidence.map((item) => item.entityType)).toEqual(["proposal"]);
+    expect(llm.seen).toEqual([]);
   });
 });

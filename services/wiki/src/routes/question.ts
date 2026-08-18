@@ -35,6 +35,7 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
           redis: deps.redis,
           metrics: deps.metrics,
           ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
+          ...(deps.proposalReader !== undefined ? { proposalReader: deps.proposalReader } : {}),
           policyContext: {
             tenantId: request.principal!.tenantId,
             actor: request.principal!.id,

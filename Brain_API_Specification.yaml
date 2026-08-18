@@ -7890,12 +7890,12 @@ components:
             type: object
             required: [entityType, entityId, excerpt]
             properties:
-              entityType: { type: string, enum: [transaction, obligation, counterparty, invoice, policy] }
+              entityType: { type: string, enum: [transaction, obligation, counterparty, invoice, account, policy, proposal] }
               entityId: { type: string, pattern: '^[a-z]+_[0-9A-HJKMNP-TV-Z]{26}$' }
               excerpt: { type: string }
         model:
           type: string
-          description: The configured LLM model, or `structured-ledger-query` for deterministic aggregates and listings.
+          description: The configured LLM model, or a `structured-*-query` model for deterministic aggregates and listings.
         usage:
           type: object
           required: [inputTokens, outputTokens]

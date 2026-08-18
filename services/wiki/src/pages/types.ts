@@ -83,6 +83,24 @@ export interface AgentReader {
   byId(ctx: ServiceCallContext, id: string): Promise<AgentView | null>;
 }
 
+/**
+ * Read-only projection of public proposal fields used by deterministic Wiki
+ * questions. Execution owns proposal status and approval semantics.
+ */
+export interface ProposalView {
+  id: string;
+  type: string;
+  status: string;
+  created_at: string;
+  headline: string;
+  recommendation: string | null;
+  required_approvers: readonly string[];
+}
+
+export interface ProposalReader {
+  listPending(ctx: ServiceCallContext): Promise<readonly ProposalView[]>;
+}
+
 export interface PageGenerationContext {
   ctx: ServiceCallContext;
   client: TenantScopedClient;

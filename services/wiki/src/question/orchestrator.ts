@@ -38,7 +38,7 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Redis } from "ioredis";
-import type { PolicyReader, PolicyView } from "../pages/types.js";
+import type { PolicyReader, PolicyView, ProposalReader, ProposalView } from "../pages/types.js";
 
 export interface AskOptions {
   question: string;
@@ -49,7 +49,14 @@ export interface AskOptions {
 }
 
 export interface AskEvidenceItem {
-  entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "account" | "policy";
+  entityType:
+    | "transaction"
+    | "obligation"
+    | "counterparty"
+    | "invoice"
+    | "account"
+    | "policy"
+    | "proposal";
   entityId: string;
   excerpt: string;
 }
@@ -84,6 +91,8 @@ export interface AskDeps {
   policyReader?: PolicyReader;
   /** Authenticated caller context for the Policy-owned read projection. */
   policyContext?: ServiceCallContext;
+  /** Optional Execution-owned read projection for deterministic proposal questions. */
+  proposalReader?: ProposalReader;
   evidenceBoundaryFactory?: (() => string) | undefined;
 }
 
@@ -118,8 +127,14 @@ export type DeterministicIntentId =
   | "transaction_listing"
   | "cash_flow_listing"
   | "invoice_listing"
+  | "open_payables_listing"
+  | "open_customer_invoices_listing"
   | "payable_by_counterparty"
   | "receivable_by_counterparty"
+  | "overdue_customer_invoices_total"
+  | "document_verified_vendor_listing"
+  | "pending_recommendations_listing"
+  | "outreach_approval_recommendation"
   | "accounts_receivable_total"
   | "accounts_payable_total"
   | "policy_auto_allow_payments"
@@ -246,6 +261,7 @@ interface CounterpartyResolutionRow {
   name: string;
   type: string;
   trust_status?: string | null;
+  verified_status?: string | null;
 }
 
 type CounterpartyTrustStatus = "unreviewed" | "trusted" | "paused" | "acknowledged";
@@ -256,6 +272,7 @@ interface PayableByCounterpartyIntent {
 
 interface ReceivableByCounterpartyIntent {
   counterpartyName: string;
+  operation: "total" | "count";
 }
 
 interface NetCashFlowIntent {
@@ -278,6 +295,11 @@ interface VendorTrustStatusListingIntent {
 
 interface OverdueCustomerInvoicesIntent {
   asOf: Date | null;
+  operation: "list" | "total";
+}
+
+interface PendingRecommendationsIntent {
+  limit: number;
 }
 
 interface AccountBalanceIntent {
@@ -303,6 +325,7 @@ type PolicyAutoAllowPaymentIntent = Record<string, never>;
 interface DeterministicAnswerContext {
   policyReader?: PolicyReader;
   policyContext?: ServiceCallContext;
+  proposalReader?: ProposalReader;
 }
 
 interface DeterministicIntentDefinition {
@@ -344,6 +367,7 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
       {
         ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
         ...(deps.policyContext !== undefined ? { policyContext: deps.policyContext } : {}),
+        ...(deps.proposalReader !== undefined ? { proposalReader: deps.proposalReader } : {}),
       },
     );
     result.deterministicIntentId = deterministicIntent.definition.id;
@@ -709,12 +733,78 @@ async function answerInvoiceListing(
   return structuredListingResult(`${capitalize(scope)}:\n${records}`, rows.map(toInvoiceEvidence));
 }
 
+async function answerOpenPayablesListing(client: TenantScopedClient): Promise<AskResult> {
+  const { rows } = await client.query<LargestPayableRow>(
+    `SELECT obl.id,
+            obl.type,
+            obl.amount_due::text AS amount_due,
+            obl.currency,
+            obl.due_date,
+            obl.status,
+            obl.counterparty_id,
+            cp.name AS counterparty_name,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(obl.amount_due) OVER (), 0)::text AS matching_sum
+       FROM ledger_obligations obl
+       JOIN ledger_counterparties cp ON cp.id = obl.counterparty_id
+      WHERE obl.direction = 'payable'
+        AND obl.status IN ('upcoming','due','overdue')
+        AND cp.type = 'vendor'
+      ORDER BY cp.name ASC, obl.due_date ASC, obl.id ASC
+      LIMIT $1`,
+    [MAX_LISTING_RECORDS],
+  );
+  if (rows.length === 0) return structuredListingResult("No open vendor payables found.", []);
+  return structuredListingResult(
+    `Open vendor payables:\n${rows.map(formatPayableListingRow).join("\n")}`,
+    rows.map(toObligationEvidence),
+  );
+}
+
+async function answerOpenCustomerInvoicesListing(client: TenantScopedClient): Promise<AskResult> {
+  const { rows } = await client.query<InvoiceListingRow>(
+    `SELECT inv.id,
+            inv.invoice_number,
+            inv.amount_due::text AS amount_due,
+            inv.amount_paid::text AS amount_paid,
+            inv.currency,
+            inv.issue_date,
+            inv.due_date,
+            inv.status,
+            inv.counterparty_id,
+            cp.name AS counterparty_name
+       FROM ledger_invoices inv
+       JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
+      WHERE inv.metadata->>'scenario' = 'ar'
+        AND inv.status IN ('sent','partial','overdue')
+        AND cp.type = 'customer'
+      ORDER BY inv.due_date ASC NULLS LAST, inv.id ASC
+      LIMIT $1`,
+    [MAX_LISTING_RECORDS],
+  );
+  if (rows.length === 0) return structuredListingResult("No open customer invoices found.", []);
+  return structuredListingResult(
+    `Open customer invoices:\n${rows.map(formatInvoiceListingRow).join("\n")}`,
+    rows.map(toInvoiceEvidence),
+  );
+}
+
 function structuredListingResult(answer: string, evidence: AskEvidenceItem[]): AskResult {
   return {
     answered: true,
     answer,
     evidence,
     model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function structuredProposalResult(answer: string, evidence: AskEvidenceItem[]): AskResult {
+  return {
+    answered: true,
+    answer,
+    evidence,
+    model: "structured-proposal-query",
     usage: { inputTokens: 0, outputTokens: 0 },
   };
 }
@@ -742,6 +832,10 @@ function formatInvoiceListingRow(row: InvoiceListingRow): string {
     row.due_date === null ? "no due date" : `due ${row.due_date.toISOString().slice(0, 10)}`;
   const counterparty = row.counterparty_name ?? row.counterparty_id;
   return `- ${row.invoice_number}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, issued ${row.issue_date.toISOString().slice(0, 10)}, ${due}, counterparty ${counterparty}`;
+}
+
+function formatPayableListingRow(row: LargestPayableRow): string {
+  return `- ${row.counterparty_name}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, due ${row.due_date.toISOString().slice(0, 10)}`;
 }
 
 function toInvoiceEvidence(row: InvoiceListingRow): AskEvidenceItem {
@@ -804,7 +898,10 @@ async function answerPayableByCounterparty(
   const evidence = [toCounterpartyEvidence(counterparty), ...rows.map(toObligationEvidence)];
   if (rows.length === 0) {
     if (counterparty.type === "customer") {
-      const receivable = await answerReceivableByCounterparty(client, intent);
+      const receivable = await answerReceivableByCounterparty(client, {
+        ...intent,
+        operation: "total",
+      });
       if (receivable.answered && receivable.evidence.length > 1) {
         return {
           answered: true,
@@ -946,6 +1043,15 @@ async function answerReceivableByCounterparty(
   }
 
   const count = Number(rows[0]!.matching_count);
+  if (intent.operation === "count") {
+    return {
+      answered: true,
+      answer: `${counterparty.name} has ${count} open customer ${count === 1 ? "invoice" : "invoices"}.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
   return {
     answered: true,
     answer: `${counterparty.name} owes you ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)} across ${count} open customer ${count === 1 ? "invoice" : "invoices"}.`,
@@ -1361,6 +1467,81 @@ async function answerVendorTrustStatusListing(
   );
 }
 
+async function answerDocumentVerifiedVendorListing(client: TenantScopedClient): Promise<AskResult> {
+  const { rows } = await client.query<CounterpartyResolutionRow>(
+    `SELECT id, name, type, trust_status, verified_status
+       FROM ledger_counterparties
+      WHERE type = 'vendor'
+        AND verified_status = 'document_verified'
+      ORDER BY name ASC, id ASC
+      LIMIT $1`,
+    [MAX_LISTING_RECORDS],
+  );
+  if (rows.length === 0) return structuredListingResult("No vendors are document verified.", []);
+  return structuredListingResult(
+    `Document-verified vendors: ${rows.map((row) => row.name).join(", ")}.`,
+    rows.map(toCounterpartyEvidence),
+  );
+}
+
+async function answerPendingRecommendations(
+  _client: TenantScopedClient,
+  intent: PendingRecommendationsIntent,
+  context: DeterministicAnswerContext,
+): Promise<AskResult> {
+  if (context.proposalReader === undefined || context.policyContext === undefined) {
+    return {
+      answered: false,
+      answer: "Pending recommendation data is not available in this deployment.",
+      evidence: [],
+      model: "structured-proposal-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  const rows = await context.proposalReader.listPending(context.policyContext);
+  const proposals = rows.slice(0, intent.limit);
+  if (proposals.length === 0)
+    return structuredProposalResult("No pending recommendations found.", []);
+  return structuredProposalResult(
+    `Pending recommendations:\n${proposals.map(formatProposalListingRow).join("\n")}`,
+    proposals.map(toProposalEvidence),
+  );
+}
+
+async function answerOutreachApprovalRecommendation(
+  _client: TenantScopedClient,
+  _intent: Record<string, never>,
+  context: DeterministicAnswerContext,
+): Promise<AskResult> {
+  if (context.proposalReader === undefined || context.policyContext === undefined) {
+    return {
+      answered: false,
+      answer: "Pending recommendation data is not available in this deployment.",
+      evidence: [],
+      model: "structured-proposal-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  const proposals = (await context.proposalReader.listPending(context.policyContext)).filter(
+    (proposal) =>
+      proposal.type === "collections" &&
+      proposal.required_approvers.length > 0 &&
+      /\b(?:outreach|follow[ -]?up|collections?)\b/i.test(
+        `${proposal.headline} ${proposal.recommendation ?? ""}`,
+      ),
+  );
+  if (proposals.length === 0) {
+    return structuredProposalResult(
+      "No pending Collections recommendation requiring approval before outreach was found.",
+      [],
+    );
+  }
+  return structuredProposalResult(
+    `Collections recommendations requiring approval before outreach:\n${proposals.map(formatProposalListingRow).join("\n")}`,
+    proposals.map(toProposalEvidence),
+  );
+}
+
 async function answerOverdueCustomerInvoices(
   client: TenantScopedClient,
   intent: OverdueCustomerInvoicesIntent,
@@ -1375,7 +1556,7 @@ async function answerOverdueCustomerInvoices(
         })();
   values.push(MAX_LISTING_RECORDS);
 
-  const { rows } = await client.query<InvoiceListingRow>(
+  const { rows } = await client.query<InvoiceAggregateRow>(
     `SELECT inv.id,
             inv.invoice_number,
             inv.amount_due::text AS amount_due,
@@ -1385,7 +1566,9 @@ async function answerOverdueCustomerInvoices(
             inv.due_date,
             inv.status,
             inv.counterparty_id,
-            cp.name AS counterparty_name
+            cp.name AS counterparty_name,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(inv.amount_due - COALESCE(inv.amount_paid, 0)) OVER (), 0)::text AS matching_sum
        FROM ledger_invoices inv
        JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
       WHERE inv.status = 'overdue'
@@ -1399,6 +1582,23 @@ async function answerOverdueCustomerInvoices(
 
   if (rows.length === 0) {
     return structuredListingResult("No overdue customer invoices found.", []);
+  }
+  if (intent.operation === "total") {
+    const currencies = [...new Set(rows.map((row) => row.currency))];
+    if (currencies.length !== 1) {
+      return {
+        answered: false,
+        answer: "I can't calculate one overdue receivables total across multiple currencies.",
+        evidence: rows.map(toInvoiceEvidence),
+        model: "structured-ledger-query",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
+    }
+    const count = Number(rows[0]!.matching_count);
+    return structuredListingResult(
+      `Overdue customer receivables total ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)} across ${count} ${count === 1 ? "invoice" : "invoices"}.`,
+      rows.map(toInvoiceEvidence),
+    );
   }
   const records = rows.map(formatInvoiceListingRow).join("\n");
   return structuredListingResult(
@@ -1699,6 +1899,22 @@ function toAccountEvidence(
     entityId: row.id,
     excerpt: `${row.account_type} account "${row.name}" balance ${balance} ${row.currency}`,
   };
+}
+
+function toProposalEvidence(row: ProposalView): AskEvidenceItem {
+  return {
+    entityType: "proposal",
+    entityId: row.id,
+    excerpt: `${row.type} proposal status=${row.status} headline="${stripUnsafeControlCharacters(row.headline)}" required_approvers=${row.required_approvers.join(",") || "none"}`,
+  };
+}
+
+function formatProposalListingRow(row: ProposalView): string {
+  const recommendation =
+    row.recommendation === null || row.recommendation === ""
+      ? ""
+      : `, recommendation ${stripUnsafeControlCharacters(row.recommendation)}`;
+  return `- ${stripUnsafeControlCharacters(row.headline)} (${row.type}, ${row.status}${recommendation})`;
 }
 
 function toObligationEvidence(
@@ -2166,9 +2382,26 @@ function parseStructuredListingIntent(
 function parsePayableByCounterpartyIntent(question: string): PayableByCounterpartyIntent | null {
   const match =
     /\b(?:what(?:'s| is)?|how much)\s+do\s+we\s+owe\s+(?:to\s+)?(.+?)[?!.\s]*$/i.exec(question) ??
-    /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+(.+?)[?!.\s]*$/i.exec(question);
+    /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+(.+?)[?!.\s]*$/i.exec(question) ??
+    /\bpayment\s+due\s+to\s+(.+?)[?!.\s]*$/i.exec(question);
   const counterpartyName = match?.[1]?.trim() ?? "";
   return isCounterpartyNameCandidate(counterpartyName) ? { counterpartyName } : null;
+}
+
+function parseOpenPayablesListingIntent(question: string): Record<string, never> | null {
+  const q = question.toLowerCase();
+  return /\b(?:list|show|display)\b/.test(q) &&
+    /\b(?:all\s+)?open\s+payables?\b/.test(q) &&
+    /\bvendors?\b/.test(q)
+    ? {}
+    : null;
+}
+
+function parseOpenCustomerInvoicesListingIntent(question: string): Record<string, never> | null {
+  const q = question.toLowerCase();
+  return /\b(?:list|show|display)\b/.test(q) && /\b(?:all\s+)?open\s+customer\s+invoices?\b/.test(q)
+    ? {}
+    : null;
 }
 
 function parseReceivableByCounterpartyIntent(
@@ -2176,9 +2409,12 @@ function parseReceivableByCounterpartyIntent(
 ): ReceivableByCounterpartyIntent | null {
   const match =
     /\b(?:what(?:'s| is)?|how much)\s+does\s+(.+?)\s+owe\s+us[?!.\s]*$/i.exec(question) ??
-    /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+us\s+by\s+(.+?)[?!.\s]*$/i.exec(question);
+    /\b(?:what(?:'s| is)?|how much)\s+is\s+owed\s+to\s+us\s+by\s+(.+?)[?!.\s]*$/i.exec(question) ??
+    /\bhow\s+many\s+open\s+invoices?\s+does\s+(.+?)\s+have[?!.\s]*$/i.exec(question);
   const counterpartyName = match?.[1]?.trim() ?? "";
-  return isCounterpartyNameCandidate(counterpartyName) ? { counterpartyName } : null;
+  return isCounterpartyNameCandidate(counterpartyName)
+    ? { counterpartyName, operation: /\bhow\s+many\b/i.test(question) ? "count" : "total" }
+    : null;
 }
 
 function isCounterpartyNameCandidate(value: string): boolean {
@@ -2270,6 +2506,36 @@ function parseVendorTrustStatusListingIntent(
   return { trustStatus: match[1]!.toLowerCase() as CounterpartyTrustStatus, operation };
 }
 
+function parseDocumentVerifiedVendorListingIntent(question: string): Record<string, never> | null {
+  const q = question.toLowerCase();
+  return /\b(?:who|which|list|show|display|are)\b/.test(q) &&
+    /\bvendors?\b/.test(q) &&
+    /\bdocument[ -]?verified\b/.test(q)
+    ? {}
+    : null;
+}
+
+function parsePendingRecommendationsIntent(question: string): PendingRecommendationsIntent | null {
+  const q = question.toLowerCase();
+  if (!/\bpending\s+(?:recommendations?|proposals?)\b/.test(q)) return null;
+  const requested = /\b(one|two|three|four|five|\d{1,2})\s+pending\b/.exec(q)?.[1];
+  const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const limit =
+    requested === undefined ? DEFAULT_LISTING_RECORDS : (words[requested] ?? Number(requested));
+  return Number.isInteger(limit) && limit > 0
+    ? { limit: Math.min(limit, MAX_LISTING_RECORDS) }
+    : null;
+}
+
+function parseOutreachApprovalRecommendationIntent(question: string): Record<string, never> | null {
+  const q = question.toLowerCase();
+  return /\b(?:which|what)\s+recommendation\b/.test(q) &&
+    /\b(?:needs?|requires?)\s+approval\b/.test(q) &&
+    /\b(?:outreach|follow[ -]?up)\b/.test(q)
+    ? {}
+    : null;
+}
+
 function parseOverdueCustomerInvoicesIntent(
   question: string,
   asOf: Date | null,
@@ -2281,7 +2547,7 @@ function parseOverdueCustomerInvoicesIntent(
   if (!/\boverdue\b/.test(q) || (!referencesReceivables && !referencesArInvoices)) {
     return null;
   }
-  return { asOf };
+  return { asOf, operation: /\bhow\s+much\b|\btotal\b/.test(q) ? "total" : "list" };
 }
 
 function parsePayrollObligationTotalIntent(
@@ -2531,6 +2797,22 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     isEligible: (client, asOf) => hasEligibleInvoices(client, asOf, currentMonthRange(asOf)),
   },
   {
+    id: "open_payables_listing",
+    displayText: "List all open payables by vendor",
+    suggestable: false,
+    parse: (question) => parseOpenPayablesListingIntent(question),
+    answer: (client) => answerOpenPayablesListing(client),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "open_customer_invoices_listing",
+    displayText: "List all open customer invoices",
+    suggestable: false,
+    parse: (question) => parseOpenCustomerInvoicesListingIntent(question),
+    answer: (client) => answerOpenCustomerInvoicesListing(client),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
     id: "accounts_payable_total",
     displayText: "What's our total accounts payable?",
     parse: (question) => parseAccountsPayableTotalIntent(question),
@@ -2557,9 +2839,24 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     isEligible: () => Promise.resolve(false),
   },
   {
+    id: "overdue_customer_invoices_total",
+    displayText: "How much is overdue on receivables?",
+    suggestable: false,
+    parse: (question, asOf) => {
+      const intent = parseOverdueCustomerInvoicesIntent(question, asOf);
+      return intent?.operation === "total" ? intent : null;
+    },
+    answer: (client, intent) =>
+      answerOverdueCustomerInvoices(client, intent as OverdueCustomerInvoicesIntent),
+    isEligible: hasEligibleOverdueCustomerInvoices,
+  },
+  {
     id: "overdue_customer_invoices",
     displayText: "Which customer invoices are overdue?",
-    parse: parseOverdueCustomerInvoicesIntent,
+    parse: (question, asOf) => {
+      const intent = parseOverdueCustomerInvoicesIntent(question, asOf);
+      return intent?.operation === "list" ? intent : null;
+    },
     answer: (client, intent) =>
       answerOverdueCustomerInvoices(client, intent as OverdueCustomerInvoicesIntent),
     isEligible: hasEligibleOverdueCustomerInvoices,
@@ -2645,6 +2942,32 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     displayText: "Do we have any vendors marked as new?",
     parse: parseNewVendorListingIntent,
     answer: (client, intent) => answerNewVendorListing(client, intent as NewVendorListingIntent),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "document_verified_vendor_listing",
+    displayText: "Which vendors are document verified?",
+    suggestable: false,
+    parse: (question) => parseDocumentVerifiedVendorListingIntent(question),
+    answer: (client) => answerDocumentVerifiedVendorListing(client),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "outreach_approval_recommendation",
+    displayText: "Which recommendation needs approval before outreach?",
+    suggestable: false,
+    parse: (question) => parseOutreachApprovalRecommendationIntent(question),
+    answer: (client, intent, context) =>
+      answerOutreachApprovalRecommendation(client, intent as Record<string, never>, context),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "pending_recommendations_listing",
+    displayText: "What are the pending recommendations?",
+    suggestable: false,
+    parse: (question) => parsePendingRecommendationsIntent(question),
+    answer: (client, intent, context) =>
+      answerPendingRecommendations(client, intent as PendingRecommendationsIntent, context),
     isEligible: () => Promise.resolve(false),
   },
   {

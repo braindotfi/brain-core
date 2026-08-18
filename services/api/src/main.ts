@@ -340,7 +340,14 @@ import { seedBrainSaasDemo } from "./demo/brainsaas-seed.js";
 import { YIELD_VENUES } from "./demo/yield-venues.js";
 
 import type { LedgerDeps } from "@brain/ledger";
-import type { WikiDeps, PolicyReader, AgentReader, PolicyView } from "@brain/wiki";
+import type {
+  WikiDeps,
+  PolicyReader,
+  AgentReader,
+  PolicyView,
+  ProposalReader,
+  ProposalView,
+} from "@brain/wiki";
 import type { RawDeps } from "@brain/raw";
 import type { GatePaymentIntent, TenantScopedClient } from "@brain/shared";
 
@@ -762,6 +769,22 @@ async function main(): Promise<void> {
             };
       }),
   };
+  const proposalReader: ProposalReader = {
+    listPending: async (rctx) => {
+      const result = await listProposals(pool, rctx, { status: "pending", limit: 50 });
+      return result.proposals.map(
+        (proposal): ProposalView => ({
+          id: proposal.id,
+          type: proposal.type,
+          status: proposal.status,
+          created_at: proposal.created_at,
+          headline: proposal.presentation.headline,
+          recommendation: proposal.presentation.recommendation,
+          required_approvers: proposal.policy.required_approvers,
+        }),
+      );
+    },
+  };
 
   const wikiDeps: WikiDeps = {
     // H-14: read-only (brain_wiki_reader) pool when BRAIN_WIKI_DB_URL is set.
@@ -779,6 +802,7 @@ async function main(): Promise<void> {
     }),
     policyReader,
     agentReader,
+    proposalReader,
   };
 
   const wikiPageService = new WikiPageService({
