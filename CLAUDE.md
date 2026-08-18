@@ -195,6 +195,12 @@ Done
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
+  Imperative payment requests fail closed without calling the LLM. Generic
+  answers that state a payment, invoice, amount, or due-date fact about a
+  named counterparty must cite a non-counterparty record linked to that same
+  counterparty, or return the grounded-answer fallback. Account balances,
+  next payable due dates, and Collections recommendation evidence use
+  deterministic tenant-scoped queries rather than generic retrieval.
 - Wiki pages are a projection, so an orphaned page is pruned rather than
   retried forever. `wiki_pages` is both the work list and the output store of
   the regeneration worker: `runWikiRegenerationCycle` regenerates every slug it

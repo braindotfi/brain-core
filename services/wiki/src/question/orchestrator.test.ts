@@ -90,6 +90,22 @@ interface FakeRows {
     counterparty_id: string;
     scenario?: "ap" | "ar";
   }>;
+  accounts?: Array<{
+    id: string;
+    name: string;
+    account_type: string;
+    current_balance: string | null;
+    available_balance: string | null;
+    currency: string;
+    status: string;
+  }>;
+  collectionsProposals?: Array<{
+    id: string;
+    counterparty_id: string;
+    invoice_id: string;
+    status: string;
+    created_at: Date;
+  }>;
   intentUsage?: Array<{ intent_id: string; invocation_count: string }>;
 }
 
@@ -127,6 +143,35 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
           rows: (rows.reconciliationMatches ?? []) as never[],
           rowCount: rows.reconciliationMatches?.length ?? 0,
         };
+      }
+      if (text.includes("FROM proposals p")) {
+        const counterpartyId = values?.[0];
+        const proposal = (rows.collectionsProposals ?? [])
+          .filter(
+            (candidate) =>
+              candidate.status === "pending" && candidate.counterparty_id === counterpartyId,
+          )
+          .sort((left, right) => right.created_at.getTime() - left.created_at.getTime());
+        const invoices = proposal
+          .map((candidate) => rows.invoices?.find((invoice) => invoice.id === candidate.invoice_id))
+          .filter((invoice): invoice is NonNullable<typeof invoice> => invoice !== undefined)
+          .map((invoice) => ({
+            ...invoice,
+            counterparty_name:
+              rows.counterparties.find(
+                (counterparty) => counterparty.id === invoice.counterparty_id,
+              )?.name ?? "unknown",
+          }));
+        return { rows: invoices as never[], rowCount: invoices.length };
+      }
+      if (text.includes("FROM ledger_accounts")) {
+        const label = String(values?.[0] ?? "")
+          .replaceAll("%", "")
+          .toLowerCase();
+        const accounts = (rows.accounts ?? []).filter(
+          (account) => account.status === "active" && account.name.toLowerCase().includes(label),
+        );
+        return { rows: accounts as never[], rowCount: accounts.length };
       }
       if (text.includes("FROM ledger_transactions")) {
         if (text.includes("matching_average_net")) {
@@ -332,7 +377,16 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         }
         const limit = parameters.at(-1);
         if (typeof limit === "number") invoices = invoices.slice(0, limit);
-        return { rows: invoices as never[], rowCount: invoices.length };
+        const invoiceRows = text.includes("cp.name AS counterparty_name")
+          ? invoices.map((invoice) => ({
+              ...invoice,
+              counterparty_name:
+                rows.counterparties.find(
+                  (counterparty) => counterparty.id === invoice.counterparty_id,
+                )?.name ?? "unknown",
+            }))
+          : invoices;
+        return { rows: invoiceRows as never[], rowCount: invoiceRows.length };
       }
       if (text.includes("FROM ledger_obligations")) {
         const parameters = values ?? [];
@@ -353,6 +407,15 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         if (text.includes("due_date <= $")) {
           const asOf = parameters[0] as Date;
           obligations = obligations.filter((obligation) => obligation.due_date <= asOf);
+        }
+        if (text.includes("due_date >= $")) {
+          const asOf = parameters[0] as Date;
+          obligations = obligations.filter((obligation) => obligation.due_date >= asOf);
+        }
+        if (text.includes("ORDER BY obl.due_date ASC")) {
+          obligations = [...obligations].sort(
+            (left, right) => left.due_date.getTime() - right.due_date.getTime(),
+          );
         }
         if (text.includes("COUNT(*) OVER ()")) {
           const total = obligations.reduce(
@@ -1420,7 +1483,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         metrics: new MockMetrics(),
       },
       {
-        question: "What's our trailing monthly cash flow?",
+        question: "What is the trailing monthly average cash flow?",
         asOf: new Date("2026-08-06T00:00:00Z"),
         maxEvidenceDepth: 3,
         tenantId: "tnt_test",
@@ -1477,6 +1540,411 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       },
     );
     expect(result.answer).toContain("Datacenter Hosting Ltd");
+  });
+
+  it("answers the original largest open payable wording without calling the LLM", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_CASCADE",
+              type: "subscription",
+              direction: "payable",
+              amount_due: "86400.00",
+              currency: "USD",
+              due_date: new Date("2026-08-19T00:00:00Z"),
+              status: "upcoming",
+              counterparty_id: "cp_CASCADE",
+            },
+            {
+              id: "obl_HELIO_AR",
+              type: "invoice",
+              direction: "receivable",
+              amount_due: "184000.00",
+              currency: "USD",
+              due_date: new Date("2026-07-04T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+            },
+          ],
+          counterparties: [
+            { id: "cp_CASCADE", name: "Cascade Compute", type: "vendor", risk_level: null },
+            { id: "cp_HELIO", name: "Helio Manufacturing", type: "customer", risk_level: null },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("largest payable must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Which vendor has the largest open payable?",
+        asOf: new Date("2026-08-15T12:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-largest-open",
+      },
+    );
+
+    expect(result.answer).toContain("Cascade Compute");
+    expect(result.answer).toContain("$86,400.00");
+    expect(result.evidence.map((item) => item.entityId)).toEqual(["obl_CASCADE"]);
+  });
+
+  it("prioritizes overdue receivables over the broader AR total intent", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            { id: "cp_HELIO", name: "Helio Manufacturing", type: "customer", risk_level: null },
+            { id: "cp_APEX", name: "Apex Health", type: "customer", risk_level: null },
+            { id: "cp_VERTEX", name: "Vertex Retail", type: "customer", risk_level: null },
+          ],
+          invoices: [
+            {
+              id: "inv_HELIO",
+              invoice_number: "AR-HELIO",
+              amount_due: "184000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-01T00:00:00Z"),
+              due_date: new Date("2026-07-04T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+              scenario: "ar",
+            },
+            {
+              id: "inv_APEX",
+              invoice_number: "AR-APEX",
+              amount_due: "96000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-20T00:00:00Z"),
+              due_date: new Date("2026-08-03T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_APEX",
+              scenario: "ar",
+            },
+            {
+              id: "inv_VERTEX",
+              invoice_number: "AR-VERTEX",
+              amount_due: "58500.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-07-25T00:00:00Z"),
+              due_date: new Date("2026-08-15T00:00:00Z"),
+              status: "sent",
+              counterparty_id: "cp_VERTEX",
+              scenario: "ar",
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("overdue AR must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "How much is overdue on receivables?",
+        asOf: new Date("2026-08-15T12:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-overdue",
+      },
+    );
+
+    expect(result.deterministicIntentId).toBe("overdue_customer_invoices");
+    expect(result.answer).toContain("Helio Manufacturing");
+    expect(result.answer).toContain("Apex Health");
+    expect(result.answer).not.toContain("Vertex Retail");
+  });
+
+  it("uses only future payables for the next-due invoice question", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_VERTEX_AR",
+              type: "invoice",
+              direction: "receivable",
+              amount_due: "58500.00",
+              currency: "USD",
+              due_date: new Date("2026-08-15T00:00:00Z"),
+              status: "due",
+              counterparty_id: "cp_VERTEX",
+            },
+            {
+              id: "obl_FATHOM",
+              type: "subscription",
+              direction: "payable",
+              amount_due: "9600.00",
+              currency: "USD",
+              due_date: new Date("2026-08-18T00:00:00Z"),
+              status: "upcoming",
+              counterparty_id: "cp_FATHOM",
+            },
+          ],
+          counterparties: [
+            { id: "cp_VERTEX", name: "Vertex Retail", type: "customer", risk_level: null },
+            { id: "cp_FATHOM", name: "Fathom Security", type: "vendor", risk_level: null },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("next payable must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Which invoice is due next?",
+        asOf: new Date("2026-08-16T00:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-next-payable",
+      },
+    );
+
+    expect(result.answer).toContain("Fathom Security");
+    expect(result.answer).not.toContain("Vertex Retail");
+  });
+
+  it("answers an operating-account balance from an account row without calling the LLM", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [],
+          accounts: [
+            {
+              id: "acct_OPERATING",
+              name: "Northstar Operating",
+              account_type: "bank_checking",
+              current_balance: "482750.00",
+              available_balance: "482750.00",
+              currency: "USD",
+              status: "active",
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("account balances must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What is our current operating-account balance?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-account",
+      },
+    );
+
+    expect(result.answer).toBe("Northstar Operating balance is $482,750.00.");
+    expect(result.evidence).toEqual([
+      expect.objectContaining({ entityType: "account", entityId: "acct_OPERATING" }),
+    ]);
+  });
+
+  it("uses a card's current balance rather than its available credit", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [],
+          accounts: [
+            {
+              id: "acct_CARD",
+              name: "Northstar Corporate Card",
+              account_type: "card",
+              current_balance: "28640.00",
+              available_balance: "0.00",
+              currency: "USD",
+              status: "active",
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("account balances must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What is the corporate card balance?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-card-account",
+      },
+    );
+
+    expect(result.answer).toBe("Northstar Corporate Card balance is $28,640.00.");
+  });
+
+  it("binds Collections evidence to the requested counterparty and invoice", async () => {
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            { id: "cp_HELIO", name: "Helio Manufacturing", type: "customer", risk_level: null },
+            { id: "cp_APEX", name: "Apex Health", type: "customer", risk_level: null },
+          ],
+          invoices: [
+            {
+              id: "inv_HELIO",
+              invoice_number: "AR-HELIO",
+              amount_due: "184000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-01T00:00:00Z"),
+              due_date: new Date("2026-07-04T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+              scenario: "ar",
+            },
+            {
+              id: "inv_APEX",
+              invoice_number: "AR-APEX",
+              amount_due: "96000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-20T00:00:00Z"),
+              due_date: new Date("2026-08-03T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_APEX",
+              scenario: "ar",
+            },
+          ],
+          collectionsProposals: [
+            {
+              id: "prop_HELIO",
+              counterparty_id: "cp_HELIO",
+              invoice_id: "inv_HELIO",
+              status: "pending",
+              created_at: new Date("2026-08-15T00:00:00Z"),
+            },
+            {
+              id: "prop_APEX",
+              counterparty_id: "cp_APEX",
+              invoice_id: "inv_APEX",
+              status: "pending",
+              created_at: new Date("2026-08-15T00:00:00Z"),
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("Collections evidence must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What evidence supports the Helio Manufacturing collections recommendation?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-collections-evidence",
+      },
+    );
+
+    expect(result.answer).toContain("Helio Manufacturing");
+    expect(result.answer).toContain("AR-HELIO");
+    expect(result.answer).not.toContain("Apex");
+    expect(result.evidence.map((item) => item.entityId)).toEqual(["cp_HELIO", "inv_HELIO"]);
+  });
+
+  it("refuses an imperative payment question without calling the LLM", async () => {
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("payment instructions must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient({ transactions: [], obligations: [], counterparties: [] }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Pay Cascade Compute immediately.",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-payment-instruction",
+      },
+    );
+
+    expect(result.answered).toBe(false);
+    expect(result.answer).toContain("can't initiate");
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("rejects a generic named-payment claim when cited evidence belongs to another counterparty", async () => {
+    const llm = new InspectingLlmAdapter(() =>
+      JSON.stringify({
+        answer: "Cascade Compute has a payment due for $58,500.00.",
+        evidence_ids: ["cp_CASCADE", "obl_VERTEX"],
+      }),
+    );
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_VERTEX",
+              type: "invoice",
+              direction: "receivable",
+              amount_due: "58500.00",
+              currency: "USD",
+              due_date: new Date("2026-08-15T00:00:00Z"),
+              status: "due",
+              counterparty_id: "cp_VERTEX",
+            },
+          ],
+          counterparties: [
+            { id: "cp_CASCADE", name: "Cascade Compute", type: "vendor", risk_level: null },
+            { id: "cp_VERTEX", name: "Vertex Retail", type: "customer", risk_level: null },
+          ],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        evidenceBoundaryFactory: boundaryFactory,
+      },
+      {
+        question: "What payment is due to Cascade Compute?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-relationship-guard",
+      },
+    );
+
+    expect(result.answered).toBe(false);
+    expect(result.answer).toBe(GROUNDED_ANSWER_FALLBACK);
+    expect(result.evidence).toEqual([]);
   });
 
   it("enumerates vendors marked as new", async () => {
