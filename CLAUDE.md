@@ -184,10 +184,13 @@ Done
   that deterministic registry. Each registered intent supplies its eligibility
   query, and eligible intents are ranked by tenant-local invocation count.
   Named-counterparty payable and receivable totals, total accounts payable and
-  receivable, overdue customer invoice
-  listings, payroll-obligation totals, largest-payable answers, new-vendor
-  listings, and month-scoped or trailing-monthly net cash-flow totals use
-  deterministic tenant-scoped Ledger queries. Named-counterparty questions
+  receivable, open vendor-payable and customer-invoice listings, overdue
+  customer-invoice totals and listings, payroll-obligation totals,
+  largest-payable answers, document-verified and new-vendor listings, and
+  month-scoped or trailing-monthly net cash-flow totals use deterministic
+  tenant-scoped Ledger queries. Pending recommendation and Collections outreach
+  approval questions use an Execution-owned, read-only proposal projection;
+  Wiki does not query proposal tables directly. Named-counterparty questions
   fail safely without generative fallback when the counterparty is missing,
   ambiguous, has the wrong direction, or is part of a compound question.
   A payable question for a customer with no open payables but open AR invoices

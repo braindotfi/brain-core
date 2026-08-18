@@ -4098,11 +4098,11 @@ export interface components {
             answer: string;
             evidence: {
                 /** @enum {string} */
-                entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "policy";
+                entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "account" | "policy" | "proposal";
                 entityId: string;
                 excerpt: string;
             }[];
-            /** @description The configured LLM model, or `structured-ledger-query` for deterministic aggregates and listings. */
+            /** @description The configured LLM model, or a `structured-*-query` model for deterministic aggregates and listings. */
             model: string;
             usage: {
                 inputTokens: number;
