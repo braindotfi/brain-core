@@ -24,8 +24,10 @@ import {
   newObligationId,
   newTransactionId,
   withTenantScope,
+  type CanonicalTransactionCategoryCode,
   type AuditEmitter,
   type ServiceCallContext,
+  type TransactionCategoryAssignmentMethod,
 } from "@brain/shared";
 
 /** §3.2 of Brain_MVP_Architecture.md — agent-contributed rows are capped. */
@@ -33,6 +35,10 @@ const AGENT_CONTRIBUTED_CONFIDENCE_CEILING = 0.5;
 import type { Pool } from "pg";
 import type { AccountRow, CounterpartyRow, TransactionRow } from "../repository/index.js";
 import type { ObligationRow } from "../repository/obligations.js";
+import {
+  assignTransactionCategory,
+  type TransactionCategoryAssignmentResult,
+} from "../categorization/assign.js";
 
 const PROVENANCE_VALUES = new Set([
   "extracted",
@@ -328,6 +334,13 @@ export interface RecordTransactionArgs {
   posted_date?: string;
   counterparty_id?: string;
   category_id?: string;
+  category_assignment?: {
+    canonical_code: CanonicalTransactionCategoryCode;
+    assignment_method: Exclude<TransactionCategoryAssignmentMethod, "human_confirmed">;
+    confidence: number;
+    rule_version?: string;
+    source_category?: string;
+  };
   status: "pending" | "posted" | "cleared" | "failed" | "reversed" | "disputed";
   description_raw?: string;
   description_normalized?: string;
@@ -348,7 +361,11 @@ export async function recordTransactionRow(
   audit: AuditEmitter,
   ctx: ServiceCallContext,
   args: RecordTransactionArgs,
-): Promise<{ row: TransactionRow; created: boolean }> {
+): Promise<{
+  row: TransactionRow;
+  created: boolean;
+  categoryAssignment: TransactionCategoryAssignmentResult | null;
+}> {
   validateProvenance(args.provenance);
   const conf = cappedConfidence(args.provenance, args.confidence);
   if (!/^\d+(\.\d+)?$/.test(args.amount)) {
@@ -366,7 +383,7 @@ export async function recordTransactionRow(
         [args.account_id, args.external_transaction_id],
       );
       if (existing.rows[0] !== undefined) {
-        return { row: existing.rows[0], created: false };
+        return { row: existing.rows[0], created: false, categoryAssignment: null };
       }
     }
 
@@ -402,7 +419,23 @@ export async function recordTransactionRow(
         args.chain_tx_hash ?? null,
       ],
     );
-    return { row: rows[0]!, created: true };
+    const row = rows[0]!;
+    const categoryAssignment =
+      args.category_assignment === undefined
+        ? null
+        : await assignTransactionCategory(c, ctx.tenantId, row.id, {
+            canonicalCode: args.category_assignment.canonical_code,
+            method: args.category_assignment.assignment_method,
+            confidence: args.category_assignment.confidence,
+            ...(args.category_assignment.rule_version === undefined
+              ? {}
+              : { ruleVersion: args.category_assignment.rule_version }),
+            ...(args.category_assignment.source_category === undefined
+              ? {}
+              : { sourceCategory: args.category_assignment.source_category }),
+          });
+    if (categoryAssignment?.changed === true) row.category_id = categoryAssignment.categoryId;
+    return { row, created: true, categoryAssignment };
   });
 
   await audit.emit({
@@ -420,6 +453,24 @@ export async function recordTransactionRow(
     },
     outputs: { transaction_id: result.row.id },
   });
+  if (result.categoryAssignment?.changed === true) {
+    await audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "ledger",
+      actor: ctx.actor,
+      action: "ledger.transaction.category_assigned",
+      inputs: {
+        transaction_id: result.row.id,
+        canonical_code: result.categoryAssignment.canonicalCode,
+        assignment_method: args.category_assignment?.assignment_method,
+      },
+      outputs: {
+        category_assignment_id: result.categoryAssignment.assignmentId,
+        category_id: result.categoryAssignment.categoryId,
+        superseded_assignment_id: result.categoryAssignment.replacedAssignmentId,
+      },
+    });
+  }
 
   return result;
 }

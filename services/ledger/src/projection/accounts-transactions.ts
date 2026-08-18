@@ -6,11 +6,13 @@ import {
   newTransactionId,
   startManagedInterval,
   withTenantScope,
+  isCanonicalTransactionCategoryCode,
   type ManagedWorker,
   type MetricsEmitter,
   type TenantScopedClient,
 } from "@brain/shared";
 import { excludeQuarantined, projectRowWithQuarantine } from "./quarantine.js";
+import { assignTransactionCategory } from "../categorization/assign.js";
 
 const DEFAULT_CONFIDENCE: Readonly<Record<string, number>> = {
   extracted: 0.9,
@@ -69,6 +71,11 @@ interface CanonicalTransactionRow {
   description_raw: string | null;
   description_normalized: string | null;
   reconciliation_status: string | null;
+  canonical_category_code: string | null;
+  category_assignment_method: string | null;
+  category_assignment_confidence: number | null;
+  category_rule_version: string | null;
+  category_source_value: string | null;
   provenance: string;
   confidence: number | null;
   source_ids: string[];
@@ -161,7 +168,7 @@ export async function projectCanonicalTransaction(
           )
         ).rows[0]?.id ?? null);
 
-  await c.query(
+  const { rows: transactionRows } = await c.query<{ id: string }>(
     `INSERT INTO ledger_transactions
        (id, owner_id, account_id, external_transaction_id, amount, currency, direction,
         transaction_date, posted_date, counterparty_id, status, description_raw,
@@ -191,7 +198,8 @@ export async function projectCanonicalTransaction(
         provenance = CASE WHEN ledger_transactions.provenance = 'human_confirmed'
                           THEN ledger_transactions.provenance ELSE EXCLUDED.provenance END,
         confidence = GREATEST(ledger_transactions.confidence, EXCLUDED.confidence),
-        updated_at = now()`,
+        updated_at = now()
+     RETURNING id`,
     [
       newTransactionId(),
       tenantId,
@@ -214,6 +222,23 @@ export async function projectCanonicalTransaction(
       row.id,
     ],
   );
+  const transactionId = transactionRows[0]?.id;
+  if (transactionId === undefined) throw new Error("projectCanonicalTransaction returned no row");
+  if (
+    row.canonical_category_code !== null &&
+    isCanonicalTransactionCategoryCode(row.canonical_category_code) &&
+    (row.category_assignment_method === "source_provided" ||
+      row.category_assignment_method === "deterministic_rule") &&
+    row.category_assignment_confidence !== null
+  ) {
+    await assignTransactionCategory(c, tenantId, transactionId, {
+      canonicalCode: row.canonical_category_code,
+      method: row.category_assignment_method,
+      confidence: row.category_assignment_confidence,
+      ...(row.category_rule_version === null ? {} : { ruleVersion: row.category_rule_version }),
+      ...(row.category_source_value === null ? {} : { sourceCategory: row.category_source_value }),
+    });
+  }
   return true;
 }
 
@@ -241,7 +266,8 @@ export async function rebuildAccountTransactionProjectionFromCanonical(
       `SELECT id, tenant_id, canonical_account_id, canonical_counterparty_id,
               source_natural_key, amount, currency, direction, transaction_date, posted_date,
               status, description_raw, description_normalized, reconciliation_status,
-              provenance, confidence, source_ids, evidence_ids
+              canonical_category_code, category_assignment_method, category_assignment_confidence,
+              category_rule_version, category_source_value, provenance, confidence, source_ids, evidence_ids
          FROM canonical_transaction
         WHERE tenant_id = $1`,
       [tenantId],
@@ -317,7 +343,9 @@ export async function runLedgerAccountTransactionProjectionCycle(
       `SELECT ct.id, ct.tenant_id, ct.canonical_account_id, ct.canonical_counterparty_id,
               ct.source_natural_key, ct.amount, ct.currency, ct.direction, ct.transaction_date,
               ct.posted_date, ct.status, ct.description_raw, ct.description_normalized,
-              ct.reconciliation_status, ct.provenance, ct.confidence, ct.source_ids,
+              ct.reconciliation_status, ct.canonical_category_code, ct.category_assignment_method,
+              ct.category_assignment_confidence, ct.category_rule_version, ct.category_source_value,
+              ct.provenance, ct.confidence, ct.source_ids,
               ct.evidence_ids
          FROM canonical_transaction ct
          LEFT JOIN ledger_transactions lt

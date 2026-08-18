@@ -25,6 +25,10 @@ import type {
   Currency,
   DecimalString,
 } from "./types.js";
+import type {
+  CanonicalTransactionCategoryCode,
+  TransactionCategoryAssignmentMethod,
+} from "../transaction-categories.js";
 
 // ---------- Entity shapes -------------------------------------------------
 
@@ -264,6 +268,13 @@ export interface RecordTransactionInput {
   posted_date?: string;
   counterparty_id?: string;
   category_id?: string;
+  category_assignment?: {
+    canonical_code: CanonicalTransactionCategoryCode;
+    assignment_method: Exclude<TransactionCategoryAssignmentMethod, "human_confirmed">;
+    confidence: number;
+    rule_version?: string;
+    source_category?: string;
+  };
   status: Transaction["status"];
   description_raw?: string;
   description_normalized?: string;

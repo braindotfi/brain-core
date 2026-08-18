@@ -142,6 +142,8 @@ export type DeterministicIntentId =
   | "payroll_obligation_total"
   | "monthly_net_cash_flow"
   | "trailing_monthly_net_cash_flow"
+  | "period_category_transaction_total"
+  | "revenue_expenses_comparison"
   | "largest_payable"
   | "next_payable_due"
   | "account_balance"
@@ -220,6 +222,36 @@ interface InvoiceAggregateRow extends InvoiceListingRow {
 interface NetCashFlowRow extends TransactionListingRow {
   matching_count: string;
   matching_net: string;
+}
+
+interface CategoryCoverageRow {
+  transaction_count: string;
+  categorized_count: string;
+}
+
+interface CategoryTransactionRow extends TransactionListingRow {
+  matching_sum: string;
+}
+
+interface RevenueExpenseRow extends TransactionListingRow {
+  revenue_total: string;
+  expense_total: string;
+  revenue_minus_expenses: string;
+}
+
+interface PeriodCategoryIntent {
+  canonicalCode:
+    | "income.subscription_revenue"
+    | "expense.payroll_and_benefits"
+    | "expense.cloud_infrastructure";
+  label: string;
+  range: DateRange;
+  asOf: Date | null;
+}
+
+interface RevenueExpenseIntent {
+  range: DateRange;
+  asOf: Date | null;
 }
 
 interface TrailingCashFlowRow extends TransactionListingRow {
@@ -1139,6 +1171,179 @@ async function answerMonthlyNetCashFlow(
   return {
     answered: true,
     answer,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function categoryCoverage(
+  client: TenantScopedClient,
+  range: DateRange,
+  asOf: Date | null,
+): Promise<CategoryCoverageRow> {
+  const values: unknown[] = [range.start, range.end];
+  const asOfClause =
+    asOf === null
+      ? ""
+      : (() => {
+          values.push(asOf);
+          return `AND t.transaction_date <= $${values.length}`;
+        })();
+  const { rows } = await client.query<CategoryCoverageRow>(
+    `SELECT COUNT(*)::text AS transaction_count,
+            COUNT(a.id)::text AS categorized_count
+       FROM ledger_transactions t
+       LEFT JOIN ledger_transaction_category_assignments a
+         ON a.transaction_id = t.id AND a.superseded_at IS NULL
+      WHERE t.status IN ('posted','cleared')
+        AND t.direction IN ('inflow','outflow')
+        AND t.transaction_date >= $1
+        AND t.transaction_date < $2
+        ${asOfClause}`,
+    values,
+  );
+  return rows[0] ?? { transaction_count: "0", categorized_count: "0" };
+}
+
+function incompleteCategoryCoverageResult(range: DateRange): AskResult {
+  return {
+    answered: false,
+    answer: `I can't calculate a category total ${range.label} because transaction categorization is incomplete for that period.`,
+    evidence: [],
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerPeriodCategoryTotal(
+  client: TenantScopedClient,
+  intent: PeriodCategoryIntent,
+): Promise<AskResult> {
+  const coverage = await categoryCoverage(client, intent.range, intent.asOf);
+  const transactionCount = Number(coverage.transaction_count);
+  if (transactionCount === 0) {
+    return structuredListingResult(
+      `No posted cash-flow transactions found ${intent.range.label}.`,
+      [],
+    );
+  }
+  if (coverage.categorized_count !== coverage.transaction_count) {
+    return incompleteCategoryCoverageResult(intent.range);
+  }
+
+  const values: unknown[] = [intent.canonicalCode, intent.range.start, intent.range.end];
+  const asOfClause =
+    intent.asOf === null
+      ? ""
+      : (() => {
+          values.push(intent.asOf);
+          return `AND t.transaction_date <= $${values.length}`;
+        })();
+  values.push(MAX_AGGREGATE_EVIDENCE);
+  const { rows } = await client.query<CategoryTransactionRow>(
+    `SELECT t.id, t.amount::text AS amount, t.currency, t.direction, t.transaction_date,
+            t.description_normalized, t.description_raw, t.counterparty_id,
+            COALESCE(SUM(t.amount) OVER (), 0)::text AS matching_sum
+       FROM ledger_transactions t
+       JOIN ledger_transaction_category_assignments a
+         ON a.transaction_id = t.id AND a.superseded_at IS NULL
+      WHERE a.canonical_code = $1
+        AND t.status IN ('posted','cleared')
+        AND t.direction IN ('inflow','outflow')
+        AND t.transaction_date >= $2
+        AND t.transaction_date < $3
+        ${asOfClause}
+      ORDER BY t.transaction_date DESC, t.id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+  const evidence = rows.map(toTransactionEvidence);
+  if (rows.length === 0) {
+    return structuredListingResult(
+      `No ${intent.label.toLowerCase()} transactions found ${intent.range.label}.`,
+      evidence,
+    );
+  }
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: `I can't calculate one ${intent.label.toLowerCase()} total ${intent.range.label} across multiple currencies.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  return {
+    answered: true,
+    answer: `${intent.label} ${intent.range.label} was ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)}.`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerRevenueExpensesComparison(
+  client: TenantScopedClient,
+  intent: RevenueExpenseIntent,
+): Promise<AskResult> {
+  const coverage = await categoryCoverage(client, intent.range, intent.asOf);
+  const transactionCount = Number(coverage.transaction_count);
+  if (transactionCount === 0) {
+    return structuredListingResult(
+      `No posted cash-flow transactions found ${intent.range.label}.`,
+      [],
+    );
+  }
+  if (coverage.categorized_count !== coverage.transaction_count) {
+    return incompleteCategoryCoverageResult(intent.range);
+  }
+
+  const values: unknown[] = [intent.range.start, intent.range.end];
+  const asOfClause =
+    intent.asOf === null
+      ? ""
+      : (() => {
+          values.push(intent.asOf);
+          return `AND t.transaction_date <= $${values.length}`;
+        })();
+  values.push(MAX_AGGREGATE_EVIDENCE);
+  const { rows } = await client.query<RevenueExpenseRow>(
+    `SELECT t.id, t.amount::text AS amount, t.currency, t.direction, t.transaction_date,
+            t.description_normalized, t.description_raw, t.counterparty_id,
+            COALESCE(SUM(CASE WHEN a.canonical_code LIKE 'income.%' THEN t.amount ELSE 0 END) OVER (), 0)::text AS revenue_total,
+            COALESCE(SUM(CASE WHEN a.canonical_code LIKE 'expense.%' THEN t.amount ELSE 0 END) OVER (), 0)::text AS expense_total,
+            COALESCE(SUM(CASE WHEN a.canonical_code LIKE 'income.%' THEN t.amount ELSE -t.amount END) OVER (), 0)::text AS revenue_minus_expenses
+       FROM ledger_transactions t
+       JOIN ledger_transaction_category_assignments a
+         ON a.transaction_id = t.id AND a.superseded_at IS NULL
+      WHERE t.status IN ('posted','cleared')
+        AND t.direction IN ('inflow','outflow')
+        AND t.transaction_date >= $1
+        AND t.transaction_date < $2
+        ${asOfClause}
+      ORDER BY t.transaction_date DESC, t.id DESC
+      LIMIT $${values.length}`,
+    values,
+  );
+  const evidence = rows.map(toTransactionEvidence);
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: `I can't compare revenue and expenses ${intent.range.label} across multiple currencies.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  const revenue = rows[0]!.revenue_total;
+  const expenses = rows[0]!.expense_total;
+  const difference = rows[0]!.revenue_minus_expenses;
+  return {
+    answered: true,
+    answer: `Revenue ${intent.range.label} was ${formatCurrencyAmount(revenue, currencies[0]!)} and expenses were ${formatCurrencyAmount(expenses, currencies[0]!)}. Revenue ${difference.startsWith("-") ? "was below expenses by" : "exceeded expenses by"} ${formatCurrencyAmount(difference.startsWith("-") ? difference.slice(1) : difference, currencies[0]!)}.`,
     evidence,
     model: "structured-ledger-query",
     usage: { inputTokens: 0, outputTokens: 0 },
@@ -2442,6 +2647,52 @@ function parseTrailingCashFlowIntent(
     : null;
 }
 
+function parsePeriodCategoryIntent(
+  question: string,
+  asOf: Date | null,
+): PeriodCategoryIntent | null {
+  const q = question.toLowerCase();
+  const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
+  if (range === null) return null;
+  if (/\brevenue\b/.test(q)) {
+    return {
+      canonicalCode: "income.subscription_revenue",
+      label: "Revenue",
+      range,
+      asOf,
+    };
+  }
+  if (/\bpayroll\b/.test(q)) {
+    return {
+      canonicalCode: "expense.payroll_and_benefits",
+      label: "Payroll",
+      range,
+      asOf,
+    };
+  }
+  if (/\bcloud\s+(?:spend|cost|expense)/.test(q)) {
+    return {
+      canonicalCode: "expense.cloud_infrastructure",
+      label: "Cloud spend",
+      range,
+      asOf,
+    };
+  }
+  return null;
+}
+
+function parseRevenueExpensesIntent(
+  question: string,
+  asOf: Date | null,
+): RevenueExpenseIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(?:compare|comparison)\b/.test(q) || !/\brevenue\b/.test(q) || !/\bexpenses?\b/.test(q)) {
+    return null;
+  }
+  const range = parseIsoDateRange(q) ?? parseMonthRange(q, asOf);
+  return range === null ? null : { range, asOf };
+}
+
 function parseLargestPayableIntent(question: string): Record<string, never> | null {
   return /\blargest\s+(?:single\s+)?(?:open\s+)?payable\b/i.test(question) ? {} : null;
 }
@@ -2893,6 +3144,23 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     parse: parseMonthlyNetCashFlowIntent,
     answer: (client, intent) => answerMonthlyNetCashFlow(client, intent as NetCashFlowIntent),
     isEligible: (client, asOf) => hasEligibleTransactions(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "revenue_expenses_comparison",
+    displayText: "Compare this month's revenue and expenses",
+    suggestable: false,
+    parse: parseRevenueExpensesIntent,
+    answer: (client, intent) =>
+      answerRevenueExpensesComparison(client, intent as RevenueExpenseIntent),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "period_category_transaction_total",
+    displayText: "What was payroll this month?",
+    suggestable: false,
+    parse: parsePeriodCategoryIntent,
+    answer: (client, intent) => answerPeriodCategoryTotal(client, intent as PeriodCategoryIntent),
+    isEligible: () => Promise.resolve(false),
   },
   {
     id: "trailing_monthly_net_cash_flow",

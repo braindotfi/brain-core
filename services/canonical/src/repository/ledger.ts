@@ -94,8 +94,10 @@ export async function upsertCanonicalTransaction(
         account_source_key, canonical_counterparty_id, counterparty_source_key,
         amount, currency, direction, transaction_date, posted_date, status,
         description_raw, description_normalized, reconciliation_status,
-        provenance, confidence, source_ids, evidence_ids, extensions)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::text[],$21::text[],$22::jsonb)
+        canonical_category_code, category_assignment_method, category_assignment_confidence,
+        category_rule_version, category_source_value, provenance, confidence, source_ids,
+        evidence_ids, extensions)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::text[],$26::text[],$27::jsonb)
      ON CONFLICT (tenant_id, source_system, source_natural_key) DO UPDATE SET
         canonical_account_id = EXCLUDED.canonical_account_id,
         account_source_key = EXCLUDED.account_source_key,
@@ -110,6 +112,11 @@ export async function upsertCanonicalTransaction(
         description_raw = EXCLUDED.description_raw,
         description_normalized = EXCLUDED.description_normalized,
         reconciliation_status = EXCLUDED.reconciliation_status,
+        canonical_category_code = EXCLUDED.canonical_category_code,
+        category_assignment_method = EXCLUDED.category_assignment_method,
+        category_assignment_confidence = EXCLUDED.category_assignment_confidence,
+        category_rule_version = EXCLUDED.category_rule_version,
+        category_source_value = EXCLUDED.category_source_value,
         provenance = EXCLUDED.provenance,
         confidence = EXCLUDED.confidence,
         source_ids = EXCLUDED.source_ids,
@@ -135,6 +142,11 @@ export async function upsertCanonicalTransaction(
       input.descriptionRaw,
       input.descriptionNormalized,
       input.reconciliationStatus,
+      input.categoryAssignment?.canonicalCode ?? null,
+      input.categoryAssignment?.method ?? null,
+      input.categoryAssignment?.confidence ?? null,
+      input.categoryAssignment?.ruleVersion ?? null,
+      input.categoryAssignment?.sourceCategory ?? null,
       input.common.provenance,
       input.common.confidence,
       input.common.sourceIds,
