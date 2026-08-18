@@ -34,9 +34,11 @@ import {
   type LlmAdapter,
   type MetricsEmitter,
   stripUnsafeControlCharacters,
+  type ServiceCallContext,
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Redis } from "ioredis";
+import type { PolicyReader, PolicyView } from "../pages/types.js";
 
 export interface AskOptions {
   question: string;
@@ -47,7 +49,7 @@ export interface AskOptions {
 }
 
 export interface AskEvidenceItem {
-  entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "account";
+  entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "account" | "policy";
   entityId: string;
   excerpt: string;
 }
@@ -78,6 +80,10 @@ export interface AskDeps {
   embed: EmbeddingAdapter;
   redis: Redis;
   metrics: MetricsEmitter;
+  /** Optional Policy-owned read projection for deterministic policy questions. */
+  policyReader?: PolicyReader;
+  /** Authenticated caller context for the Policy-owned read projection. */
+  policyContext?: ServiceCallContext;
   evidenceBoundaryFactory?: (() => string) | undefined;
 }
 
@@ -115,6 +121,8 @@ export type DeterministicIntentId =
   | "payable_by_counterparty"
   | "receivable_by_counterparty"
   | "accounts_receivable_total"
+  | "accounts_payable_total"
+  | "policy_auto_allow_payments"
   | "overdue_customer_invoices"
   | "payroll_obligation_total"
   | "monthly_net_cash_flow"
@@ -289,6 +297,13 @@ interface PayrollObligationTotalIntent {
 }
 
 type AccountsReceivableTotalIntent = Record<string, never>;
+type AccountsPayableTotalIntent = Record<string, never>;
+type PolicyAutoAllowPaymentIntent = Record<string, never>;
+
+interface DeterministicAnswerContext {
+  policyReader?: PolicyReader;
+  policyContext?: ServiceCallContext;
+}
 
 interface DeterministicIntentDefinition {
   id: DeterministicIntentId;
@@ -296,7 +311,11 @@ interface DeterministicIntentDefinition {
   /** Named-counterparty routes need a concrete entity and are not useful as static suggestions. */
   suggestable?: boolean;
   parse: (question: string, asOf: Date | null) => unknown | null;
-  answer: (client: TenantScopedClient, intent: unknown) => Promise<AskResult>;
+  answer: (
+    client: TenantScopedClient,
+    intent: unknown,
+    context: DeterministicAnswerContext,
+  ) => Promise<AskResult>;
   isEligible: (client: TenantScopedClient, asOf: Date) => Promise<boolean>;
 }
 
@@ -322,6 +341,10 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
     const result = await deterministicIntent.definition.answer(
       deps.client,
       deterministicIntent.intent,
+      {
+        ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
+        ...(deps.policyContext !== undefined ? { policyContext: deps.policyContext } : {}),
+      },
     );
     result.deterministicIntentId = deterministicIntent.definition.id;
     await deps.redis.set(cacheKey(key), JSON.stringify(result), "EX", CACHE_TTL_SECONDS);
@@ -1507,6 +1530,153 @@ async function answerAccountsReceivableTotal(
   };
 }
 
+async function answerAccountsPayableTotal(
+  client: TenantScopedClient,
+  _intent: AccountsPayableTotalIntent,
+): Promise<AskResult> {
+  const { rows } = await client.query<ObligationAggregateRow>(
+    `SELECT id,
+            type,
+            amount_due::text AS amount_due,
+            currency,
+            due_date,
+            status,
+            counterparty_id,
+            COUNT(*) OVER ()::text AS matching_count,
+            COALESCE(SUM(amount_due) OVER (), 0)::text AS matching_sum
+       FROM ledger_obligations
+      WHERE direction = 'payable'
+        AND status IN ('upcoming','due','overdue')
+      ORDER BY due_date ASC, id ASC
+      LIMIT ${MAX_AGGREGATE_EVIDENCE}`,
+  );
+
+  const evidence = rows.map(toObligationEvidence);
+  if (rows.length === 0) {
+    return {
+      answered: true,
+      answer: "No open accounts payable obligations were found.",
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const currencies = [...new Set(rows.map((row) => row.currency))];
+  if (currencies.length !== 1) {
+    return {
+      answered: false,
+      answer: "I can't calculate one accounts payable total across multiple currencies.",
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const count = Number(rows[0]!.matching_count);
+  return {
+    answered: true,
+    answer: `Total open accounts payable is ${formatCurrencyAmount(rows[0]!.matching_sum, currencies[0]!)} across ${count} open payable ${count === 1 ? "obligation" : "obligations"}.`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+async function answerPolicyAutoAllowPayments(
+  _client: TenantScopedClient,
+  _intent: PolicyAutoAllowPaymentIntent,
+  context: DeterministicAnswerContext,
+): Promise<AskResult> {
+  if (context.policyReader === undefined || context.policyContext === undefined) {
+    return {
+      answered: false,
+      answer: "I can't retrieve the active policy conditions right now.",
+      evidence: [],
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const policy = await context.policyReader.active(context.policyContext);
+  if (policy === null) {
+    return {
+      answered: false,
+      answer: "No active policy was found for this tenant.",
+      evidence: [],
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const rules = policy.auto_allow_payment_rules ?? [];
+  const evidence = [toPolicyAutoAllowEvidence(policy, rules)];
+  if (rules.length === 0) {
+    return {
+      answered: true,
+      answer: `Active policy v${policy.version} has no outbound-payment rule that can auto-allow a payment.`,
+      evidence,
+      model: "structured-ledger-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  return {
+    answered: true,
+    answer: `Under active policy v${policy.version}, ${rules.map(describePolicyAutoAllowRule).join(" ")}`,
+    evidence,
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+function describePolicyAutoAllowRule(
+  rule: NonNullable<PolicyView["auto_allow_payment_rules"]>[number],
+): string {
+  const counterparty =
+    rule.counterparty_list === null
+      ? "outbound payments"
+      : `outbound payments to vendors in ${rule.counterparty_list}`;
+  const risk =
+    rule.risk_level_lte === null ? "" : ` with agent risk ${rule.risk_level_lte} or lower`;
+  const matchingLimit =
+    rule.amount_limit === null
+      ? ""
+      : ` The rule matches amounts up to ${formatCurrencyAmount(rule.amount_limit.value, rule.amount_limit.currency)}.`;
+  const railLimits = [
+    ["ACH", rule.ach_autonomous_max_amount],
+    ["card", rule.card_autonomous_max_amount],
+    ["x402", rule.x402_autonomous_max_amount],
+  ] as const;
+  const autonomousRails = railLimits.flatMap(([rail, limit]) =>
+    limit === null
+      ? []
+      : [
+          `${rail} ${counterparty}${risk} can auto-allow up to ${formatCurrencyAmount(limit.value, limit.currency)} under rule ${rule.id}.`,
+        ],
+  );
+  const autoAllow =
+    autonomousRails.length === 0
+      ? `${counterparty}${risk} matches rule ${rule.id}, but no autonomous payment-rail limit is configured.`
+      : autonomousRails.join(" ");
+  const approval =
+    rule.approval_required_above === null
+      ? ""
+      : ` Amounts above ${formatCurrencyAmount(rule.approval_required_above.value, rule.approval_required_above.currency)} require approval.`;
+  return `${autoAllow}${approval}${matchingLimit}`;
+}
+
+function toPolicyAutoAllowEvidence(
+  policy: PolicyView,
+  rules: ReadonlyArray<NonNullable<PolicyView["auto_allow_payment_rules"]>[number]>,
+): AskEvidenceItem {
+  return {
+    entityType: "policy",
+    entityId: policy.id,
+    excerpt: `active policy v${policy.version}; auto-allow outbound-payment rules=${rules.map((rule) => rule.id).join(",") || "none"}`,
+  };
+}
+
 function toCounterpartyEvidence(row: CounterpartyResolutionRow): AskEvidenceItem {
   const trust =
     row.trust_status === null || row.trust_status === undefined
@@ -2138,6 +2308,20 @@ function parseAccountsReceivableTotalIntent(
     : null;
 }
 
+function parseAccountsPayableTotalIntent(question: string): AccountsPayableTotalIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(total|sum|how much)\b/.test(q)) return null;
+  if (/[,;]/.test(q) || /\b(?:and|or)\b/.test(q)) return null;
+  return /\baccounts payable\b/.test(q) || /\bopen payables?\b/.test(q) ? {} : null;
+}
+
+function parsePolicyAutoAllowPaymentIntent(question: string): PolicyAutoAllowPaymentIntent | null {
+  const q = question.toLowerCase();
+  return /\bauto[ -]?(?:allow|approve)\b/.test(q) && /\bpayments?\b/.test(q) && /\bpolicy\b/.test(q)
+    ? {}
+    : null;
+}
+
 function parseAggregateOperationIntent(
   operation: AggregateOperation,
 ): (question: string, asOf: Date | null) => TransactionAggregateIntent | null {
@@ -2232,6 +2416,18 @@ async function hasEligiblePayrollObligations(
           AND due_date <= $1
      ) AS eligible`,
     [asOf],
+  );
+  return rows[0]?.eligible === true;
+}
+
+async function hasEligiblePayableObligations(client: TenantScopedClient): Promise<boolean> {
+  const { rows } = await client.query<{ eligible: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+         FROM ledger_obligations
+        WHERE direction = 'payable'
+          AND status IN ('upcoming','due','overdue')
+     ) AS eligible`,
   );
   return rows[0]?.eligible === true;
 }
@@ -2332,6 +2528,14 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     isEligible: (client, asOf) => hasEligibleInvoices(client, asOf, currentMonthRange(asOf)),
   },
   {
+    id: "accounts_payable_total",
+    displayText: "What's our total accounts payable?",
+    parse: (question) => parseAccountsPayableTotalIntent(question),
+    answer: (client, intent) =>
+      answerAccountsPayableTotal(client, intent as AccountsPayableTotalIntent),
+    isEligible: hasEligiblePayableObligations,
+  },
+  {
     id: "payable_by_counterparty",
     displayText: "What do we owe a counterparty?",
     suggestable: false,
@@ -2364,6 +2568,15 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     answer: (client, intent) =>
       answerAccountsReceivableTotal(client, intent as AccountsReceivableTotalIntent),
     isEligible: (client) => hasEligibleOpenCustomerInvoices(client),
+  },
+  {
+    id: "policy_auto_allow_payments",
+    displayText: "Which payments can auto-allow under the active policy?",
+    suggestable: false,
+    parse: (question) => parsePolicyAutoAllowPaymentIntent(question),
+    answer: (client, intent, context) =>
+      answerPolicyAutoAllowPayments(client, intent as PolicyAutoAllowPaymentIntent, context),
+    isEligible: () => Promise.resolve(false),
   },
   {
     id: "payroll_obligation_total",

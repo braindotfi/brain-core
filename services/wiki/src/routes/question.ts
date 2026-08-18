@@ -34,6 +34,14 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
           embed: deps.embed,
           redis: deps.redis,
           metrics: deps.metrics,
+          ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
+          policyContext: {
+            tenantId: request.principal!.tenantId,
+            actor: request.principal!.id,
+            requestId: request.id,
+            principalType: request.principal!.type,
+            scopes: request.principal!.scopes,
+          },
         },
         {
           question,

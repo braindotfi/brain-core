@@ -35,6 +35,23 @@ export interface PolicyView {
   deactivated_at: Date | null;
   created_by: string;
   created_at: Date;
+  /**
+   * Read-only projection of active outbound-payment rules that can actually
+   * resolve to allow. Wiki uses this for deterministic policy-condition
+   * questions without reading Policy-owned tables directly.
+   */
+  auto_allow_payment_rules?: ReadonlyArray<PolicyAutoAllowPaymentRuleView>;
+}
+
+export interface PolicyAutoAllowPaymentRuleView {
+  id: string;
+  counterparty_list: string | null;
+  amount_limit: { currency: string; value: string } | null;
+  risk_level_lte: "low" | "medium" | "high" | "critical" | null;
+  approval_required_above: { currency: string; value: string } | null;
+  ach_autonomous_max_amount: { currency: string; value: string } | null;
+  card_autonomous_max_amount: { currency: string; value: string } | null;
+  x402_autonomous_max_amount: { currency: string; value: string } | null;
 }
 
 export interface AgentView {
