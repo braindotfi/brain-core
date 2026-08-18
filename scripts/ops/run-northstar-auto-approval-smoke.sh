@@ -48,7 +48,7 @@ actor_id="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node 
   process.stdin.on("data", (chunk) => { body += chunk; });
   process.stdin.on("end", () => {
     const value = JSON.parse(body);
-    if (!/^usr_[0-9A-HJKMNP-TV-Z]{26}$/.test(value.member?.id ?? "")) process.exit(1);
+    if (!/^user_[0-9A-HJKMNP-TV-Z]{26}$/.test(value.member?.id ?? "")) process.exit(1);
     process.stdout.write(value.member.id);
   });
 ')"
