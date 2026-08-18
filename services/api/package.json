@@ -32,7 +32,7 @@
     "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.116.0",
+    "@anthropic-ai/sdk": "^0.117.1",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@azure/storage-blob": "^12.25.0",
