@@ -107,6 +107,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "ledger_transfers", column: "owner_id" },
   { table: "ledger_invoices", column: "owner_id" },
   { table: "ledger_obligations", column: "owner_id" },
+  { table: "ledger_transaction_category_assignments", column: "tenant_id" },
   { table: "ledger_transactions", column: "owner_id" },
   { table: "ledger_documents", column: "owner_id" },
   { table: "ledger_balances", column: "owner_id" },
