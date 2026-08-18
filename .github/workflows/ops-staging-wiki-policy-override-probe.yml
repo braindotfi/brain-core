@@ -1,0 +1,46 @@
+name: ops-staging-wiki-policy-override-probe
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe fixed policy-override Wiki questions on staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Run fixed policy-override probe and assert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/probe-northstar-wiki-policy-override.mjs \
+            scripts/ops/probe-northstar-wiki-policy-override.sh \
+            "azureuser@$VM_HOST:/tmp/"
+          set +e
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 700 /tmp/probe-northstar-wiki-policy-override.sh && bash /tmp/probe-northstar-wiki-policy-override.sh" 2>&1)"
+          remote_status=$?
+          set -e
+          printf '%s\n' "$output"
+          [[ "$remote_status" == "0" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^{' || true)" == "4" ]]
+          [[ "$(printf '%s\n' "$output" | tail -n 1)" == "northstar_wiki_policy_override_probe_completed" ]]
