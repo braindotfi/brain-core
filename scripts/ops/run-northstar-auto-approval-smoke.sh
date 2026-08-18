@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+phase="bootstrap"
+trap 'status=$?; printf "northstar_auto_approval_smoke_failed phase=%s line=%s status=%s\\n" "$phase" "$LINENO" "$status" >&2; exit "$status"' ERR
+
 : "${VM_ENV_FILE:?VM_ENV_FILE is required}"
 : "${API_BASE:?API_BASE is required}"
 
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 cd ~/brain-core
 set -a
 . "./${VM_ENV_FILE}"
 set +a
 : "${BRAIN_PLATFORM_SERVICE_SECRET:?BRAIN_PLATFORM_SERVICE_SECRET is required}"
 
+phase="tenant_create"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 create_payload="$(docker exec brain-prod-api node -e '
   const { randomUUID } = require("node:crypto");
   const suffix = randomUUID().replace(/-/g, "");
@@ -48,9 +54,13 @@ actor_id="$(printf '%s' "$create_response" | docker exec -i brain-prod-api node 
 ')"
 printf 'northstar_auto_approval_smoke_tenant_id=%s\n' "$smoke_tenant_id"
 
+phase="northstar_seed"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 docker exec -e BRAIN_TENANT_ID="$smoke_tenant_id" -e BRAIN_ACTOR="$actor_id" \
   brain-prod-api node tools/seed-northstar-demo/dist/cli.js
 
+phase="fixture_lookup"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 ids="$(docker exec brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=1 -c "
   SELECT json_build_object(
     'source_account_id', (
@@ -80,6 +90,8 @@ printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
   });
 '
 
+phase="agent_fixture"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 agent_id="$(docker exec -w /app/services/api brain-prod-api node --input-type=module -e '
   import { newAgentId } from "@brain/shared";
   process.stdout.write(newAgentId());
@@ -95,6 +107,8 @@ docker exec brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=
     now(), now(), 0, 100
   );"
 
+phase="agent_token"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 agent_token="$(docker exec -w /app/services/api \
   -e SMOKE_TENANT_ID="$smoke_tenant_id" \
   -e SMOKE_AGENT_ID="$agent_id" \
@@ -117,6 +131,8 @@ agent_token="$(docker exec -w /app/services/api \
     }));
   ')"
 
+phase="agent_run"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 request_body="$(printf '%s' "$ids" | docker exec -i brain-prod-api node -e '
   let body = "";
   process.stdin.on("data", (chunk) => { body += chunk; });
@@ -157,6 +173,8 @@ payment_intent_id="$(printf '%s' "$response" | docker exec -i brain-prod-api nod
   });
 ')"
 
+phase="assertions"
+printf 'northstar_auto_approval_smoke_phase=%s\n' "$phase"
 result="$(docker exec brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=1 -c "
   SELECT json_build_object(
     'payment_intent_id', pi.id,
@@ -191,4 +209,3 @@ printf '%s' "$result" | docker exec -i brain-prod-api node -e '
   });
 '
 printf 'northstar_auto_approval_smoke_completed\n'
-
