@@ -499,7 +499,11 @@ Done
   already uses: its `outbound_payment` / `onchain_tx` auto rules became
   `confirm` because this route has no seeded counterparty data to scope a
   `counterparty.in` allowlist to, and `agent.risk_level.lte` is fail-closed
-  against the unset `risk_level` a demo-created PaymentIntent carries.
+  against the unset `risk_level` a demo-created PaymentIntent carries. The
+  curated Northstar auto rule instead caps the trusted Payment agent's
+  definition-level `medium` signal and carries a $10,000 ACH autonomy cap.
+  Direct requests remain in review because they cannot self-assert an agent
+  risk level.
   `tools/seed-golden-path/src/cli.ts` (a separate raw-SQL `policies.state =
 'active'` writer used to seed a fresh testnet deploy) got the identical
   content fix plus a `validatePolicyDocument` + `runActivationLintGate` check

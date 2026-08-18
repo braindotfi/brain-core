@@ -29,14 +29,14 @@ describe("Northstar Labs fixture", () => {
     ).toEqual([]);
   });
 
-  it("keeps the seeded auto rule reachable through its policy allowlist", () => {
+  it("accepts the Payment agent's trusted risk signal through the auto rule", () => {
     const policy = buildNorthstarPolicy(["cp_fathom"]);
     const decision = evaluate(policy, {
       kind: "outbound_payment",
       counterparty_id: "cp_fathom",
-      amount: { currency: "USD", value: "9600.00" },
+      amount: { currency: "USD", value: "5000.00" },
       agent_role: "payment",
-      risk_level: "low",
+      risk_level: "medium",
       counterparty_trust_status: "unreviewed",
       timestamp: new Date("2026-08-15T12:00:00.000Z"),
     });
@@ -45,6 +45,10 @@ describe("Northstar Labs fixture", () => {
       outcome: "allow",
       matched_rule_id: "northstar-ap-auto-approved",
     });
+    expect(policy.rules[0]?.ach_autonomous_max_amount).toEqual({
+      currency: "USD",
+      value: "10000.00",
+    });
     expect(decision.trace[0]?.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -52,6 +56,29 @@ describe("Northstar Labs fixture", () => {
           detail: "vendors.policy_allowlisted",
           passed: true,
         }),
+      ]),
+    );
+  });
+
+  it("keeps a direct payment request without an agent risk signal in review", () => {
+    const policy = buildNorthstarPolicy(["cp_fathom"]);
+    const decision = evaluate(policy, {
+      kind: "outbound_payment",
+      counterparty_id: "cp_fathom",
+      amount: { currency: "USD", value: "5000.00" },
+      agent_role: null,
+      risk_level: null,
+      counterparty_trust_status: "unreviewed",
+      timestamp: new Date("2026-08-15T12:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      outcome: "confirm",
+      matched_rule_id: "northstar-ap-review",
+    });
+    expect(decision.trace[0]?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "agent.risk_level.lte", passed: false }),
       ]),
     );
   });

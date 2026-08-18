@@ -60,11 +60,24 @@ try {
             content->'lists'->'vendors.policy_allowlisted' AS policy_allowlisted_vendors,
             EXISTS (
               SELECT 1
-                FROM jsonb_array_elements(content->'rules') AS rule
+               FROM jsonb_array_elements(content->'rules') AS rule
                WHERE rule->>'id' = 'northstar-ap-auto-approved'
                  AND rule->>'execute' = 'auto'
                  AND rule->'when'->>'counterparty.in' = 'vendors.policy_allowlisted'
             ) AS auto_rule_matches_policy_allowlist
+           ,EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(content->'rules') AS rule
+               WHERE rule->>'id' = 'northstar-ap-auto-approved'
+                 AND rule->'when'->>'agent.risk_level.lte' = 'medium'
+            ) AS auto_rule_uses_payment_agent_risk
+           ,EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(content->'rules') AS rule
+               WHERE rule->>'id' = 'northstar-ap-auto-approved'
+                 AND rule->'ach_autonomous_max_amount'->>'currency' = 'USD'
+                 AND rule->'ach_autonomous_max_amount'->>'value' = '10000.00'
+            ) AS auto_rule_has_ach_autonomy_cap
        FROM policies
       WHERE tenant_id = $1 AND state = 'active'
       ORDER BY version DESC
@@ -128,6 +141,8 @@ try {
     result.policy?.state === "active" &&
     result.policy?.version === 2 &&
     result.policy.auto_rule_matches_policy_allowlist === true &&
+    result.policy.auto_rule_uses_payment_agent_risk === true &&
+    result.policy.auto_rule_has_ach_autonomy_cap === true &&
     result.audit.some((row) => row.action === "policy.activated") &&
     result.audit.some((row) => row.action === "agent.action.proposed");
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
