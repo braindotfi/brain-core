@@ -1,0 +1,43 @@
+name: ops-staging-northstar-assistant-evals
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: run Northstar Assistant evaluation set on staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Run all Northstar Assistant evaluations and assert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/run-northstar-assistant-evals.mjs \
+            scripts/ops/run-northstar-assistant-evals.sh \
+            docs/demo-runs/BRAIN_ASSISTANT_DEMO_EVALS.md \
+            "azureuser@$VM_HOST:/tmp/"
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 700 /tmp/run-northstar-assistant-evals.sh && bash /tmp/run-northstar-assistant-evals.sh" 2>&1)"
+          printf '%s\n' "$output"
+          [[ "$(printf '%s\n' "$output" | grep -c '^{' || true)" == "34" ]]
+          [[ "$(printf '%s\n' "$output" | tail -n 1)" == "northstar_assistant_evals_completed" ]]
