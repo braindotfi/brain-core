@@ -36,8 +36,12 @@ jobs:
             scripts/ops/run-northstar-assistant-evals.sh \
             docs/demo-runs/BRAIN_ASSISTANT_DEMO_EVALS.md \
             "azureuser@$VM_HOST:/tmp/"
+          set +e
           output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "chmod 700 /tmp/run-northstar-assistant-evals.sh && bash /tmp/run-northstar-assistant-evals.sh" 2>&1)"
+          remote_status=$?
+          set -e
           printf '%s\n' "$output"
           [[ "$(printf '%s\n' "$output" | grep -c '^{' || true)" == "34" ]]
           [[ "$(printf '%s\n' "$output" | tail -n 1)" == "northstar_assistant_evals_completed" ]]
+          [[ "$remote_status" == "0" ]]

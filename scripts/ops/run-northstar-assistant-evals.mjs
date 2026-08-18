@@ -34,30 +34,52 @@ if (
   throw new Error("Northstar Assistant evaluation did not recover an active tenant member session");
 }
 
-for (const question of questions) {
-  const result = await request("/wiki/question", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${session.token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ question: question.text }),
-  });
+let requestFailures = 0;
 
-  process.stdout.write(
-    `${JSON.stringify({
-      event: "northstar_assistant_eval",
-      ...question,
-      answered: result.answered === true,
-      answer: result.answer,
-      evidence: result.evidence,
-      model: result.model,
-      usage: result.usage,
-    })}\n`,
-  );
+for (const question of questions) {
+  try {
+    const result = await request("/wiki/question", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ question: question.text }),
+    });
+
+    process.stdout.write(
+      `${JSON.stringify({
+        event: "northstar_assistant_eval",
+        ...question,
+        answered: result.answered === true,
+        answer: result.answer,
+        evidence: result.evidence,
+        model: result.model,
+        usage: result.usage,
+        error: null,
+      })}\n`,
+    );
+  } catch (error) {
+    requestFailures += 1;
+    process.stdout.write(
+      `${JSON.stringify({
+        event: "northstar_assistant_eval",
+        ...question,
+        answered: false,
+        answer: null,
+        evidence: [],
+        model: null,
+        usage: null,
+        error: error instanceof Error ? error.message : "Unknown evaluation request error",
+      })}\n`,
+    );
+  }
 }
 
 process.stdout.write("northstar_assistant_evals_completed\n");
+if (requestFailures > 0) {
+  process.exitCode = 1;
+}
 
 async function request(path, init) {
   const response = await fetch(`http://127.0.0.1:3000/v1${path}`, init);
