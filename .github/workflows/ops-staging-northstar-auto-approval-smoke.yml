@@ -37,4 +37,3 @@ jobs:
             "azureuser@$VM_HOST:/tmp/"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "chmod 700 /tmp/run-northstar-auto-approval-smoke.sh && VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash /tmp/run-northstar-auto-approval-smoke.sh"
-
