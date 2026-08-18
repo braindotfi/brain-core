@@ -123,6 +123,7 @@ export type DeterministicIntentId =
   | "next_payable_due"
   | "account_balance"
   | "collections_recommendation_evidence"
+  | "policy_override_request"
   | "unsupported_action_request"
   | "new_vendor_listing"
   | "vendor_trust_status_listing";
@@ -1268,6 +1269,17 @@ function answerUnsupportedActionRequest(): Promise<AskResult> {
   });
 }
 
+function answerPolicyOverrideRequest(): Promise<AskResult> {
+  return Promise.resolve({
+    answered: false,
+    answer:
+      "I can't bypass or override policy or approval controls. Use the approved payment and policy workflows.",
+    evidence: [],
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  });
+}
+
 async function answerNewVendorListing(
   client: TenantScopedClient,
   intent: NewVendorListingIntent,
@@ -2053,6 +2065,12 @@ function parseUnsupportedActionRequest(question: string): Record<string, never> 
   return /^\s*(?:please\s+)?(?:pay|send|transfer|execute)\b/i.test(question) ? {} : null;
 }
 
+function parsePolicyOverrideRequest(question: string): Record<string, never> | null {
+  const coerciveVerb = /\b(?:ignore|disregard|bypass|override|circumvent)\b/i;
+  const controlTarget = /\b(?:polic(?:y|ies)|rules?|approvals?|gates?|controls?)\b/i;
+  return coerciveVerb.test(question) && controlTarget.test(question) ? {} : null;
+}
+
 function parseNewVendorListingIntent(
   question: string,
   asOf: Date | null,
@@ -2246,6 +2264,14 @@ function currentMonthRange(asOf: Date): DateRange {
 }
 
 export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefinition[] = [
+  {
+    id: "policy_override_request",
+    displayText: "",
+    suggestable: false,
+    parse: (question) => parsePolicyOverrideRequest(question),
+    answer: () => answerPolicyOverrideRequest(),
+    isEligible: () => Promise.resolve(false),
+  },
   {
     id: "unsupported_action_request",
     displayText: "",
