@@ -1212,12 +1212,12 @@ async function answerAccountBalance(
       : (account.available_balance ?? account.current_balance);
   if (balance === null) {
     return structuredListingResult(`${account.name} has no available balance recorded.`, [
-      toAccountEvidence(account),
+      toAccountEvidence(account, balance),
     ]);
   }
   return structuredListingResult(
     `${account.name} balance is ${formatCurrencyAmount(balance, account.currency)}.`,
-    [toAccountEvidence(account)],
+    [toAccountEvidence(account, balance)],
   );
 }
 
@@ -1689,8 +1689,11 @@ function toCounterpartyEvidence(row: CounterpartyResolutionRow): AskEvidenceItem
   };
 }
 
-function toAccountEvidence(row: AccountBalanceRow): AskEvidenceItem {
-  const balance = row.available_balance ?? row.current_balance ?? "unavailable";
+function toAccountEvidence(
+  row: AccountBalanceRow,
+  selectedBalance: string | null,
+): AskEvidenceItem {
+  const balance = selectedBalance ?? "unavailable";
   return {
     entityType: "account",
     entityId: row.id,
