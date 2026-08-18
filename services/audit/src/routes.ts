@@ -5,6 +5,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   brainError,
+  decodeKeysetCursor,
+  encodeKeysetCursor,
   newWebhookEndpointId,
   parseDateParam,
   parsePositiveIntParam,
@@ -34,12 +36,18 @@ const READ: Scope = "audit:read";
 const WRITE: Scope = "audit:write";
 
 export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps): Promise<void> {
-  // GET /audit/events — filter by layer/since/until
+  // GET /audit/events — filter by layer/since/until with opaque keyset pagination.
   app.get(
     "/audit/events",
     async (
       request: FastifyRequest<{
-        Querystring: { layer?: string; since?: string; until?: string; limit?: string };
+        Querystring: {
+          layer?: string;
+          since?: string;
+          until?: string;
+          limit?: string;
+          cursor?: string;
+        };
       }>,
       reply,
     ) => {
@@ -54,16 +62,27 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       });
       const since = parseDateParam("since", request.query.since);
       const until = parseDateParam("until", request.query.until);
+      const cursor =
+        request.query.cursor !== undefined ? decodeKeysetCursor(request.query.cursor) : undefined;
       const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         queryEvents(c, {
           ...(request.query.layer !== undefined ? { layer: request.query.layer } : {}),
           ...(since !== undefined ? { since } : {}),
           ...(until !== undefined ? { until } : {}),
-          limit,
+          limit: limit + 1,
+          ...(cursor !== undefined ? { cursor } : {}),
         }),
       );
+      const visible = rows.slice(0, limit);
+      const last = visible.at(-1);
       reply.status(200);
-      return { events: rows.map(serializeEvent) };
+      return {
+        events: visible.map(serializeEvent),
+        next_cursor:
+          rows.length > limit && last !== undefined
+            ? encodeKeysetCursor({ sort: last.created_at.toISOString(), id: last.id })
+            : null,
+      };
     },
   );
 

@@ -114,6 +114,16 @@ describe("queryEvents", () => {
     expect(log[0]!.values).toEqual([since, until, 5]);
   });
 
+  it("adds a descending keyset predicate when a cursor is provided", async () => {
+    const { client, log } = fakeClient();
+    await queryEvents(client, {
+      limit: 21,
+      cursor: { sort: "2026-08-18T12:00:00.000Z", id: "evt_01KZ" },
+    });
+    expect(log[0]!.sql).toContain("(created_at, id) < ($1::timestamptz, $2)");
+    expect(log[0]!.values).toEqual(["2026-08-18T12:00:00.000Z", "evt_01KZ", 21]);
+  });
+
   it("orders desc so most recent events come first", async () => {
     const { client, log } = fakeClient();
     await queryEvents(client, { limit: 1 });

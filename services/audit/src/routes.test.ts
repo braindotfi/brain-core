@@ -268,6 +268,85 @@ describe("GET /audit/events query-param validation (F-2)", () => {
     expect(clamped.statusCode).toBe(200); // capped at 500, not rejected
     await app.close();
   });
+
+  it("returns an opaque next_cursor when another event exists", async () => {
+    const rows = [
+      {
+        id: "evt_02",
+        layer: "ledger",
+        event_type: "system_activity",
+        severity: "info",
+        actor: "system",
+        actor_display_name: null,
+        actor_email: null,
+        action: "ledger.transaction.created",
+        inputs: {},
+        outputs: {},
+        policy_version: null,
+        policy_decision_id: null,
+        policy_check_id: null,
+        outcome: null,
+        event_hash: Buffer.alloc(32, 2),
+        prev_event_hash: null,
+        created_at: new Date("2026-08-18T12:01:00.000Z"),
+      },
+      {
+        id: "evt_01",
+        layer: "ledger",
+        event_type: "system_activity",
+        severity: "info",
+        actor: "system",
+        actor_display_name: null,
+        actor_email: null,
+        action: "ledger.transaction.created",
+        inputs: {},
+        outputs: {},
+        policy_version: null,
+        policy_decision_id: null,
+        policy_check_id: null,
+        outcome: null,
+        event_hash: Buffer.alloc(32, 1),
+        prev_event_hash: null,
+        created_at: new Date("2026-08-18T12:00:00.000Z"),
+      },
+    ];
+    const app = Fastify();
+    await app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      (req as unknown as { principal: unknown }).principal = {
+        tenantId,
+        id: "user_1",
+        type: "user",
+        scopes: ["audit:read"],
+      };
+    });
+    const client = {
+      query: vi.fn(async () => ({ rows, rowCount: rows.length })),
+      release: vi.fn(),
+    };
+    await registerAuditRoutes(app, {
+      pool: { connect: async () => client } as unknown as Pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+
+    const res = await app.inject({ method: "GET", url: "/audit/events?limit=1" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ events: [{ id: "evt_02" }] });
+    expect(res.json().next_cursor).toBe(
+      Buffer.from(JSON.stringify({ sort: "2026-08-18T12:01:00.000Z", id: "evt_02" })).toString(
+        "base64url",
+      ),
+    );
+    await app.close();
+  });
+
+  it("rejects a malformed cursor with 400", async () => {
+    const app = buildApp();
+    const res = await app.inject({ method: "GET", url: "/audit/events?cursor=not-a-cursor" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("invalid_cursor");
+    await app.close();
+  });
 });
 
 describe("GET /audit/anchor/latest anchoring mode", () => {

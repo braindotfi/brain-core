@@ -6730,7 +6730,7 @@ paths:
     get:
       tags: [Audit]
       summary: Query audit events
-      description: Requires `audit:read`.
+      description: Requires `audit:read`. Results are ordered newest first. Pagination is keyset-based and opaque. Pass `next_cursor` unchanged to fetch the next page.
       operationId: queryAuditEvents
       parameters:
         - name: layer
@@ -6749,7 +6749,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: limit
           in: query
-          schema: { type: integer, default: 100, maximum: 1000 }
+          schema: { type: integer, default: 100, maximum: 500 }
         - name: cursor
           in: query
           schema: { type: string }

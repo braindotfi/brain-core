@@ -3367,7 +3367,7 @@ export interface paths {
         };
         /**
          * Query audit events
-         * @description Requires `audit:read`.
+         * @description Requires `audit:read`. Results are ordered newest first. Pagination is keyset-based and opaque. Pass `next_cursor` unchanged to fetch the next page.
          */
         get: operations["queryAuditEvents"];
         put?: never;
