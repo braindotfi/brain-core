@@ -1208,9 +1208,15 @@ async function answerCollectionsRecommendationEvidence(
     `SELECT id, name, type, trust_status
        FROM ledger_counterparties
       WHERE normalized_name = $1
+         OR normalized_name LIKE $2 ESCAPE '\\'
+         OR EXISTS (
+           SELECT 1
+             FROM unnest(aliases) AS alias
+            WHERE LOWER(alias) = LOWER($3)
+         )
       ORDER BY name ASC, id ASC
       LIMIT 2`,
-    [normalizedName],
+    [normalizedName, `${escapeLike(normalizedName)}\\_%`, intent.counterpartyName.trim()],
   );
   if (counterparties.length !== 1) {
     return unresolvedCounterpartyResult(intent.counterpartyName, counterparties.length > 1);
