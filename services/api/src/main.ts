@@ -769,20 +769,29 @@ async function main(): Promise<void> {
             };
       }),
   };
+  const toProposalView = (
+    proposal: Awaited<ReturnType<typeof listProposals>>["proposals"][number],
+  ): ProposalView => ({
+    id: proposal.id,
+    type: proposal.type,
+    status: proposal.status,
+    created_at: proposal.created_at,
+    headline: proposal.presentation.headline,
+    recommendation: proposal.presentation.recommendation,
+    required_approvers: proposal.policy.required_approvers,
+  });
   const proposalReader: ProposalReader = {
     listPending: async (rctx) => {
       const result = await listProposals(pool, rctx, { status: "pending", limit: 50 });
-      return result.proposals.map(
-        (proposal): ProposalView => ({
-          id: proposal.id,
-          type: proposal.type,
-          status: proposal.status,
-          created_at: proposal.created_at,
-          headline: proposal.presentation.headline,
-          recommendation: proposal.presentation.recommendation,
-          required_approvers: proposal.policy.required_approvers,
-        }),
-      );
+      return result.proposals.map(toProposalView);
+    },
+    listPendingCollections: async (rctx) => {
+      const result = await listProposals(pool, rctx, {
+        status: "pending",
+        type: "collections",
+        limit: 100,
+      });
+      return result.proposals.map(toProposalView);
     },
   };
 

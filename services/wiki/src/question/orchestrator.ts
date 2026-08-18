@@ -1522,9 +1522,10 @@ async function answerOutreachApprovalRecommendation(
       usage: { inputTokens: 0, outputTokens: 0 },
     };
   }
-  const proposals = (await context.proposalReader.listPending(context.policyContext)).filter(
+  const proposals = (
+    await context.proposalReader.listPendingCollections(context.policyContext)
+  ).filter(
     (proposal) =>
-      proposal.type === "collections" &&
       proposal.required_approvers.length > 0 &&
       /\b(?:outreach|follow[ -]?up|collections?)\b/i.test(
         `${proposal.headline} ${proposal.recommendation ?? ""}`,
