@@ -448,11 +448,12 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
       if (text.includes("FROM ledger_counterparties")) {
         if (text.includes("normalized_name = $1")) {
           const [normalized, _prefix, rawName] = values ?? [];
+          const allowsPrefix = text.includes("normalized_name LIKE $2");
           const matches = rows.counterparties.filter((counterparty) => {
             const candidate = counterparty.normalized_name ?? normalizeFakeName(counterparty.name);
             return (
               candidate === normalized ||
-              candidate.startsWith(`${normalized}_`) ||
+              (allowsPrefix && candidate.startsWith(`${normalized}_`)) ||
               counterparty.aliases?.some(
                 (alias) => alias.toLowerCase() === String(rawName).toLowerCase(),
               )
@@ -1859,7 +1860,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         metrics: new MockMetrics(),
       },
       {
-        question: "What evidence supports the Helio Manufacturing collections recommendation?",
+        question: "What evidence supports the Helio collections recommendation?",
         asOf: null,
         maxEvidenceDepth: 3,
         tenantId: "tnt_test",
