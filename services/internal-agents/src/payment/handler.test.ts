@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceBundle } from "../evidence.js";
 import { paymentHandler } from "./handler.js";
+import { paymentDefinition } from "./definition.js";
 
 const EVIDENCE: EvidenceBundle = {
   items: [
@@ -56,6 +57,24 @@ describe("paymentHandler — ACH branch", () => {
     expect(proposed.channel).toBe("payment_intent");
     if (proposed.channel !== "payment_intent") return;
     expect(proposed.intent.confidence).toBe(0.42);
+  });
+
+  it("threads its trusted definition risk level into a financial intent", () => {
+    const proposed = paymentHandler.build({
+      action: "propose_payment",
+      context: {
+        source_account_id: "acct_1",
+        destination_counterparty_id: "cp_2",
+        amount: "5000",
+        currency: "USD",
+      },
+      evidence: EVIDENCE,
+      definition: paymentDefinition,
+    });
+
+    expect(proposed.channel).toBe("payment_intent");
+    if (proposed.channel !== "payment_intent") return;
+    expect(proposed.intent.risk_level).toBe("medium");
   });
 
   it("rejects missing ids and malformed money fields before creating an intent shape", () => {

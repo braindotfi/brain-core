@@ -5,7 +5,8 @@
  * so re-running it cannot repair the original presenter tenant. This script
  * has one fixed tenant and no free-form identifiers. It patches only the five
  * receivable invoice metadata documents and the unsigned active Northstar
- * policy's list key, then records one idempotent repair audit event.
+ * policy's list key and trusted agent-risk bound, then records one idempotent
+ * repair audit event.
  *
  * Default mode is read-only. Pass --apply only through the staging-only
  * workflow after its constrained preflight succeeds.
@@ -29,7 +30,7 @@ export const NORTHSTAR_RECEIVABLE_INVOICE_NUMBERS = [
 ];
 
 const EXPECTED_AR_TOTAL = "530500.00000000";
-const REPAIR_IDEMPOTENCY_KEY = "northstar_labs_v1:canonical-repair:v1";
+const REPAIR_IDEMPOTENCY_KEY = "northstar_labs_v1:canonical-repair:v2";
 
 /** @param {unknown} value */
 function isObject(value) {
@@ -74,17 +75,43 @@ export function repairPolicyContent(content) {
   }
   if (legacyList !== undefined) autoRule.when["counterparty.in"] = "vendors.policy_allowlisted";
 
+  const storedRiskBound = autoRule.when["agent.risk_level.lte"];
+  if (storedRiskBound !== "low" && storedRiskBound !== "medium") {
+    throw new Error("Northstar auto-approval rule has an unexpected agent risk bound");
+  }
+  if (storedRiskBound === "low") autoRule.when["agent.risk_level.lte"] = "medium";
+
+  const storedAchCap = autoRule.ach_autonomous_max_amount;
+  if (
+    storedAchCap !== undefined &&
+    (!isObject(storedAchCap) ||
+      storedAchCap.currency !== "USD" ||
+      storedAchCap.value !== "10000.00")
+  ) {
+    throw new Error("Northstar auto-approval rule has an unexpected ACH autonomy cap");
+  }
+  if (storedAchCap === undefined) {
+    autoRule.ach_autonomous_max_amount = { currency: "USD", value: "10000.00" };
+  }
+
   if (
     !Array.isArray(lists["vendors.policy_allowlisted"]) ||
     lists["vendors.policy_allowlisted"].length !== 5 ||
-    autoRule.when["counterparty.in"] !== "vendors.policy_allowlisted"
+    autoRule.when["counterparty.in"] !== "vendors.policy_allowlisted" ||
+    autoRule.when["agent.risk_level.lte"] !== "medium" ||
+    !isObject(autoRule.ach_autonomous_max_amount) ||
+    autoRule.ach_autonomous_max_amount.currency !== "USD" ||
+    autoRule.ach_autonomous_max_amount.value !== "10000.00"
   ) {
     throw new Error("Northstar repaired policy does not have the expected allowlist");
   }
 
   return {
     content: next,
-    changed: legacyList !== undefined,
+    listRenamed: legacyList !== undefined,
+    riskBoundUpdated: storedRiskBound === "low",
+    achCapAdded: storedAchCap === undefined,
+    changed: legacyList !== undefined || storedRiskBound === "low" || storedAchCap === undefined,
   };
 }
 
@@ -209,9 +236,15 @@ function report(value) {
       version: value.policy.version,
       state: value.policy.state,
       has_signers: value.policy.signers !== null,
-      list_rename_required: policyRepair.changed,
+      list_rename_required: policyRepair.listRenamed,
+      risk_bound_update_required: policyRepair.riskBoundUpdated,
+      ach_autonomy_cap_add_required: policyRepair.achCapAdded,
       stored_auto_rule_list: storedAutoRule?.when?.["counterparty.in"],
       repaired_auto_rule_list: repairedAutoRule?.when?.["counterparty.in"],
+      stored_auto_rule_risk_bound: storedAutoRule?.when?.["agent.risk_level.lte"],
+      repaired_auto_rule_risk_bound: repairedAutoRule?.when?.["agent.risk_level.lte"],
+      stored_auto_rule_ach_autonomy_cap: storedAutoRule?.ach_autonomous_max_amount ?? null,
+      repaired_auto_rule_ach_autonomy_cap: repairedAutoRule?.ach_autonomous_max_amount ?? null,
     },
     core_presenter_identity: {
       email: value.identity.email,
@@ -245,7 +278,12 @@ async function main() {
     await client.query("SELECT set_config('app.tenant_id', $1, true)", [NORTHSTAR_TENANT_ID]);
     const before = await snapshot(client, true);
     const beforeReport = report(before);
-    if (before.policy.signers !== null && beforeReport.policy.list_rename_required) {
+    if (
+      before.policy.signers !== null &&
+      (beforeReport.policy.list_rename_required ||
+        beforeReport.policy.risk_bound_update_required ||
+        beforeReport.policy.ach_autonomy_cap_add_required)
+    ) {
       throw new Error("refusing to alter a signed Northstar policy");
     }
 
@@ -301,7 +339,12 @@ async function main() {
       verifyClient.release();
     }
     const afterReport = report(after);
-    if (afterReport.invoice_rows_to_patch !== 0 || afterReport.policy.list_rename_required) {
+    if (
+      afterReport.invoice_rows_to_patch !== 0 ||
+      afterReport.policy.list_rename_required ||
+      afterReport.policy.risk_bound_update_required ||
+      afterReport.policy.ach_autonomy_cap_add_required
+    ) {
       throw new Error("Northstar repair did not reach the expected postcondition");
     }
 
@@ -320,6 +363,8 @@ async function main() {
         outputs: {
           invoice_metadata_rows_patched: patchedInvoiceRows,
           policy_list_renamed: patchedPolicyRows === 1,
+          policy_risk_bound_updated: beforeReport.policy.risk_bound_update_required,
+          policy_ach_autonomy_cap_added: beforeReport.policy.ach_autonomy_cap_add_required,
           policy_version: 2,
         },
         idempotencyKey: REPAIR_IDEMPOTENCY_KEY,

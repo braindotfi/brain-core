@@ -319,9 +319,12 @@ export function buildNorthstarPolicy(approvedVendorIds: string[]): NorthstarPoli
         when: {
           "counterparty.in": "vendors.policy_allowlisted",
           "amount.lte": { currency: "USD", value: "50000.00" },
-          "agent.risk_level.lte": "low",
+          // The Payment agent's trusted definition-level signal is "medium".
+          // Direct payment requests omit this signal and therefore remain fail-closed.
+          "agent.risk_level.lte": "medium",
         },
         approval_required_above: { currency: "USD", value: "10000.00" },
+        ach_autonomous_max_amount: { currency: "USD", value: "10000.00" },
         execute: "auto",
       },
       {
