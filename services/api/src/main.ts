@@ -713,6 +713,23 @@ async function main(): Promise<void> {
     deactivated_at: row.deactivated_at,
     created_by: row.created_by,
     created_at: row.created_at,
+    auto_allow_payment_rules: row.content.rules
+      .filter(
+        (rule) =>
+          rule.execute === "auto" &&
+          rule.require === undefined &&
+          (rule.applies_to.includes("outbound_payment") || rule.applies_to.includes("any")),
+      )
+      .map((rule) => ({
+        id: rule.id,
+        counterparty_list: rule.when["counterparty.in"] ?? null,
+        amount_limit: rule.when["amount.lte"] ?? null,
+        risk_level_lte: rule.when["agent.risk_level.lte"] ?? null,
+        approval_required_above: rule.approval_required_above ?? null,
+        ach_autonomous_max_amount: rule.ach_autonomous_max_amount ?? null,
+        card_autonomous_max_amount: rule.card_autonomous_max_amount ?? null,
+        x402_autonomous_max_amount: rule.x402_autonomous_max_amount ?? null,
+      })),
   });
   const policyReader: PolicyReader = {
     byId: (rctx, id) =>

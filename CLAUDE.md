@@ -183,7 +183,8 @@ Done
   `GET /v1/wiki/suggested-questions` derives tenant-aware suggestions only from
   that deterministic registry. Each registered intent supplies its eligibility
   query, and eligible intents are ranked by tenant-local invocation count.
-  Named-counterparty payable and receivable totals, overdue customer invoice
+  Named-counterparty payable and receivable totals, total accounts payable and
+  receivable, overdue customer invoice
   listings, payroll-obligation totals, largest-payable answers, new-vendor
   listings, and month-scoped or trailing-monthly net cash-flow totals use
   deterministic tenant-scoped Ledger queries. Named-counterparty questions
@@ -198,6 +199,8 @@ Done
   Counterparty evidence includes the persisted `trust_status`; trusted,
   paused, acknowledged, and unreviewed vendor-list questions use a
   deterministic tenant-scoped route rather than generative retrieval.
+  Active-policy auto-allow payment questions use a sanitized Policy-owned read
+  projection and return the actual rule conditions without LLM synthesis.
   Imperative payment requests fail closed without calling the LLM. Generic
   answers that state a payment, invoice, amount, or due-date fact about a
   named counterparty must cite a non-counterparty record linked to that same

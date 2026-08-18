@@ -1434,7 +1434,8 @@ export interface paths {
         /**
          * Natural-language question against the Wiki
          * @description Requires `wiki:read`. Grounds questions in tenant Ledger rows and
-         *     returns an answer with cited evidence. Transaction count, total, and
+         *     sanctioned Policy read projections and returns an answer with cited
+         *     evidence. Transaction count, total, and
          *     average questions use a deterministic Ledger query when the intent is
          *     unambiguous. Explicit transaction, cash-flow, and invoice listing
          *     questions with a recency, count, or date bound also use a deterministic
@@ -4097,7 +4098,7 @@ export interface components {
             answer: string;
             evidence: {
                 /** @enum {string} */
-                entityType: "transaction" | "obligation" | "counterparty" | "invoice";
+                entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "policy";
                 entityId: string;
                 excerpt: string;
             }[];

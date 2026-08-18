@@ -17,6 +17,7 @@ import {
   listSuggestedQuestions,
   recordDeterministicIntentUsage,
 } from "./orchestrator.js";
+import type { PolicyReader, PolicyView } from "../pages/types.js";
 
 /**
  * v0.3 — orchestrator grounds in Ledger rows. The fake client returns
@@ -2300,6 +2301,75 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(llm.seen).toEqual([]);
   });
 
+  it.each([
+    "What is Northstar's open accounts payable total?",
+    "How much do we owe in total accounts payable?",
+  ])("returns the open AP obligation total for %s without calling the LLM", async (question) => {
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("accounts payable totals must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_AP_A",
+              type: "bill",
+              direction: "payable",
+              amount_due: "86400.00",
+              currency: "USD",
+              due_date: new Date("2026-08-20T00:00:00Z"),
+              status: "upcoming",
+              counterparty_id: "cp_CASCADE",
+            },
+            {
+              id: "obl_AP_B",
+              type: "subscription",
+              direction: "payable",
+              amount_due: "134900.00",
+              currency: "USD",
+              due_date: new Date("2026-08-22T00:00:00Z"),
+              status: "due",
+              counterparty_id: "cp_ATLAS",
+            },
+            {
+              id: "obl_AR",
+              type: "invoice",
+              direction: "receivable",
+              amount_due: "530500.00",
+              currency: "USD",
+              due_date: new Date("2026-08-15T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+            },
+          ],
+          counterparties: [],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question,
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_ap_total",
+        model: "m-ap-total",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      answer: "Total open accounts payable is $221,300.00 across 2 open payable obligations.",
+      deterministicIntentId: "accounts_payable_total",
+      model: "structured-ledger-query",
+    });
+    expect(result.evidence.map((evidence) => evidence.entityId)).toEqual(["obl_AP_A", "obl_AP_B"]);
+    expect(llm.seen).toEqual([]);
+  });
+
   it.each(["What's our total accounts receivable?", "How much are we owed in total?"])(
     "returns the complete AR invoice total for %s without calling the LLM",
     async (question) => {
@@ -2387,6 +2457,78 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       expect(llm.seen).toEqual([]);
     },
   );
+
+  it("answers the active policy auto-allow conditions without calling the LLM", async () => {
+    const policy: PolicyView = {
+      id: "pol_ACTIVE",
+      version: 2,
+      state: "active",
+      quorum_required: 1,
+      signers: [],
+      activated_at: new Date("2026-08-01T00:00:00Z"),
+      deactivated_at: null,
+      created_by: "user_ADMIN",
+      created_at: new Date("2026-08-01T00:00:00Z"),
+      auto_allow_payment_rules: [
+        {
+          id: "northstar-ap-auto-approved",
+          counterparty_list: "vendors.policy_allowlisted",
+          amount_limit: { currency: "USD", value: "50000.00" },
+          risk_level_lte: "medium",
+          approval_required_above: { currency: "USD", value: "10000.00" },
+          ach_autonomous_max_amount: { currency: "USD", value: "10000.00" },
+          card_autonomous_max_amount: null,
+          x402_autonomous_max_amount: null,
+        },
+      ],
+    };
+    const policyReader: PolicyReader = {
+      byId: async () => null,
+      active: async (ctx) => {
+        expect(ctx).toMatchObject({ tenantId: "tnt_policy", actor: "user_ADMIN" });
+        return policy;
+      },
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("policy auto-allow questions must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient({ transactions: [], obligations: [], counterparties: [] }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        policyReader,
+        policyContext: { tenantId: "tnt_policy", actor: "user_ADMIN" },
+      },
+      {
+        question: "Which payments can auto-allow under the active policy?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_policy",
+        model: "m-policy-auto-allow",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      deterministicIntentId: "policy_auto_allow_payments",
+      model: "structured-ledger-query",
+    });
+    expect(result.answer).toContain("vendors.policy_allowlisted");
+    expect(result.answer).toContain("ACH");
+    expect(result.answer).toContain("$10,000.00");
+    expect(result.answer).toContain("Amounts above $10,000.00 require approval.");
+    expect(result.evidence).toEqual([
+      {
+        entityType: "policy",
+        entityId: "pol_ACTIVE",
+        excerpt: "active policy v2; auto-allow outbound-payment rules=northstar-ap-auto-approved",
+      },
+    ]);
+    expect(llm.seen).toEqual([]);
+  });
 
   it("derives eligible suggested questions only from registered deterministic intents", async () => {
     const suggestions = await listSuggestedQuestions(
