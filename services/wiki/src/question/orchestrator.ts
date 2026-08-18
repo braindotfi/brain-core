@@ -47,7 +47,7 @@ export interface AskOptions {
 }
 
 export interface AskEvidenceItem {
-  entityType: "transaction" | "obligation" | "counterparty" | "invoice";
+  entityType: "transaction" | "obligation" | "counterparty" | "invoice" | "account";
   entityId: string;
   excerpt: string;
 }
@@ -97,9 +97,11 @@ interface LedgerCandidate {
   type: "transaction" | "obligation" | "counterparty";
   id: string;
   excerpt: string;
+  counterpartyId?: string | undefined;
+  counterpartyName?: string | undefined;
 }
 
-type QuestionIntent = "accounts_receivable" | "reconciliation" | "generic";
+type QuestionIntent = "accounts_receivable" | "payables" | "reconciliation" | "generic";
 
 type AggregateOperation = "count" | "sum" | "average";
 
@@ -118,6 +120,10 @@ export type DeterministicIntentId =
   | "monthly_net_cash_flow"
   | "trailing_monthly_net_cash_flow"
   | "largest_payable"
+  | "next_payable_due"
+  | "account_balance"
+  | "collections_recommendation_evidence"
+  | "unsupported_action_request"
   | "new_vendor_listing"
   | "vendor_trust_status_listing";
 
@@ -213,6 +219,15 @@ interface LargestPayableRow extends ObligationAggregateRow {
   counterparty_name: string;
 }
 
+interface AccountBalanceRow {
+  id: string;
+  name: string;
+  account_type: string;
+  current_balance: string | null;
+  available_balance: string | null;
+  currency: string;
+}
+
 interface NewVendorRow extends CounterpartyResolutionRow {
   created_at: Date;
 }
@@ -254,6 +269,18 @@ interface VendorTrustStatusListingIntent {
 
 interface OverdueCustomerInvoicesIntent {
   asOf: Date | null;
+}
+
+interface AccountBalanceIntent {
+  accountLabel: "operating" | "reserve" | "card";
+}
+
+interface NextPayableDueIntent {
+  asOf: Date | null;
+}
+
+interface CollectionsRecommendationEvidenceIntent {
+  counterpartyName: string;
 }
 
 interface PayrollObligationTotalIntent {
@@ -330,14 +357,25 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
 
   const completion = await deps.llm.complete(llmReq);
   const parsed = parseLlmAnswer(completion.text, candidates, boundaryToken);
+  const evidenceCandidates = parsed.evidenceIds
+    .map((id) => candidates.find((candidate) => candidate.id === id))
+    .filter((candidate): candidate is LedgerCandidate => candidate !== undefined);
+  const relationshipSafe = hasSupportedCounterpartyRelationship(
+    parsed.answer,
+    evidenceCandidates,
+    candidates,
+  );
 
   const result: AskResult = {
-    answered: parsed.answered,
-    answer: parsed.answer,
-    evidence: parsed.evidenceIds
-      .map((id) => candidates.find((c) => c.id === id))
-      .filter((c): c is LedgerCandidate => c !== undefined)
-      .map((c) => ({ entityType: c.type, entityId: c.id, excerpt: c.excerpt })),
+    answered: parsed.answered && relationshipSafe,
+    answer: relationshipSafe ? parsed.answer : GROUNDED_ANSWER_FALLBACK,
+    evidence: relationshipSafe
+      ? evidenceCandidates.map((candidate) => ({
+          entityType: candidate.type,
+          entityId: candidate.id,
+          excerpt: candidate.excerpt,
+        }))
+      : [],
     model: completion.model,
     usage: completion.usage,
   };
@@ -1086,6 +1124,150 @@ async function answerLargestPayable(client: TenantScopedClient): Promise<AskResu
   );
 }
 
+async function answerNextPayableDue(
+  client: TenantScopedClient,
+  intent: NextPayableDueIntent,
+): Promise<AskResult> {
+  const reference = intent.asOf ?? new Date();
+  const { rows } = await client.query<LargestPayableRow>(
+    `SELECT obl.id,
+            obl.type,
+            obl.amount_due::text AS amount_due,
+            obl.currency,
+            obl.due_date,
+            obl.status,
+            obl.counterparty_id,
+            cp.name AS counterparty_name,
+            '1'::text AS matching_count,
+            obl.amount_due::text AS matching_sum
+       FROM ledger_obligations obl
+       JOIN ledger_counterparties cp ON cp.id = obl.counterparty_id
+      WHERE obl.direction = 'payable'
+        AND obl.status IN ('upcoming','due')
+        AND obl.due_date >= $1
+      ORDER BY obl.due_date ASC, obl.id ASC
+      LIMIT 1`,
+    [reference],
+  );
+  const row = rows[0];
+  if (row === undefined)
+    return structuredListingResult("No upcoming payable obligations found.", []);
+  return structuredListingResult(
+    `The next payable due is ${formatCurrencyAmount(row.amount_due, row.currency)} to ${row.counterparty_name} on ${row.due_date.toISOString().slice(0, 10)}.`,
+    [toObligationEvidence(row)],
+  );
+}
+
+async function answerAccountBalance(
+  client: TenantScopedClient,
+  intent: AccountBalanceIntent,
+): Promise<AskResult> {
+  const { rows } = await client.query<AccountBalanceRow>(
+    `SELECT id, name, account_type, current_balance::text AS current_balance,
+            available_balance::text AS available_balance, currency
+       FROM ledger_accounts
+      WHERE status = 'active'
+        AND LOWER(name) LIKE $1
+      ORDER BY name ASC, id ASC
+      LIMIT 2`,
+    [`%${intent.accountLabel}%`],
+  );
+  if (rows.length === 0) {
+    return structuredListingResult(`No active ${intent.accountLabel} account was found.`, []);
+  }
+  if (rows.length > 1) {
+    return structuredListingResult(
+      `I found multiple active ${intent.accountLabel} accounts, so I can't provide a reliable balance.`,
+      [],
+    );
+  }
+  const account = rows[0]!;
+  const balance =
+    account.account_type === "card"
+      ? account.current_balance
+      : (account.available_balance ?? account.current_balance);
+  if (balance === null) {
+    return structuredListingResult(`${account.name} has no available balance recorded.`, [
+      toAccountEvidence(account),
+    ]);
+  }
+  return structuredListingResult(
+    `${account.name} balance is ${formatCurrencyAmount(balance, account.currency)}.`,
+    [toAccountEvidence(account)],
+  );
+}
+
+async function answerCollectionsRecommendationEvidence(
+  client: TenantScopedClient,
+  intent: CollectionsRecommendationEvidenceIntent,
+): Promise<AskResult> {
+  const normalizedName = normalizeCounterpartyName(intent.counterpartyName);
+  if (normalizedName === "") return unresolvedCounterpartyResult(intent.counterpartyName);
+  const { rows: counterparties } = await client.query<CounterpartyResolutionRow>(
+    `SELECT id, name, type, trust_status
+       FROM ledger_counterparties
+      WHERE normalized_name = $1
+      ORDER BY name ASC, id ASC
+      LIMIT 2`,
+    [normalizedName],
+  );
+  if (counterparties.length !== 1) {
+    return unresolvedCounterpartyResult(intent.counterpartyName, counterparties.length > 1);
+  }
+  const counterparty = counterparties[0]!;
+  const { rows } = await client.query<InvoiceListingRow>(
+    `SELECT inv.id,
+            inv.invoice_number,
+            inv.amount_due::text AS amount_due,
+            inv.amount_paid::text AS amount_paid,
+            inv.currency,
+            inv.issue_date,
+            inv.due_date,
+            inv.status,
+            inv.counterparty_id,
+            cp.name AS counterparty_name
+       FROM proposals p
+       JOIN ledger_invoices inv ON inv.id = p.action->>'invoice_id'
+       JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
+      WHERE p.status = 'pending'
+        AND p.action->>'type' = 'collections'
+        AND p.action->>'counterparty_id' = $1
+        AND inv.counterparty_id = $1
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT 2`,
+    [counterparty.id],
+  );
+  if (rows.length === 0) {
+    return structuredListingResult(
+      `No pending Collections recommendation was found for ${counterparty.name}.`,
+      [toCounterpartyEvidence(counterparty)],
+    );
+  }
+  if (rows.length > 1) {
+    return structuredListingResult(
+      `I found multiple pending Collections recommendations for ${counterparty.name}, so I can't provide a single rationale.`,
+      [toCounterpartyEvidence(counterparty), ...rows.map(toInvoiceEvidence)],
+    );
+  }
+  const invoice = rows[0]!;
+  const due = invoice.due_date?.toISOString().slice(0, 10) ?? "no due date";
+  return structuredListingResult(
+    `The pending Collections recommendation for ${counterparty.name} is supported by invoice ${invoice.invoice_number}: ${formatCurrencyAmount(invoice.amount_due, invoice.currency)} due ${due}, status ${invoice.status}.`,
+    [toCounterpartyEvidence(counterparty), toInvoiceEvidence(invoice)],
+  );
+}
+
+function answerUnsupportedActionRequest(): Promise<AskResult> {
+  return Promise.resolve({
+    answered: false,
+    answer:
+      "I can't initiate or instruct a payment from a Wiki question. Use the payment workflow, where policy and approval checks apply.",
+    evidence: [],
+    model: "structured-ledger-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  });
+}
+
 async function answerNewVendorListing(
   client: TenantScopedClient,
   intent: NewVendorListingIntent,
@@ -1319,6 +1501,15 @@ function toCounterpartyEvidence(row: CounterpartyResolutionRow): AskEvidenceItem
   };
 }
 
+function toAccountEvidence(row: AccountBalanceRow): AskEvidenceItem {
+  const balance = row.available_balance ?? row.current_balance ?? "unavailable";
+  return {
+    entityType: "account",
+    entityId: row.id,
+    excerpt: `${row.account_type} account "${row.name}" balance ${balance} ${row.currency}`,
+  };
+}
+
 function toObligationEvidence(
   row: Pick<
     ObligationAggregateRow,
@@ -1364,6 +1555,8 @@ async function retrieveLedgerCandidates(
     return retrieveAccountsReceivableCandidates(client, asOf);
   }
 
+  const payableClause = intent === "payables" ? "AND obl.direction = 'payable'" : "";
+
   const txClause = asOf === null ? "" : "AND transaction_date <= $1";
   const txValues: unknown[] = asOf === null ? [MAX_TRANSACTIONS] : [asOf, MAX_TRANSACTIONS];
   const txLimitParam = asOf === null ? "$1" : "$2";
@@ -1395,11 +1588,15 @@ async function retrieveLedgerCandidates(
     due_date: Date;
     status: string;
     counterparty_id: string;
+    counterparty_name: string;
   }>(
-    `SELECT id, type, amount_due, currency, due_date, status, counterparty_id
-       FROM ledger_obligations
-      WHERE status IN ('upcoming','due','overdue')
-      ORDER BY due_date ASC
+    `SELECT obl.id, obl.type, obl.amount_due, obl.currency, obl.due_date, obl.status,
+            obl.counterparty_id, cp.name AS counterparty_name
+       FROM ledger_obligations obl
+       JOIN ledger_counterparties cp ON cp.id = obl.counterparty_id
+      WHERE obl.status IN ('upcoming','due','overdue')
+        ${payableClause}
+      ORDER BY obl.due_date ASC
       LIMIT $1`,
     [MAX_OBLIGATIONS],
   );
@@ -1427,6 +1624,7 @@ async function retrieveLedgerCandidates(
       id: r.id,
       excerpt:
         `${r.direction} ${r.amount} ${r.currency} on ${r.transaction_date.toISOString().slice(0, 10)}${cp} ${memo}`.trim(),
+      counterpartyId: r.counterparty_id ?? undefined,
     });
   }
   for (const r of oblRes.rows) {
@@ -1436,6 +1634,8 @@ async function retrieveLedgerCandidates(
       type: "obligation",
       id: r.id,
       excerpt: `${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status} cp=${r.counterparty_id}`,
+      counterpartyId: r.counterparty_id,
+      counterpartyName: r.counterparty_name,
     });
   }
   for (const r of cpRes.rows) {
@@ -1448,6 +1648,8 @@ async function retrieveLedgerCandidates(
       type: "counterparty",
       id: r.id,
       excerpt: `${r.type} "${r.name}"${risk}${trust}`,
+      counterpartyId: r.id,
+      counterpartyName: r.name,
     });
   }
   return out;
@@ -1513,6 +1715,7 @@ async function retrieveAccountsReceivableCandidates(
       type: "obligation" as const,
       id: r.id,
       excerpt: `${r.type} due ${r.due_date.toISOString().slice(0, 10)} amount ${r.amount_due} ${r.currency} status=${r.status} cp=${r.counterparty_id}`,
+      counterpartyId: r.counterparty_id,
     })),
     ...cpRes.rows.map((r) => {
       const risk = r.risk_level !== null ? ` risk=${r.risk_level}` : "";
@@ -1524,6 +1727,8 @@ async function retrieveAccountsReceivableCandidates(
         type: "counterparty" as const,
         id: r.id,
         excerpt: `${r.type} "${r.name}"${risk}${trust}`,
+        counterpartyId: r.id,
+        counterpartyName: r.name,
       };
     }),
   ];
@@ -1690,6 +1895,9 @@ function classifyQuestionIntent(question: string): QuestionIntent {
   ) {
     return "accounts_receivable";
   }
+  if (/\bpayables?\b/.test(q) || /\bwhat\s+do\s+we\s+owe\b/.test(q)) {
+    return "payables";
+  }
   return "generic";
 }
 
@@ -1801,11 +2009,48 @@ function parseTrailingCashFlowIntent(
   question: string,
   asOf: Date | null,
 ): TrailingCashFlowIntent | null {
-  return /\btrailing\s+monthly\s+cash[ -]?flow\b/i.test(question) ? { asOf } : null;
+  return /\btrailing\s+(?:monthly\s+)?(?:average\s+)?cash[ -]?flow\b/i.test(question)
+    ? { asOf }
+    : null;
 }
 
 function parseLargestPayableIntent(question: string): Record<string, never> | null {
-  return /\blargest\s+(?:single\s+)?payable\b/i.test(question) ? {} : null;
+  return /\blargest\s+(?:single\s+)?(?:open\s+)?payable\b/i.test(question) ? {} : null;
+}
+
+function parseNextPayableDueIntent(
+  question: string,
+  asOf: Date | null,
+): NextPayableDueIntent | null {
+  const q = question.toLowerCase();
+  return /\b(?:which|what)\s+(?:invoice|payable|bill)\s+is\s+due\s+next\b/.test(q) ||
+    /\bnext\s+(?:invoice|payable|bill)\s+due\b/.test(q)
+    ? { asOf }
+    : null;
+}
+
+function parseAccountBalanceIntent(question: string): AccountBalanceIntent | null {
+  const q = question.toLowerCase();
+  if (!/\b(balance|cash)\b/.test(q)) return null;
+  if (/\boperating(?:[ -]?account)?\b/.test(q)) return { accountLabel: "operating" };
+  if (/\breserve(?:[ -]?account)?\b/.test(q)) return { accountLabel: "reserve" };
+  if (/\b(?:corporate\s+)?card\b/.test(q)) return { accountLabel: "card" };
+  return null;
+}
+
+function parseCollectionsRecommendationEvidenceIntent(
+  question: string,
+): CollectionsRecommendationEvidenceIntent | null {
+  const match =
+    /\bevidence\s+(?:supports?|for)\s+(?:the\s+)?(.+?)\s+collections\s+recommendation[?!.\s]*$/i.exec(
+      question,
+    );
+  const counterpartyName = match?.[1]?.trim() ?? "";
+  return isCounterpartyNameCandidate(counterpartyName) ? { counterpartyName } : null;
+}
+
+function parseUnsupportedActionRequest(question: string): Record<string, never> | null {
+  return /^\s*(?:please\s+)?(?:pay|send|transfer|execute)\b/i.test(question) ? {} : null;
 }
 
 function parseNewVendorListingIntent(
@@ -1833,11 +2078,10 @@ function parseOverdueCustomerInvoicesIntent(
   asOf: Date | null,
 ): OverdueCustomerInvoicesIntent | null {
   const q = question.toLowerCase();
-  if (
-    !/\binvoices?\b/.test(q) ||
-    !/\boverdue\b/.test(q) ||
-    !/\b(customer|customers|ar|accounts receivable|receivables?)\b/.test(q)
-  ) {
+  if (/[,;]/.test(q) || /\b(?:and|or)\b/.test(q)) return null;
+  const referencesReceivables = /\b(customer|customers|accounts receivable|receivables?)\b/.test(q);
+  const referencesArInvoices = /\binvoices?\b/.test(q) && /\bar\b/.test(q);
+  if (!/\boverdue\b/.test(q) || (!referencesReceivables && !referencesArInvoices)) {
     return null;
   }
   return { asOf };
@@ -1864,7 +2108,8 @@ function parseAccountsReceivableTotalIntent(
   return /\baccounts receivable\b/.test(q) ||
     /\breceivables?\b/.test(q) ||
     /\b(?:are|is)\s+we\s+owed\b/.test(q) ||
-    /\b(?:customers?|customer invoices?)\s+owe\s+us\b/.test(q)
+    /\b(?:customers?|customer invoices?)\s+owe\s+us\b/.test(q) ||
+    /\bhow\s+much\s+are\s+customers?\s+owed\s+to\b/.test(q)
     ? {}
     : null;
 }
@@ -2002,6 +2247,14 @@ function currentMonthRange(asOf: Date): DateRange {
 
 export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefinition[] = [
   {
+    id: "unsupported_action_request",
+    displayText: "",
+    suggestable: false,
+    parse: (question) => parseUnsupportedActionRequest(question),
+    answer: () => answerUnsupportedActionRequest(),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
     id: "transaction_count",
     displayText: "How many transactions do I have this month?",
     parse: parseAggregateOperationIntent("count"),
@@ -2065,20 +2318,20 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     isEligible: () => Promise.resolve(false),
   },
   {
-    id: "accounts_receivable_total",
-    displayText: "What's our total accounts receivable?",
-    parse: (question) => parseAccountsReceivableTotalIntent(question),
-    answer: (client, intent) =>
-      answerAccountsReceivableTotal(client, intent as AccountsReceivableTotalIntent),
-    isEligible: (client) => hasEligibleOpenCustomerInvoices(client),
-  },
-  {
     id: "overdue_customer_invoices",
     displayText: "Which customer invoices are overdue?",
     parse: parseOverdueCustomerInvoicesIntent,
     answer: (client, intent) =>
       answerOverdueCustomerInvoices(client, intent as OverdueCustomerInvoicesIntent),
     isEligible: hasEligibleOverdueCustomerInvoices,
+  },
+  {
+    id: "accounts_receivable_total",
+    displayText: "What's our total accounts receivable?",
+    parse: (question) => parseAccountsReceivableTotalIntent(question),
+    answer: (client, intent) =>
+      answerAccountsReceivableTotal(client, intent as AccountsReceivableTotalIntent),
+    isEligible: (client) => hasEligibleOpenCustomerInvoices(client),
   },
   {
     id: "payroll_obligation_total",
@@ -2109,6 +2362,34 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     suggestable: false,
     parse: (question) => parseLargestPayableIntent(question),
     answer: (client) => answerLargestPayable(client),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "next_payable_due",
+    displayText: "Which payable is due next?",
+    suggestable: false,
+    parse: parseNextPayableDueIntent,
+    answer: (client, intent) => answerNextPayableDue(client, intent as NextPayableDueIntent),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "account_balance",
+    displayText: "What is our operating-account balance?",
+    suggestable: false,
+    parse: (question) => parseAccountBalanceIntent(question),
+    answer: (client, intent) => answerAccountBalance(client, intent as AccountBalanceIntent),
+    isEligible: () => Promise.resolve(false),
+  },
+  {
+    id: "collections_recommendation_evidence",
+    displayText: "What evidence supports a Collections recommendation?",
+    suggestable: false,
+    parse: (question) => parseCollectionsRecommendationEvidenceIntent(question),
+    answer: (client, intent) =>
+      answerCollectionsRecommendationEvidence(
+        client,
+        intent as CollectionsRecommendationEvidenceIntent,
+      ),
     isEligible: () => Promise.resolve(false),
   },
   {
@@ -2248,6 +2529,36 @@ function parseLlmAnswer(
   } catch {
     return { answered: false, answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
   }
+}
+
+/**
+ * A generic answer may cite a counterparty row and a separate obligation row.
+ * When it states a payment, invoice, amount, or due-date fact about that
+ * counterparty, at least one cited record must carry the same counterparty id.
+ */
+function hasSupportedCounterpartyRelationship(
+  answer: string,
+  cited: ReadonlyArray<LedgerCandidate>,
+  candidates: ReadonlyArray<LedgerCandidate>,
+): boolean {
+  if (!/\b(?:amount|due|invoice|obligation|payable|receivable|owe|payment)\b/i.test(answer)) {
+    return true;
+  }
+  const lowerAnswer = answer.toLocaleLowerCase("en-US");
+  const mentioned = candidates.filter(
+    (candidate) =>
+      candidate.type === "counterparty" &&
+      candidate.counterpartyId !== undefined &&
+      candidate.counterpartyName !== undefined &&
+      lowerAnswer.includes(candidate.counterpartyName.toLocaleLowerCase("en-US")),
+  );
+  return mentioned.every((counterparty) =>
+    cited.some(
+      (candidate) =>
+        candidate.type !== "counterparty" &&
+        candidate.counterpartyId === counterparty.counterpartyId,
+    ),
+  );
 }
 
 function createEvidenceBoundaryToken(): string {
