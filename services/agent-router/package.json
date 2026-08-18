@@ -30,7 +30,7 @@
     "@brain/schemas": "workspace:*",
     "@brain/internal-agents": "workspace:*",
     "bullmq": "^6.0.5",
-    "fastify": "^5.11.0",
+    "fastify": "^5.12.0",
     "pg": "^8.22.0"
   }
 }
