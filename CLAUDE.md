@@ -661,6 +661,14 @@ onchain_version`, so `content` and `content_hash` are immutable after INSERT;
   funds throws `InsufficientAnchorFundsError`, leaves the anchor pending for
   retry, emits `brain.audit.anchor.publisher_wallet_insufficient_funds.count`,
   and never marks the row `reverted`.
+- Base RPC boot validation distinguishes a confirmed chain or deployed-contract
+  mismatch from a provider transport failure. A wrong chain, missing contract,
+  or missing selector remains startup-fatal. A transient unavailable provider
+  starts the process with `onchain_rpc.status="degraded"` on `/health`, pauses
+  anchor cycles and on-chain rail execution, emits
+  `brain.onchain.rpc.available=0`, and retries with bounded exponential
+  backoff. `BASE_RPC_FALLBACK_URLS` is an ordered comma-separated list of
+  secondary endpoints, each required to serve `BRAIN_BASE_CHAIN_ID`.
 - Audit anchor publishing uses `BrainAuditAnchor.anchorBatch` on Base Sepolia.
   The scheduler first creates each tenant's one-row anchor record under
   tenant-scoped RLS, then broadcasts bounded batches of up to

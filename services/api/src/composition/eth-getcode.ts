@@ -16,7 +16,13 @@ export function makeBaseGetCode(
   chainId: number,
 ): (address: string) => Promise<string> {
   const chain = chainId === BASE_MAINNET_CHAIN_ID ? base : baseSepolia;
-  const client = createPublicClient({ chain, transport: http(rpcUrl) });
+  // Boot validation must distinguish a short provider blip from a verified
+  // chain or contract mismatch. Do one bounded attempt here; retry policy is
+  // owned by OnchainRpcReadiness rather than viem's opaque startup retries.
+  const client = createPublicClient({
+    chain,
+    transport: http(rpcUrl, { retryCount: 0, timeout: 5_000 }),
+  });
   return async (address: string): Promise<string> => {
     const code = await client.getCode({ address: address as Address });
     // viem returns undefined when there is no code at the address; the fence
@@ -26,6 +32,9 @@ export function makeBaseGetCode(
 }
 
 export function makeBaseGetChainId(rpcUrl: string): () => Promise<number> {
-  const client = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) });
+  const client = createPublicClient({
+    chain: baseSepolia,
+    transport: http(rpcUrl, { retryCount: 0, timeout: 5_000 }),
+  });
   return async (): Promise<number> => client.getChainId();
 }

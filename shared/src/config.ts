@@ -562,6 +562,23 @@ const envSchema = z.object({
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional(),
   BASE_RPC_URL: z.string().url().optional(),
+  /**
+   * Comma-separated secondary Base RPC endpoints, tried in order after
+   * BASE_RPC_URL. They keep HTTP services available when one provider has a
+   * transient outage while chain safety validation retries in the background.
+   */
+  BASE_RPC_FALLBACK_URLS: z.preprocess(
+    (value) =>
+      typeof value === "string"
+        ? value
+            .split(",")
+            .map((url) => url.trim())
+            .filter((url) => url !== "")
+        : value,
+    z.array(z.string().url()).default([]),
+  ),
+  BRAIN_ONCHAIN_RPC_RETRY_INITIAL_MS: z.coerce.number().int().positive().default(5_000),
+  BRAIN_ONCHAIN_RPC_RETRY_MAX_MS: z.coerce.number().int().positive().default(300_000),
   /** Per-deployment BrainSmartAccount address for on-chain PaymentIntent dispatch. */
   BRAIN_ONCHAIN_SMART_ACCOUNT: z
     .string()
