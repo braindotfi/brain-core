@@ -163,10 +163,10 @@ printf '%s' "$preflight" | docker exec -i brain-prod-api node -e '
       identityLink?.synthetic_bootstrap_link_count === 1 &&
       identityLink?.linked_member_is_active_synthetic_bootstrap_admin === true &&
       value.active_invite_count === 0 && value.api_key_count === 0 &&
-      value.member_count >= 1 && value.non_synthetic_member_count === 0 &&
+      value.member_count === 1 && value.non_synthetic_member_count === 0 &&
       value.active_bootstrap_admin_count === 1 && value.nonterminal_payment_intent_count === 0 &&
       value.nonterminal_execution_count === 0 && value.nonterminal_outbox_count === 0 &&
-      value.rail_receipt_count === 0;
+      value.rail_receipt_count === 0 && value.blob_artifact_count === 0;
     if (!valid) process.exit(1);
   });
 '
@@ -177,12 +177,23 @@ if [[ "$mode" == 'report' ]]; then
 fi
 
 member_id="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
-  -c "SELECT id FROM members
-        WHERE tenant_id = '$TENANT_ID' AND role = 'admin' AND active = TRUE
-          AND status = 'active' AND email ~ '@brain\\.invalid$'
-        ORDER BY id;")"
+  -c "SELECT m.id
+        FROM member_identity_links l
+        JOIN members m
+          ON m.tenant_id = l.tenant_id
+         AND m.id = l.member_id
+       WHERE l.tenant_id = '$TENANT_ID'
+         AND l.surface = 'platform'
+         AND m.role = 'admin'
+         AND m.status = 'active'
+         AND m.active = TRUE
+         AND m.email ~ '^northstar-phase4\\+[0-9a-f]{32}@brain\\.invalid$'
+         AND l.external_ref ~ '^northstar-phase4:[0-9a-f]{32}$'
+         AND substring(m.email FROM '^northstar-phase4\\+([0-9a-f]{32})@brain\\.invalid$')
+           = substring(l.external_ref FROM '^northstar-phase4:([0-9a-f]{32})$')
+       ORDER BY l.linked_at ASC;")"
 if [[ ! "$member_id" =~ ^(usr|mem)_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
-  echo 'preflighted tenant does not have exactly one valid synthetic bootstrap admin' >&2
+  echo 'preflighted tenant does not have exactly one matching synthetic fixture bootstrap admin' >&2
   exit 1
 fi
 
