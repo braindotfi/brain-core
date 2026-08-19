@@ -1,0 +1,42 @@
+name: ops-staging-rpc-degraded-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: verify staging API remains available during Base RPC outage
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: .env.staging
+      COMPOSE_PROJECT: brain-staging
+      API_BASE: https://staging-api.brain.fi
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run controlled degraded-RPC smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy scripts/ops/staging-rpc-degraded-smoke.sh \
+            "azureuser@$VM_HOST:/tmp/staging-rpc-degraded-smoke.sh"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "REPO_DIR=~/brain-core VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' API_BASE='$API_BASE' bash /tmp/staging-rpc-degraded-smoke.sh"
