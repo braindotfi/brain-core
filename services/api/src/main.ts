@@ -519,6 +519,15 @@ async function main(): Promise<void> {
           getCode: makeBaseGetCode(endpoint, cfg.BRAIN_BASE_CHAIN_ID),
         });
       }
+
+      // Escrow and PaymentIntent code both assume a six-decimal settlement
+      // token. A confirmed mismatch is a safety failure, while an unavailable
+      // endpoint is handled by the same degraded readiness path as the chain
+      // and selector checks above.
+      await assertSettlementTokenIsSixDecimals({
+        tokenAddress: cfg.BRAIN_X402_USDC_ADDRESS,
+        getDecimals: makeBaseGetErc20Decimals(endpoint, cfg.BRAIN_BASE_CHAIN_ID),
+      });
     },
   });
   const onchainRpcReady = await onchainRpcReadiness.validateNow();
@@ -1012,15 +1021,6 @@ async function main(): Promise<void> {
   // arbitrary ERC-20 would satisfy a release intent, so a half-configured
   // escrow leaves the check dormant rather than running it unbound.
   //
-  // escrow-resolver.ts and PaymentIntentService.ts both hardcode 6 decimals
-  // for BRAIN_X402_USDC_ADDRESS; neither reads decimals() off the actual
-  // token. Verify it here, once, and fail closed rather than boot with a
-  // silent power-of-ten mismatch between check 6.6's approval and the rail's
-  // release amount.
-  await assertSettlementTokenIsSixDecimals({
-    tokenAddress: cfg.BRAIN_X402_USDC_ADDRESS,
-    getDecimals: makeBaseGetErc20Decimals(onchainRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
-  });
   const resolveEscrowState =
     cfg.BRAIN_ESCROW_ADDRESS !== undefined && cfg.BRAIN_X402_USDC_ADDRESS !== undefined
       ? makeResolveEscrowState({
