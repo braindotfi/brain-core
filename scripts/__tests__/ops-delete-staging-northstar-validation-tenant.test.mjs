@@ -10,7 +10,7 @@ const scriptPath = fileURLToPath(
   new URL("../ops/delete-staging-northstar-validation-tenant.sh", import.meta.url),
 );
 
-test("Northstar validation tenant cleanup is fixed to staging and fails closed on identity links", async () => {
+test("Northstar validation tenant cleanup is fixed to staging and accepts only its synthetic bootstrap link", async () => {
   const [workflow, script] = await Promise.all([
     readFile(workflowPath, "utf8"),
     readFile(scriptPath, "utf8"),
@@ -32,6 +32,12 @@ test("Northstar validation tenant cleanup is fixed to staging and fails closed o
   assert.match(script, /parsed\?\.linked !== false/);
   assert.match(script, /tenant_created_via/);
   assert.match(script, /seed_marker_count/);
+  assert.match(script, /identity_link_summary/);
+  assert.match(script, /all_links_belong_to_tenant/);
+  assert.match(script, /synthetic_bootstrap_link_count/);
+  assert.match(script, /linked_member_is_active_synthetic_bootstrap_admin/);
+  assert.match(script, /northstar-phase4\\\\\+\[0-9a-f\]\{32\}@brain/);
+  assert.match(script, /northstar-phase4:\[0-9a-f\]\{32\}/);
   assert.doesNotMatch(script, /:'tenant_id'|:'seed_key'/);
   assert.match(script, /deletedRows\?\.tenants !== 1/);
   assert.match(script, /tenant\.deleted/);

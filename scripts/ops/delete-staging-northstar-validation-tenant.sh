@@ -65,6 +65,37 @@ printf 'brainmvb_identity_lookup=%s\n' "$identity_summary"
 preflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
   -c "BEGIN TRANSACTION READ ONLY;
       SET LOCAL statement_timeout = '15s';
+      WITH identity_link_summary AS (
+        SELECT json_build_object(
+          'link_count', count(*),
+          'all_links_belong_to_tenant', bool_and(l.tenant_id = '$TENANT_ID'),
+          'synthetic_bootstrap_link_count', count(*) FILTER (
+            WHERE l.surface = 'platform'
+              AND m.role = 'admin'
+              AND m.status = 'active'
+              AND m.active = TRUE
+              AND m.email ~ '^northstar-phase4\\+[0-9a-f]{32}@brain\\.invalid$'
+              AND l.external_ref ~ '^northstar-phase4:[0-9a-f]{32}$'
+              AND substring(m.email FROM '^northstar-phase4\\+([0-9a-f]{32})@brain\\.invalid$')
+                = substring(l.external_ref FROM '^northstar-phase4:([0-9a-f]{32})$')
+          ),
+          'linked_member_is_active_synthetic_bootstrap_admin', bool_and(
+            l.surface = 'platform'
+            AND m.role = 'admin'
+            AND m.status = 'active'
+            AND m.active = TRUE
+            AND m.email ~ '^northstar-phase4\\+[0-9a-f]{32}@brain\\.invalid$'
+            AND l.external_ref ~ '^northstar-phase4:[0-9a-f]{32}$'
+            AND substring(m.email FROM '^northstar-phase4\\+([0-9a-f]{32})@brain\\.invalid$')
+              = substring(l.external_ref FROM '^northstar-phase4:([0-9a-f]{32})$')
+          )
+        ) AS value
+          FROM member_identity_links l
+          JOIN members m
+            ON m.tenant_id = l.tenant_id
+           AND m.id = l.member_id
+         WHERE l.tenant_id = '$TENANT_ID'
+      )
       SELECT json_build_object(
         'tenant_rows', (SELECT count(*) FROM tenants WHERE id = '$TENANT_ID'),
         'tenant_kind', (SELECT kind FROM tenants WHERE id = '$TENANT_ID'),
@@ -74,9 +105,7 @@ preflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v O
           SELECT count(*) FROM policies
            WHERE tenant_id = '$TENANT_ID' AND content->>'seed_key' = '$NORTHSTAR_SEED_KEY'
         ),
-        'identity_link_count', (
-          SELECT count(*) FROM member_identity_links WHERE tenant_id = '$TENANT_ID'
-        ),
+        'identity_link', (SELECT value FROM identity_link_summary),
         'active_invite_count', (
           SELECT count(*) FROM member_invites
            WHERE tenant_id = '$TENANT_ID' AND consumed_at IS NULL AND revoked_at IS NULL
@@ -126,9 +155,13 @@ printf '%s' "$preflight" | docker exec -i brain-prod-api node -e '
   process.stdin.on("data", (chunk) => { body += chunk; });
   process.stdin.on("end", () => {
     const value = JSON.parse(body);
+    const identityLink = value.identity_link;
     const valid = value.tenant_rows === 1 && value.tenant_kind === "production" &&
       value.tenant_sandbox === false && value.tenant_created_via === "admin" &&
-      value.seed_marker_count === 1 && value.identity_link_count === 0 &&
+      value.seed_marker_count === 1 && identityLink?.link_count === 1 &&
+      identityLink?.all_links_belong_to_tenant === true &&
+      identityLink?.synthetic_bootstrap_link_count === 1 &&
+      identityLink?.linked_member_is_active_synthetic_bootstrap_admin === true &&
       value.active_invite_count === 0 && value.api_key_count === 0 &&
       value.member_count >= 1 && value.non_synthetic_member_count === 0 &&
       value.active_bootstrap_admin_count === 1 && value.nonterminal_payment_intent_count === 0 &&
