@@ -64,7 +64,7 @@ printf 'brainmvb_identity_lookup=%s\n' "$identity_summary"
 
 preflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
   -c "BEGIN TRANSACTION READ ONLY;
-      SET LOCAL statement_timeout = '15 seconds';
+      SET LOCAL statement_timeout = '15s';
       SELECT json_build_object(
         'tenant_rows', (SELECT count(*) FROM tenants WHERE id = '$TENANT_ID'),
         'tenant_kind', (SELECT kind FROM tenants WHERE id = '$TENANT_ID'),
@@ -210,7 +210,7 @@ printf 'northstar_validation_tenant_delete=%s\n' "$delete_summary"
 
 postflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
   -c "BEGIN TRANSACTION READ ONLY;
-      SET LOCAL statement_timeout = '15 seconds';
+      SET LOCAL statement_timeout = '15s';
       SELECT json_build_object(
         'tenant_rows', (SELECT count(*) FROM tenants WHERE id = '$TENANT_ID'),
         'members', (SELECT count(*) FROM members WHERE tenant_id = '$TENANT_ID'),
