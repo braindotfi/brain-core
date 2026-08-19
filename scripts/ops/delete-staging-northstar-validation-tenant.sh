@@ -192,7 +192,7 @@ member_id="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v O
          AND substring(m.email FROM '^northstar-phase4\\+([0-9a-f]{32})@brain\\.invalid$')
            = substring(l.external_ref FROM '^northstar-phase4:([0-9a-f]{32})$')
        ORDER BY l.linked_at ASC;")"
-if [[ ! "$member_id" =~ ^(usr|mem)_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+if [[ ! "$member_id" =~ ^user_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
   echo 'preflighted tenant does not have exactly one matching synthetic fixture bootstrap admin' >&2
   exit 1
 fi
