@@ -163,10 +163,10 @@ printf '%s' "$preflight" | docker exec -i brain-prod-api node -e '
       identityLink?.synthetic_bootstrap_link_count === 1 &&
       identityLink?.linked_member_is_active_synthetic_bootstrap_admin === true &&
       value.active_invite_count === 0 && value.api_key_count === 0 &&
-      value.member_count >= 1 && value.non_synthetic_member_count === 0 &&
+      value.member_count === 1 && value.non_synthetic_member_count === 0 &&
       value.active_bootstrap_admin_count === 1 && value.nonterminal_payment_intent_count === 0 &&
       value.nonterminal_execution_count === 0 && value.nonterminal_outbox_count === 0 &&
-      value.rail_receipt_count === 0;
+      value.rail_receipt_count === 0 && value.blob_artifact_count === 0;
     if (!valid) process.exit(1);
   });
 '
