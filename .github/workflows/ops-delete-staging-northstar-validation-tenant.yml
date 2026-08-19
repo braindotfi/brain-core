@@ -1,0 +1,83 @@
+name: ops-delete-staging-northstar-validation-tenant
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Read-only preflight or guarded staging deletion."
+        required: true
+        default: report
+        type: choice
+        options:
+          - report
+          - apply
+      confirmation:
+        description: "Required only for apply."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    name: preflight or delete fixed Northstar staging validation tenant
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-staging-refs/heads/main
+      cancel-in-progress: false
+    env:
+      MODE: ${{ inputs.mode }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.7
+
+      - name: Validate fixed staging deletion inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODE" == 'report' || "$MODE" == 'apply' ]]
+          if [[ "$MODE" == 'apply' ]]; then
+            [[ "$CONFIRMATION" == 'DELETE_NORTHSTAR_STAGING_VALIDATION_TENANT' ]]
+          fi
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy fixed preflight and deletion script
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/delete-staging-northstar-validation-tenant.sh \
+            "azureuser@$VM_HOST:~/brain-core/scripts/ops/"
+
+      - name: Run preflight or guarded deletion and assert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 700 ~/brain-core/scripts/ops/delete-staging-northstar-validation-tenant.sh && MODE='$MODE' CONFIRMATION='$CONFIRMATION' bash ~/brain-core/scripts/ops/delete-staging-northstar-validation-tenant.sh" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ "$status" -ne 0 ]]; then
+            echo "Northstar validation tenant cleanup exited with status $status" >&2
+            exit "$status"
+          fi
+          if [[ "$MODE" == 'report' ]]; then
+            [[ "$(printf '%s\n' "$output" | tail -n 1)" == 'northstar_validation_tenant_preflight_completed' ]]
+          else
+            [[ "$(printf '%s\n' "$output" | tail -n 1)" == 'northstar_validation_tenant_delete_completed' ]]
+          fi
