@@ -25,6 +25,8 @@ test("Northstar validation tenant cleanup is fixed to staging and fails closed o
 
   assert.match(script, /readonly TENANT_ID='tnt_01M0909Z6WCCPB4MG0SWJ07VJX'/);
   assert.match(script, /BEGIN TRANSACTION READ ONLY/);
+  assert.match(script, /SET LOCAL statement_timeout = '15s'/);
+  assert.doesNotMatch(script, /statement_timeout = '15 seconds'/);
   assert.match(script, /X-Platform-Service-Auth/);
   assert.match(script, /\/internal\/brain-identities\/\$TENANT_ID/);
   assert.match(script, /parsed\?\.linked !== false/);
