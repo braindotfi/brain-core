@@ -24,17 +24,16 @@ import {
 } from "@brain/shared";
 import type { Pool } from "pg";
 import {
-  NORTHSTAR_AS_OF,
+  buildNorthstarFixture,
   NORTHSTAR_COUNTERPARTIES,
-  NORTHSTAR_MONTHLY_CASH_FLOW,
-  NORTHSTAR_PAYABLES,
-  NORTHSTAR_RECEIVABLES,
   NORTHSTAR_SEED_KEY,
+  type NorthstarReceivableFixture,
   validateNorthstarFixture,
 } from "./fixture.js";
 
 export type NorthstarSeedResult = {
   tenantId: string;
+  asOf: string;
   policyId: string;
   agentId: string;
   proposalIds: string[];
@@ -53,8 +52,10 @@ export async function seedNorthstarDemo(
   pool: Pool,
   tenantId: string,
   actor: string,
+  asOf: Date = new Date(),
 ): Promise<NorthstarSeedResult> {
-  validateNorthstarFixture();
+  const fixture = buildNorthstarFixture(asOf);
+  validateNorthstarFixture(fixture);
   await assertTenantIsReady(pool, tenantId);
 
   const audit = new PostgresAuditEmitter(pool);
@@ -63,22 +64,23 @@ export async function seedNorthstarDemo(
   const evidenceIds = [newRawParsedId()];
   const counterparties = new Map<string, string>();
 
-  for (const fixture of NORTHSTAR_COUNTERPARTIES) {
+  for (const counterpartyFixture of NORTHSTAR_COUNTERPARTIES) {
     const { row } = await upsertCounterpartyRow(pool, audit, ctx, {
-      name: fixture.name,
-      type: fixture.type,
-      risk_level: fixture.riskLevel,
-      verified_status: fixture.verifiedStatus,
+      name: counterpartyFixture.name,
+      type: counterpartyFixture.type,
+      risk_level: counterpartyFixture.riskLevel,
+      verified_status: counterpartyFixture.verifiedStatus,
       metadata: {
         seed_key: NORTHSTAR_SEED_KEY,
-        segment: fixture.type === "customer" ? "customer" : "vendor",
+        seed_as_of: fixture.asOfIso,
+        segment: counterpartyFixture.type === "customer" ? "customer" : "vendor",
       },
       source_ids: sourceIds,
       evidence_ids: evidenceIds,
       provenance: "human_confirmed",
       confidence: 1,
     });
-    counterparties.set(fixture.key, row.id);
+    counterparties.set(counterpartyFixture.key, row.id);
   }
 
   const operating = await upsertAccountRow(pool, audit, ctx, {
@@ -124,8 +126,8 @@ export async function seedNorthstarDemo(
     confidence: 1,
   });
 
-  for (const [index, month] of NORTHSTAR_MONTHLY_CASH_FLOW.entries()) {
-    const date = `${month.month}-15T12:00:00.000Z`;
+  for (const [index, month] of fixture.monthlyCashFlow.entries()) {
+    const date = month.transactionDate;
     const customer = ["helio", "apex", "kestrel", "vertex", "horizon"][index % 5]!;
     const entries = [
       [
@@ -198,7 +200,7 @@ export async function seedNorthstarDemo(
     }
   }
 
-  for (const [counterpartyKey, invoiceNumber, amount, dueDate, type] of NORTHSTAR_PAYABLES) {
+  for (const [counterpartyKey, invoiceNumber, amount, dueDate, type] of fixture.payables) {
     await upsertObligationRow(pool, audit, ctx, {
       type,
       counterparty_id: counterparties.get(counterpartyKey)!,
@@ -209,7 +211,12 @@ export async function seedNorthstarDemo(
       status: "upcoming",
       direction: "payable",
       external_key: `northstar:ap:${invoiceNumber}`,
-      metadata: { seed_key: NORTHSTAR_SEED_KEY, scenario: "ap", invoice_number: invoiceNumber },
+      metadata: {
+        seed_key: NORTHSTAR_SEED_KEY,
+        seed_as_of: fixture.asOfIso,
+        scenario: "ap",
+        invoice_number: invoiceNumber,
+      },
       source_ids: sourceIds,
       evidence_ids: evidenceIds,
       provenance: "human_confirmed",
@@ -225,7 +232,7 @@ export async function seedNorthstarDemo(
     issueDate,
     dueDate,
     status,
-  ] of NORTHSTAR_RECEIVABLES) {
+  ] of fixture.receivables) {
     const obligation = await upsertObligationRow(pool, audit, ctx, {
       type: "invoice",
       counterparty_id: counterparties.get(counterpartyKey)!,
@@ -235,7 +242,12 @@ export async function seedNorthstarDemo(
       status: status === "overdue" ? "overdue" : "upcoming",
       direction: "receivable",
       external_key: `northstar:ar:${invoiceNumber}`,
-      metadata: { seed_key: NORTHSTAR_SEED_KEY, scenario: "ar", invoice_number: invoiceNumber },
+      metadata: {
+        seed_key: NORTHSTAR_SEED_KEY,
+        seed_as_of: fixture.asOfIso,
+        scenario: "ar",
+        invoice_number: invoiceNumber,
+      },
       source_ids: sourceIds,
       evidence_ids: evidenceIds,
       provenance: "human_confirmed",
@@ -251,7 +263,12 @@ export async function seedNorthstarDemo(
       sourceIds,
       evidenceIds,
       obligationId: obligation.row.id,
-      metadata: { seed_key: NORTHSTAR_SEED_KEY, scenario: "ar", invoice_number: invoiceNumber },
+      metadata: {
+        seed_key: NORTHSTAR_SEED_KEY,
+        seed_as_of: fixture.asOfIso,
+        scenario: "ar",
+        invoice_number: invoiceNumber,
+      },
     });
     receivableInvoices.set(invoiceNumber, invoiceId);
   }
@@ -263,6 +280,7 @@ export async function seedNorthstarDemo(
     buildNorthstarPolicy(
       ["cascade", "atlas", "meridian", "redwood", "fathom"].map((key) => counterparties.get(key)!),
     ),
+    fixture.asOfIso,
   );
   await audit.emit({
     tenantId,
@@ -273,7 +291,7 @@ export async function seedNorthstarDemo(
     outputs: { state: "active" },
     idempotencyKey: `${NORTHSTAR_SEED_KEY}:policy.activated`,
   });
-  const agentId = await seedCollectionsAgent(pool, tenantId);
+  const agentId = await seedCollectionsAgent(pool, tenantId, fixture.asOfIso);
   const proposalIds = await seedCollectionsProposals(
     pool,
     audit,
@@ -282,19 +300,22 @@ export async function seedNorthstarDemo(
     policy.version,
     counterparties,
     receivableInvoices,
+    fixture.receivables,
+    fixture.asOfIso,
   );
 
   return {
     tenantId,
+    asOf: fixture.asOfIso,
     policyId: policy.id,
     agentId,
     proposalIds,
     counts: {
       accounts: 3,
       counterparties: NORTHSTAR_COUNTERPARTIES.length,
-      transactions: NORTHSTAR_MONTHLY_CASH_FLOW.length * 4,
-      payables: NORTHSTAR_PAYABLES.length,
-      receivables: NORTHSTAR_RECEIVABLES.length,
+      transactions: fixture.monthlyCashFlow.length * 4,
+      payables: fixture.payables.length,
+      receivables: fixture.receivables.length,
     },
   };
 }
@@ -395,6 +416,7 @@ async function seedPolicy(
   tenantId: string,
   actor: string,
   policy: NorthstarPolicyDocument,
+  asOf: string,
 ): Promise<{ id: string; version: number }> {
   validatePolicyDocument(policy);
   const activation = runActivationLintGate(policy, {
@@ -421,13 +443,13 @@ async function seedPolicy(
     const id = newPolicyId();
     await c.query(
       `INSERT INTO policies (id, tenant_id, version, content, content_hash, quorum_required, state, created_by, activated_at, created_at) VALUES ($1,$2,$3,$4::jsonb,$5,1,'active',$6,$7,$7)`,
-      [id, tenantId, version, JSON.stringify(policy), contentHash(policy), actor, NORTHSTAR_AS_OF],
+      [id, tenantId, version, JSON.stringify(policy), contentHash(policy), actor, asOf],
     );
     return { id, version };
   });
 }
 
-async function seedCollectionsAgent(pool: Pool, tenantId: string): Promise<string> {
+async function seedCollectionsAgent(pool: Pool, tenantId: string, asOf: string): Promise<string> {
   return withTenantScope(pool, tenantId, async (c) => {
     const existing = await c.query<{ id: string }>(
       `SELECT id FROM agents WHERE display_name = 'Northstar Collections Agent' LIMIT 1`,
@@ -436,7 +458,7 @@ async function seedCollectionsAgent(pool: Pool, tenantId: string): Promise<strin
     const id = newAgentId();
     await c.query(
       `INSERT INTO agents (id, tenant_id, kind, role, display_name, scope_hash, state, registered_at, created_at, contribution_count, quarantine_threshold) VALUES ($1,$2,'internal','collections','Northstar Collections Agent',$3,'active',$4,$4,0,100)`,
-      [id, tenantId, Buffer.alloc(32), NORTHSTAR_AS_OF],
+      [id, tenantId, Buffer.alloc(32), asOf],
     );
     return id;
   });
@@ -450,11 +472,18 @@ async function seedCollectionsProposals(
   policyVersion: number,
   counterparties: Map<string, string>,
   invoices: Map<string, string>,
+  receivables: readonly NorthstarReceivableFixture[],
+  asOf: string,
 ): Promise<string[]> {
-  const source = [
-    ["helio", "AR-HELIO-2026-07", "184000.00", 42],
-    ["apex", "AR-APEX-2026-07", "96000.00", 12],
-  ] as const;
+  const source = receivables
+    .filter(([key]) => key === "helio" || key === "apex")
+    .map(([key, invoiceNumber, amount, _issueDate, dueDate]) => {
+      const daysOverdue = Math.round(
+        (new Date(asOf).getTime() - new Date(`${dueDate}T12:00:00.000Z`).getTime()) /
+          (24 * 60 * 60 * 1000),
+      );
+      return [key, invoiceNumber, amount, daysOverdue] as const;
+    });
   const proposalIds: string[] = [];
   for (const [key, invoiceNumber, amount, daysOverdue] of source) {
     const proposalId = newProposalId();
@@ -490,7 +519,7 @@ async function seedCollectionsProposals(
           policyVersion,
           JSON.stringify([{ rule_id: "northstar-collections-review", matched: true }]),
           `northstar:${invoiceNumber}:collections`,
-          NORTHSTAR_AS_OF,
+          asOf,
         ],
       );
     });

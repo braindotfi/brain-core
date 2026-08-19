@@ -266,7 +266,18 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             matching_average_net: average.toFixed(2),
           };
           return {
-            rows: transactions.map((transaction) => ({ ...transaction, ...aggregate })) as never[],
+            rows: transactions.map((transaction) => ({
+              ...transaction,
+              ...aggregate,
+              ...(text.includes("cp.name AS counterparty_name")
+                ? {
+                    counterparty_name:
+                      rows.counterparties.find(
+                        (counterparty) => counterparty.id === transaction.counterparty_id,
+                      )?.name ?? null,
+                  }
+                : {}),
+            })) as never[],
             rowCount: transactions.length,
           };
         }
@@ -352,7 +363,18 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             matching_average: average.toFixed(2),
           };
           return {
-            rows: transactions.map((transaction) => ({ ...transaction, ...aggregate })) as never[],
+            rows: transactions.map((transaction) => ({
+              ...transaction,
+              ...aggregate,
+              ...(text.includes("cp.name AS counterparty_name")
+                ? {
+                    counterparty_name:
+                      rows.counterparties.find(
+                        (counterparty) => counterparty.id === transaction.counterparty_id,
+                      )?.name ?? null,
+                  }
+                : {}),
+            })) as never[],
             rowCount: transactions.length,
           };
         }
@@ -381,7 +403,16 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         }
         const limit = parameters.at(-1);
         if (typeof limit === "number") transactions = transactions.slice(0, limit);
-        return { rows: transactions as never[], rowCount: transactions.length };
+        const transactionRows = text.includes("cp.name AS counterparty_name")
+          ? transactions.map((transaction) => ({
+              ...transaction,
+              counterparty_name:
+                rows.counterparties.find(
+                  (counterparty) => counterparty.id === transaction.counterparty_id,
+                )?.name ?? null,
+            }))
+          : transactions;
+        return { rows: transactionRows as never[], rowCount: transactionRows.length };
       }
       if (text.includes("FROM ledger_invoices")) {
         const parameters = values ?? [];
@@ -441,7 +472,18 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
             matching_sum: total.toFixed(2),
           };
           return {
-            rows: invoices.map((invoice) => ({ ...invoice, ...aggregate })) as never[],
+            rows: invoices.map((invoice) => ({
+              ...invoice,
+              ...aggregate,
+              ...(text.includes("cp.name AS counterparty_name")
+                ? {
+                    counterparty_name:
+                      rows.counterparties.find(
+                        (counterparty) => counterparty.id === invoice.counterparty_id,
+                      )?.name ?? null,
+                  }
+                : {}),
+            })) as never[],
             rowCount: invoices.length,
           };
         }
@@ -1028,7 +1070,10 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         },
       ],
       obligations: [],
-      counterparties: [],
+      counterparties: [
+        { id: "cp_CUSTOMER", name: "Helio Manufacturing", type: "customer", risk_level: null },
+        { id: "cp_PAYROLL", name: "Meridian Benefits", type: "vendor", risk_level: null },
+      ],
     };
 
     const result = await askWiki(
@@ -1052,6 +1097,11 @@ describe("askWiki — Ledger-grounded retrieval", () => {
 
     expect(result.answered).toBe(true);
     expect(result.answer).toContain("Cash flow transactions:");
+    expect(result.answer).toContain("counterparty Helio Manufacturing");
+    expect(result.answer).toContain("counterparty Meridian Benefits");
+    expect(result.answer).not.toContain("cp_CUSTOMER");
+    expect(result.answer).not.toContain("cp_PAYROLL");
+    expect(result.evidence.map((evidence) => evidence.excerpt).join(" ")).not.toMatch(/cp_/);
     expect(result.evidence.map((evidence) => evidence.entityId)).toEqual([
       "tx_CASH_IN",
       "tx_CASH_OUT",
@@ -2331,6 +2381,72 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.answer).toContain("AR-100");
     expect(result.answer).not.toContain("AP-200");
     expect(result.evidence.map((evidence) => evidence.entityId)).toEqual(["inv_AR_OVERDUE"]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("names every overdue customer when explaining a Collections review", async () => {
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [
+        { id: "cp_HELIO", name: "Helio Manufacturing", type: "customer", risk_level: null },
+        { id: "cp_APEX", name: "Apex Health", type: "customer", risk_level: null },
+      ],
+      invoices: [
+        {
+          id: "inv_HELIO",
+          invoice_number: "AR-HELIO-2026-08",
+          amount_due: "184000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-06-05T00:00:00Z"),
+          due_date: new Date("2026-07-08T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_HELIO",
+          scenario: "ar",
+        },
+        {
+          id: "inv_APEX",
+          invoice_number: "AR-APEX-2026-08",
+          amount_due: "96000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-06-24T00:00:00Z"),
+          due_date: new Date("2026-08-07T00:00:00Z"),
+          status: "overdue",
+          counterparty_id: "cp_APEX",
+          scenario: "ar",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("Collections review explanations must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Why is Collections requesting review?",
+        asOf: new Date("2026-08-19T12:00:00Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_collections",
+        model: "m-collections",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      deterministicIntentId: "overdue_customer_invoices",
+    });
+    expect(result.answer).toContain("Helio Manufacturing");
+    expect(result.answer).toContain("Apex Health");
+    expect(result.answer).not.toMatch(/cp_/);
     expect(llm.seen).toEqual([]);
   });
 
@@ -4390,7 +4506,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
           status: "pending",
           created_at: "2026-08-14T12:00:00.000Z",
           headline: "Review Northwind Cloud",
-          recommendation: "Review the vendor evidence.",
+          recommendation: "no_match",
           required_approvers: [],
         },
       ]),
@@ -4433,6 +4549,8 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(pending).toMatchObject({ deterministicIntentId: "pending_recommendations_listing" });
     expect(pending.answer).toContain("Follow up with Helio Manufacturing");
     expect(pending.answer).toContain("Review Northwind Cloud");
+    expect(pending.answer).toContain("no matching ledger record");
+    expect(pending.answer).not.toContain("no_match");
 
     const outreach = await ask("Which recommendation needs approval before outreach?");
     expect(outreach).toMatchObject({ deterministicIntentId: "outreach_approval_recommendation" });
