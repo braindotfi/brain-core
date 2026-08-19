@@ -153,9 +153,7 @@ function addUtcDays(value: Date, days: number): Date {
 
 function addUtcMonths(value: Date, months: number): Date {
   const next = new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + months, 1));
-  const lastDay = new Date(
-    Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0),
-  ).getUTCDate();
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
   next.setUTCDate(Math.min(value.getUTCDate(), lastDay));
   return next;
 }

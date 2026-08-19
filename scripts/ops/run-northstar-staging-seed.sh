@@ -33,8 +33,19 @@ payload="$(docker exec \
 response="$(printf '%s' "$payload" | curl -fsS -X POST "$API_BASE/v1/tenants" -H "X-Platform-Service-Auth: ${BRAIN_PLATFORM_SERVICE_SECRET}" -H 'Content-Type: application/json' --data-binary @-)"
 tenant_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(typeof v.tenant_id!=="string"||typeof v.member?.id!=="string")process.exit(1);process.stdout.write(v.tenant_id)})')"
 actor_id="$(printf '%s' "$response" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(typeof v.member?.id!=="string")process.exit(1);process.stdout.write(v.member.id)})')"
+bootstrap_external_ref="$(printf '%s' "$payload" | docker exec -i brain-prod-api node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);if(typeof v.founder_external_ref!=="string")process.exit(1);process.stdout.write(v.founder_external_ref)})')"
 
 printf 'northstar_tenant_id=%s\n' "$tenant_id"
 docker exec -e BRAIN_TENANT_ID="$tenant_id" -e BRAIN_ACTOR="$actor_id" brain-prod-api node tools/seed-northstar-demo/dist/cli.js
 docker cp "$VALIDATOR_PATH" brain-prod-api:/app/tools/seed-northstar-demo/dist/validate-northstar-staging.mjs
 docker exec -e BRAIN_TENANT_ID="$tenant_id" brain-prod-api node tools/seed-northstar-demo/dist/validate-northstar-staging.mjs
+
+if [[ -n "${PRESENTATION_PROBE_PATH:-}" ]]; then
+  readonly probe_container_path="/app/tools/seed-northstar-demo/dist/probe-northstar-presentation.mjs"
+  docker cp "$PRESENTATION_PROBE_PATH" "brain-prod-api:$probe_container_path"
+  docker exec \
+    -e BRAIN_TENANT_ID="$tenant_id" \
+    -e NORTHSTAR_BOOTSTRAP_EXTERNAL_REF="$bootstrap_external_ref" \
+    brain-prod-api node "$probe_container_path"
+  docker exec brain-prod-api rm -f "$probe_container_path"
+fi
