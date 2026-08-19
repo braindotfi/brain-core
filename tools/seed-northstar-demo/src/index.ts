@@ -1,4 +1,5 @@
 import {
+  assignTransactionCategoryForTenant,
   recordTransactionRow,
   upsertAccountRow,
   upsertCounterpartyRow,
@@ -127,13 +128,41 @@ export async function seedNorthstarDemo(
     const date = `${month.month}-15T12:00:00.000Z`;
     const customer = ["helio", "apex", "kestrel", "vertex", "horizon"][index % 5]!;
     const entries = [
-      ["revenue", month.revenue, "inflow", customer, "Subscription revenue"],
-      ["payroll", month.payroll, "outflow", "meridian", "Payroll and benefits"],
-      ["cloud", month.cloud, "outflow", "cascade", "Cloud infrastructure"],
-      ["operating", month.other, "outflow", "redwood", "Operating expense"],
+      [
+        "revenue",
+        month.revenue,
+        "inflow",
+        customer,
+        "Subscription revenue",
+        "income.subscription_revenue",
+      ],
+      [
+        "payroll",
+        month.payroll,
+        "outflow",
+        "meridian",
+        "Payroll and benefits",
+        "expense.payroll_and_benefits",
+      ],
+      [
+        "cloud",
+        month.cloud,
+        "outflow",
+        "cascade",
+        "Cloud infrastructure",
+        "expense.cloud_infrastructure",
+      ],
+      [
+        "operating",
+        month.other,
+        "outflow",
+        "redwood",
+        "Operating expense",
+        "expense.general_and_administrative",
+      ],
     ] as const;
-    for (const [kind, amount, direction, counterpartyKey, description] of entries) {
-      await recordTransactionRow(pool, audit, ctx, {
+    for (const [kind, amount, direction, counterpartyKey, description, canonicalCode] of entries) {
+      const recorded = await recordTransactionRow(pool, audit, ctx, {
         account_id:
           direction === "outflow" && kind === "operating" ? card.row.id : operating.row.id,
         external_transaction_id: `northstar:${month.month}:${kind}`,
@@ -149,7 +178,23 @@ export async function seedNorthstarDemo(
         evidence_ids: evidenceIds,
         provenance: "human_confirmed",
         confidence: 1,
+        category_assignment: {
+          canonical_code: canonicalCode,
+          assignment_method: "deterministic_rule",
+          confidence: 1,
+          rule_version: "northstar_demo_v1",
+        },
       });
+      // The Northstar seed is the one approved correction to the forward-only
+      // rule. Re-running repairs only this fixture's pre-categorization rows.
+      if (!recorded.created) {
+        await assignTransactionCategoryForTenant(pool, audit, ctx, recorded.row.id, {
+          canonicalCode,
+          method: "deterministic_rule",
+          confidence: 1,
+          ruleVersion: "northstar_demo_v1",
+        });
+      }
     }
   }
 

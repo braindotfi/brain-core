@@ -183,6 +183,12 @@ Done
   `GET /v1/wiki/suggested-questions` derives tenant-aware suggestions only from
   that deterministic registry. Each registered intent supplies its eligibility
   query, and eligible intents are ranked by tenant-local invocation count.
+  Transaction categorization is forward-only. Tenant-local `ledger_categories`
+  map optional canonical codes through auditable assignment history. New category
+  assignments come only from explicit source values, versioned deterministic rules,
+  or human confirmation. Wiki category totals refuse when a requested period has
+  incomplete assignment coverage. Northstar Labs has one approved seed-data repair,
+  not a general historical backfill.
   Named-counterparty payable and receivable totals, total accounts payable and
   receivable, open vendor-payable and customer-invoice listings, overdue
   customer-invoice totals and listings, payroll-obligation totals,

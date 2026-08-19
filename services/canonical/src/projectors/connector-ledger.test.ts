@@ -808,6 +808,66 @@ describe("connector ledger canonical projectors", () => {
     expect(out.some((projection) => projection.kind === "obligation")).toBe(false);
   });
 
+  it("retains an explicit bank transaction category code without inferring from its description", () => {
+    const out = projectCustomerAssertedCsvLedger(
+      {
+        object_type: "customer_asserted_csv",
+        record_type: "bank_transactions",
+        records: [
+          {
+            transaction_id: "txn_cloud_1",
+            account_id: "acct_operating",
+            date: "2026-08-15",
+            description: "Provider charge",
+            amount: "1200.00",
+            direction: "outflow",
+            currency: "USD",
+            category_code: "expense.cloud_infrastructure",
+          },
+        ],
+      },
+      common,
+    );
+
+    expect(out).toEqual([
+      expect.objectContaining({
+        kind: "transaction",
+        input: expect.objectContaining({
+          categoryAssignment: {
+            canonicalCode: "expense.cloud_infrastructure",
+            method: "source_provided",
+            confidence: 1,
+            sourceCategory: "expense.cloud_infrastructure",
+          },
+        }),
+      }),
+    ]);
+  });
+
+  it("rejects unsupported explicit bank transaction category codes", () => {
+    expect(() =>
+      projectCustomerAssertedCsvLedger(
+        {
+          object_type: "customer_asserted_csv",
+          record_type: "bank_transactions",
+          records: [
+            {
+              transaction_id: "txn_unknown_1",
+              account_id: "acct_operating",
+              date: "2026-08-15",
+              description: "Unmapped",
+              amount: "1200.00",
+              direction: "outflow",
+              currency: "USD",
+              category_code: "expense.free_text_guess",
+            },
+          ],
+        },
+        common,
+      ),
+    ).toThrow("unsupported customer_asserted category_code");
+  });
+
   it("retains tax authorities as named canonical counterparties", () => {
     const out = projectCustomerAssertedCsvLedger(
       {

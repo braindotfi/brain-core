@@ -27,6 +27,12 @@ export {
   normalizeName,
 } from "./service/writes.js";
 export {
+  assignTransactionCategory,
+  assignTransactionCategoryForTenant,
+  type TransactionCategoryAssignmentInput,
+  type TransactionCategoryAssignmentResult,
+} from "./categorization/assign.js";
+export {
   normalizePlaidArtifact,
   type PlaidAccountPayload,
   type PlaidTransactionPayload,

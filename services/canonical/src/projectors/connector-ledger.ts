@@ -1,6 +1,11 @@
 import type { ProjectionCommon } from "./merge-accounting.js";
 import type { CounterpartyType, CounterpartyUpsert, ObligationUpsert } from "./merge-apar.js";
 import { normalizeName } from "./merge-apar.js";
+import type {
+  CanonicalTransactionCategoryCode,
+  TransactionCategoryAssignmentMethod,
+} from "@brain/shared";
+import { isCanonicalTransactionCategoryCode } from "@brain/shared";
 
 export const PLAID_LEDGER_PARSER = "plaid_tx_v1" as const;
 export const STRIPE_LEDGER_PARSER = "stripe_v1" as const;
@@ -45,6 +50,13 @@ export interface CanonicalTransactionUpsert {
   descriptionRaw: string | null;
   descriptionNormalized: string | null;
   reconciliationStatus: string | null;
+  categoryAssignment?: {
+    canonicalCode: CanonicalTransactionCategoryCode;
+    method: Exclude<TransactionCategoryAssignmentMethod, "human_confirmed">;
+    confidence: number;
+    ruleVersion?: string;
+    sourceCategory?: string;
+  };
   extensions: Record<string, unknown>;
   common: ProjectionCommon;
 }
@@ -1003,6 +1015,10 @@ export function projectCustomerAssertedCsvLedger(
         continue;
       }
       const description = str(row["description"]) ?? id;
+      const categoryCode = str(row["category_code"]);
+      if (categoryCode !== null && !isCanonicalTransactionCategoryCode(categoryCode)) {
+        throw new Error(`unsupported customer_asserted category_code: ${categoryCode}`);
+      }
       out.push({
         kind: "transaction",
         input: {
@@ -1019,6 +1035,16 @@ export function projectCustomerAssertedCsvLedger(
           descriptionRaw: description,
           descriptionNormalized: description,
           reconciliationStatus: "unreconciled",
+          ...(categoryCode === null
+            ? {}
+            : {
+                categoryAssignment: {
+                  canonicalCode: categoryCode,
+                  method: "source_provided" as const,
+                  confidence: 1,
+                  sourceCategory: categoryCode,
+                },
+              }),
           extensions: { customer_asserted_csv: { record_type: recordType, transaction_id: id } },
           common: sourceCommon,
         },

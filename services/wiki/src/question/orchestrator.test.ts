@@ -37,6 +37,7 @@ interface FakeRows {
     description_normalized: string | null;
     description_raw: string | null;
     counterparty_id: string | null;
+    canonical_code?: string;
   }>;
   obligations: Array<{
     id: string;
@@ -176,6 +177,73 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         return { rows: accounts as never[], rowCount: accounts.length };
       }
       if (text.includes("FROM ledger_transactions")) {
+        if (text.includes("COUNT(a.id)::text AS categorized_count")) {
+          const parameters = values ?? [];
+          const start = parameters[0] as Date;
+          const end = parameters[1] as Date;
+          const transactions = rows.transactions.filter(
+            (transaction) =>
+              (transaction.direction === "inflow" || transaction.direction === "outflow") &&
+              transaction.transaction_date >= start &&
+              transaction.transaction_date < end,
+          );
+          return {
+            rows: [
+              {
+                transaction_count: String(transactions.length),
+                categorized_count: String(
+                  transactions.filter((transaction) => transaction.canonical_code !== undefined)
+                    .length,
+                ),
+              },
+            ] as never[],
+            rowCount: 1,
+          };
+        }
+        if (text.includes("a.canonical_code = $1")) {
+          const [canonicalCode, start, end] = values as [string, Date, Date, number];
+          const transactions = rows.transactions.filter(
+            (transaction) =>
+              transaction.canonical_code === canonicalCode &&
+              transaction.transaction_date >= start &&
+              transaction.transaction_date < end,
+          );
+          const matchingSum = transactions
+            .reduce((sum, transaction) => sum + Number(transaction.amount), 0)
+            .toFixed(2);
+          return {
+            rows: transactions.map((transaction) => ({
+              ...transaction,
+              matching_sum: matchingSum,
+            })) as never[],
+            rowCount: transactions.length,
+          };
+        }
+        if (text.includes("revenue_total")) {
+          const [start, end] = values as [Date, Date, number];
+          const transactions = rows.transactions.filter(
+            (transaction) =>
+              transaction.transaction_date >= start && transaction.transaction_date < end,
+          );
+          const revenue = transactions
+            .filter((transaction) => transaction.canonical_code?.startsWith("income."))
+            .reduce((sum, transaction) => sum + Number(transaction.amount), 0)
+            .toFixed(2);
+          const expenses = transactions
+            .filter((transaction) => transaction.canonical_code?.startsWith("expense."))
+            .reduce((sum, transaction) => sum + Number(transaction.amount), 0)
+            .toFixed(2);
+          const difference = (Number(revenue) - Number(expenses)).toFixed(2);
+          return {
+            rows: transactions.map((transaction) => ({
+              ...transaction,
+              revenue_total: revenue,
+              expense_total: expenses,
+              revenue_minus_expenses: difference,
+            })) as never[],
+            rowCount: transactions.length,
+          };
+        }
         if (text.includes("matching_average_net")) {
           const transactions = rows.transactions.filter(
             (transaction) =>
@@ -2572,6 +2640,158 @@ describe("askWiki — Ledger-grounded retrieval", () => {
         excerpt: "active policy v2; auto-allow outbound-payment rules=northstar-ap-auto-approved",
       },
     ]);
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("answers categorized period totals and revenue-versus-expenses without an LLM call", async () => {
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("categorized questions must not call the LLM");
+    });
+    const deps = {
+      client: fakeClient({
+        transactions: [
+          {
+            id: "tx_revenue",
+            amount: "200000.00",
+            currency: "USD",
+            direction: "inflow",
+            transaction_date: new Date("2026-08-15T00:00:00Z"),
+            description_normalized: "Subscription revenue",
+            description_raw: null,
+            counterparty_id: "cp_customer",
+            canonical_code: "income.subscription_revenue",
+          },
+          {
+            id: "tx_payroll",
+            amount: "25000.00",
+            currency: "USD",
+            direction: "outflow",
+            transaction_date: new Date("2026-08-15T00:00:00Z"),
+            description_normalized: "Payroll and benefits",
+            description_raw: null,
+            counterparty_id: "cp_payroll",
+            canonical_code: "expense.payroll_and_benefits",
+          },
+          {
+            id: "tx_cloud",
+            amount: "13000.00",
+            currency: "USD",
+            direction: "outflow",
+            transaction_date: new Date("2026-08-15T00:00:00Z"),
+            description_normalized: "Cloud infrastructure",
+            description_raw: null,
+            counterparty_id: "cp_cloud",
+            canonical_code: "expense.cloud_infrastructure",
+          },
+          {
+            id: "tx_operating",
+            amount: "10000.00",
+            currency: "USD",
+            direction: "outflow",
+            transaction_date: new Date("2026-08-15T00:00:00Z"),
+            description_normalized: "Operating expense",
+            description_raw: null,
+            counterparty_id: "cp_operations",
+            canonical_code: "expense.general_and_administrative",
+          },
+        ],
+        obligations: [],
+        counterparties: [],
+      }),
+      llm,
+      embed: new DeterministicEmbeddingAdapter(16),
+      redis: fakeRedis() as unknown as Redis,
+      metrics: new MockMetrics(),
+    };
+    const base = {
+      asOf: new Date("2026-08-31T23:59:59Z"),
+      maxEvidenceDepth: 3,
+      tenantId: "tnt_categories",
+    };
+
+    const payroll = await askWiki(deps, {
+      ...base,
+      question: "What was payroll in August 2026?",
+      model: "m-categories-payroll",
+    });
+    const cloud = await askWiki(deps, {
+      ...base,
+      question: "What was cloud spend in August 2026?",
+      model: "m-categories-cloud",
+    });
+    const comparison = await askWiki(deps, {
+      ...base,
+      question: "Compare August revenue and expenses.",
+      model: "m-categories-comparison",
+    });
+
+    expect(payroll).toMatchObject({
+      answered: true,
+      deterministicIntentId: "period_category_transaction_total",
+    });
+    expect(payroll.answer).toContain("$25,000.00");
+    expect(cloud.answer).toContain("$13,000.00");
+    expect(comparison).toMatchObject({
+      answered: true,
+      deterministicIntentId: "revenue_expenses_comparison",
+    });
+    expect(comparison.answer).toContain("$200,000.00");
+    expect(comparison.answer).toContain("$48,000.00");
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("refuses categorized totals when the requested period has uncategorized transactions", async () => {
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("incomplete category coverage must not call the LLM");
+    });
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [
+            {
+              id: "tx_revenue",
+              amount: "200.00",
+              currency: "USD",
+              direction: "inflow",
+              transaction_date: new Date("2026-07-15T00:00:00Z"),
+              description_normalized: "Subscription revenue",
+              description_raw: null,
+              counterparty_id: null,
+              canonical_code: "income.subscription_revenue",
+            },
+            {
+              id: "tx_uncategorized",
+              amount: "10.00",
+              currency: "USD",
+              direction: "outflow",
+              transaction_date: new Date("2026-07-15T00:00:00Z"),
+              description_normalized: "Unknown",
+              description_raw: null,
+              counterparty_id: null,
+            },
+          ],
+          obligations: [],
+          counterparties: [],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What was revenue in July 2026?",
+        asOf: new Date("2026-07-31T23:59:59Z"),
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_categories",
+        model: "m-categories-incomplete",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: false,
+      deterministicIntentId: "period_category_transaction_total",
+    });
+    expect(result.answer).toContain("categorization is incomplete");
     expect(llm.seen).toEqual([]);
   });
 

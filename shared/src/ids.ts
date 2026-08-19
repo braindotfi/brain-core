@@ -44,6 +44,7 @@ export const ID_PREFIX = {
   ledgerObligation: "obl",
   ledgerDocument: "doc",
   ledgerCategory: "cat",
+  ledgerTransactionCategoryAssignment: "tca",
   ledgerTransfer: "xfer",
   ledgerInvoice: "inv",
   ledgerPaymentIntent: "pi",
@@ -147,6 +148,8 @@ export const newCounterpartyId = (): string => brainId(ID_PREFIX.ledgerCounterpa
 export const newObligationId = (): string => brainId(ID_PREFIX.ledgerObligation);
 export const newDocumentId = (): string => brainId(ID_PREFIX.ledgerDocument);
 export const newCategoryId = (): string => brainId(ID_PREFIX.ledgerCategory);
+export const newTransactionCategoryAssignmentId = (): string =>
+  brainId(ID_PREFIX.ledgerTransactionCategoryAssignment);
 export const newTransferId = (): string => brainId(ID_PREFIX.ledgerTransfer);
 export const newInvoiceId = (): string => brainId(ID_PREFIX.ledgerInvoice);
 export const newPaymentIntentId = (): string => brainId(ID_PREFIX.ledgerPaymentIntent);
