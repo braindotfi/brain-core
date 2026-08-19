@@ -30,6 +30,7 @@ test("Northstar validation tenant cleanup is fixed to staging and fails closed o
   assert.match(script, /parsed\?\.linked !== false/);
   assert.match(script, /tenant_created_via/);
   assert.match(script, /seed_marker_count/);
+  assert.doesNotMatch(script, /:'tenant_id'|:'seed_key'/);
   assert.match(script, /deletedRows\?\.tenants !== 1/);
   assert.match(script, /tenant\.deleted/);
 });

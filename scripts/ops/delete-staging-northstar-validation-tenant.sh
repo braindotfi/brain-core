@@ -63,61 +63,59 @@ identity_summary="$(cat "$identity_response_path" | docker exec -i brain-prod-ap
 printf 'brainmvb_identity_lookup=%s\n' "$identity_summary"
 
 preflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
-  -v tenant_id="$TENANT_ID" \
-  -v seed_key="$NORTHSTAR_SEED_KEY" \
   -c "BEGIN TRANSACTION READ ONLY;
       SET LOCAL statement_timeout = '15 seconds';
       SELECT json_build_object(
-        'tenant_rows', (SELECT count(*) FROM tenants WHERE id = :'tenant_id'),
-        'tenant_kind', (SELECT kind FROM tenants WHERE id = :'tenant_id'),
-        'tenant_sandbox', (SELECT sandbox FROM tenants WHERE id = :'tenant_id'),
-        'tenant_created_via', (SELECT created_via FROM tenants WHERE id = :'tenant_id'),
+        'tenant_rows', (SELECT count(*) FROM tenants WHERE id = '$TENANT_ID'),
+        'tenant_kind', (SELECT kind FROM tenants WHERE id = '$TENANT_ID'),
+        'tenant_sandbox', (SELECT sandbox FROM tenants WHERE id = '$TENANT_ID'),
+        'tenant_created_via', (SELECT created_via FROM tenants WHERE id = '$TENANT_ID'),
         'seed_marker_count', (
           SELECT count(*) FROM policies
-           WHERE tenant_id = :'tenant_id' AND content->>'seed_key' = :'seed_key'
+           WHERE tenant_id = '$TENANT_ID' AND content->>'seed_key' = '$NORTHSTAR_SEED_KEY'
         ),
         'identity_link_count', (
-          SELECT count(*) FROM member_identity_links WHERE tenant_id = :'tenant_id'
+          SELECT count(*) FROM member_identity_links WHERE tenant_id = '$TENANT_ID'
         ),
         'active_invite_count', (
           SELECT count(*) FROM member_invites
-           WHERE tenant_id = :'tenant_id' AND consumed_at IS NULL AND revoked_at IS NULL
+           WHERE tenant_id = '$TENANT_ID' AND consumed_at IS NULL AND revoked_at IS NULL
              AND expires_at > now()
         ),
-        'api_key_count', (SELECT count(*) FROM api_keys WHERE tenant_id = :'tenant_id'),
-        'member_count', (SELECT count(*) FROM members WHERE tenant_id = :'tenant_id'),
+        'api_key_count', (SELECT count(*) FROM api_keys WHERE tenant_id = '$TENANT_ID'),
+        'member_count', (SELECT count(*) FROM members WHERE tenant_id = '$TENANT_ID'),
         'non_synthetic_member_count', (
           SELECT count(*) FROM members
-           WHERE tenant_id = :'tenant_id' AND email !~ '@brain\\.invalid$'
+           WHERE tenant_id = '$TENANT_ID' AND email !~ '@brain\\.invalid$'
         ),
         'active_bootstrap_admin_count', (
           SELECT count(*) FROM members
-           WHERE tenant_id = :'tenant_id' AND role = 'admin' AND active = TRUE
+           WHERE tenant_id = '$TENANT_ID' AND role = 'admin' AND active = TRUE
              AND status = 'active' AND email ~ '@brain\\.invalid$'
         ),
         'nonterminal_payment_intent_count', (
           SELECT count(*) FROM ledger_payment_intents
-           WHERE owner_id = :'tenant_id'
+           WHERE owner_id = '$TENANT_ID'
              AND status NOT IN ('executed', 'rejected', 'failed', 'cancelled')
         ),
         'nonterminal_execution_count', (
           SELECT count(*) FROM executions
-           WHERE tenant_id = :'tenant_id' AND status NOT IN ('completed', 'failed')
+           WHERE tenant_id = '$TENANT_ID' AND status NOT IN ('completed', 'failed')
         ),
         'nonterminal_outbox_count', (
           SELECT count(*) FROM execution_outbox
-           WHERE tenant_id = :'tenant_id' AND status NOT IN ('settled', 'failed')
+           WHERE tenant_id = '$TENANT_ID' AND status NOT IN ('settled', 'failed')
         ),
         'rail_receipt_count', (
           (SELECT count(*) FROM executions
-            WHERE tenant_id = :'tenant_id' AND rail_receipt IS NOT NULL)
+            WHERE tenant_id = '$TENANT_ID' AND rail_receipt IS NOT NULL)
           +
           (SELECT count(*) FROM execution_outbox
-            WHERE tenant_id = :'tenant_id' AND rail_receipt IS NOT NULL)
+            WHERE tenant_id = '$TENANT_ID' AND rail_receipt IS NOT NULL)
         ),
         'blob_artifact_count', (
           SELECT count(*) FROM raw_artifacts
-           WHERE tenant_id = :'tenant_id' AND blob_uri IS NOT NULL
+           WHERE tenant_id = '$TENANT_ID' AND blob_uri IS NOT NULL
         )
       );
       COMMIT;")"
@@ -146,9 +144,8 @@ if [[ "$mode" == 'report' ]]; then
 fi
 
 member_id="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
-  -v tenant_id="$TENANT_ID" \
   -c "SELECT id FROM members
-        WHERE tenant_id = :'tenant_id' AND role = 'admin' AND active = TRUE
+        WHERE tenant_id = '$TENANT_ID' AND role = 'admin' AND active = TRUE
           AND status = 'active' AND email ~ '@brain\\.invalid$'
         ORDER BY id;")"
 if [[ ! "$member_id" =~ ^(usr|mem)_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -212,23 +209,22 @@ delete_summary="$(cat /tmp/northstar-validation-delete-response.json | docker ex
 printf 'northstar_validation_tenant_delete=%s\n' "$delete_summary"
 
 postflight="$(docker exec -i brain-prod-postgres psql -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
-  -v tenant_id="$TENANT_ID" \
   -c "BEGIN TRANSACTION READ ONLY;
       SET LOCAL statement_timeout = '15 seconds';
       SELECT json_build_object(
-        'tenant_rows', (SELECT count(*) FROM tenants WHERE id = :'tenant_id'),
-        'members', (SELECT count(*) FROM members WHERE tenant_id = :'tenant_id'),
-        'identity_links', (SELECT count(*) FROM member_identity_links WHERE tenant_id = :'tenant_id'),
-        'ledger_invoices', (SELECT count(*) FROM ledger_invoices WHERE owner_id = :'tenant_id'),
-        'ledger_transactions', (SELECT count(*) FROM ledger_transactions WHERE owner_id = :'tenant_id'),
-        'ledger_payment_intents', (SELECT count(*) FROM ledger_payment_intents WHERE owner_id = :'tenant_id'),
-        'proposals', (SELECT count(*) FROM proposals WHERE tenant_id = :'tenant_id'),
-        'execution_outbox', (SELECT count(*) FROM execution_outbox WHERE tenant_id = :'tenant_id'),
-        'raw_artifacts', (SELECT count(*) FROM raw_artifacts WHERE tenant_id = :'tenant_id'),
-        'policies', (SELECT count(*) FROM policies WHERE tenant_id = :'tenant_id'),
+        'tenant_rows', (SELECT count(*) FROM tenants WHERE id = '$TENANT_ID'),
+        'members', (SELECT count(*) FROM members WHERE tenant_id = '$TENANT_ID'),
+        'identity_links', (SELECT count(*) FROM member_identity_links WHERE tenant_id = '$TENANT_ID'),
+        'ledger_invoices', (SELECT count(*) FROM ledger_invoices WHERE owner_id = '$TENANT_ID'),
+        'ledger_transactions', (SELECT count(*) FROM ledger_transactions WHERE owner_id = '$TENANT_ID'),
+        'ledger_payment_intents', (SELECT count(*) FROM ledger_payment_intents WHERE owner_id = '$TENANT_ID'),
+        'proposals', (SELECT count(*) FROM proposals WHERE tenant_id = '$TENANT_ID'),
+        'execution_outbox', (SELECT count(*) FROM execution_outbox WHERE tenant_id = '$TENANT_ID'),
+        'raw_artifacts', (SELECT count(*) FROM raw_artifacts WHERE tenant_id = '$TENANT_ID'),
+        'policies', (SELECT count(*) FROM policies WHERE tenant_id = '$TENANT_ID'),
         'audit_delete_event_count', (
           SELECT count(*) FROM audit_events
-           WHERE tenant_id = :'tenant_id' AND action = 'tenant.deleted'
+           WHERE tenant_id = '$TENANT_ID' AND action = 'tenant.deleted'
         )
       );
       COMMIT;")"
