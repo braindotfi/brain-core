@@ -83,6 +83,7 @@ import {
   BRAIN_AUDIT_ANCHOR_ABI,
 } from "./anchorBroadcaster.js";
 import { assertDeployedContractSelectors } from "./composition/contract-selector-fence.js";
+import { OnchainRpcReadiness } from "./composition/onchain-rpc-readiness.js";
 import { logBootCapabilities } from "./capabilities.js";
 import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
@@ -212,7 +213,7 @@ import {
   TenantSignedRegistrationRelayer,
   startAgentRegistrationWorker,
 } from "@brain/execution";
-import type { ExecutionDeps, OnchainDispatchParams, Rail } from "@brain/execution";
+import type { ExecutionDeps, OnchainDispatchParams, OnchainExecutor, Rail } from "@brain/execution";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
 import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
@@ -469,34 +470,80 @@ async function main(): Promise<void> {
   // invariant (not env-gated); a no-op while every connector is first-party.
   assertRegistryPartnerIsolation();
 
-  await assertBaseRpcChainId({
-    configuredChainId: cfg.BRAIN_BASE_CHAIN_ID,
-    rpcUrl: cfg.BASE_RPC_URL,
-    getChainId:
-      cfg.BASE_RPC_URL !== undefined
-        ? makeBaseGetChainId(cfg.BASE_RPC_URL)
-        : async () => cfg.BRAIN_BASE_CHAIN_ID,
-  });
+  const metrics = new MockMetrics();
+  const primaryOnchainRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+  const onchainRpcEndpoints = [primaryOnchainRpcUrl, ...cfg.BASE_RPC_FALLBACK_URLS];
+  const onchainRpcReadiness = new OnchainRpcReadiness({
+    endpoints: onchainRpcEndpoints,
+    metrics,
+    log,
+    retryInitialMs: cfg.BRAIN_ONCHAIN_RPC_RETRY_INITIAL_MS,
+    retryMaxMs: cfg.BRAIN_ONCHAIN_RPC_RETRY_MAX_MS,
+    validate: async (endpoint) => {
+      if (
+        cfg.NODE_ENV !== "production" &&
+        cfg.NODE_ENV !== "staging" &&
+        cfg.BASE_RPC_URL === undefined &&
+        cfg.BASE_RPC_FALLBACK_URLS.length === 0
+      ) {
+        return;
+      }
+      await assertBaseRpcChainId({
+        configuredChainId: cfg.BRAIN_BASE_CHAIN_ID,
+        rpcUrl: endpoint,
+        getChainId: makeBaseGetChainId(endpoint),
+      });
 
-  // Refuse to boot when a configured contract address does not expose the
-  // functions this build calls. #393 shipped anchorBatch() against a contract
-  // that never had it, and every publish reverted at gas estimation for four
-  // days with no boot-time signal. Logic + tests live in
-  // composition/contract-selector-fence.ts.
-  {
-    const contractRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
-    await assertDeployedContractSelectors({
-      nodeEnv: cfg.NODE_ENV,
-      expectations: [
-        {
-          contractName: "BrainAuditAnchor",
-          address: cfg.AUDIT_PUBLISHER_KEY !== undefined ? cfg.AUDIT_ANCHOR_ADDRESS : undefined,
-          requiredFunctions: BRAIN_AUDIT_ANCHOR_ABI,
-        },
-      ],
-      getCode: makeBaseGetCode(contractRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
-    });
-  }
+      // A successfully reached endpoint with stale or missing selectors is a
+      // deployment safety failure. OnchainRpcReadiness only degrades for
+      // provider transport failures, never these asserted mismatches.
+      await assertDeployedContractSelectors({
+        nodeEnv: cfg.NODE_ENV,
+        expectations: [
+          {
+            contractName: "BrainAuditAnchor",
+            address: cfg.AUDIT_PUBLISHER_KEY !== undefined ? cfg.AUDIT_ANCHOR_ADDRESS : undefined,
+            requiredFunctions: BRAIN_AUDIT_ANCHOR_ABI,
+          },
+        ],
+        getCode: makeBaseGetCode(endpoint, cfg.BRAIN_BASE_CHAIN_ID),
+      });
+
+      if (cfg.BRAIN_ESCROW_ADDRESS !== undefined) {
+        const expectation = readDeployedBytecodeExpectation();
+        await assertDeployedEscrowBytecode({
+          chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
+          expectedRuntimeSha256: expectation.expectedRuntimeSha256,
+          immutableReferences: expectation.immutableReferences,
+          getCode: makeBaseGetCode(endpoint, cfg.BRAIN_BASE_CHAIN_ID),
+        });
+      }
+    },
+  });
+  const onchainRpcReady = await onchainRpcReadiness.validateNow();
+  if (!onchainRpcReady) onchainRpcReadiness.startRetry();
+  const onchainRpcUrl = onchainRpcReadiness.snapshot().endpoint ?? primaryOnchainRpcUrl;
+  const guardOnchainExecutor = (executor: OnchainExecutor): OnchainExecutor => ({
+    readNonce: async (input) => {
+      if (!onchainRpcReadiness.isReady()) {
+        throw brainError(
+          "execution_rail_unavailable",
+          "on-chain rail unavailable while Base RPC validation is degraded",
+        );
+      }
+      return executor.readNonce(input);
+    },
+    execute: async (input) => {
+      if (!onchainRpcReadiness.isReady()) {
+        throw brainError(
+          "execution_rail_unavailable",
+          "on-chain rail unavailable while Base RPC validation is degraded",
+        );
+      }
+      return executor.execute(input);
+    },
+  });
 
   // Refuse to boot against any non-testnet chain with BRAIN_ESCROW_ADDRESS
   // configured unless BOTH the committed audit record and an operator env
@@ -512,26 +559,6 @@ async function main(): Promise<void> {
       ? { auditReceipt: cfg.BRAIN_ESCROW_AUDIT_RECEIPT }
       : {}),
   });
-
-  // On-chain half of the mainnet escrow fence: verify the DEPLOYED escrow
-  // bytecode matches the audited runtime bytecode (immutable-masked) via
-  // eth_getCode. Only on Base mainnet with an escrow address + a Base RPC
-  // configured; silent (early-return inside) otherwise. Runs AFTER the
-  // audit-approval fence above, so it is reached only once the audit is
-  // approved — the deployed code must then be the code we audited.
-  {
-    const escrowRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
-    if (cfg.BRAIN_ESCROW_ADDRESS !== undefined) {
-      const expectation = readDeployedBytecodeExpectation();
-      await assertDeployedEscrowBytecode({
-        chainId: cfg.BRAIN_BASE_CHAIN_ID,
-        escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
-        expectedRuntimeSha256: expectation.expectedRuntimeSha256,
-        immutableReferences: expectation.immutableReferences,
-        getCode: makeBaseGetCode(escrowRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
-      });
-    }
-  }
 
   // Batch 10 C-1: refuse to boot when /v1/demo/provision-run is enabled
   // without (a) the shared-secret header configured (so the route would mint
@@ -686,7 +713,6 @@ async function main(): Promise<void> {
   );
 
   const schemaRegistry = await loadRegistry();
-  const metrics = new MockMetrics();
 
   // Wiki LLM + embed adapters.
   // Priority: OPENAI_API_KEY (real) > BRAIN_DEMO_MODE (recorded fixture) > throw-stub.
@@ -836,7 +862,7 @@ async function main(): Promise<void> {
       ? () => Promise.resolve(true)
       : createViemPolicySignerChecker({
           contractAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
-          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          rpcUrl: onchainRpcUrl,
         }),
     confidenceFloorReject: cfg.BRAIN_POLICY_CONFIDENCE_FLOOR_REJECT,
     lintReject: cfg.BRAIN_POLICY_LINT_REJECT,
@@ -849,7 +875,7 @@ async function main(): Promise<void> {
       ? {
           resolveReputation: makeResolveReputation({
             registryAddress: cfg.BRAIN_REPUTATION_REGISTRY_ADDRESS,
-            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            rpcUrl: onchainRpcUrl,
             chainId: cfg.BRAIN_BASE_CHAIN_ID,
           }),
         }
@@ -918,7 +944,7 @@ async function main(): Promise<void> {
   // assumption is unsafe here.
   const getOnchainTransferTokenDecimals =
     cfg.BRAIN_X402_USDC_ADDRESS !== undefined
-      ? makeBaseGetErc20Decimals(cfg.BASE_RPC_URL ?? cfg.RPC_URL, cfg.BRAIN_BASE_CHAIN_ID)
+      ? makeBaseGetErc20Decimals(onchainRpcUrl, cfg.BRAIN_BASE_CHAIN_ID)
       : undefined;
   const resolveOnchainParams:
     | ((
@@ -976,7 +1002,7 @@ async function main(): Promise<void> {
   // counterparty is not an agent-type (5.5). Escrow (6.6) is env-gated.
   const attestCounterpartyAgent = makeAttestCounterpartyAgent({
     registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS,
-    rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+    rpcUrl: onchainRpcUrl,
     chainId: cfg.BRAIN_BASE_CHAIN_ID,
   });
   const sumAgentWindowSpend = makeSumAgentWindowSpend(pool);
@@ -993,13 +1019,13 @@ async function main(): Promise<void> {
   // release amount.
   await assertSettlementTokenIsSixDecimals({
     tokenAddress: cfg.BRAIN_X402_USDC_ADDRESS,
-    getDecimals: makeBaseGetErc20Decimals(cfg.BASE_RPC_URL ?? cfg.RPC_URL, cfg.BRAIN_BASE_CHAIN_ID),
+    getDecimals: makeBaseGetErc20Decimals(onchainRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
   });
   const resolveEscrowState =
     cfg.BRAIN_ESCROW_ADDRESS !== undefined && cfg.BRAIN_X402_USDC_ADDRESS !== undefined
       ? makeResolveEscrowState({
           escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
-          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          rpcUrl: onchainRpcUrl,
           chainId: cfg.BRAIN_BASE_CHAIN_ID,
           settlementToken: cfg.BRAIN_X402_USDC_ADDRESS,
         })
@@ -1110,12 +1136,14 @@ async function main(): Promise<void> {
       log.info({ env: cfg.PLAID_ENV }, "ACH Plaid rail registered");
     }
     let onchainExecutor: ReturnType<typeof buildOnchainExecutor> | undefined;
-    if (cfg.BRAIN_SESSION_KEY !== undefined && cfg.BASE_RPC_URL !== undefined) {
-      onchainExecutor = buildOnchainExecutor({
-        privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
-        rpcUrl: cfg.BASE_RPC_URL,
-        chainId: cfg.BRAIN_BASE_CHAIN_ID,
-      });
+    if (cfg.BRAIN_SESSION_KEY !== undefined && onchainRpcUrl !== undefined) {
+      onchainExecutor = guardOnchainExecutor(
+        buildOnchainExecutor({
+          privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
+          rpcUrl: onchainRpcUrl,
+          chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        }),
+      );
       configured.push(new OnchainBaseRail({ executor: onchainExecutor }));
       liveNames.push("onchain_base");
       log.info({ chainId: cfg.BRAIN_BASE_CHAIN_ID }, "on-chain Base rail registered");
@@ -1124,7 +1152,7 @@ async function main(): Promise<void> {
       cfg.BRAIN_X402_FACILITATOR_URL !== undefined &&
       cfg.BRAIN_X402_USDC_ADDRESS !== undefined &&
       cfg.BRAIN_SESSION_KEY !== undefined &&
-      cfg.BASE_RPC_URL !== undefined &&
+      onchainRpcUrl !== undefined &&
       // F1: x402 now routes through BrainSmartAccount.executeViaSessionKey
       // (the same executor + smart account OnchainBaseRail/EscrowBaseRail
       // use), so it needs the same on-chain executor and smart-account
@@ -1139,7 +1167,7 @@ async function main(): Promise<void> {
         executor: onchainExecutor,
         smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
         holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
-        getUsdcDecimals: makeBaseGetErc20Decimals(cfg.BASE_RPC_URL, cfg.BRAIN_BASE_CHAIN_ID),
+        getUsdcDecimals: makeBaseGetErc20Decimals(onchainRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
       });
       configured.push(new X402BaseRail({ client: x402Client }));
       liveNames.push("x402_base");
@@ -1213,14 +1241,14 @@ async function main(): Promise<void> {
     cfg.BRAIN_AGENT_RELAYER_MODE === "custodial"
       ? new KmsCustodialRegistrationRelayer({
           privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
-          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          rpcUrl: onchainRpcUrl,
           registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
           audit,
         })
       : cfg.BRAIN_AGENT_RELAYER_MODE === "tenant_signed"
         ? new TenantSignedRegistrationRelayer({
             privateKey: cfg.BRAIN_AGENT_RELAYER_PRIVATE_KEY as `0x${string}` | undefined,
-            rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+            rpcUrl: onchainRpcUrl,
             registryAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
             audit,
           })
@@ -1476,7 +1504,7 @@ async function main(): Promise<void> {
       ? createViemAnchorBroadcaster({
           privateKey: cfg.AUDIT_PUBLISHER_KEY as `0x${string}`,
           contractAddress: cfg.AUDIT_ANCHOR_ADDRESS as `0x${string}`,
-          rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+          rpcUrl: onchainRpcUrl,
           fromBlock: cfg.AUDIT_ANCHOR_FROM_BLOCK,
           fromBlockLookbackBlocks: cfg.AUDIT_ANCHOR_FROM_BLOCK_LOOKBACK_BLOCKS,
           maxEventScanBlockSpan: cfg.AUDIT_ANCHOR_EVENT_SCAN_MAX_BLOCKS,
@@ -1501,7 +1529,7 @@ async function main(): Promise<void> {
   // The orphan scan is cross-tenant and must use the audit-verifier BYPASSRLS
   // pool. The request pool would match zero rows under FORCE RLS and report a
   // false-clean cycle.
-  const anchorRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
+  const anchorRpcUrl = onchainRpcUrl;
   const anchorReconciler =
     composition.workers.has("audit") &&
     cfg.AUDIT_ANCHOR_ADDRESS !== undefined &&
@@ -1542,10 +1570,10 @@ async function main(): Promise<void> {
   const policyRegistrar =
     cfg.BRAIN_SESSION_KEY !== undefined &&
     cfg.POLICY_REGISTRY_ADDRESS !== undefined &&
-    (cfg.BASE_RPC_URL ?? cfg.RPC_URL) !== undefined
+    onchainRpcUrl !== undefined
       ? buildPolicyRegistrar({
           privateKey: cfg.BRAIN_SESSION_KEY as `0x${string}`,
-          rpcUrl: (cfg.BASE_RPC_URL ?? cfg.RPC_URL) as string,
+          rpcUrl: onchainRpcUrl,
           registryAddress: cfg.POLICY_REGISTRY_ADDRESS as `0x${string}`,
         })
       : undefined;
@@ -1555,7 +1583,7 @@ async function main(): Promise<void> {
   // needs an on-chain reader for its scope-hash acceptance check, whether or
   // not MCP itself is running in dev-bypass mode.
   const onchainScopeChecker = createViemScopeChecker({
-    rpcUrl: cfg.BASE_RPC_URL ?? cfg.RPC_URL,
+    rpcUrl: onchainRpcUrl,
     contractAddress: cfg.MCP_AGENT_REGISTRY_ADDRESS as `0x${string}`,
   });
   // BRAIN-97: isMcpDevBypassAllowed is the single allowlist condition;
@@ -2037,6 +2065,7 @@ async function main(): Promise<void> {
     version: cfg.SERVICE_VERSION,
     service: cfg.SERVICE_NAME,
     commit: process.env.GIT_SHA ?? "dev",
+    onchain_rpc: onchainRpcReadiness.snapshot(),
   }));
 
   // Worker/process separation: the public HTTP surface (audit-health snapshot +
@@ -3446,6 +3475,13 @@ async function main(): Promise<void> {
 
     const runAnchor = async (): Promise<void> => {
       if (anchorRunning) return;
+      if (!onchainRpcReadiness.isReady()) {
+        log.warn(
+          { onchain_rpc: onchainRpcReadiness.snapshot() },
+          "anchor publish skipped while Base RPC is degraded",
+        );
+        return;
+      }
       anchorRunning = true;
       const now = new Date();
       try {
@@ -3633,6 +3669,13 @@ async function main(): Promise<void> {
     };
 
     const runAnchorCycle = async (): Promise<void> => {
+      if (!onchainRpcReadiness.isReady()) {
+        log.warn(
+          { onchain_rpc: onchainRpcReadiness.snapshot() },
+          "anchor cycle skipped while Base RPC is degraded",
+        );
+        return;
+      }
       try {
         const [pending, eligible] = await Promise.all([
           auditVerifierPool.query<{ count: string; oldest_pending: Date | null }>(
@@ -3826,6 +3869,7 @@ async function main(): Promise<void> {
       log.info({ signal }, "shutting down");
       anchorShutdown = true;
       if (anchorTimer !== undefined) clearTimeout(anchorTimer);
+      onchainRpcReadiness.stop();
 
       const outcome = await runShutdown({
         // Only the workers this process actually started (worker/process
