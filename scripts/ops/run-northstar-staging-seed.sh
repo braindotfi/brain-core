@@ -47,5 +47,5 @@ if [[ -n "${PRESENTATION_PROBE_PATH:-}" ]]; then
     -e BRAIN_TENANT_ID="$tenant_id" \
     -e NORTHSTAR_BOOTSTRAP_EXTERNAL_REF="$bootstrap_external_ref" \
     brain-prod-api node "$probe_container_path"
-  docker exec brain-prod-api rm -f "$probe_container_path"
+  docker exec -u 0 brain-prod-api rm -f "$probe_container_path"
 fi
