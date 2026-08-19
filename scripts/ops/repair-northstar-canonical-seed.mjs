@@ -31,6 +31,26 @@ export const NORTHSTAR_RECEIVABLE_INVOICE_NUMBERS = [
 
 const EXPECTED_AR_TOTAL = "530500.00000000";
 const REPAIR_IDEMPOTENCY_KEY = "northstar_labs_v1:canonical-repair:v2";
+const NORTHSTAR_MONTHS = [
+  "2025-09",
+  "2025-10",
+  "2025-11",
+  "2025-12",
+  "2026-01",
+  "2026-02",
+  "2026-03",
+  "2026-04",
+  "2026-05",
+  "2026-06",
+  "2026-07",
+  "2026-08",
+];
+const NORTHSTAR_TRANSACTION_CATEGORY_BY_KIND = {
+  revenue: "income.subscription_revenue",
+  payroll: "expense.payroll_and_benefits",
+  cloud: "expense.cloud_infrastructure",
+  operating: "expense.general_and_administrative",
+};
 
 /** @param {unknown} value */
 function isObject(value) {
@@ -144,10 +164,64 @@ export function classifyInvoiceRepair(invoices) {
     });
 }
 
+/**
+ * Identifies only the fixed Northstar transaction set that predates forward
+ * categorization. This does not infer a category from free text: every
+ * expected external transaction id has one fixture-defined canonical code.
+ *
+ * @param {Array<{ id: string, external_transaction_id: string, category_id: string | null, active_category_id: string | null, canonical_code: string | null }>} transactions
+ */
+export function classifyTransactionCategoryRepair(transactions) {
+  const expected = new Map();
+  for (const month of NORTHSTAR_MONTHS) {
+    for (const [kind, canonicalCode] of Object.entries(NORTHSTAR_TRANSACTION_CATEGORY_BY_KIND)) {
+      expected.set(`northstar:${month}:${kind}`, canonicalCode);
+    }
+  }
+
+  if (transactions.length !== expected.size) {
+    throw new Error("Northstar transaction set does not match the canonical fixture");
+  }
+
+  const seen = new Set();
+  const repairs = [];
+  for (const transaction of transactions) {
+    const canonicalCode = expected.get(transaction.external_transaction_id);
+    if (canonicalCode === undefined || seen.has(transaction.external_transaction_id)) {
+      throw new Error("Northstar transaction set does not match the canonical fixture");
+    }
+    seen.add(transaction.external_transaction_id);
+
+    if (transaction.canonical_code === null) {
+      if (transaction.category_id !== null || transaction.active_category_id !== null) {
+        throw new Error("Northstar transaction has an incomplete category assignment");
+      }
+      repairs.push({
+        id: transaction.id,
+        externalTransactionId: transaction.external_transaction_id,
+        canonicalCode,
+      });
+      continue;
+    }
+    if (
+      transaction.canonical_code !== canonicalCode ||
+      transaction.category_id === null ||
+      transaction.category_id !== transaction.active_category_id
+    ) {
+      throw new Error("Northstar transaction has an unexpected category assignment");
+    }
+  }
+  if (seen.size !== expected.size) {
+    throw new Error("Northstar transaction set does not match the canonical fixture");
+  }
+  return repairs;
+}
+
 /** @param {import("pg").PoolClient} client */
 async function snapshot(client, lockRows) {
   const invoiceLock = lockRows ? " FOR UPDATE" : "";
   const policyLock = lockRows ? " FOR UPDATE" : "";
+  const transactionLock = lockRows ? " FOR UPDATE OF t" : "";
   const invoiceResult = await client.query(
     `SELECT id, invoice_number, amount_due::text, metadata
        FROM ledger_invoices
@@ -184,6 +258,18 @@ async function snapshot(client, lockRows) {
       WHERE owner_id = $1 AND status = 'posted'`,
     [NORTHSTAR_TENANT_ID],
   );
+  const transactionResult = await client.query(
+    `SELECT t.id, t.external_transaction_id, t.category_id,
+            assignment.category_id AS active_category_id, assignment.canonical_code
+       FROM ledger_transactions t
+       LEFT JOIN ledger_transaction_category_assignments assignment
+         ON assignment.tenant_id = t.owner_id
+        AND assignment.transaction_id = t.id
+        AND assignment.superseded_at IS NULL
+      WHERE t.owner_id = $1 AND t.external_transaction_id LIKE 'northstar:%'
+      ORDER BY t.external_transaction_id${transactionLock}`,
+    [NORTHSTAR_TENANT_ID],
+  );
 
   if (policyResult.rows.length !== 1)
     throw new Error("Northstar tenant must have exactly one active policy");
@@ -209,6 +295,7 @@ async function snapshot(client, lockRows) {
     identity,
     ap: apResult.rows[0],
     cash: cashResult.rows[0],
+    transactions: transactionResult.rows,
   };
 }
 
@@ -216,6 +303,7 @@ async function snapshot(client, lockRows) {
 function report(value) {
   const policyRepair = repairPolicyContent(value.policy.content);
   const invoiceIds = classifyInvoiceRepair(value.invoices);
+  const transactionCategoryRepairs = classifyTransactionCategoryRepair(value.transactions);
   const storedAutoRule = value.policy.content.rules.find(
     (rule) => rule.id === "northstar-ap-auto-approved",
   );
@@ -231,6 +319,12 @@ function report(value) {
       scenario: invoice.metadata?.scenario ?? null,
     })),
     invoice_rows_to_patch: invoiceIds.length,
+    transaction_category_rows_to_patch: transactionCategoryRepairs.length,
+    transaction_categories: value.transactions.map((transaction) => ({
+      transaction_id: transaction.id,
+      external_transaction_id: transaction.external_transaction_id,
+      canonical_code: transaction.canonical_code,
+    })),
     policy: {
       id: value.policy.id,
       version: value.policy.version,
@@ -288,6 +382,7 @@ async function main() {
     }
 
     const invoiceIds = classifyInvoiceRepair(before.invoices);
+    const transactionCategoryRepairs = classifyTransactionCategoryRepair(before.transactions);
     const repairedPolicy = repairPolicyContent(before.policy.content);
     let patchedInvoiceRows = 0;
     if (invoiceIds.length > 0) {
@@ -326,6 +421,30 @@ async function main() {
     }
     await client.query("COMMIT");
 
+    let patchedTransactionCategoryRows = 0;
+    if (transactionCategoryRepairs.length > 0) {
+      const { assignTransactionCategoryForTenant } = await import("@brain/ledger");
+      const categoryAudit = new PostgresAuditEmitter(pool);
+      for (const transaction of transactionCategoryRepairs) {
+        const result = await assignTransactionCategoryForTenant(
+          pool,
+          categoryAudit,
+          { tenantId: NORTHSTAR_TENANT_ID, actor: "ops:northstar-canonical-repair" },
+          transaction.id,
+          {
+            canonicalCode: transaction.canonicalCode,
+            method: "deterministic_rule",
+            confidence: 1,
+            ruleVersion: "northstar_demo_v1",
+          },
+        );
+        if (!result.changed) {
+          throw new Error("Northstar transaction category repair did not update a preflight row");
+        }
+        patchedTransactionCategoryRows += 1;
+      }
+    }
+
     const verifyClient = await pool.connect();
     let after;
     try {
@@ -341,6 +460,7 @@ async function main() {
     const afterReport = report(after);
     if (
       afterReport.invoice_rows_to_patch !== 0 ||
+      afterReport.transaction_category_rows_to_patch !== 0 ||
       afterReport.policy.list_rename_required ||
       afterReport.policy.risk_bound_update_required ||
       afterReport.policy.ach_autonomy_cap_add_required
@@ -349,7 +469,7 @@ async function main() {
     }
 
     let repairAuditId = null;
-    if (patchedInvoiceRows > 0 || patchedPolicyRows > 0) {
+    if (patchedInvoiceRows > 0 || patchedPolicyRows > 0 || patchedTransactionCategoryRows > 0) {
       const audit = new PostgresAuditEmitter(pool);
       const repairEvent = await audit.emit({
         tenantId: NORTHSTAR_TENANT_ID,
@@ -362,6 +482,7 @@ async function main() {
         },
         outputs: {
           invoice_metadata_rows_patched: patchedInvoiceRows,
+          transaction_category_rows_patched: patchedTransactionCategoryRows,
           policy_list_renamed: patchedPolicyRows === 1,
           policy_risk_bound_updated: beforeReport.policy.risk_bound_update_required,
           policy_ach_autonomy_cap_added: beforeReport.policy.ach_autonomy_cap_add_required,
