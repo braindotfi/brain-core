@@ -1256,9 +1256,9 @@ Python analysis. Pull requests build each production Dockerfile once and scan
 both resulting images with Trivy. Main scans the exact core and agents images
 already pushed to GHCR before staging deploy. Dependabot checks npm and GitHub
 Actions weekly. Any future dependency or Trivy ignore must document its reason
-and expiry date. `.trivyignore` currently contains only no-fix Debian 12 base
-image advisories, each with a documented reason and 2026-09-02 expiry; reassess
-them when refreshing the base images.
+and expiry date. `.trivyignore` contains no-fix Debian 12 base-image advisories
+with a documented 2026-09-02 expiry and Debian 13 OpenSSL CVE-2026-14456 with
+a documented 2026-09-18 expiry; reassess them when refreshing the base images.
 
 `ops-counterparty-trust-smoke.yml` is a production-gated mutable smoke for the
 counterparty trust-state API. It creates an isolated seeded tenant, calls all

@@ -37,3 +37,6 @@ CVE-2026-9538
 # Debian marks this zlib issue will_not_fix for bookworm as of 2026-08-02. Reassess by 2026-09-02.
 # exp:2026-09-02
 CVE-2023-45853
+# Debian 13 marks this OpenSSL QUIC denial-of-service issue fix_deferred as of 2026-08-19. Reassess by 2026-09-18.
+# exp:2026-09-18
+CVE-2026-14456
