@@ -185,6 +185,7 @@ interface TransactionAggregateRow {
   description_normalized: string | null;
   description_raw: string | null;
   counterparty_id: string | null;
+  counterparty_name?: string | null;
   matching_count: string;
   matching_sum: string;
   matching_average: string;
@@ -199,6 +200,7 @@ interface TransactionListingRow {
   description_normalized: string | null;
   description_raw: string | null;
   counterparty_id: string | null;
+  counterparty_name?: string | null;
 }
 
 interface InvoiceListingRow {
@@ -327,7 +329,7 @@ interface VendorTrustStatusListingIntent {
 
 interface OverdueCustomerInvoicesIntent {
   asOf: Date | null;
-  operation: "list" | "total";
+  operation: "list" | "review_reason" | "total";
 }
 
 interface PendingRecommendationsIntent {
@@ -548,38 +550,40 @@ async function answerTransactionAggregate(
   client: TenantScopedClient,
   intent: TransactionAggregateIntent,
 ): Promise<AskResult> {
-  const clauses = ["status IN ('posted','cleared')"];
+  const clauses = ["tx.status IN ('posted','cleared')"];
   const values: unknown[] = [];
   if (intent.range !== null) {
     values.push(intent.range.start, intent.range.end);
-    clauses.push(`transaction_date >= $${values.length - 1}`);
-    clauses.push(`transaction_date < $${values.length}`);
+    clauses.push(`tx.transaction_date >= $${values.length - 1}`);
+    clauses.push(`tx.transaction_date < $${values.length}`);
   }
   if (intent.asOf !== null) {
     values.push(intent.asOf);
-    clauses.push(`transaction_date <= $${values.length}`);
+    clauses.push(`tx.transaction_date <= $${values.length}`);
   }
   if (intent.direction !== null) {
     values.push(intent.direction);
-    clauses.push(`direction = $${values.length}`);
+    clauses.push(`tx.direction = $${values.length}`);
   }
   values.push(MAX_AGGREGATE_EVIDENCE);
 
   const rows = await client.query<TransactionAggregateRow>(
-    `SELECT id,
-            amount::text AS amount,
-            currency,
-            direction,
-            transaction_date,
-            description_normalized,
-            description_raw,
-            counterparty_id,
+    `SELECT tx.id,
+            tx.amount::text AS amount,
+            tx.currency,
+            tx.direction,
+            tx.transaction_date,
+            tx.description_normalized,
+            tx.description_raw,
+            tx.counterparty_id,
+            cp.name AS counterparty_name,
             COUNT(*) OVER ()::text AS matching_count,
-            COALESCE(SUM(amount) OVER (), 0)::text AS matching_sum,
-            COALESCE(ROUND(AVG(amount) OVER (), 2), 0)::text AS matching_average
-       FROM ledger_transactions
+            COALESCE(SUM(tx.amount) OVER (), 0)::text AS matching_sum,
+            COALESCE(ROUND(AVG(tx.amount) OVER (), 2), 0)::text AS matching_average
+       FROM ledger_transactions tx
+       LEFT JOIN ledger_counterparties cp ON cp.id = tx.counterparty_id
       WHERE ${clauses.join(" AND ")}
-      ORDER BY transaction_date DESC, id DESC
+      ORDER BY tx.transaction_date DESC, tx.id DESC
       LIMIT $${values.length}`,
     values,
   );
@@ -635,9 +639,13 @@ function toTransactionEvidence(
     | "description_normalized"
     | "description_raw"
     | "counterparty_id"
+    | "counterparty_name"
   >,
 ): AskEvidenceItem {
-  const counterparty = row.counterparty_id === null ? "" : ` cp=${row.counterparty_id}`;
+  const counterparty =
+    row.counterparty_name === null || row.counterparty_name === undefined
+      ? ""
+      : ` counterparty=${row.counterparty_name}`;
   const memo = row.description_normalized ?? row.description_raw ?? "";
   return {
     entityType: "transaction",
@@ -690,29 +698,31 @@ async function answerTransactionListing(
   client: TenantScopedClient,
   intent: StructuredListingIntent,
 ): Promise<AskResult> {
-  const clauses = ["status IN ('posted','cleared')"];
+  const clauses = ["tx.status IN ('posted','cleared')"];
   const values: unknown[] = [];
   if (intent.range !== null) {
     values.push(intent.range.start, intent.range.end);
-    clauses.push(`transaction_date >= $${values.length - 1}`);
-    clauses.push(`transaction_date < $${values.length}`);
+    clauses.push(`tx.transaction_date >= $${values.length - 1}`);
+    clauses.push(`tx.transaction_date < $${values.length}`);
   }
   if (intent.asOf !== null) {
     values.push(intent.asOf);
-    clauses.push(`transaction_date <= $${values.length}`);
+    clauses.push(`tx.transaction_date <= $${values.length}`);
   }
   if (intent.direction !== null) {
     values.push(intent.direction);
-    clauses.push(`direction = $${values.length}`);
+    clauses.push(`tx.direction = $${values.length}`);
   }
   values.push(intent.limit);
 
   const { rows } = await client.query<TransactionListingRow>(
-    `SELECT id, amount::text AS amount, currency, direction, transaction_date,
-            description_normalized, description_raw, counterparty_id
-       FROM ledger_transactions
+    `SELECT tx.id, tx.amount::text AS amount, tx.currency, tx.direction, tx.transaction_date,
+            tx.description_normalized, tx.description_raw, tx.counterparty_id,
+            cp.name AS counterparty_name
+       FROM ledger_transactions tx
+       LEFT JOIN ledger_counterparties cp ON cp.id = tx.counterparty_id
       WHERE ${clauses.join(" AND ")}
-      ORDER BY transaction_date DESC, id DESC
+      ORDER BY tx.transaction_date DESC, tx.id DESC
       LIMIT $${values.length}`,
     values,
   );
@@ -855,14 +865,17 @@ function formatTransactionListingRow(row: TransactionListingRow): string {
   const memo = stripUnsafeControlCharacters(
     row.description_normalized ?? row.description_raw ?? "",
   );
-  const counterparty = row.counterparty_id === null ? "" : `, counterparty ${row.counterparty_id}`;
+  const counterparty =
+    row.counterparty_name === null || row.counterparty_name === undefined
+      ? ""
+      : `, counterparty ${row.counterparty_name}`;
   return `- ${row.transaction_date.toISOString().slice(0, 10)}: ${row.direction} ${formatCurrencyAmount(row.amount, row.currency)}${counterparty}${memo === "" ? "" : `, ${memo}`}`;
 }
 
 function formatInvoiceListingRow(row: InvoiceListingRow): string {
   const due =
     row.due_date === null ? "no due date" : `due ${row.due_date.toISOString().slice(0, 10)}`;
-  const counterparty = row.counterparty_name ?? row.counterparty_id;
+  const counterparty = row.counterparty_name ?? "unidentified counterparty";
   return `- ${row.invoice_number}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, issued ${row.issue_date.toISOString().slice(0, 10)}, ${due}, counterparty ${counterparty}`;
 }
 
@@ -872,10 +885,11 @@ function formatPayableListingRow(row: LargestPayableRow): string {
 
 function toInvoiceEvidence(row: InvoiceListingRow): AskEvidenceItem {
   const due = row.due_date === null ? "" : ` due ${row.due_date.toISOString().slice(0, 10)}`;
+  const counterparty = row.counterparty_name ? ` counterparty=${row.counterparty_name}` : "";
   return {
     entityType: "invoice",
     entityId: row.id,
-    excerpt: `${row.invoice_number} amount ${row.amount_due} ${row.currency} status=${row.status} issued ${row.issue_date.toISOString().slice(0, 10)}${due} cp=${row.counterparty_id}`,
+    excerpt: `${row.invoice_number} amount ${row.amount_due} ${row.currency} status=${row.status} issued ${row.issue_date.toISOString().slice(0, 10)}${due}${counterparty}`,
   };
 }
 
@@ -1807,6 +1821,12 @@ async function answerOverdueCustomerInvoices(
     );
   }
   const records = rows.map(formatInvoiceListingRow).join("\n");
+  if (intent.operation === "review_reason") {
+    return structuredListingResult(
+      `Collections is requesting review because these customer invoices are overdue:\n${records}`,
+      rows.map(toInvoiceEvidence),
+    );
+  }
   return structuredListingResult(
     `Overdue customer invoices:\n${records}`,
     rows.map(toInvoiceEvidence),
@@ -2119,8 +2139,12 @@ function formatProposalListingRow(row: ProposalView): string {
   const recommendation =
     row.recommendation === null || row.recommendation === ""
       ? ""
-      : `, recommendation ${stripUnsafeControlCharacters(row.recommendation)}`;
+      : `, recommendation ${formatUserFacingRecommendation(row.recommendation)}`;
   return `- ${stripUnsafeControlCharacters(row.headline)} (${row.type}, ${row.status}${recommendation})`;
+}
+
+function formatUserFacingRecommendation(value: string): string {
+  return stripUnsafeControlCharacters(value).replace(/\bno_match\b/gi, "no matching ledger record");
 }
 
 function toObligationEvidence(
@@ -2793,6 +2817,13 @@ function parseOverdueCustomerInvoicesIntent(
   asOf: Date | null,
 ): OverdueCustomerInvoicesIntent | null {
   const q = question.toLowerCase();
+  if (
+    /\bwhy\b/.test(q) &&
+    /\bcollections?\b/.test(q) &&
+    /\b(?:requesting|needs?|requires?)\s+(?:a\s+)?review\b/.test(q)
+  ) {
+    return { asOf, operation: "review_reason" };
+  }
   if (/[,;]/.test(q) || /\b(?:and|or)\b/.test(q)) return null;
   const referencesReceivables = /\b(customer|customers|accounts receivable|receivables?)\b/.test(q);
   const referencesArInvoices = /\binvoices?\b/.test(q) && /\bar\b/.test(q);
@@ -3107,7 +3138,7 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     displayText: "Which customer invoices are overdue?",
     parse: (question, asOf) => {
       const intent = parseOverdueCustomerInvoicesIntent(question, asOf);
-      return intent?.operation === "list" ? intent : null;
+      return intent?.operation === "list" || intent?.operation === "review_reason" ? intent : null;
     },
     answer: (client, intent) =>
       answerOverdueCustomerInvoices(client, intent as OverdueCustomerInvoicesIntent),

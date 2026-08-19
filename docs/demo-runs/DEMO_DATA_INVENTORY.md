@@ -5,7 +5,7 @@ Status: Phase 1 and Phase 2 design artifact. The runnable seeder is
 
 ## Scope
 
-Northstar Labs, Inc. is a fixed, curated B2B SaaS and AI infrastructure tenant.
+Northstar Labs, Inc. is a curated B2B SaaS and AI infrastructure tenant.
 It is separate from the Brightline demo seed and the Golden Path developer seed.
 Every value shown to a presenter must originate in the tenant's real core records.
 
@@ -16,7 +16,7 @@ Every value shown to a presenter must originate in the tenant's real core record
 | Ledger: Payables    | payable `ledger_obligations` and vendor counterparties          | Seven named open obligations totaling $221,300.00                           |
 | Ledger: Receivables | customer `ledger_invoices` and receivable obligations           | Five named open invoices totaling $530,500.00                               |
 | Ledger: Cash Flow   | posted `ledger_transactions`                                    | Forty-eight monthly revenue and operating-expense records                   |
-| Counterparties      | `ledger_counterparties`                                         | Seven vendors, five customers, one tax authority                            |
+| Counterparties      | `ledger_counterparties`                                         | Six vendors, five customers, one tax authority                              |
 | Inbox               | `proposals`, policy trace, audit events                         | Two evidence-backed Collections recommendations requiring review            |
 | Policy              | one active tenant policy                                        | AP auto-allow through $10,000 for approved vendors, review otherwise        |
 | Agents              | tenant agent registration                                       | Collections Agent used by pending Collections recommendations               |
@@ -43,6 +43,6 @@ Every value shown to a presenter must originate in the tenant's real core record
 
 ## Validation Boundary
 
-This Phase 1 through Phase 3 change builds the data and its canonical expected
-results. It does not claim a completed live tenant walkthrough, full Assistant
-evaluation, or production readiness. Those belong to Phases 4 through 6.
+The canonical amounts are fixed, while transaction, invoice, payable, policy,
+agent, and proposal dates are generated relative to one seed timestamp. This
+keeps a newly provisioned tenant current without changing the reconciled totals.

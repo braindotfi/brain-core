@@ -39,7 +39,22 @@ try {
     [tenantId],
   );
   const cashFlow = await client.query(
-    `SELECT COUNT(DISTINCT date_trunc('month', transaction_date))::int AS months, COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0)::text AS annual_net, ROUND(COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0) / 12, 2)::text AS monthly_average, COALESCE(SUM(CASE WHEN transaction_date >= '2026-08-01T00:00:00Z'::timestamptz AND direction = 'inflow' THEN amount ELSE 0 END) - SUM(CASE WHEN transaction_date >= '2026-08-01T00:00:00Z'::timestamptz AND direction = 'outflow' THEN amount ELSE 0 END), 0)::text AS august_net FROM ledger_transactions WHERE owner_id = $1 AND status = 'posted'`,
+    `WITH posted AS (
+       SELECT amount, direction, transaction_date
+         FROM ledger_transactions
+        WHERE owner_id = $1 AND status = 'posted'
+     ), latest AS (
+       SELECT MAX(date_trunc('month', transaction_date)) AS month_start FROM posted
+     )
+     SELECT COUNT(DISTINCT date_trunc('month', transaction_date))::int AS months,
+            COUNT(*)::int AS transactions,
+            COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0)::text AS annual_net,
+            ROUND(COALESCE(SUM(CASE WHEN direction = 'inflow' THEN amount ELSE -amount END), 0) / 12, 2)::text AS monthly_average,
+            COALESCE(SUM(CASE WHEN date_trunc('month', transaction_date) = latest.month_start AND direction = 'inflow' THEN amount ELSE 0 END) - SUM(CASE WHEN date_trunc('month', transaction_date) = latest.month_start AND direction = 'outflow' THEN amount ELSE 0 END), 0)::text AS latest_month_net,
+            MAX(transaction_date) AS latest_transaction_at
+       FROM posted
+       CROSS JOIN latest
+      GROUP BY latest.month_start`,
     [tenantId],
   );
   const counterparties = await client.query(
@@ -88,6 +103,13 @@ try {
     `SELECT action, COUNT(*)::int AS count FROM audit_events WHERE tenant_id = $1 AND action IN ('ledger.account.created', 'ledger.counterparty.created', 'ledger.transaction.posted', 'ledger.obligation.created', 'policy.activated', 'agent.action.proposed') GROUP BY action ORDER BY action`,
     [tenantId],
   );
+  const auditCleanliness = await client.query(
+    `SELECT COUNT(*) FILTER (WHERE action = 'wiki.question')::int AS wiki_questions,
+            COUNT(*) FILTER (WHERE action LIKE '%evaluator%')::int AS evaluator_events
+       FROM audit_events
+      WHERE tenant_id = $1`,
+    [tenantId],
+  );
 
   const result = {
     tenant_id: tenantId,
@@ -96,7 +118,9 @@ try {
       annual_net: cashFlow.rows[0]?.annual_net,
       monthly_average: cashFlow.rows[0]?.monthly_average,
       months: cashFlow.rows[0]?.months ?? 0,
-      august_net: cashFlow.rows[0]?.august_net,
+      transactions: cashFlow.rows[0]?.transactions ?? 0,
+      latest_month_net: cashFlow.rows[0]?.latest_month_net,
+      latest_transaction_at: cashFlow.rows[0]?.latest_transaction_at,
     },
     payables: payables.rows[0],
     receivables: receivables.rows[0],
@@ -105,12 +129,16 @@ try {
     inbox: { count: inbox.rows.length, proposals: inbox.rows },
     policy: policy.rows[0] ?? null,
     audit: audit.rows,
+    audit_cleanliness: auditCleanliness.rows[0],
   };
   const expected =
     result.overview.annual_net === "1300000.00000000" &&
     result.overview.monthly_average === "108333.33" &&
     result.overview.months === 12 &&
-    result.overview.august_net === "162000.00000000" &&
+    result.overview.transactions === 48 &&
+    result.overview.latest_month_net === "162000.00000000" &&
+    new Date(result.overview.latest_transaction_at).getTime() <= Date.now() + 60 * 60 * 1000 &&
+    new Date(result.overview.latest_transaction_at).getTime() >= Date.now() - 25 * 60 * 60 * 1000 &&
     result.payables?.count === 7 &&
     result.payables.total === "221300.00000000" &&
     result.receivables?.count === 5 &&
@@ -143,6 +171,8 @@ try {
     result.policy.auto_rule_matches_policy_allowlist === true &&
     result.policy.auto_rule_uses_payment_agent_risk === true &&
     result.policy.auto_rule_has_ach_autonomy_cap === true &&
+    result.audit_cleanliness?.wiki_questions === 0 &&
+    result.audit_cleanliness?.evaluator_events === 0 &&
     result.audit.some((row) => row.action === "policy.activated") &&
     result.audit.some((row) => row.action === "agent.action.proposed");
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
