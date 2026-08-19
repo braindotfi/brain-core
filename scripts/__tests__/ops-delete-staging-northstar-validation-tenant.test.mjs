@@ -38,6 +38,7 @@ test("Northstar validation tenant cleanup is fixed to staging and accepts only i
   assert.match(script, /linked_member_is_active_synthetic_bootstrap_admin/);
   assert.match(script, /northstar-phase4\\\\\+\[0-9a-f\]\{32\}@brain/);
   assert.match(script, /northstar-phase4:\[0-9a-f\]\{32\}/);
+  assert.match(script, /matching synthetic fixture bootstrap admin/);
   assert.doesNotMatch(script, /:'tenant_id'|:'seed_key'/);
   assert.match(script, /deletedRows\?\.tenants !== 1/);
   assert.match(script, /tenant\.deleted/);
