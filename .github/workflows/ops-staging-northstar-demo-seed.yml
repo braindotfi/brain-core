@@ -33,9 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scp -i ~/.ssh/id_deploy scripts/ops/run-northstar-staging-seed.sh scripts/ops/validate-northstar-staging.mjs "azureuser@$VM_HOST:/tmp/"
-      - name: Seed and validate isolated staging tenant
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/run-northstar-staging-seed.sh \
+            scripts/ops/validate-northstar-staging.mjs \
+            scripts/ops/probe-northstar-presentation.mjs \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Seed, validate, and probe isolated staging tenant
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' VALIDATOR_PATH=/tmp/validate-northstar-staging.mjs bash /tmp/run-northstar-staging-seed.sh"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' VALIDATOR_PATH=/tmp/validate-northstar-staging.mjs PRESENTATION_PROBE_PATH=/tmp/probe-northstar-presentation.mjs bash /tmp/run-northstar-staging-seed.sh; rc=\$?; rm -f /tmp/run-northstar-staging-seed.sh /tmp/validate-northstar-staging.mjs /tmp/probe-northstar-presentation.mjs; exit \$rc"
