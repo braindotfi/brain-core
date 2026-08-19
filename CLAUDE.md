@@ -1383,7 +1383,8 @@ Pending
       nonempty tenant. The original presenter tenant can only be repaired through
       the staging-only `ops-repair-canonical-northstar-seed.yml` workflow, which
       is fixed to that tenant and updates no rows beyond the five named AR invoice
-      metadata documents and the unsigned version 2 policy allowlist key.
+      metadata documents, the unsigned version 2 policy allowlist key, and the 48
+      fixed Northstar transaction IDs missing canonical category assignments.
 - [ ] Slack Marketplace MCP registry listing for the pull path.
 - [ ] Provision real Slack, Teams, and ESP credentials in staging and run an
       exercised surface approval release candidate.

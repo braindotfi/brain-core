@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   NORTHSTAR_RECEIVABLE_INVOICE_NUMBERS,
   classifyInvoiceRepair,
+  classifyTransactionCategoryRepair,
   repairPolicyContent,
 } from "../ops/repair-northstar-canonical-seed.mjs";
 
@@ -15,7 +16,10 @@ const legacyPolicy = {
     {
       id: "northstar-ap-auto-approved",
       execute: "auto",
-      when: { "counterparty.in": "vendors.approved" },
+      when: {
+        "counterparty.in": "vendors.approved",
+        "agent.risk_level.lte": "low",
+      },
     },
   ],
 };
@@ -53,6 +57,80 @@ test("refuses a conflicting invoice scenario instead of overwriting it", () => {
     metadata: index === 2 ? { scenario: "ap" } : {},
   }));
   assert.throws(() => classifyInvoiceRepair(invoices), /unexpected scenario marker/);
+});
+
+test("repairs only the exact unassigned canonical Northstar transaction set", () => {
+  const kinds = {
+    revenue: "income.subscription_revenue",
+    payroll: "expense.payroll_and_benefits",
+    cloud: "expense.cloud_infrastructure",
+    operating: "expense.general_and_administrative",
+  };
+  const months = [
+    "2025-09",
+    "2025-10",
+    "2025-11",
+    "2025-12",
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05",
+    "2026-06",
+    "2026-07",
+    "2026-08",
+  ];
+  const rows = months.flatMap((month) =>
+    Object.entries(kinds).map(([kind, canonicalCode], index) => ({
+      id: `txn_${month}_${kind}`,
+      external_transaction_id: `northstar:${month}:${kind}`,
+      category_id: index === 0 ? `cat_${kind}` : null,
+      active_category_id: index === 0 ? `cat_${kind}` : null,
+      canonical_code: index === 0 ? canonicalCode : null,
+    })),
+  );
+
+  const repairs = classifyTransactionCategoryRepair(rows);
+  assert.equal(repairs.length, 36);
+  assert.deepEqual(repairs[0], {
+    id: "txn_2025-09_payroll",
+    externalTransactionId: "northstar:2025-09:payroll",
+    canonicalCode: "expense.payroll_and_benefits",
+  });
+});
+
+test("refuses an unexpected historical category rather than overwriting it", () => {
+  const kinds = ["revenue", "payroll", "cloud", "operating"];
+  const months = [
+    "2025-09",
+    "2025-10",
+    "2025-11",
+    "2025-12",
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05",
+    "2026-06",
+    "2026-07",
+    "2026-08",
+  ];
+  const rows = months.flatMap((month) =>
+    kinds.map((kind) => ({
+      id: `txn_${month}_${kind}`,
+      external_transaction_id: `northstar:${month}:${kind}`,
+      category_id: null,
+      active_category_id: null,
+      canonical_code: null,
+    })),
+  );
+  rows[0] = {
+    ...rows[0],
+    category_id: "cat_wrong",
+    active_category_id: "cat_wrong",
+    canonical_code: "expense.cloud_infrastructure",
+  };
+  assert.throws(() => classifyTransactionCategoryRepair(rows), /unexpected category assignment/);
 });
 
 test("staging repair workflow has no production target and requires apply confirmation", async () => {
