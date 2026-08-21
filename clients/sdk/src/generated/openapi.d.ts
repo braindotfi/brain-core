@@ -379,6 +379,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/invites/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check whether an email has a valid pending member invite
+         * @description BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+         *     The email is trimmed and lowercased before lookup. Returns only a
+         *     boolean and never exposes invite tokens, tenant ids, or member ids.
+         *     `pending` is true only for an invited member whose invite is unexpired,
+         *     unconsumed, and unrevoked.
+         */
+        post: operations["getPendingInviteStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invites/consume": {
         parameters: {
             query?: never;
@@ -6080,6 +6104,46 @@ export interface operations {
              *     is revoked as a side effect of this response). Error code
              *     `auth_token_invalid`.
              */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPendingInviteStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Pending-invite status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        pending: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Missing or invalid platform credential, or the platform secret is not configured. */
             401: {
                 headers: {
                     [name: string]: unknown;

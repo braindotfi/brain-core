@@ -1016,6 +1016,40 @@ describe("production tenancy routes", () => {
     }
   });
 
+  it("reports a valid pending invite for a normalized platform email", async () => {
+    const { app, resolver } = await build({ resolverRows: [{ pending: true }] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/invites/pending",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: { email: "  Invitee+Test@Example.COM  " },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ pending: true });
+      expect(resolver.query).toHaveBeenCalledWith(expect.stringContaining("i.expires_at > now()"), [
+        "invitee+test@example.com",
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("requires the platform credential for pending-invite lookup", async () => {
+    const { app, resolver } = await build({ resolverRows: [{ pending: true }] });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/invites/pending",
+        payload: { email: "invitee@example.com" },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(resolver.query).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it("creates the users row on invite consume (AUTH-PATHS-PLAN.md section 1)", async () => {
     const tenantId = newTenantId();
     const inviteRow = {

@@ -1470,6 +1470,45 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /invites/pending:
+    post:
+      tags: [Tenancy]
+      summary: Check whether an email has a valid pending member invite
+      description: |
+        BFF-only route (`skipAuth`), gated by `X-Platform-Service-Auth`.
+        The email is trimmed and lowercased before lookup. Returns only a
+        boolean and never exposes invite tokens, tenant ids, or member ids.
+        `pending` is true only for an invited member whose invite is unexpired,
+        unconsumed, and unrevoked.
+      operationId: getPendingInviteStatus
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Pending-invite status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pending]
+                properties:
+                  pending: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Missing or invalid platform credential, or the platform secret is not configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /invites/consume:
     post:
       tags: [Tenancy]

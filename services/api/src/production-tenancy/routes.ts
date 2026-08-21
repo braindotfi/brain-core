@@ -549,6 +549,17 @@ export async function registerProductionTenancyRoutes(
   });
 
   app.post(
+    "/invites/pending",
+    { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request) => {
+      assertPlatformCredential(request, deps.platformSecret, "invite:consume");
+      const body = request.body as { email?: unknown } | undefined;
+      const email = normalizeEmail(requireString(body?.email, "email"));
+      return { pending: await hasPendingInviteForEmail(deps.resolverPool, email) };
+    },
+  );
+
+  app.post(
     "/invites/consume",
     { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
     async (request, reply) => {
@@ -896,6 +907,25 @@ async function findInvite(pool: Pool, tokenHash: string): Promise<InviteRow | nu
   return rows[0] ?? null;
 }
 
+async function hasPendingInviteForEmail(pool: Pool, email: string): Promise<boolean> {
+  const { rows } = await pool.query<{ pending: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM member_invites i
+         JOIN members m
+           ON m.tenant_id = i.tenant_id
+          AND m.id = i.member_id
+        WHERE lower(btrim(m.email)) = $1
+          AND m.status = 'invited'
+          AND i.consumed_at IS NULL
+          AND i.revoked_at IS NULL
+          AND i.expires_at > now()
+     ) AS pending`,
+    [email],
+  );
+  return rows[0]?.pending === true;
+}
+
 async function lockInvite(
   client: TenantScopedClient,
   tokenHash: string,
@@ -987,6 +1017,10 @@ function requireString(value: unknown, name: string): string {
     throw brainError("request_body_invalid", `${name} required`);
   }
   return value.trim();
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 function resolveRequestedScopes(raw: unknown, entitlements: readonly Scope[]): readonly Scope[] {
