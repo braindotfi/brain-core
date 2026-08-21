@@ -64,6 +64,12 @@ POST /v1/members/{id}/invites (admin) -> { invite_token, expires_at } - token re
 ONCE, stored hashed, single-use, default expiry 72h. Reissue revokes prior outstanding
 invites for the member.
 DELETE /v1/members/{id}/invites (admin) -> revoke outstanding.
+POST /v1/invites/pending (auth: platform service credential)
+body: { email }
+-> 200 { pending: boolean }. The email is trimmed and lowercased before lookup. `pending`
+is true only when an invite for an invited member is unexpired, unconsumed, and unrevoked.
+This platform-only read lets a BFF veto implicit tenant provisioning without exposing invite
+tokens or membership details.
 POST /v1/invites/consume (auth: platform service credential)
 body: { invite_token, external_ref, display_name? }
 -> 200 { tenant_id, member, session } - atomic: validate token (unexpired, unconsumed,
@@ -114,3 +120,6 @@ sessions remains POST /v1/sessions.
 11. A platform identity has one global tenant link. Repeated or concurrent creation requests
     return `tenant_identity_already_linked` with that tenant id and never leak a PostgreSQL
     unique-constraint error.
+12. Pending-invite lookup matches normalized email and returns true only for an unexpired,
+    unconsumed, unrevoked invite whose member remains invited. It exposes no token or membership
+    details.
