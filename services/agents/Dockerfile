@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Apply Debian security updates that may land after the base image was built.
+RUN apt-get update \
+  && apt-get upgrade -y \
+  && rm -rf /var/lib/apt/lists/*
+
 # Install uv for deterministic dependency installs. Pinned to the same
 # 0.4.x release CI uses (.github/workflows/main.yml python_agents job,
 # astral-sh/setup-uv version: "0.4.x"), by digest so the tag cannot move
