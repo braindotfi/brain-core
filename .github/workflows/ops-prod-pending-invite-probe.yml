@@ -1,0 +1,87 @@
+name: ops-prod-pending-invite-probe
+
+# Read-only post-deploy verification for POST /v1/invites/pending. The
+# platform credential remains on the production VM, and the workflow prints
+# only the HTTP status and parsed boolean response.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe pending invite lookup on production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Probe pending invite lookup
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+
+          if [[ ! -f .env.prod ]]; then
+            echo "::error::.env.prod not found on VM"
+            exit 1
+          fi
+
+          secret="$(grep -E '^BRAIN_PLATFORM_SERVICE_SECRET=' .env.prod | tail -n1 | cut -d'=' -f2-)"
+          if [[ -z "$secret" ]]; then
+            echo "::error::BRAIN_PLATFORM_SERVICE_SECRET is not configured"
+            exit 1
+          fi
+
+          probe_email="ops-pending-invite-probe+$(date -u +%Y%m%dT%H%M%SZ)@brain.invalid"
+          response="$({
+            printf '{"email":"%s"}' "$probe_email" | curl -sS --connect-timeout 10 --max-time 30 \
+              -w '\nHTTP_STATUS:%{http_code}' \
+              -X POST https://api.brain.fi/v1/invites/pending \
+              -H 'Content-Type: application/json' \
+              -H "X-Platform-Service-Auth: $secret" \
+              --data-binary @-
+          })"
+          unset secret
+
+          status="$(printf '%s\n' "$response" | tail -n1 | cut -d: -f2)"
+          payload="$(printf '%s\n' "$response" | sed '$d')"
+          pending="$(
+            printf '%s' "$payload" | docker exec -i brain-prod-api node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                const parsed = JSON.parse(body);
+                if (typeof parsed.pending !== "boolean") process.exit(1);
+                process.stdout.write(String(parsed.pending));
+              });
+            '
+          )"
+
+          echo "HTTP status: $status"
+          echo "pending: $pending"
+
+          if [[ "$status" != "200" ]]; then
+            echo "::error::pending invite lookup did not return HTTP 200"
+            exit 1
+          fi
+          if [[ "$pending" != "false" ]]; then
+            echo "::error::unique probe email unexpectedly has a pending invite"
+            exit 1
+          fi
+          echo "PROBE OK: POST /v1/invites/pending returned pending=false"
+          REMOTE
