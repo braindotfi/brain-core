@@ -1,6 +1,9 @@
 # Debian 12 has no vendor fix for this util-linux issue as of 2026-08-02. Reassess by 2026-09-02.
 # exp:2026-09-02
 CVE-2026-53615
+# Debian 12 has no vendor fix for this util-linux mount issue as of 2026-08-22. Reassess by 2026-09-22.
+# exp:2026-09-22
+CVE-2026-53613
 # Debian 12 marks this gzip issue fix_deferred as of 2026-08-02. Reassess by 2026-09-02.
 # exp:2026-09-02
 CVE-2026-41992
