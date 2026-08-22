@@ -72,7 +72,7 @@
     "pino-pretty": "^11.2.2",
     "siwe": "^2.3.2",
     "ulid": "^3.0.2",
-    "viem": "^2.55.11",
+    "viem": "^2.55.16",
     "zod": "^4.4.3"
   },
   "devDependencies": {
