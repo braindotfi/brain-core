@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly tenant_id="tnt_01M08J9B75QH08MCVA884N57VB"
+readonly tenant_id="tnt_01M0DBPNXG0TRB0SV1WTMB6F6J"
 readonly script_path="/tmp/issue-northstar-phase4-invite.mjs"
 readonly result_path="/tmp/northstar-phase4-invite-result.json"
 
