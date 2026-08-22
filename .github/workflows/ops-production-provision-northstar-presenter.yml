@@ -1,0 +1,172 @@
+name: ops-production-provision-northstar-presenter
+
+on:
+  workflow_call: {}
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PROVISION_FRESH_NORTHSTAR_TRUE_PRODUCTION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: provision and validate clean Northstar production tenants
+    if: github.event_name == 'workflow_call' || inputs.confirmation == 'PROVISION_FRESH_NORTHSTAR_TRUE_PRODUCTION'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: prod-northstar-presenter-provision
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assert workflow production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ -n "$VM_HOST" ]]
+          [[ -n "$VM_SSH_KEY" ]]
+      - name: Configure production SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Copy fixed production scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/ops/run-northstar-staging-seed.sh \
+            scripts/ops/validate-northstar-staging.mjs \
+            scripts/ops/run-northstar-production-assistant-evals.sh \
+            scripts/ops/run-northstar-production-assistant-evals.mjs \
+            docs/demo-runs/BRAIN_ASSISTANT_DEMO_EVALS.md \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Provision, seed, validate, and evaluate on true production
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cleanup() {
+            rm -f \
+              /tmp/assert-true-production.sh \
+              /tmp/run-northstar-staging-seed.sh \
+              /tmp/validate-northstar-staging.mjs \
+              /tmp/run-northstar-production-assistant-evals.sh \
+              /tmp/run-northstar-production-assistant-evals.mjs \
+              /tmp/BRAIN_ASSISTANT_DEMO_EVALS.md
+            docker exec -u 0 brain-prod-api rm -f \
+              /app/tools/seed-northstar-demo/dist/validate-northstar-staging.mjs \
+              >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          chmod 700 \
+            /tmp/assert-true-production.sh \
+            /tmp/run-northstar-staging-seed.sh \
+            /tmp/run-northstar-production-assistant-evals.sh
+
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" \
+            bash /tmp/assert-true-production.sh
+
+          presenter_output="$(
+            VM_ENV_FILE="$VM_ENV_FILE" \
+            API_BASE="$API_BASE" \
+            VALIDATOR_PATH=/tmp/validate-northstar-staging.mjs \
+            NORTHSTAR_COMPANY_NAME='Northstar Labs, Inc.' \
+            NORTHSTAR_FOUNDER_PREFIX='northstar-production-presenter-bootstrap' \
+            bash /tmp/run-northstar-staging-seed.sh
+          )"
+          printf '%s\n' "$presenter_output"
+          presenter_tenant_id="$(printf '%s\n' "$presenter_output" | sed -n 's/^northstar_tenant_id=//p')"
+          [[ "$presenter_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+
+          evaluator_output="$(
+            VM_ENV_FILE="$VM_ENV_FILE" \
+            API_BASE="$API_BASE" \
+            VALIDATOR_PATH=/tmp/validate-northstar-staging.mjs \
+            NORTHSTAR_COMPANY_NAME='Northstar Labs Assistant Evaluation disposable' \
+            NORTHSTAR_FOUNDER_PREFIX='northstar-production-evaluator-bootstrap' \
+            bash /tmp/run-northstar-staging-seed.sh
+          )"
+          printf '%s\n' "$evaluator_output"
+          evaluator_tenant_id="$(printf '%s\n' "$evaluator_output" | sed -n 's/^northstar_tenant_id=//p')"
+          [[ "$evaluator_tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+          [[ "$evaluator_tenant_id" != "$presenter_tenant_id" ]]
+
+          BRAIN_TENANT_ID="$evaluator_tenant_id" \
+            bash /tmp/run-northstar-production-assistant-evals.sh
+
+          docker exec \
+            -e BRAIN_TENANT_ID="$presenter_tenant_id" \
+            brain-prod-api node \
+            /app/tools/seed-northstar-demo/dist/validate-northstar-staging.mjs
+
+          contamination="$(docker exec brain-prod-postgres psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain -c "
+            BEGIN TRANSACTION READ ONLY;
+            SELECT json_build_object(
+              'presenter_tenant_id', '$presenter_tenant_id',
+              'presenter_wiki_questions', COUNT(*) FILTER (
+                WHERE tenant_id = '$presenter_tenant_id' AND action = 'wiki.question'
+              ),
+              'presenter_evaluator_events', COUNT(*) FILTER (
+                WHERE tenant_id = '$presenter_tenant_id' AND action LIKE '%evaluator%'
+              ),
+              'presenter_test_events', COUNT(*) FILTER (
+                WHERE tenant_id = '$presenter_tenant_id' AND action LIKE '%test%'
+              ),
+              'evaluator_tenant_id', '$evaluator_tenant_id',
+              'evaluator_wiki_questions', COUNT(*) FILTER (
+                WHERE tenant_id = '$evaluator_tenant_id' AND action = 'wiki.question'
+              )
+            )::text
+            FROM audit_events
+            WHERE tenant_id IN ('$presenter_tenant_id', '$evaluator_tenant_id');
+            COMMIT;" | tr -d '\r' | sed '/^$/d')"
+          printf '%s\n' "$contamination"
+          printf '%s' "$contamination" | docker exec -i brain-prod-api node -e '
+          let text = "";
+          process.stdin.on("data", (chunk) => text += chunk);
+          process.stdin.on("end", () => {
+            const value = JSON.parse(text);
+            const ok = value.presenter_wiki_questions === 0 &&
+              value.presenter_evaluator_events === 0 &&
+              value.presenter_test_events === 0 &&
+              value.evaluator_wiki_questions === 34;
+            process.exit(ok ? 0 : 1);
+          });
+          '
+
+          printf 'northstar_production_presenter_tenant_id=%s\n' "$presenter_tenant_id"
+          printf 'northstar_production_evaluator_tenant_id=%s\n' "$evaluator_tenant_id"
+          printf '%s\n' "northstar_true_production_provision_completed"
+          REMOTE
+          )"
+          remote_status=$?
+          set -e
+          printf '%s\n' "$output"
+          [[ "$remote_status" == "0" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^true_production_preflight_completed$' || true)" == "1" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^northstar_production_assistant_evals_completed$' || true)" == "1" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^northstar_production_presenter_tenant_id=tnt_' || true)" == "1" ]]
+          [[ "$(printf '%s\n' "$output" | tail -n 1)" == "northstar_true_production_provision_completed" ]]
