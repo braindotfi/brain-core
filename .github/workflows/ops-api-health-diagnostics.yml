@@ -122,10 +122,17 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::api redacted assistant incident logs"
-          docker logs --since 6h --timestamps "${COMPOSE_PROJECT}-api" 2>&1 \
-            | grep -E \
-                '"url":"/v1/wiki/question"|"msg":"request failed"|wiki_question_timeout|dependency_unavailable|rate_limit_exceeded|internal_server_error' \
-            | tail -n 500 \
+          log_file="$(mktemp)"
+          trap 'rm -f "$log_file"' EXIT
+          docker logs --since 6h --timestamps "${COMPOSE_PROJECT}-api" > "$log_file" 2>&1
+          request_ids="$({
+            grep -E '"url":"/v1/wiki/question"' "$log_file" || true
+          } | sed -nE 's/.*"reqId":"([^"]+)".*/\1/p' | sort -u)"
+          if [[ -n "$request_ids" ]]; then
+            while IFS= read -r request_id; do
+              grep -F "\"reqId\":\"$request_id\"" "$log_file" || true
+            done <<< "$request_ids"
+          fi \
             | sed -E \
                 -e 's/(AUTH_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
                 -e 's/(EMAIL_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
