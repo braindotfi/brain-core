@@ -109,6 +109,117 @@ jobs:
           echo
           echo "::endgroup::"
 
+          if [[ "$COMPOSE_PROJECT" == "brain-prod" ]]; then
+            echo "::group::northstar listing question probe"
+            tenant_id='tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ'
+            member_id='user_01M0KKTY83A2V3QYAVEN9452RQ'
+
+            docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+              -v ON_ERROR_STOP=1 \
+              -v tenant_id="$tenant_id" <<'SQL'
+            SELECT json_build_object(
+              'event', 'northstar_listing_dataset_counts',
+              'tenant_id', :'tenant_id',
+              'transactions', (SELECT count(*) FROM ledger_transactions WHERE owner_id = :'tenant_id'),
+              'open_obligations', (SELECT count(*) FROM ledger_obligations WHERE owner_id = :'tenant_id' AND status IN ('upcoming', 'due', 'overdue')),
+              'overdue_invoices', (SELECT count(*) FROM ledger_invoices WHERE owner_id = :'tenant_id' AND status = 'overdue'),
+              'pending_proposals', (SELECT count(*) FROM proposals WHERE tenant_id = :'tenant_id' AND status = 'pending')
+            );
+          SQL
+
+            external_ref="$(
+              docker exec -i brain-prod-postgres psql -U brain -d brain -At \
+                -v ON_ERROR_STOP=1 \
+                -v tenant_id="$tenant_id" \
+                -v member_id="$member_id" <<'SQL'
+              SELECT l.external_ref
+                FROM member_identity_links l
+                JOIN members m
+                  ON m.tenant_id = l.tenant_id
+                 AND m.id = l.member_id
+               WHERE l.tenant_id = :'tenant_id'
+                 AND l.member_id = :'member_id'
+                 AND l.surface = 'platform'
+                 AND m.status = 'active'
+               LIMIT 1;
+          SQL
+            )"
+            if [[ -z "$external_ref" ]]; then
+              echo "No active platform identity link found for fixed Northstar member"
+              exit 1
+            fi
+
+            set -a
+            . "./$VM_ENV_FILE"
+            set +a
+            : "${BRAIN_PLATFORM_SERVICE_SECRET:?BRAIN_PLATFORM_SERVICE_SECRET is required}"
+
+            docker exec \
+              -e BRAIN_PLATFORM_SERVICE_SECRET \
+              -e NORTHSTAR_EXTERNAL_REF="$external_ref" \
+              -e NORTHSTAR_TENANT_ID="$tenant_id" \
+              brain-prod-api node --input-type=module -e '
+                const apiBase = "https://api.brain.fi/v1";
+                const sessionResponse = await fetch(`${apiBase}/sessions`, {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    "x-platform-service-auth": process.env.BRAIN_PLATFORM_SERVICE_SECRET,
+                  },
+                  body: JSON.stringify({
+                    external_ref: process.env.NORTHSTAR_EXTERNAL_REF,
+                    scopes: ["wiki:read"],
+                  }),
+                });
+                const session = await sessionResponse.json();
+                if (
+                  !sessionResponse.ok ||
+                  typeof session.token !== "string" ||
+                  session.member?.tenantId !== process.env.NORTHSTAR_TENANT_ID
+                ) {
+                  throw new Error(`Session exchange failed with HTTP ${sessionResponse.status}`);
+                }
+
+                const checks = [
+                  ["overdue_exact", "Which invoices are overdue?"],
+                  ["overdue_variant", "Which customer invoices are overdue?"],
+                  ["payables_exact", "List all our open vendor payables."],
+                  ["payables_variant", "List all open payables by vendor."],
+                  ["outreach_exact", "Which outreach recommendations need approval?"],
+                  ["outreach_variant", "Which recommendation needs approval before outreach?"],
+                ];
+                for (const [check, question] of checks) {
+                  const response = await fetch(`${apiBase}/wiki/question`, {
+                    method: "POST",
+                    headers: {
+                      authorization: `Bearer ${session.token}`,
+                      "content-type": "application/json",
+                    },
+                    body: JSON.stringify({ question }),
+                  });
+                  const result = await response.json();
+                  process.stdout.write(`${JSON.stringify({
+                    event: "northstar_listing_question_probe",
+                    environment: "true_production_api.brain.fi",
+                    check,
+                    question,
+                    http_status: response.status,
+                    answered: result.answered,
+                    answer: result.answer,
+                    deterministic_intent_id: result.deterministicIntentId ?? null,
+                    evidence_count: Array.isArray(result.evidence) ? result.evidence.length : 0,
+                    evidence: result.evidence ?? [],
+                    model: result.model ?? null,
+                    usage: result.usage ?? null,
+                  })}\n`);
+                  if (!response.ok) {
+                    throw new Error(`${check} failed with HTTP ${response.status}`);
+                  }
+                }
+              '
+            echo "::endgroup::"
+          fi
+
           echo "::group::api redacted logs"
           docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
             logs --tail=160 api 2>&1 \
