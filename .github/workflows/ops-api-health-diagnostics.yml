@@ -141,4 +141,69 @@ jobs:
                 -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
             || true
           echo "::endgroup::"
+
+          if [[ "$COMPOSE_PROJECT" == "brain-prod" ]]; then
+            echo "::group::Northstar Assistant incident retry"
+            external_ref="$(docker exec brain-prod-postgres psql -X -qAt -v ON_ERROR_STOP=1 \
+              -U brain -d brain -c "
+                BEGIN TRANSACTION READ ONLY;
+                SELECT l.external_ref
+                  FROM member_identity_links l
+                  JOIN members m
+                    ON m.tenant_id = l.tenant_id
+                   AND m.id = l.member_id
+                 WHERE l.tenant_id = 'tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ'
+                   AND l.member_id = 'user_01M0KKTY83A2V3QYAVEN9452RQ'
+                   AND l.surface = 'platform'
+                   AND m.status = 'active'
+                   AND m.active = TRUE;
+                COMMIT;" | tr -d '\r' | sed '/^$/d')"
+            [[ "$(printf '%s\n' "$external_ref" | wc -l | tr -d ' ')" == "1" ]]
+
+            docker exec \
+              -e "NORTHSTAR_EXTERNAL_REF=$external_ref" \
+              brain-prod-api node --input-type=module -e '
+                const base = "http://127.0.0.1:3000/v1";
+                const sessionResponse = await fetch(`${base}/sessions`, {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    "x-platform-service-auth": process.env.BRAIN_PLATFORM_SERVICE_SECRET,
+                  },
+                  body: JSON.stringify({
+                    external_ref: process.env.NORTHSTAR_EXTERNAL_REF,
+                    scopes: ["wiki:read"],
+                  }),
+                });
+                const session = await sessionResponse.json();
+                if (!sessionResponse.ok || typeof session.token !== "string") process.exit(1);
+                const questionResponse = await fetch(`${base}/wiki/question`, {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${session.token}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ question: "What was August\u0027s cloud spend?" }),
+                });
+                const result = await questionResponse.json();
+                const passed = questionResponse.status === 200 &&
+                  result.answered === true &&
+                  typeof result.answer === "string" &&
+                  /78,?000/.test(result.answer);
+                process.stdout.write(`${JSON.stringify({
+                  event: "northstar_assistant_incident_retry",
+                  tenant_id: session.member?.tenantId ?? null,
+                  member_id: session.member?.id ?? null,
+                  http_status: questionResponse.status,
+                  answered: result.answered === true,
+                  answer: result.answer ?? null,
+                  evidence_count: Array.isArray(result.evidence) ? result.evidence.length : 0,
+                  model: result.model ?? null,
+                  usage: result.usage ?? null,
+                  passed,
+                })}\n`);
+                if (!passed) process.exit(1);
+              '
+            echo "::endgroup::"
+          fi
           REMOTE
