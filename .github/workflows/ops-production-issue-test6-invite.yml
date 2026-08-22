@@ -1,0 +1,92 @@
+name: ops-production-issue-test6-invite
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type ISSUE_TEST6_INVITE_TRUE_PRODUCTION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  issue:
+    name: issue encrypted test6 invite on true production
+    if: inputs.confirmation == 'ISSUE_TEST6_INVITE_TRUE_PRODUCTION'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-northstar-test6-invite
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assert workflow production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ -n "$VM_HOST" ]]
+          [[ -n "$VM_SSH_KEY" ]]
+      - name: Configure production SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Copy fixed production invite scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/ops/issue-production-test6-invite.sh \
+            scripts/ops/issue-production-test6-invite.mjs \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Issue, verify, and encrypt the production invite
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cleanup() {
+            rm -f \
+              /tmp/assert-true-production.sh \
+              /tmp/issue-production-test6-invite.sh \
+              /tmp/issue-production-test6-invite.mjs
+          }
+          trap cleanup EXIT
+
+          chmod 700 \
+            /tmp/assert-true-production.sh \
+            /tmp/issue-production-test6-invite.sh
+
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" \
+            bash /tmp/assert-true-production.sh
+          bash /tmp/issue-production-test6-invite.sh
+          REMOTE
+          )"
+          remote_status=$?
+          set -e
+          printf '%s\n' "$output"
+          [[ "$remote_status" == "0" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^true_production_preflight_completed$' || true)" == "1" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^{"event":"production_test6_invite_verified"' || true)" == "1" ]]
+          ciphertext="$(printf '%s\n' "$output" | sed -n 's/^invite_ciphertext=//p')"
+          [[ "${#ciphertext}" == "684" ]]
+          [[ "$(printf '%s' "$ciphertext" | base64 -d | wc -c | tr -d ' ')" == "512" ]]
+          [[ "$(printf '%s\n' "$output" | tail -n 1)" == "production_test6_invite_issuance_completed" ]]
