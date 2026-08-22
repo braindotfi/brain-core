@@ -7,7 +7,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "brain-seed-northstar-demo": "./dist/cli.js"
+    "brain-seed-northstar-demo": "./dist/cli.js",
+    "brain-seed-northstar-sources": "./dist/sources-cli.js"
   },
   "scripts": {
     "build": "tsc -b",
@@ -15,7 +16,8 @@
     "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
-    "seed": "node dist/cli.js"
+    "seed": "node dist/cli.js",
+    "seed:sources": "node dist/sources-cli.js"
   },
   "dependencies": {
     "@brain/ledger": "workspace:*",

@@ -17,6 +17,7 @@ Every value shown to a presenter must originate in the tenant's real core record
 | Ledger: Receivables | customer `ledger_invoices` and receivable obligations           | Five named open invoices totaling $530,500.00                               |
 | Ledger: Cash Flow   | posted `ledger_transactions`                                    | Forty-eight monthly revenue and operating-expense records                   |
 | Counterparties      | `ledger_counterparties`                                         | Six vendors, five customers, one tax authority                              |
+| Sources             | `raw_sources`                                                   | Five historical provenance records, explicitly not live connections         |
 | Inbox               | `proposals`, policy trace, audit events                         | Two evidence-backed Collections recommendations requiring review            |
 | Policy              | one active tenant policy                                        | AP auto-allow through $10,000 for approved vendors, review otherwise        |
 | Agents              | tenant agent registration                                       | Collections Agent used by pending Collections recommendations               |
@@ -46,3 +47,12 @@ Every value shown to a presenter must originate in the tenant's real core record
 The canonical amounts are fixed, while transaction, invoice, payable, policy,
 agent, and proposal dates are generated relative to one seed timestamp. This
 keeps a newly provisioned tenant current without changing the reconciled totals.
+
+## Historical source provenance
+
+Northstar has real `raw_sources` rows for historical exports from Harborline
+Bank, Keystone Corporate Card, Meridian Benefits, the Internal Revenue Service,
+and Northstar's internal accounting records. They use `status: historical`,
+contain no credentials or sync timestamp, and cannot be selected by the source
+sync worker. They point at existing Ledger accounts and domains as provenance
+metadata only. They do not create Raw artifacts or write any Ledger data.

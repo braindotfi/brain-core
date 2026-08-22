@@ -183,6 +183,7 @@ describe("recordToWire source freshness", () => {
     expect(recordToWire({ ...src, status: "error", error_message: "timeout" }, now).freshness).toBe(
       "error",
     );
+    expect(recordToWire({ ...src, status: "historical" }, now).freshness).toBe("not_applicable");
   });
 });
 
@@ -278,6 +279,22 @@ describe("SourceService.sync", () => {
     } catch (e) {
       expect((e as { code: string }).code).toBe("source_not_found");
     }
+  });
+
+  it("refuses to sync a historical provenance source", async () => {
+    const repo = new InMemorySourceRepository();
+    const svc = new SourceService(repo);
+    await repo.insert({
+      ...sourceRecord("src_historical", "2026-08-22T00:00:00.000Z"),
+      type: "csv_upload",
+      status: "historical",
+      is_stub: true,
+    });
+
+    await expect(svc.sync(CTX, "src_historical")).rejects.toMatchObject({
+      code: "raw_source_unsupported",
+    });
+    expect((await svc.get(CTX, "src_historical"))?.last_synced_at).toBeNull();
   });
 
   it("updates last_synced_at after a successful sync", async () => {

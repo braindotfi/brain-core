@@ -65,8 +65,8 @@ export const STUB_SOURCE_TYPES: ReadonlySet<SourceType> = new Set([
   "eth_address",
 ]);
 
-export type SourceStatus = "active" | "paused" | "error" | "disconnected";
-export type SourceFreshness = "fresh" | "stale" | "error" | "never_synced";
+export type SourceStatus = "active" | "paused" | "error" | "disconnected" | "historical";
+export type SourceFreshness = "fresh" | "stale" | "error" | "never_synced" | "not_applicable";
 
 export const SOURCE_STALENESS_THRESHOLD_HOURS = 24;
 export const SOURCE_STALENESS_THRESHOLD_MS = SOURCE_STALENESS_THRESHOLD_HOURS * 60 * 60 * 1000;
@@ -149,6 +149,7 @@ export function recordToWire(r: SourceRecord, now: Date = new Date()): SourceWir
 }
 
 export function sourceFreshness(r: SourceRecord, now: Date = new Date()): SourceFreshness {
+  if (r.status === "historical") return "not_applicable";
   if (r.status === "error") return "error";
   if (r.last_synced_at === null) return "never_synced";
   const syncedAt = Date.parse(r.last_synced_at);
