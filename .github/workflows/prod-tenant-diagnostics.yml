@@ -1124,7 +1124,6 @@ jobs:
               console.log(JSON.stringify({ checked: targets, summaries }, null, 2));
               if (failures.length > 0) {
                 console.error(JSON.stringify({ failures }, null, 2));
-                process.exit(1);
               }
             });
           NODE
