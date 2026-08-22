@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   issue:
-    name: issue encrypted Northstar Phase 4 admin invite
+    name: inspect test5 Northstar invite state read-only
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: staging
@@ -29,7 +29,7 @@ jobs:
           echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
-      - name: Copy fixed Northstar invite scripts
+      - name: Copy fixed Northstar invite diagnostic
         shell: bash
         run: |
           set -euo pipefail
@@ -37,7 +37,7 @@ jobs:
             scripts/ops/issue-northstar-phase4-invite.mjs \
             scripts/ops/issue-northstar-phase4-invite.sh \
             "azureuser@$VM_HOST:/tmp/"
-      - name: Issue encrypted invite and assert completion
+      - name: Query invite state and assert completion
         shell: bash
         run: |
           set -euo pipefail
@@ -47,5 +47,5 @@ jobs:
           sentinel="$(printf '%s\n' "$output" | sed -n '2p')"
           [[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" == "2" ]]
           [[ "$ciphertext" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
-          [[ "$sentinel" == "northstar_invite_issuance_completed" ]]
+          [[ "$sentinel" == "northstar_invite_status_completed" ]]
           printf '%s\n' "$ciphertext"
