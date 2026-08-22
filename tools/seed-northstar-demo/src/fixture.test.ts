@@ -2,8 +2,52 @@ import { describe, expect, it } from "vitest";
 import { evaluate, runActivationLintGate } from "@brain/policy";
 import { buildNorthstarPolicy } from "./index.js";
 import { buildNorthstarFixture, NORTHSTAR_EXPECTED, validateNorthstarFixture } from "./fixture.js";
+import {
+  buildNorthstarHistoricalSources,
+  buildNorthstarHistoricalSourceMetadata,
+  NORTHSTAR_ACCOUNT_EXTERNAL_IDS,
+} from "./historical-sources.js";
 
 describe("Northstar Labs fixture", () => {
+  it("defines honest provenance sources without live connection claims", () => {
+    const sources = buildNorthstarHistoricalSources({
+      operating: "acct_operating",
+      reserve: "acct_reserve",
+      card: "acct_card",
+    });
+
+    expect(sources).toHaveLength(5);
+    expect(sources.map((source) => source.providerName)).toEqual([
+      "Harborline Bank",
+      "Keystone Corporate Card",
+      "Meridian Benefits",
+      "Internal Revenue Service",
+      "Northstar Labs",
+    ]);
+    expect(sources.map((source) => source.sourceCategory)).toEqual(
+      expect.arrayContaining(["banking_cash", "payroll_hr", "tax_records", "accounting_erp"]),
+    );
+    expect(sources[0]?.externalAccountIds).toEqual([
+      NORTHSTAR_ACCOUNT_EXTERNAL_IDS.operating,
+      NORTHSTAR_ACCOUNT_EXTERNAL_IDS.reserve,
+    ]);
+    expect(sources[1]?.externalAccountIds).toEqual([NORTHSTAR_ACCOUNT_EXTERNAL_IDS.card]);
+    expect(sources.slice(2).every((source) => source.externalAccountIds.length === 0)).toBe(true);
+
+    for (const source of sources) {
+      expect(
+        buildNorthstarHistoricalSourceMetadata(source, "2026-08-22T00:00:00.000Z"),
+      ).toMatchObject({
+        seed_key: "northstar_labs_v1",
+        origin_mode: "historical_import",
+        live_connection: false,
+        sync_disabled: true,
+        disconnectable: false,
+        disconnect_hidden: true,
+      });
+    }
+  });
+
   it("reconciles Ledger, Overview, Wiki, and forecasting totals", () => {
     const fixture = buildNorthstarFixture(new Date("2026-08-15T23:45:00.000Z"));
     validateNorthstarFixture(fixture);

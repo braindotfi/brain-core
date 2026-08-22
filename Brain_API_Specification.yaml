@@ -2270,7 +2270,7 @@ paths:
           schema: { $ref: '#/components/schemas/SourceType' }
         - name: status
           in: query
-          schema: { type: string, enum: [active, paused, error, disconnected] }
+          schema: { type: string, enum: [active, paused, error, disconnected, historical] }
         - name: limit
           in: query
           schema: { type: integer }
@@ -7787,9 +7787,10 @@ components:
       description: |
         Derived source freshness. `fresh` means the source synced within the
         last 24 hours. `stale` means the last sync is older than 24 hours.
-        `never_synced` means there is no successful sync timestamp. `error`
-        mirrors an error source status.
-      enum: [fresh, stale, error, never_synced]
+        `never_synced` means a syncable source has no successful sync timestamp.
+        `error` mirrors an error source status. `not_applicable` identifies a
+        historical provenance record that has no live connection or sync cycle.
+      enum: [fresh, stale, error, never_synced, not_applicable]
 
     Source:
       type: object
@@ -7800,18 +7801,17 @@ components:
         type: { $ref: '#/components/schemas/SourceType' }
         status:
           type: string
-          enum: [active, paused, error, disconnected]
+          enum: [active, paused, error, disconnected, historical]
         last_synced_at: { type: [string, "null"], format: date-time }
         freshness: { $ref: '#/components/schemas/SourceFreshness' }
         metadata:
           type: object
           additionalProperties: true
           description: |
-            Connector metadata. Demo tenants may include
-            `demo_seed_kind:"fake_connected_source"`, `disconnectable:false`,
-            `disconnect_hidden:true`, and `sync_disabled:true` for fake connected
-            rows that should count as connected sources but should not show a
-            disconnect control or run provider sync.
+            Connector or provenance metadata. A `historical` source has no live
+            provider connection, no credentials, and no sync cycle. Its metadata
+            can describe the origin system and the Ledger records it overlaps,
+            without causing another ingestion pass.
         error_message: { type: [string, "null"] }
         is_stub:
           type: boolean

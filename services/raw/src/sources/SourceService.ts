@@ -241,7 +241,9 @@ export class SourceService {
       ctx.tenantId,
       externalAccountId,
     );
-    if (record === null || record.status === "disconnected") return null;
+    if (record === null || record.status === "disconnected" || record.status === "historical") {
+      return null;
+    }
     const credentials = await this.credentialStore.resolveCredentials(ctx.tenantId, record.id);
     if (credentials === null) return null;
     return { source_id: record.id, type: record.type, credentials };
@@ -270,6 +272,9 @@ export class SourceService {
     if (existing === null) return null;
     if (existing.status === "disconnected") {
       throw brainError("source_not_found", "cannot sync a disconnected source");
+    }
+    if (existing.status === "historical") {
+      throw brainError("raw_source_unsupported", "historical sources do not support sync");
     }
     const connector = getConnector(existing.type);
     const job = await connector.sync(id);

@@ -30,6 +30,7 @@ import {
   type NorthstarReceivableFixture,
   validateNorthstarFixture,
 } from "./fixture.js";
+import { seedNorthstarHistoricalSources } from "./historical-sources.js";
 
 export type NorthstarSeedResult = {
   tenantId: string;
@@ -43,6 +44,7 @@ export type NorthstarSeedResult = {
     transactions: number;
     payables: number;
     receivables: number;
+    sources: number;
   };
 };
 
@@ -125,6 +127,7 @@ export async function seedNorthstarDemo(
     provenance: "human_confirmed",
     confidence: 1,
   });
+  const historicalSources = await seedNorthstarHistoricalSources(pool, tenantId, fixture.asOf);
 
   for (const [index, month] of fixture.monthlyCashFlow.entries()) {
     const date = month.transactionDate;
@@ -316,6 +319,7 @@ export async function seedNorthstarDemo(
       transactions: fixture.monthlyCashFlow.length * 4,
       payables: fixture.payables.length,
       receivables: fixture.receivables.length,
+      sources: historicalSources.sourceIds.length,
     },
   };
 }

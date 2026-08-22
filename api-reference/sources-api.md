@@ -1,9 +1,18 @@
 # Sources and Raw Ingestion
 
-The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. Source connectors (Plaid, on-chain extractors, ERP integrations) are configured out-of-band via the Console or per-tenant infra wiring and they push evidence into Brain through the **Raw layer**. The Raw API is what you call to ingest artifacts directly and to inspect what's been ingested.
+Brain exposes `/v1/sources/*` for tenant-scoped source records and the Raw API
+for the evidence those sources produce. Live connectors such as Plaid can hold
+encrypted credentials and run sync cycles. A source with `status: historical`
+is provenance metadata only: it has no live provider connection, stores no
+credentials, and cannot sync. This lets imported or curated Ledger data name
+its origin without claiming that Brain is actively connected to that system.
 
 | Concern                                                            | API                                                       |
 | ------------------------------------------------------------------ | --------------------------------------------------------- |
+| List source records                                                | `GET /v1/sources`                                         |
+| Read one source record                                             | `GET /v1/sources/{source_id}`                             |
+| Connect or disconnect a live source                                | `POST /v1/sources`, `DELETE /v1/sources/{source_id}`      |
+| Trigger a live source sync                                         | `POST /v1/sources/{source_id}/sync`                       |
 | Push an artifact (file, URL, or provider webhook payload) into Raw | `POST /v1/raw/ingest`, `POST /v1/raw/webhooks/{provider}` |
 | Read or tombstone a Raw artifact                                   | `GET /v1/raw/{raw_id}`, `DELETE /v1/raw/{raw_id}`         |
 | Trigger asynchronous document extraction                           | `POST /v1/raw/{raw_id}/extract`                           |
@@ -11,7 +20,22 @@ The Brain HTTP surface does **not** expose a `/v1/sources/*` resource family. So
 | Read the deterministic parser output for an artifact               | `GET /v1/raw/{raw_id}/parsed`                             |
 | Promote parsed Raw into typed Ledger rows                          | `POST /v1/ledger/normalize` (see Ledger API)              |
 
-The "Source Types" table further down is the conceptual taxonomy. The `source_type` you tag an ingested artifact with, not a list of HTTP resources you create.
+The "Source Types" table further down is the shared connector and artifact
+origin taxonomy. A source record uses `type`; an ingested artifact uses the
+corresponding `source_type`.
+
+### Source lifecycle status
+
+| `status`       | Meaning                                                                   |
+| -------------- | ------------------------------------------------------------------------- |
+| `active`       | A configured source eligible for live sync                                |
+| `paused`       | A configured source whose sync is intentionally paused                    |
+| `error`        | A configured source that needs attention after a connection or sync error |
+| `disconnected` | A former connection that is no longer available                           |
+| `historical`   | Provenance for prior imports or curated data, with no live connection     |
+
+Historical source freshness is `not_applicable`, and attempts to sync one fail
+with `raw_source_unsupported`.
 
 ### Ingest a Raw Artifact
 

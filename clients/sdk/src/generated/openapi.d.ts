@@ -4025,26 +4025,26 @@ export interface components {
         /**
          * @description Derived source freshness. `fresh` means the source synced within the
          *     last 24 hours. `stale` means the last sync is older than 24 hours.
-         *     `never_synced` means there is no successful sync timestamp. `error`
-         *     mirrors an error source status.
+         *     `never_synced` means a syncable source has no successful sync timestamp.
+         *     `error` mirrors an error source status. `not_applicable` identifies a
+         *     historical provenance record that has no live connection or sync cycle.
          * @enum {string}
          */
-        SourceFreshness: "fresh" | "stale" | "error" | "never_synced";
+        SourceFreshness: "fresh" | "stale" | "error" | "never_synced" | "not_applicable";
         Source: {
             id: string;
             tenantId: string;
             type: components["schemas"]["SourceType"];
             /** @enum {string} */
-            status: "active" | "paused" | "error" | "disconnected";
+            status: "active" | "paused" | "error" | "disconnected" | "historical";
             /** Format: date-time */
             last_synced_at: string | null;
             freshness: components["schemas"]["SourceFreshness"];
             /**
-             * @description Connector metadata. Demo tenants may include
-             *     `demo_seed_kind:"fake_connected_source"`, `disconnectable:false`,
-             *     `disconnect_hidden:true`, and `sync_disabled:true` for fake connected
-             *     rows that should count as connected sources but should not show a
-             *     disconnect control or run provider sync.
+             * @description Connector or provenance metadata. A `historical` source has no live
+             *     provider connection, no credentials, and no sync cycle. Its metadata
+             *     can describe the origin system and the Ledger records it overlaps,
+             *     without causing another ingestion pass.
              */
             metadata: {
                 [key: string]: unknown;
@@ -6915,7 +6915,7 @@ export interface operations {
         parameters: {
             query?: {
                 type?: components["schemas"]["SourceType"];
-                status?: "active" | "paused" | "error" | "disconnected";
+                status?: "active" | "paused" | "error" | "disconnected" | "historical";
                 limit?: number;
                 cursor?: string;
             };
