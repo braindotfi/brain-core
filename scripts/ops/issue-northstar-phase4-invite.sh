@@ -11,6 +11,7 @@ payload="$({
     SET LOCAL lock_timeout = '1s';
     WITH matching AS (
       SELECT i.member_id,
+             i.token_hash,
              i.created_at,
              i.expires_at,
              i.consumed_at,
@@ -41,6 +42,7 @@ payload="$({
         json_agg(
           json_build_object(
             'member_id', member_id,
+            'token_hash', token_hash,
             'created_at', created_at,
             'expires_at', expires_at,
             'consumed_at', consumed_at,
