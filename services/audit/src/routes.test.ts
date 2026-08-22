@@ -347,6 +347,45 @@ describe("GET /audit/events query-param validation (F-2)", () => {
     expect(res.json().error.code).toBe("invalid_cursor");
     await app.close();
   });
+
+  it("validates after as a compatibility alias for cursor", async () => {
+    const app = Fastify();
+    await app.register(errorHandlerPlugin);
+    app.addHook("onRequest", async (req) => {
+      (req as unknown as { principal: unknown }).principal = {
+        tenantId,
+        id: "user_1",
+        type: "user",
+        scopes: ["audit:read"],
+      };
+    });
+    const client = {
+      query: vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [], rowCount: 0 })),
+      release: vi.fn(),
+    };
+    await registerAuditRoutes(app, {
+      pool: { connect: async () => client } as unknown as Pool,
+      audit: new InMemoryAuditEmitter(),
+    });
+    const after = Buffer.from(
+      JSON.stringify({ sort: "2026-08-18T12:01:00.000Z", id: "evt_02" }),
+    ).toString("base64url");
+    const ok = await app.inject({ method: "GET", url: `/audit/events?after=${after}` });
+    expect(ok.statusCode).toBe(200);
+    const eventQuery = client.query.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("SELECT * FROM audit_events"),
+    );
+    expect(eventQuery?.[0]).toContain("(created_at, id) <");
+    expect(eventQuery?.[1]).toEqual(["2026-08-18T12:01:00.000Z", "evt_02", 101]);
+
+    const malformed = await app.inject({
+      method: "GET",
+      url: "/audit/events?after=not-a-cursor",
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json().error.code).toBe("invalid_cursor");
+    await app.close();
+  });
 });
 
 describe("GET /audit/anchor/latest anchoring mode", () => {

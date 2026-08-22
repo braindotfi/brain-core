@@ -47,6 +47,7 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
           until?: string;
           limit?: string;
           cursor?: string;
+          after?: string;
         };
       }>,
       reply,
@@ -62,8 +63,11 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: AuditDeps)
       });
       const since = parseDateParam("since", request.query.since);
       const until = parseDateParam("until", request.query.until);
-      const cursor =
-        request.query.cursor !== undefined ? decodeKeysetCursor(request.query.cursor) : undefined;
+      // `cursor` is the public contract. Accept `after` as a compatibility
+      // alias for older BrainMVB deployments that replayed next_cursor under
+      // the wrong query name. Prefer cursor when both are present.
+      const cursorValue = request.query.cursor ?? request.query.after;
+      const cursor = cursorValue !== undefined ? decodeKeysetCursor(cursorValue) : undefined;
       const rows = await withTenantScope(deps.pool, principal.tenantId, (c) =>
         queryEvents(c, {
           ...(request.query.layer !== undefined ? { layer: request.query.layer } : {}),
