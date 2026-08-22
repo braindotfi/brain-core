@@ -83,23 +83,37 @@ logs_payload="$(docker logs --since 6h brain-prod-api 2>&1 | docker exec -i brai
 let text = "";
 process.stdin.on("data", (chunk) => text += chunk);
 process.stdin.on("end", () => {
-  const rows = [];
+  const parsed = [];
   for (const line of text.split("\n")) {
-    if (!line.includes("/invites/consume") && !line.includes("/invites/pending")) continue;
     try {
-      const value = JSON.parse(line);
-      const url = value.req?.url ?? value.url ?? null;
-      if (typeof url !== "string" || (!url.includes("/invites/consume") && !url.includes("/invites/pending"))) continue;
-      rows.push({
+      parsed.push(JSON.parse(line));
+    } catch {}
+  }
+  const requestUrls = new Map();
+  for (const value of parsed) {
+    const url = value.req?.url ?? value.url ?? null;
+    const requestId = value.reqId ?? value.requestId ?? value.req?.id ?? null;
+    if (
+      typeof requestId === "string" &&
+      typeof url === "string" &&
+      (url.includes("/invites/consume") || url.includes("/invites/pending"))
+    ) {
+      requestUrls.set(requestId, url);
+    }
+  }
+  const rows = [];
+  for (const value of parsed) {
+    const requestId = value.reqId ?? value.requestId ?? value.req?.id ?? null;
+    if (typeof requestId !== "string" || !requestUrls.has(requestId)) continue;
+    rows.push({
         time: value.time ?? value.timestamp ?? null,
-        request_id: value.reqId ?? value.requestId ?? value.req?.id ?? null,
+        request_id: requestId,
         method: value.req?.method ?? value.method ?? null,
-        url,
+        url: value.req?.url ?? value.url ?? requestUrls.get(requestId),
         status_code: value.res?.statusCode ?? value.statusCode ?? null,
         response_time_ms: value.responseTime ?? null,
         message: value.msg ?? value.message ?? null,
-      });
-    } catch {}
+    });
   }
   process.stdout.write(JSON.stringify(rows.slice(-100)));
 });
