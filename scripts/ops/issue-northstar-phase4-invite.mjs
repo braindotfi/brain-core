@@ -1,23 +1,23 @@
 import { constants, createHash, createPublicKey, publicEncrypt } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
-const TENANT_ID = "tnt_01M08J9B75QH08MCVA884N57VB";
-const RECIPIENT_EMAIL = "braindotfi+test1@gmail.com";
+const TENANT_ID = "tnt_01M0DBPNXG0TRB0SV1WTMB6F6J";
+const RECIPIENT_EMAIL = "braindotfi+test5@gmail.com";
 const EXPECTED_PUBLIC_KEY_SHA256 =
-  "05e3e5924f48e385afbd6b58334f8355c03696012887b87747f486568640a8a2";
+  "d6b1e38f91393dee8b631d5e6e36fe8338a335f5b2b49d2a22bd7eb564f00eb8";
 const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsNSjWThpXRvOufxTOKQu
-Kt3U3Qd7qIdP7MsMGCDGTnozstnAJWOCBMabOq9A3NgNJ11McUNyH5b9ujGpVorB
-wwpaxnmiMLwLHXU0NFdi8CP2shEIOmcvkEbh+SAl3G+fRLvNRdsTECElyFZo5/q8
-F8vq4iWmJ26r5QVtWcXw14x1rrkr5VbTbFZxO8SFPwV+4D1LneDf0caytZbGInoi
-bEBO6763qdeuClHV/rrgOxYUIqob4ZyqgWQG8xbHX9r6oXWrM9xURqUWL3dzPpQL
-3LlnNaAhSYHjMpGwDikyS8L+prCjsRAeE5qfWBkg+rvAD4FbFi5bAeNIxPRF0LlW
-xWP5t5Y/P5MoFAWzzsNUBUE/g0+JWbBnoC32dm7p6rwCyG/tl/jJpY5LelSNYmDf
-8mPBRu6rLYPwovqtK0nh4Qxn5PHU3YNE5nCSIomHfjwk/xoopb5dHHA+/hxASrzs
-P3dtnfN187KUwdAi/aKA3RvDnw6IEoI+HDyuwG8aKtxOCZ+GXZJJTZo0oUQkO/UT
-iU6TxU5KWh0g4G4C3a/86vhHjPm3SWcmNKuKas488anq3HUfEYqPXRI9RVc1TzEl
-jjB/XnhSqfz+TMrGAYlRe/h5Tl4+E1IBWVIBHtRZz83zUKtyh2QoS+WYTYzFr/wd
-fMlgXoq2kugnaIzS6/AboOECAwEAAQ==
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsYL5R/dlsb1EWtzqHXx3
+6QIHLaSM/Beydp34q9bop23xtAhITBYQB+uDDBg0Zl7TpEgJurvuUWQodGb7hRn2
+L/V7NohV6C1Z9QCxMZJAW9r36mG1NM7jvyY0RfgfAGh1xUDPvabwimHGG+bZbcgc
+RVcpskJTXWOaOklRYlLwuuKgm9mRrb2gQEsh2buYo4fQhustYWfQXsSZvoG301+g
+Vc8HKFdrMB+es0eT2PujUzCsjNQ5jgD59u2s+29zvnIfhxrcTtwvwzOSw60FT6JO
+gGwIHhMJEA6cDrwULBt8unrUzzMAaFwgYbjNm3V9s8cEDGAWLOhG9c8lb/pSpODp
+zmzwPOLdx/Syq/XSpsfUym1CP2Am64SnGfEHXPHCir7kCeS9cM+NIJAKCKdtc/ev
+C7+SNgmfC9NskYZvfAoGDgogtbbNFdVnX7Mch8s0uYIoOvVmWMMvEuRj6YHqLS3P
+1j8PY6XWoj+/HeL+3dXqGC6qqhmo/YGMC4/KVxQX1oWDLfW/75iJk/AwxUt1e6kY
+IoceR6Pby1PSHJDcmiKC86sPDhSzvW2d7INLWfvI8GOfmQiC9LITdRrurBZK2WJt
+k3YqFCboIA2RAkg+U+GrqT03VG+uuTU2yetyXTCVq3nKxSRZrMSz5Vm1HOQQqfT5
+q8CRqn2R8yQ0WhQ+70GnLqMCAwEAAQ==
 -----END PUBLIC KEY-----
 `;
 const RESULT_PATH = process.env.NORTHSTAR_RESULT_PATH;
@@ -99,7 +99,7 @@ if (existing !== undefined) {
     headers: { ...adminHeaders, "content-type": "application/json" },
     body: JSON.stringify({
       email: RECIPIENT_EMAIL,
-      display_name: "Northstar Phase 4 Test Presenter",
+      display_name: "Northstar Manual Policy Test 5",
       role: "admin",
       invite: true,
       approval: {
