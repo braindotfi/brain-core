@@ -1027,13 +1027,22 @@ jobs:
                 --data-binary @-
             )"
             token="$(
-              printf '%s' "$session_json" | docker exec -i brain-prod-api node -e '
+              printf '%s' "$session_json" | docker exec -i \
+                -e EXPECTED_TENANT_ID="$TENANT_ID" \
+                -e EXPECTED_MEMBER_ID="user_01M0KKTY83A2V3QYAVEN9452RQ" \
+                brain-prod-api node -e '
                 let body = "";
                 process.stdin.on("data", (chunk) => { body += chunk; });
                 process.stdin.on("end", () => {
                   const parsed = JSON.parse(body);
                   if (typeof parsed.token !== "string" || parsed.token.length === 0) {
                     process.exit(1);
+                  }
+                  if (parsed.member?.tenantId !== process.env.EXPECTED_TENANT_ID) {
+                    throw new Error("session tenant mismatch");
+                  }
+                  if (parsed.member?.id !== process.env.EXPECTED_MEMBER_ID) {
+                    throw new Error("session member mismatch");
                   }
                   process.stdout.write(parsed.token);
                 });
@@ -1149,18 +1158,6 @@ jobs:
                 });
               '
             )"
-            first_audit_tenant="$(
-              printf '%s' "$first_audit_json" | docker exec -i brain-prod-api node -e '
-                let body = "";
-                process.stdin.on("data", (chunk) => { body += chunk; });
-                process.stdin.on("end", () => {
-                  const parsed = JSON.parse(body);
-                  const event = parsed.events?.[0];
-                  if (typeof event?.tenant_id !== "string") process.exit(1);
-                  process.stdout.write(event.tenant_id);
-                });
-              '
-            )"
             first_audit_cursor="$(
               printf '%s' "$first_audit_json" | docker exec -i brain-prod-api node -e '
                 let body = "";
@@ -1183,19 +1180,12 @@ jobs:
               -e AUDIT_TENANT_ID="$TENANT_ID" \
               -e AUDIT_MEMBER_ID="user_01M0KKTY83A2V3QYAVEN9452RQ" \
               -e FIRST_AUDIT_ID="$first_audit_id" \
-              -e FIRST_AUDIT_TENANT="$first_audit_tenant" \
               brain-prod-api node -e '
                 let body = "";
                 process.stdin.on("data", (chunk) => { body += chunk; });
                 process.stdin.on("end", () => {
                   const parsed = JSON.parse(body);
                   const second = parsed.events?.[0];
-                  if (process.env.FIRST_AUDIT_TENANT !== process.env.AUDIT_TENANT_ID) {
-                    throw new Error("first page tenant mismatch");
-                  }
-                  if (second?.tenant_id !== process.env.AUDIT_TENANT_ID) {
-                    throw new Error("second page tenant mismatch");
-                  }
                   if (typeof second.id !== "string" || second.id === process.env.FIRST_AUDIT_ID) {
                     throw new Error("legacy after pagination did not advance");
                   }
