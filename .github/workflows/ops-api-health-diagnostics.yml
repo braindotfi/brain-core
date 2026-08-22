@@ -120,4 +120,18 @@ jobs:
                 -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
             || true
           echo "::endgroup::"
+
+          echo "::group::api redacted assistant incident logs"
+          docker logs --since 6h --timestamps "${COMPOSE_PROJECT}-api" 2>&1 \
+            | grep -E \
+                '"url":"/v1/wiki/question"|"msg":"request failed"|wiki_question_timeout|dependency_unavailable|rate_limit_exceeded|internal_server_error' \
+            | tail -n 500 \
+            | sed -E \
+                -e 's/(AUTH_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's/(EMAIL_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's/(BRAIN_[A-Z0-9_]*PASSWORD=)[^[:space:]]+/\1[redacted]/g' \
+                -e 's#(postgres(ql)?://)[^[:space:]]+#\1[redacted]#g' \
+                -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
+            || true
+          echo "::endgroup::"
           REMOTE
