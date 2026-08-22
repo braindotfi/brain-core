@@ -2621,7 +2621,8 @@ function parsePayableByCounterpartyIntent(question: string): PayableByCounterpar
 function parseOpenPayablesListingIntent(question: string): Record<string, never> | null {
   const q = question.toLowerCase();
   return /\b(?:list|show|display)\b/.test(q) &&
-    /\b(?:all\s+)?open\s+payables?\b/.test(q) &&
+    /\bopen\b/.test(q) &&
+    /\bpayables?\b/.test(q) &&
     /\bvendors?\b/.test(q)
     ? {}
     : null;
@@ -2805,7 +2806,7 @@ function parsePendingRecommendationsIntent(question: string): PendingRecommendat
 
 function parseOutreachApprovalRecommendationIntent(question: string): Record<string, never> | null {
   const q = question.toLowerCase();
-  return /\b(?:which|what)\s+recommendation\b/.test(q) &&
+  return /\b(?:which|what)\s+(?:outreach\s+)?recommendations?\b/.test(q) &&
     /\b(?:needs?|requires?)\s+approval\b/.test(q) &&
     /\b(?:outreach|follow[ -]?up)\b/.test(q)
     ? {}
@@ -2827,7 +2828,12 @@ function parseOverdueCustomerInvoicesIntent(
   if (/[,;]/.test(q) || /\b(?:and|or)\b/.test(q)) return null;
   const referencesReceivables = /\b(customer|customers|accounts receivable|receivables?)\b/.test(q);
   const referencesArInvoices = /\binvoices?\b/.test(q) && /\bar\b/.test(q);
-  if (!/\boverdue\b/.test(q) || (!referencesReceivables && !referencesArInvoices)) {
+  const referencesInvoiceListing =
+    /\b(?:which|what)\s+invoices?\b/.test(q) || /\b(?:list|show|display)\b.*\binvoices?\b/.test(q);
+  if (
+    !/\boverdue\b/.test(q) ||
+    (!referencesReceivables && !referencesArInvoices && !referencesInvoiceListing)
+  ) {
     return null;
   }
   return { asOf, operation: /\bhow\s+much\b|\btotal\b/.test(q) ? "total" : "list" };

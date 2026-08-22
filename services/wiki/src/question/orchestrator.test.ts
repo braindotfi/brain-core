@@ -4421,6 +4421,11 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(payables.answer).toContain("Meridian Benefits");
     expect(payables.answer).not.toContain("Payroll");
 
+    const naturalPayables = await ask("List all our open vendor payables.");
+    expect(naturalPayables).toMatchObject({ deterministicIntentId: "open_payables_listing" });
+    expect(naturalPayables.answer).toContain("Meridian Benefits");
+    expect(naturalPayables.answer).not.toContain("Payroll");
+
     const invoices = await ask("List all open customer invoices.");
     expect(invoices).toMatchObject({ deterministicIntentId: "open_customer_invoices_listing" });
     expect(invoices.answer).toContain("AR-HORIZON");
@@ -4431,6 +4436,14 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       deterministicIntentId: "overdue_customer_invoices_total",
     });
     expect(overdue.answer).toContain("$280,000.00");
+
+    const naturalOverdue = await ask("Which invoices are overdue?");
+    expect(naturalOverdue).toMatchObject({
+      deterministicIntentId: "overdue_customer_invoices",
+    });
+    expect(naturalOverdue.answer).toContain("AR-HORIZON");
+    expect(naturalOverdue.answer).toContain("AR-APEX");
+    expect(naturalOverdue.answer).not.toContain("AP-MERIDIAN");
 
     const meridian = await ask("What is the payment due to Meridian Benefits?");
     expect(meridian).toMatchObject({ deterministicIntentId: "payable_by_counterparty" });
@@ -4557,7 +4570,15 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(outreach.answer).toContain("Follow up with Helio Manufacturing");
     expect(outreach.answer).not.toContain("Review Northwind Cloud");
     expect(outreach.evidence.map((item) => item.entityType)).toEqual(["proposal"]);
-    expect(proposalReader.listPendingCollections).toHaveBeenCalledOnce();
+
+    const naturalOutreach = await ask("Which outreach recommendations need approval?");
+    expect(naturalOutreach).toMatchObject({
+      deterministicIntentId: "outreach_approval_recommendation",
+    });
+    expect(naturalOutreach.answer).toContain("Follow up with Helio Manufacturing");
+    expect(naturalOutreach.answer).not.toContain("Review Northwind Cloud");
+    expect(naturalOutreach.evidence.map((item) => item.entityType)).toEqual(["proposal"]);
+    expect(proposalReader.listPendingCollections).toHaveBeenCalledTimes(2);
     expect(llm.seen).toEqual([]);
   });
 });
