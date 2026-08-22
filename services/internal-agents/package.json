@@ -23,7 +23,7 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
     "@vitest/coverage-v8": "^4.1.8",
-    "eslint": "^9.12.0",
+    "eslint": "^10.8.1",
     "@brain/policy": "workspace:*"
   },
   "dependencies": {
