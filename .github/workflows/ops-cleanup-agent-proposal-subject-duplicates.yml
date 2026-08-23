@@ -14,6 +14,16 @@ on:
         required: false
         type: string
         default: ""
+      tenant_id:
+        description: "Production tenant whose duplicate subjects may be reported or superseded"
+        required: true
+        type: string
+      agent_id:
+        description: "Agent subject namespace to report or supersede"
+        required: true
+        type: choice
+        options: [reconciliation, vendor_risk, subscription, fraud_anomaly, compliance]
+        default: reconciliation
 
 permissions:
   contents: read
@@ -32,6 +42,10 @@ jobs:
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
       MODE: ${{ inputs.mode }}
       CONFIRMATION: ${{ inputs.confirmation }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      AGENT_ID: ${{ inputs.agent_id }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -47,6 +61,16 @@ jobs:
             echo "apply requires confirmation=SUPERSEDE_DUPLICATE_AGENT_PROPOSAL_SUBJECT_DUPLICATES"
             exit 1
           fi
+          if [[ ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+            echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
+            exit 1
+          fi
+          case "$AGENT_ID" in
+            reconciliation|vendor_risk|subscription|fraud_anomaly|compliance) ;;
+            *) echo "unsupported agent_id"; exit 1 ;;
+          esac
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
 
       - name: Configure SSH
         shell: bash
@@ -62,12 +86,25 @@ jobs:
         run: |
           set -euo pipefail
           script="scripts/ops/cleanup-agent-proposal-subject-duplicates.mjs"
-          scp -i ~/.ssh/id_deploy "$script" "azureuser@$VM_HOST:~/brain-core/$script"
+          scp -i ~/.ssh/id_deploy \
+            "$script" \
+            scripts/ops/assert-true-production.sh \
+            "azureuser@$VM_HOST:~/brain-core/scripts/ops/"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "MODE='$MODE' bash -s" <<'REMOTE'
+            "MODE='$MODE' TENANT_ID='$TENANT_ID' AGENT_ID='$AGENT_ID' VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
           set -euo pipefail
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+          case "$AGENT_ID" in
+            reconciliation|vendor_risk|subscription|fraud_anomaly|compliance) ;;
+            *) echo "unsupported agent_id"; exit 1 ;;
+          esac
           cd ~/brain-core
-          args=()
+          chmod 700 scripts/ops/assert-true-production.sh
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" \
+            bash scripts/ops/assert-true-production.sh
+          args=(--tenant-id "$TENANT_ID" --agent-id "$AGENT_ID")
           if [[ "$MODE" == "apply" ]]; then
             args+=(--apply)
           fi

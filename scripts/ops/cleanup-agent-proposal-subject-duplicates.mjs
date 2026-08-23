@@ -23,13 +23,38 @@ function requireEnv(name) {
 
 function parseOptions() {
   const { values } = parseArgs({
-    options: { apply: { type: "boolean" }, help: { type: "boolean" } },
+    options: {
+      apply: { type: "boolean" },
+      "tenant-id": { type: "string" },
+      "agent-id": { type: "string" },
+      help: { type: "boolean" },
+    },
   });
   if (values.help === true) {
-    process.stdout.write("Usage: cleanup-agent-proposal-subject-duplicates [--apply]\n");
+    process.stdout.write(
+      "Usage: cleanup-agent-proposal-subject-duplicates [--apply] [--tenant-id tnt_...] [--agent-id agent]\n",
+    );
     process.exit(0);
   }
-  return { apply: values.apply === true };
+  const tenantId = values["tenant-id"]?.trim() || null;
+  const agentId = values["agent-id"]?.trim() || null;
+  if (tenantId !== null && !/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/.test(tenantId)) {
+    throw new Error("tenant-id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$");
+  }
+  const supportedAgents = new Set([
+    "reconciliation",
+    "vendor_risk",
+    "subscription",
+    "fraud_anomaly",
+    "compliance",
+  ]);
+  if (agentId !== null && !supportedAgents.has(agentId)) {
+    throw new Error(`unsupported agent-id: ${agentId}`);
+  }
+  if (values.apply === true && (tenantId === null || agentId === null)) {
+    throw new Error("apply requires both tenant-id and agent-id");
+  }
+  return { apply: values.apply === true, tenantId, agentId };
 }
 
 const subjectCte = `
@@ -44,7 +69,7 @@ const subjectCte = `
                   AND NULLIF(p.action->>'vendor_id', '') IS NOT NULL THEN 'vendor_id'
              WHEN p.proposing_agent = 'vendor_risk'
                   AND NULLIF(p.action->>'counterparty_id', '') IS NOT NULL THEN 'counterparty_id'
-             WHEN p.proposing_agent IN ('subscription', 'fraud_anomaly')
+             WHEN p.proposing_agent IN ('reconciliation', 'subscription', 'fraud_anomaly')
                   AND NULLIF(p.action->>'transaction_id', '') IS NOT NULL THEN 'transaction_id'
              WHEN p.proposing_agent = 'compliance'
                   AND NULLIF(p.action->>'policy_decision_id', '') IS NOT NULL THEN 'policy_decision_id'
@@ -57,7 +82,7 @@ const subjectCte = `
                   AND NULLIF(p.action->>'vendor_id', '') IS NOT NULL THEN p.action->>'vendor_id'
              WHEN p.proposing_agent = 'vendor_risk'
                   AND NULLIF(p.action->>'counterparty_id', '') IS NOT NULL THEN p.action->>'counterparty_id'
-             WHEN p.proposing_agent IN ('subscription', 'fraud_anomaly')
+             WHEN p.proposing_agent IN ('reconciliation', 'subscription', 'fraud_anomaly')
                   AND NULLIF(p.action->>'transaction_id', '') IS NOT NULL THEN p.action->>'transaction_id'
              WHEN p.proposing_agent = 'compliance'
                   AND NULLIF(p.action->>'policy_decision_id', '') IS NOT NULL THEN p.action->>'policy_decision_id'
@@ -65,9 +90,13 @@ const subjectCte = `
                   AND NULLIF(p.action->>'audit_event_id', '') IS NOT NULL THEN p.action->>'audit_event_id'
              ELSE NULL
            END AS subject_value
-      FROM proposals p
+     FROM proposals p
      WHERE p.status = 'pending'
-       AND p.proposing_agent IN ('vendor_risk', 'subscription', 'fraud_anomaly', 'compliance')
+       AND p.proposing_agent IN (
+         'reconciliation', 'vendor_risk', 'subscription', 'fraud_anomaly', 'compliance'
+       )
+       AND ($1::text IS NULL OR p.tenant_id = $1)
+       AND ($2::text IS NULL OR p.proposing_agent = $2)
   ), eligible AS (
     SELECT *
       FROM scoped
@@ -102,7 +131,7 @@ async function inReadOnlyTransaction(pool, fn) {
   }
 }
 
-async function duplicateGroups(pool) {
+async function duplicateGroups(pool, tenantId, agentId) {
   return inReadOnlyTransaction(pool, async () => {
     const { rows } = await pool.query(
       `${subjectCte}
@@ -118,12 +147,13 @@ async function duplicateGroups(pool) {
         WHERE group_size > 1
         GROUP BY tenant_id, proposing_agent, subject_field, subject_value
         ORDER BY tenant_id, proposing_agent, subject_field, subject_value`,
+      [tenantId, agentId],
     );
     return rows;
   });
 }
 
-async function reportEvidence(pool) {
+async function reportEvidence(pool, tenantId, agentId) {
   return inReadOnlyTransaction(pool, async () => {
     const { rows } = await pool.query(
       `${subjectCte}
@@ -143,6 +173,7 @@ async function reportEvidence(pool) {
                          FROM ranked WHERE group_size > 1) groups) AS rows_to_supersede,
               (SELECT min(created_at) FROM ranked WHERE group_size > 1) AS duplicate_oldest_created_at,
               (SELECT max(created_at) FROM ranked WHERE group_size > 1) AS duplicate_newest_created_at`,
+      [tenantId, agentId],
     );
     const { rows: perAgentRows } = await pool.query(
       `${subjectCte}
@@ -157,6 +188,7 @@ async function reportEvidence(pool) {
          FROM ranked
         GROUP BY proposing_agent
         ORDER BY proposing_agent`,
+      [tenantId, agentId],
     );
     const { rows: largestGroupRows } = await pool.query(
       `${subjectCte}
@@ -178,6 +210,7 @@ async function reportEvidence(pool) {
            LIMIT 1
         )
         ORDER BY created_at ASC, id ASC`,
+      [tenantId, agentId],
     );
     return {
       summary: rows[0] ?? {},
@@ -190,8 +223,11 @@ async function reportEvidence(pool) {
 function subjectPredicate(group) {
   const field = group.subject_field;
   if (
-    (group.proposing_agent === "vendor_risk" && (field === "vendor_id" || field === "counterparty_id")) ||
-    ((group.proposing_agent === "subscription" || group.proposing_agent === "fraud_anomaly") &&
+    (group.proposing_agent === "vendor_risk" &&
+      (field === "vendor_id" || field === "counterparty_id")) ||
+    ((group.proposing_agent === "reconciliation" ||
+      group.proposing_agent === "subscription" ||
+      group.proposing_agent === "fraud_anomaly") &&
       field === "transaction_id") ||
     (group.proposing_agent === "compliance" &&
       (field === "policy_decision_id" || field === "audit_event_id"))
@@ -210,6 +246,64 @@ function subjectPredicate(group) {
     };
   }
   throw new Error(`unsupported agent subject group: ${group.proposing_agent}.${field}`);
+}
+
+async function preservationEvidence(pool, tenantId, agentId, proposalIds) {
+  if (proposalIds.length === 0) {
+    return {
+      targeted_rows: 0,
+      retained_rows: 0,
+      superseded_rows: 0,
+      linked_rows: 0,
+      original_proposed_audit_subjects: 0,
+      cleanup_audit_subjects: 0,
+      audit_events_for_targeted_rows: 0,
+    };
+  }
+  return inReadOnlyTransaction(pool, async () => {
+    const { rows } = await pool.query(
+      `WITH targeted AS (
+         SELECT unnest($1::text[]) AS proposal_id
+       )
+       SELECT (SELECT count(*)::int FROM targeted) AS targeted_rows,
+              (SELECT count(*)::int
+                 FROM proposals p
+                 JOIN targeted t ON t.proposal_id = p.id
+                WHERE p.tenant_id = $2
+                  AND p.proposing_agent = $3) AS retained_rows,
+              (SELECT count(*)::int
+                 FROM proposals p
+                 JOIN targeted t ON t.proposal_id = p.id
+                WHERE p.tenant_id = $2
+                  AND p.proposing_agent = $3
+                  AND p.status = 'superseded') AS superseded_rows,
+              (SELECT count(*)::int
+                 FROM proposals p
+                 JOIN targeted t ON t.proposal_id = p.id
+                WHERE p.tenant_id = $2
+                  AND p.proposing_agent = $3
+                  AND p.superseded_at IS NOT NULL
+                  AND p.superseded_by IS NOT NULL) AS linked_rows,
+              (SELECT count(DISTINCT ae.inputs->>'proposal_id')::int
+                 FROM audit_events ae
+                 JOIN targeted t ON t.proposal_id = ae.inputs->>'proposal_id'
+                WHERE ae.tenant_id = $2
+                  AND ae.actor = $3
+                  AND ae.action = 'agent.action.proposed') AS original_proposed_audit_subjects,
+              (SELECT count(DISTINCT ae.inputs->>'proposal_id')::int
+                 FROM audit_events ae
+                 JOIN targeted t ON t.proposal_id = ae.inputs->>'proposal_id'
+                WHERE ae.tenant_id = $2
+                  AND ae.actor = 'agent_proposal_subject_duplicate_cleanup'
+                  AND ae.action = 'agent.action.superseded') AS cleanup_audit_subjects,
+              (SELECT count(*)::int
+                 FROM audit_events ae
+                 JOIN targeted t ON t.proposal_id = ae.inputs->>'proposal_id'
+                WHERE ae.tenant_id = $2) AS audit_events_for_targeted_rows`,
+      [proposalIds, tenantId, agentId],
+    );
+    return rows[0] ?? {};
+  });
 }
 
 async function supersedeGroup(appPool, audit, group) {
@@ -282,7 +376,7 @@ async function supersedeGroup(appPool, audit, group) {
 }
 
 async function main() {
-  const { apply } = parseOptions();
+  const { apply, tenantId, agentId } = parseOptions();
   const appPool = new Pool({ connectionString: requireEnv("DATABASE_URL") });
   const ownerPool = new Pool({
     connectionString: `postgres://brain:${encodeURIComponent(
@@ -291,19 +385,37 @@ async function main() {
   });
   const audit = new PostgresAuditEmitter(appPool);
   try {
-    const groups = await duplicateGroups(ownerPool);
-    const evidence = await reportEvidence(ownerPool);
+    const groups = await duplicateGroups(ownerPool, tenantId, agentId);
+    const evidence = await reportEvidence(ownerPool, tenantId, agentId);
+    const targetedProposalIds = groups.flatMap((group) => group.supersede_proposal_ids);
+    const preCleanupPreservation = await preservationEvidence(
+      ownerPool,
+      tenantId,
+      agentId,
+      targetedProposalIds,
+    );
     const proposalsToSupersede = groups.reduce(
       (count, group) => count + group.supersede_proposal_ids.length,
       0,
     );
     process.stdout.write(`mode=${apply ? "apply" : "report"}\n`);
+    process.stdout.write(`tenant_id=${tenantId ?? "all"}\n`);
+    process.stdout.write(`agent_id=${agentId ?? "all"}\n`);
     process.stdout.write(`duplicate_groups=${groups.length}\n`);
     process.stdout.write(`proposals_to_supersede=${proposalsToSupersede}\n`);
     process.stdout.write(`report_evidence=${JSON.stringify(evidence)}\n`);
+    process.stdout.write(
+      `pre_cleanup_preservation_evidence=${JSON.stringify(preCleanupPreservation)}\n`,
+    );
     for (const group of groups) process.stdout.write(`${JSON.stringify(group)}\n`);
 
     if (!apply) return;
+    if (
+      preCleanupPreservation.retained_rows !== targetedProposalIds.length ||
+      preCleanupPreservation.original_proposed_audit_subjects !== targetedProposalIds.length
+    ) {
+      throw new Error("pre-cleanup proposal or original audit history verification failed");
+    }
 
     let superseded = 0;
     for (const group of groups) {
@@ -311,11 +423,27 @@ async function main() {
       superseded += result.superseded.length;
       process.stdout.write(`${JSON.stringify({ ...group, ...result })}\n`);
     }
-    const remainingGroups = await duplicateGroups(ownerPool);
+    const remainingGroups = await duplicateGroups(ownerPool, tenantId, agentId);
+    const preservation = await preservationEvidence(
+      ownerPool,
+      tenantId,
+      agentId,
+      targetedProposalIds,
+    );
     process.stdout.write(`superseded=${superseded}\n`);
     process.stdout.write(`duplicate_groups_after=${remainingGroups.length}\n`);
+    process.stdout.write(`preservation_evidence=${JSON.stringify(preservation)}\n`);
     if (remainingGroups.length > 0) {
       throw new Error("duplicate agent proposal subject groups remain after guarded cleanup");
+    }
+    if (
+      preservation.retained_rows !== targetedProposalIds.length ||
+      preservation.superseded_rows !== targetedProposalIds.length ||
+      preservation.linked_rows !== targetedProposalIds.length ||
+      preservation.original_proposed_audit_subjects !== targetedProposalIds.length ||
+      preservation.cleanup_audit_subjects !== targetedProposalIds.length
+    ) {
+      throw new Error("proposal or cleanup audit preservation verification failed");
     }
   } finally {
     await Promise.all([appPool.end(), ownerPool.end()]);
