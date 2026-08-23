@@ -42,6 +42,7 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
   let pool: Pool;
   let schema: string;
   let runService: AgentRunService;
+  let audit: InMemoryAuditEmitter;
 
   beforeAll(async () => {
     schema = `vendor_risk_scan_${createHash("sha1")
@@ -70,7 +71,7 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
       migrator.release();
     }
 
-    const audit = new InMemoryAuditEmitter();
+    audit = new InMemoryAuditEmitter();
     const ledger = new LedgerService({ pool, audit });
     const classifier = new RulesIntentClassifier();
     const evidence = new ServiceEvidenceGatherer(
@@ -90,8 +91,8 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
       pool,
       audit,
       evaluatePolicy: async () => ({
-        outcome: "allow",
-        matched_rule_id: "test_allow",
+        outcome: "confirm",
+        matched_rule_id: "test_confirm",
         required_approvers: [],
         trace: [],
         policy_version: 1,
@@ -149,7 +150,7 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
     );
     await runVendorRiskScanCycle(
       { scanPool: pool, appPool: pool, runService },
-      { now: new Date("2026-07-19T01:00:00.000Z"), batchSize: 10, cooldownMs: 86_400_000 },
+      { now: new Date("2026-07-20T01:00:00.000Z"), batchSize: 10, cooldownMs: 86_400_000 },
     );
 
     const proposals = await listProposals(
@@ -163,7 +164,7 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
     expect(proposals.proposals).toHaveLength(1);
     expect(proposals.proposals[0]).toMatchObject({
       type: "vendor_risk",
-      status: "approved",
+      status: "pending",
       risk_band: "high",
       mode: "propose",
       payment_intent_id: null,
@@ -176,6 +177,22 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
       ]),
     });
     expect(proposals.proposals[0]?.narrative).toContain("Recommend hold");
+    expect(
+      audit.events.filter(
+        (event) =>
+          event.tenantId === tenant &&
+          event.actor === "vendor_risk" &&
+          event.action === "agent.action.refreshed",
+      ),
+    ).toHaveLength(0);
+
+    const runCount = await withTenantScope(pool, tenant, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*) FROM agent_runs WHERE agent_id = 'vendor_risk'`,
+      );
+      return rows[0]?.count;
+    });
+    expect(runCount).toBe("2");
   });
 
   it("scores a verified vendor with bank-detail change through signals", async () => {
@@ -206,7 +223,7 @@ suite("vendor risk scanner integration (requires DATABASE_URL)", () => {
     expect(proposals.proposals).toHaveLength(1);
     expect(proposals.proposals[0]).toMatchObject({
       type: "vendor_risk",
-      status: "approved",
+      status: "pending",
       risk_band: "elevated",
       mode: "propose",
       payment_intent_id: null,

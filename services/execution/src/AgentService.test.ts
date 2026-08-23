@@ -51,7 +51,7 @@ function makeProposalRow(overrides: Record<string, unknown> = {}) {
     proposing_agent: AGENT_ID,
     action: { kind: "flag_anomaly", mode: "propose" },
     policy_version: 1,
-    policy_decision: "allow",
+    policy_decision: "confirm",
     policy_trace: [],
     required_approvers: [],
     status: "approved",
@@ -333,8 +333,18 @@ describe("AgentService.propose", () => {
     expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
     expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(1);
     expect(proposal.action).toMatchObject({ invoice_id: "inv_123", days_overdue: 19 });
-    expect((deps.audit as InMemoryAuditEmitter).events).toEqual(
-      expect.arrayContaining([expect.objectContaining({ action: "agent.action.refreshed" })]),
+    const refresh = (deps.audit as InMemoryAuditEmitter).events.find(
+      (event) => event.action === "agent.action.refreshed",
+    );
+    expect(refresh).toMatchObject({
+      outputs: {
+        changed_fields: ["action"],
+        before_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        after_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(refresh?.outputs["before_action_sha256"]).not.toBe(
+      refresh?.outputs["after_action_sha256"],
     );
   });
 
@@ -392,10 +402,23 @@ describe("AgentService.propose", () => {
     expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
     expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(1);
     expect(proposal.action).toMatchObject({ vendor_id: "ven_123", risk_band: "high" });
+    const refresh = (deps.audit as InMemoryAuditEmitter).events.find(
+      (event) => event.action === "agent.action.refreshed",
+    );
+    expect(refresh?.outputs).toMatchObject({
+      changed_fields: ["action"],
+      before_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      after_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(refresh?.outputs["before_action_sha256"]).not.toBe(
+      refresh?.outputs["after_action_sha256"],
+    );
+    expect(refresh?.beforeState).toMatchObject({ action: { risk_band: "elevated" } });
+    expect(refresh?.afterState).toMatchObject({ action: { risk_band: "high" } });
   });
 
-  it.each(["subscription", "fraud_anomaly"])(
-    "refreshes a pending %s proposal for the same transaction",
+  it.each(["reconciliation", "subscription", "fraud_anomaly"])(
+    "keeps one pending %s proposal for repeated identical transaction evaluations",
     async (agentId) => {
       const queries: string[] = [];
       let proposal = makeProposalRow({ proposing_agent: agentId, status: "pending" });
@@ -425,8 +448,97 @@ describe("AgentService.propose", () => {
 
       expect(second.id).toBe(first.id);
       expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+      expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(0);
+      expect((deps.audit as InMemoryAuditEmitter).events.map((event) => event.action)).toEqual([
+        "agent.action.proposed",
+      ]);
     },
   );
+
+  it("keeps one vendor proposal and emits no user-visible refresh for an identical evaluation", async () => {
+    const queries: string[] = [];
+    let proposal = makeProposalRow({ proposing_agent: "vendor_risk", status: "pending" });
+    let inserted = false;
+    const deps = makeDeps("confirm", (sql, values) => {
+      queries.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+        return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith("INSERT INTO proposals")) {
+        inserted = true;
+        proposal = { ...proposal, id: String(values[0]), action: JSON.parse(String(values[3])) };
+        return { rows: [proposal], rowCount: 1 };
+      }
+      if (sql.startsWith("UPDATE proposals")) return { rows: [proposal], rowCount: 1 };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const svc = new AgentService(deps);
+    const action = { type: "hold", vendor_id: "ven_unchanged", risk_band: "high" };
+
+    const first = await svc.propose(ctx, "vendor_risk", { action });
+    const second = await svc.propose(ctx, "vendor_risk", { action });
+
+    expect(second.id).toBe(first.id);
+    expect(queries.filter((sql) => sql.startsWith("INSERT INTO proposals"))).toHaveLength(1);
+    expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(0);
+    expect((deps.audit as InMemoryAuditEmitter).events.map((event) => event.action)).toEqual([
+      "agent.action.proposed",
+    ]);
+  });
+
+  it("emits a refresh when policy changes even if the action is unchanged", async () => {
+    const queries: string[] = [];
+    let proposal = makeProposalRow({ proposing_agent: "vendor_risk", status: "pending" });
+    let inserted = false;
+    const evaluatePolicy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: "confirm",
+        matched_rule_id: "policy_v1",
+        required_approvers: [],
+        trace: [],
+        policy_version: 1,
+      })
+      .mockResolvedValueOnce({
+        outcome: "confirm",
+        matched_rule_id: "policy_v2",
+        required_approvers: [],
+        trace: [],
+        policy_version: 2,
+      });
+    const deps = makeDeps(
+      "confirm",
+      (sql, values) => {
+        queries.push(sql);
+        if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+        if (sql.includes("FROM proposals") && sql.includes("FOR UPDATE")) {
+          return inserted ? { rows: [proposal], rowCount: 1 } : { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith("INSERT INTO proposals")) {
+          inserted = true;
+          proposal = { ...proposal, id: String(values[0]), action: JSON.parse(String(values[3])) };
+          return { rows: [proposal], rowCount: 1 };
+        }
+        if (sql.startsWith("UPDATE proposals")) return { rows: [proposal], rowCount: 1 };
+        throw new Error(`unexpected query: ${sql}`);
+      },
+      { evaluatePolicy },
+    );
+    const svc = new AgentService(deps);
+    const action = { type: "hold", vendor_id: "ven_policy", risk_band: "high" };
+
+    const first = await svc.propose(ctx, "vendor_risk", { action });
+    const second = await svc.propose(ctx, "vendor_risk", { action });
+
+    expect(second.id).toBe(first.id);
+    expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(1);
+    const refresh = (deps.audit as InMemoryAuditEmitter).events.find(
+      (event) => event.action === "agent.action.refreshed",
+    );
+    expect(refresh?.outputs).toMatchObject({ changed_fields: ["policy_version"] });
+    expect(refresh?.outputs["before_action_sha256"]).toBe(refresh?.outputs["after_action_sha256"]);
+  });
 
   it("refreshes compliance by policy decision but never dedupes empty identifiers", async () => {
     const queries: string[] = [];

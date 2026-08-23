@@ -74,6 +74,13 @@ export function hashEvent(input: HashInput): string {
   return createHash("sha256").update(canonicalize(input), "utf8").digest("hex");
 }
 
+/** SHA-256 of an arbitrary JSON-compatible value using the audit canonical form. */
+export function canonicalJsonSha256(value: unknown): string {
+  return createHash("sha256")
+    .update(stableStringify(stableJsonValue(value)), "utf8")
+    .digest("hex");
+}
+
 /**
  * Stable serialization of ONLY an event's logical fields (no id / created_at /
  * prev_event_hash). Used to compare two events for idempotency content equality

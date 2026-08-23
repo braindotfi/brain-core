@@ -140,7 +140,13 @@ describe("runCollectionsProposalReconcileCycle", () => {
     expect(audit.events[0]).toMatchObject({
       tenantId,
       action: "agent.action.refreshed",
-      outputs: { previous_days_overdue: 10, days_overdue: 49 },
+      outputs: {
+        changed_fields: ["action"],
+        before_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        after_action_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        previous_days_overdue: 10,
+        days_overdue: 49,
+      },
     });
   });
 

@@ -20,6 +20,7 @@
 
 import {
   brainError,
+  canonicalJsonSha256,
   newProposalId,
   withTenantScope,
   type AuditEmitter,
@@ -46,7 +47,7 @@ import {
   transitionProposal,
 } from "./repository.js";
 import type { AgentRecord } from "@brain/shared";
-import type { AgentRow } from "./repository.js";
+import type { AgentRow, ProposalRow } from "./repository.js";
 import type { AgentRegistrationRelayer } from "./registration-relayer.js";
 
 export interface AgentServiceDeps {
@@ -136,6 +137,7 @@ function proposalSubjectKey(
       const counterpartyId = stringValue(action["counterparty_id"]);
       return counterpartyId !== null ? { field: "counterparty_id", value: counterpartyId } : null;
     }
+    case "reconciliation":
     case "subscription":
     case "fraud_anomaly": {
       const transactionId = stringValue(action["transaction_id"]);
@@ -152,6 +154,46 @@ function proposalSubjectKey(
     default:
       return null;
   }
+}
+
+interface ProposalMaterialState {
+  readonly action: Record<string, unknown>;
+  readonly policyVersion: number;
+  readonly policyDecision: "allow" | "confirm" | "reject";
+  readonly policyTrace: unknown[];
+  readonly requiredApprovers: string[];
+  readonly status: ProposalRecord["status"];
+}
+
+interface ProposalMaterialDiff {
+  readonly changedFields: string[];
+  readonly beforeActionSha256: string;
+  readonly afterActionSha256: string;
+}
+
+function proposalMaterialDiff(
+  before: ProposalMaterialState,
+  after: ProposalMaterialState,
+): ProposalMaterialDiff {
+  const beforeActionSha256 = canonicalJsonSha256(before.action);
+  const afterActionSha256 = canonicalJsonSha256(after.action);
+  const changedFields: string[] = [];
+
+  if (beforeActionSha256 !== afterActionSha256) changedFields.push("action");
+  if (before.policyVersion !== after.policyVersion) changedFields.push("policy_version");
+  if (before.policyDecision !== after.policyDecision) changedFields.push("policy_decision");
+  if (canonicalJsonSha256(before.policyTrace) !== canonicalJsonSha256(after.policyTrace)) {
+    changedFields.push("policy_trace");
+  }
+  if (
+    canonicalJsonSha256([...before.requiredApprovers].sort()) !==
+    canonicalJsonSha256([...after.requiredApprovers].sort())
+  ) {
+    changedFields.push("required_approvers");
+  }
+  if (before.status !== after.status) changedFields.push("status");
+
+  return { changedFields, beforeActionSha256, afterActionSha256 };
 }
 
 export class AgentService implements IAgentService {
@@ -175,26 +217,64 @@ export class AgentService implements IAgentService {
 
     const invoiceId = collectionsInvoiceId(agentId, action);
     const subjectKey = invoiceId === null ? proposalSubjectKey(agentId, action) : null;
-    let proposalId = id;
-    let refreshed = false;
-    let previousAction: Record<string, unknown> | null = null;
+    const mutation: {
+      proposalId: string;
+      outcome: "created" | "refreshed" | "unchanged";
+      previousState: ProposalMaterialState | null;
+      materialDiff: ProposalMaterialDiff | null;
+    } = {
+      proposalId: id,
+      outcome: "created",
+      previousState: null,
+      materialDiff: null,
+    };
+
+    const refreshedState: ProposalMaterialState = {
+      action,
+      policyVersion: policyResult.policy_version,
+      policyDecision: policyResult.outcome,
+      policyTrace: policyResult.trace,
+      requiredApprovers: policyResult.required_approvers,
+      status,
+    };
+
+    const refreshExisting = async (
+      existing: ProposalRow,
+      refresh: () => Promise<unknown>,
+    ): Promise<void> => {
+      mutation.proposalId = existing.id;
+      mutation.previousState = {
+        action: existing.action,
+        policyVersion: existing.policy_version,
+        policyDecision: existing.policy_decision,
+        policyTrace: existing.policy_trace,
+        requiredApprovers: existing.required_approvers,
+        status: existing.status,
+      };
+      mutation.materialDiff = proposalMaterialDiff(mutation.previousState, refreshedState);
+      if (mutation.materialDiff.changedFields.length === 0) {
+        mutation.outcome = "unchanged";
+        return;
+      }
+      await refresh();
+      mutation.outcome = "refreshed";
+    };
 
     await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
       if (invoiceId !== null) {
         await lockCollectionsProposalForInvoice(c, ctx.tenantId, invoiceId);
         const existing = await findPendingCollectionsProposalForInvoice(c, invoiceId);
         if (existing !== null) {
-          previousAction = existing.action;
-          await refreshCollectionsProposal(c, existing, {
-            action,
-            policyVersion: policyResult.policy_version,
-            policyDecision: policyResult.outcome,
-            policyTrace: policyResult.trace as never,
-            requiredApprovers: policyResult.required_approvers,
-            status,
-          });
-          proposalId = existing.id;
-          refreshed = true;
+          await refreshExisting(existing, () =>
+            refreshCollectionsProposal(c, existing, {
+              action,
+              policyVersion: policyResult.policy_version,
+              policyDecision: policyResult.outcome,
+              policyTrace: policyResult.trace as never,
+              requiredApprovers: policyResult.required_approvers,
+              status,
+            }),
+          );
           return;
         }
       } else if (subjectKey !== null) {
@@ -212,17 +292,16 @@ export class AgentService implements IAgentService {
           subjectKey.value,
         );
         if (existing !== null) {
-          previousAction = existing.action;
-          await refreshPendingProposal(c, existing, {
-            action,
-            policyVersion: policyResult.policy_version,
-            policyDecision: policyResult.outcome,
-            policyTrace: policyResult.trace as never,
-            requiredApprovers: policyResult.required_approvers,
-            status,
-          });
-          proposalId = existing.id;
-          refreshed = true;
+          await refreshExisting(existing, () =>
+            refreshPendingProposal(c, existing, {
+              action,
+              policyVersion: policyResult.policy_version,
+              policyDecision: policyResult.outcome,
+              policyTrace: policyResult.trace as never,
+              requiredApprovers: policyResult.required_approvers,
+              status,
+            }),
+          );
           return;
         }
       }
@@ -239,6 +318,19 @@ export class AgentService implements IAgentService {
       });
     });
 
+    if (mutation.outcome === "unchanged") {
+      return {
+        id: mutation.proposalId,
+        proposing_agent_id: agentId,
+        action,
+        policy_decision_id: mutation.proposalId,
+        status,
+        approvers_signed: [],
+        created_at: new Date().toISOString(),
+      };
+    }
+
+    const refreshed = mutation.outcome === "refreshed";
     await this.deps.audit.emit({
       tenantId: ctx.tenantId,
       layer: "agent",
@@ -250,7 +342,7 @@ export class AgentService implements IAgentService {
       outcome: policyResult.outcome,
       inputs: {
         action_kind: String(action["kind"] ?? "agent_action"),
-        proposal_id: proposalId,
+        proposal_id: mutation.proposalId,
         ...(invoiceId !== null ? { invoice_id: invoiceId } : {}),
         ...(subjectKey !== null ? { [subjectKey.field]: subjectKey.value } : {}),
       },
@@ -262,18 +354,43 @@ export class AgentService implements IAgentService {
         ...(refreshed
           ? {
               refreshed: true,
-              previous_days_overdue: previousAction?.["days_overdue"] ?? null,
+              changed_fields: mutation.materialDiff?.changedFields ?? [],
+              before_action_sha256: mutation.materialDiff?.beforeActionSha256 ?? null,
+              after_action_sha256: mutation.materialDiff?.afterActionSha256 ?? null,
+              previous_days_overdue: mutation.previousState?.action["days_overdue"] ?? null,
               days_overdue: action["days_overdue"] ?? null,
             }
           : {}),
       },
+      ...(refreshed
+        ? {
+            beforeState: {
+              id: mutation.proposalId,
+              action: mutation.previousState?.action ?? {},
+              action_sha256: mutation.materialDiff?.beforeActionSha256 ?? null,
+              policy_version: mutation.previousState?.policyVersion ?? null,
+              policy_decision: mutation.previousState?.policyDecision ?? null,
+              required_approvers: mutation.previousState?.requiredApprovers ?? [],
+              status: mutation.previousState?.status ?? null,
+            },
+            afterState: {
+              id: mutation.proposalId,
+              action,
+              action_sha256: mutation.materialDiff?.afterActionSha256 ?? null,
+              policy_version: refreshedState.policyVersion,
+              policy_decision: refreshedState.policyDecision,
+              required_approvers: refreshedState.requiredApprovers,
+              status: refreshedState.status,
+            },
+          }
+        : {}),
     });
 
     return {
-      id: proposalId,
+      id: mutation.proposalId,
       proposing_agent_id: agentId,
       action,
-      policy_decision_id: proposalId,
+      policy_decision_id: mutation.proposalId,
       status,
       approvers_signed: [],
       created_at: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import {
+  canonicalJsonSha256,
   startManagedInterval,
   withTenantScope,
   type AuditEmitter,
@@ -326,6 +327,8 @@ async function refreshProposal(
   }
 
   const previousDaysOverdue = proposal.action["days_overdue"] ?? null;
+  const beforeActionSha256 = canonicalJsonSha256(proposal.action);
+  const afterActionSha256 = canonicalJsonSha256(refreshedAction);
   await refreshCollectionsProposal(client, proposal, {
     action: refreshedAction,
     policyVersion: policyResult.policy_version,
@@ -355,8 +358,29 @@ async function refreshProposal(
       matched_rule_id: policyResult.matched_rule_id,
       required_approvers: policyResult.required_approvers,
       refreshed: true,
+      changed_fields: ["action"],
+      before_action_sha256: beforeActionSha256,
+      after_action_sha256: afterActionSha256,
       previous_days_overdue: previousDaysOverdue,
       days_overdue: daysOverdue,
+    },
+    beforeState: {
+      id: proposal.id,
+      action: proposal.action,
+      action_sha256: beforeActionSha256,
+      policy_version: proposal.policy_version,
+      policy_decision: proposal.policy_decision,
+      required_approvers: proposal.required_approvers,
+      status: proposal.status,
+    },
+    afterState: {
+      id: proposal.id,
+      action: refreshedAction,
+      action_sha256: afterActionSha256,
+      policy_version: policyResult.policy_version,
+      policy_decision: policyResult.outcome,
+      required_approvers: policyResult.required_approvers,
+      status,
     },
   });
 
