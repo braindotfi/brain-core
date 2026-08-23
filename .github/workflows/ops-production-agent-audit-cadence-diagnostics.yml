@@ -1,0 +1,81 @@
+name: ops-production-agent-audit-cadence-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DIAGNOSE_AGENT_AUDIT_CADENCE_TRUE_PRODUCTION
+        required: true
+        type: string
+      tenant_id:
+        description: Production tenant id to inspect
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: diagnose production agent audit cadence
+    if: inputs.confirmation == 'DIAGNOSE_AGENT_AUDIT_CADENCE_TRUE_PRODUCTION'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-agent-audit-cadence-diagnostics
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+      TENANT_ID: ${{ inputs.tenant_id }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate fixed production inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+      - name: Configure production SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Copy fixed production diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/ops/report-agent-audit-cadence.sql \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Verify true production and run read-only diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' TENANT_ID='$TENANT_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+          cleanup() {
+            unlink /tmp/assert-true-production.sh 2>/dev/null || true
+            unlink /tmp/report-agent-audit-cadence.sql 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          chmod 700 /tmp/assert-true-production.sh
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" bash /tmp/assert-true-production.sh
+          docker exec -i brain-prod-postgres psql -X -P pager=off -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" \
+            < /tmp/report-agent-audit-cadence.sql
+          REMOTE
