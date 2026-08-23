@@ -20,7 +20,11 @@ test("report measures roots, shared transaction batches, and corrected rate", ()
   assert.match(report, /distinct_anchor_transactions/);
   assert.match(report, /batch_roots/);
   assert.match(report, /reconciliation_duplicate/);
+  assert.match(report, /proposal\.id = ae\.inputs->>'proposal_id'/);
+  assert.match(report, /proposal\.action->>'transaction_id'/);
   assert.match(report, /unchanged_refresh/);
+  assert.match(report, /refresh\.distinct_inputs = 1/);
+  assert.match(report, /refresh\.distinct_outputs = 1/);
   assert.match(report, /bug_only_roots/);
   assert.match(report, /projected_corrected_roots_per_day/);
   assert.match(workflow, /eth_getTransactionReceipt/);

@@ -82,38 +82,71 @@ SELECT '0x' || encode(target.onchain_tx_hash, 'hex') AS transaction_hash,
 \echo 'corrected-rate counterfactual'
 WITH ranked_events AS (
   SELECT ae.*,
+         COALESCE(
+           NULLIF(ae.inputs->>'transaction_id', ''),
+           NULLIF(proposal.action->>'transaction_id', '')
+         ) AS subject_transaction_id,
          ROW_NUMBER() OVER (
-           PARTITION BY ae.actor, ae.action, ae.inputs->>'transaction_id'
+           PARTITION BY ae.actor,
+                        ae.action,
+                        COALESCE(
+                          NULLIF(ae.inputs->>'transaction_id', ''),
+                          NULLIF(proposal.action->>'transaction_id', '')
+                        )
            ORDER BY ae.created_at, ae.id
          ) AS transaction_action_position
     FROM audit_events ae
+    LEFT JOIN proposals proposal
+      ON proposal.tenant_id = ae.tenant_id
+     AND proposal.id = ae.inputs->>'proposal_id'
    WHERE ae.tenant_id = :'tenant_id'
+), refresh_group_stats AS (
+  SELECT actor,
+         inputs->>'proposal_id' AS proposal_id,
+         COUNT(*) AS refresh_count,
+         COUNT(DISTINCT inputs) AS distinct_inputs,
+         COUNT(DISTINCT outputs) AS distinct_outputs
+    FROM ranked_events
+   WHERE action = 'agent.action.refreshed'
+     AND NULLIF(inputs->>'proposal_id', '') IS NOT NULL
+   GROUP BY actor, inputs->>'proposal_id'
 ), classified_events AS (
   SELECT ranked.*,
          (
            ranked.actor = 'reconciliation'
            AND ranked.action = 'agent.action.proposed'
-           AND NULLIF(ranked.inputs->>'transaction_id', '') IS NOT NULL
+           AND ranked.subject_transaction_id IS NOT NULL
            AND ranked.transaction_action_position > 1
          ) AS reconciliation_duplicate,
-         COALESCE((
-           ranked.action = 'agent.action.refreshed'
-           AND ranked.before_state ? 'action'
-           AND ranked.after_state ? 'action'
-           AND ranked.before_state->'action' = ranked.after_state->'action'
-           AND ranked.before_state->'policy_version'
-                 IS NOT DISTINCT FROM ranked.after_state->'policy_version'
-           AND ranked.before_state->'policy_decision'
-                 IS NOT DISTINCT FROM ranked.after_state->'policy_decision'
-           AND ranked.before_state->'required_approvers'
-                 IS NOT DISTINCT FROM ranked.after_state->'required_approvers'
-           AND ranked.before_state->'status' IS NOT DISTINCT FROM ranked.after_state->'status'
-         ), FALSE) AS unchanged_refresh,
+         COALESCE(
+           (
+             ranked.action = 'agent.action.refreshed'
+             AND ranked.before_state ? 'action'
+             AND ranked.after_state ? 'action'
+             AND ranked.before_state->'action' = ranked.after_state->'action'
+             AND ranked.before_state->'policy_version'
+                   IS NOT DISTINCT FROM ranked.after_state->'policy_version'
+             AND ranked.before_state->'policy_decision'
+                   IS NOT DISTINCT FROM ranked.after_state->'policy_decision'
+             AND ranked.before_state->'required_approvers'
+                   IS NOT DISTINCT FROM ranked.after_state->'required_approvers'
+             AND ranked.before_state->'status' IS NOT DISTINCT FROM ranked.after_state->'status'
+           ) OR (
+             ranked.action = 'agent.action.refreshed'
+             AND refresh.refresh_count > 1
+             AND refresh.distinct_inputs = 1
+             AND refresh.distinct_outputs = 1
+           ),
+           FALSE
+         ) AS unchanged_refresh,
          (
            ranked.action = 'agent.action.superseded'
            AND ranked.actor = 'agent_proposal_subject_duplicate_cleanup'
          ) AS one_time_cleanup
     FROM ranked_events ranked
+    LEFT JOIN refresh_group_stats refresh
+      ON refresh.actor = ranked.actor
+     AND refresh.proposal_id = ranked.inputs->>'proposal_id'
 ), root_event_counts AS (
   SELECT anchor.id,
          anchor.created_at,
