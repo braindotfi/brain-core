@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newTenantId, newUserId } from "../ids.js";
-import { canonicalize, hashEvent, stableStringify } from "./hash.js";
+import { canonicalize, canonicalJsonSha256, hashEvent, stableStringify } from "./hash.js";
 import type { AuditEventInput } from "./types.js";
 
 describe("stableStringify", () => {
@@ -19,6 +19,21 @@ describe("stableStringify", () => {
     expect(stableStringify(null)).toBe("null");
     expect(stableStringify(true)).toBe("true");
     expect(stableStringify(`line\nwith\tescapes`)).toBe(`"line\\nwith\\tescapes"`);
+  });
+});
+
+describe("canonicalJsonSha256", () => {
+  it("is stable across object key order and changes with content", () => {
+    const first = canonicalJsonSha256({ vendor_id: "ven_1", recommendation: { b: 2, a: 1 } });
+    const reordered = canonicalJsonSha256({ recommendation: { a: 1, b: 2 }, vendor_id: "ven_1" });
+    const changed = canonicalJsonSha256({
+      recommendation: { a: 1, b: 3 },
+      vendor_id: "ven_1",
+    });
+
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(reordered).toBe(first);
+    expect(changed).not.toBe(first);
   });
 });
 

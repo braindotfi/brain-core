@@ -95,8 +95,8 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
       pool,
       audit,
       evaluatePolicy: async () => ({
-        outcome: "allow",
-        matched_rule_id: "test_allow",
+        outcome: "confirm",
+        matched_rule_id: "test_confirm",
         required_approvers: [],
         trace: [],
         policy_version: 1,
@@ -158,7 +158,7 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
     await runReconciliationUnreconciledScanCycle(
       { scanPool: pool, appPool: pool, runService },
       {
-        now: new Date("2026-07-19T01:00:00.000Z"),
+        now: new Date("2026-07-20T01:00:00.000Z"),
         batchSize: 10,
         perTenantBatchSize: 10,
         cooldownMs: 86_400_000,
@@ -171,7 +171,7 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
     expect(proposals.proposals).toHaveLength(1);
     expect(proposals.proposals[0]).toMatchObject({
       type: "reconciliation",
-      status: "approved",
+      status: "pending",
       risk_band: "standard",
       confidence: expect.any(Number),
       mode: "propose",
@@ -181,6 +181,20 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
       evidence: [{ kind: "transaction", ref: tx, resolvable: true }],
     });
     expect(proposals.proposals[0]?.narrative).toContain(`proposed invoice match ${invoice}`);
+
+    const counts = await withTenantScope(pool, tenant, async (client) => {
+      const { rows } = await client.query<{ proposal_count: string; run_count: string }>(
+        `SELECT
+           (SELECT count(*) FROM proposals
+             WHERE proposing_agent = 'reconciliation'
+               AND action->>'transaction_id' = $1) AS proposal_count,
+           (SELECT count(*) FROM agent_runs
+             WHERE agent_id = 'reconciliation') AS run_count`,
+        [tx],
+      );
+      return rows[0];
+    });
+    expect(counts).toEqual({ proposal_count: "1", run_count: "2" });
   });
 
   it("keeps tenants isolated and applies per-tenant fairness", async () => {
