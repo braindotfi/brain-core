@@ -1,0 +1,103 @@
+name: ops-production-retrieve-presenter-invite
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RETRIEVE_PRESENTER_INVITE_TRUE_PRODUCTION
+        required: true
+        type: string
+      public_key_pem_base64:
+        description: Base64-encoded RSA-4096 SPKI public key PEM
+        required: true
+        type: string
+      public_key_sha256:
+        description: SHA-256 fingerprint of the SPKI DER public key
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  retrieve:
+    name: retrieve presenter invite from true production
+    if: inputs.confirmation == 'RETRIEVE_PRESENTER_INVITE_TRUE_PRODUCTION'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-northstar-presenter-invite
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+      PUBLIC_KEY_PEM_BASE64: ${{ inputs.public_key_pem_base64 }}
+      PUBLIC_KEY_SHA256: ${{ inputs.public_key_sha256 }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate fixed production inputs and transport key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+          [[ "$PUBLIC_KEY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s' "$PUBLIC_KEY_PEM_BASE64" | base64 -d > /tmp/production-presenter-retrieval-public.pem
+          actual_fingerprint="$(openssl pkey -pubin -in /tmp/production-presenter-retrieval-public.pem -outform DER | openssl dgst -sha256 -r | cut -d ' ' -f 1)"
+          [[ "$actual_fingerprint" == "$PUBLIC_KEY_SHA256" ]]
+      - name: Configure production SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+      - name: Copy fixed production retrieval scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/ops/retrieve-production-presenter-invite.sh \
+            /tmp/production-presenter-retrieval-public.pem \
+            "azureuser@$VM_HOST:/tmp/"
+      - name: Verify and retrieve the production presenter invite
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' PRESENTER_RETRIEVAL_PUBLIC_KEY_SHA256='$PUBLIC_KEY_SHA256' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cleanup() {
+            rm -f \
+              /tmp/assert-true-production.sh \
+              /tmp/retrieve-production-presenter-invite.sh \
+              /tmp/production-presenter-retrieval-public.pem
+          }
+          trap cleanup EXIT
+          chmod 700 /tmp/assert-true-production.sh /tmp/retrieve-production-presenter-invite.sh
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" bash /tmp/assert-true-production.sh
+          bash /tmp/retrieve-production-presenter-invite.sh
+          REMOTE
+          )"
+          remote_status=$?
+          set -e
+          printf '%s\n' "$output"
+          [[ "$remote_status" == "0" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^true_production_preflight_completed$' || true)" == "1" ]]
+          [[ "$(printf '%s\n' "$output" | grep -c '^{"event":"production_presenter_invite_retrieval_verified"' || true)" == "1" ]]
+          ciphertext="$(printf '%s\n' "$output" | sed -n 's/^invite_ciphertext=//p')"
+          [[ "${#ciphertext}" == "684" ]]
+          [[ "$(printf '%s' "$ciphertext" | base64 -d | wc -c | tr -d ' ')" == "512" ]]
+          [[ "$(printf '%s\n' "$output" | tail -n 1)" == "production_presenter_invite_retrieval_completed" ]]
+      - name: Remove runner transport key
+        if: always()
+        shell: bash
+        run: rm -f /tmp/production-presenter-retrieval-public.pem
