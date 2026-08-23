@@ -1,0 +1,215 @@
+name: prod-tenant-anchor-cost-diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: "Production tenant whose anchor roots and receipts will be measured"
+        required: true
+        type: string
+      projection_hours:
+        description: "Historical hours used for the corrected-rate counterfactual"
+        required: true
+        default: "36"
+        type: string
+      projection_end:
+        description: "UTC end of the pre-fix counterfactual window"
+        required: true
+        default: "2026-08-23T20:47:25Z"
+        type: string
+      fix_live_at:
+        description: "UTC time when the deduplication fix was confirmed deployed"
+        required: true
+        default: "2026-08-23T20:47:25Z"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: measure one production tenant's anchor roots and receipt costs
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    concurrency:
+      group: prod-tenant-anchor-cost-diagnostics
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      PROJECTION_HOURS: ${{ inputs.projection_hours }}
+      PROJECTION_END: ${{ inputs.projection_end }}
+      FIX_LIVE_AT: ${{ inputs.fix_live_at }}
+      VM_ENV_FILE: .env.prod
+      API_BASE: https://api.brain.fi
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate fixed report scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+          [[ "$PROJECTION_HOURS" =~ ^[0-9]+$ ]]
+          (( PROJECTION_HOURS >= 1 && PROJECTION_HOURS <= 168 ))
+          [[ "$PROJECTION_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          [[ "$FIX_LIVE_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fixed read-only production report
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/ops/report-tenant-anchor-cost.sql \
+            "azureuser@$VM_HOST:~/brain-core/scripts/ops/"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "TENANT_ID='$TENANT_ID' PROJECTION_HOURS='$PROJECTION_HOURS' PROJECTION_END='$PROJECTION_END' FIX_LIVE_AT='$FIX_LIVE_AT' VM_ENV_FILE='$VM_ENV_FILE' API_BASE='$API_BASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [[ "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]
+          [[ "$PROJECTION_HOURS" =~ ^[0-9]+$ ]]
+          (( PROJECTION_HOURS >= 1 && PROJECTION_HOURS <= 168 ))
+          [[ "$PROJECTION_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          [[ "$FIX_LIVE_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$API_BASE" == "https://api.brain.fi" ]]
+
+          cd ~/brain-core
+          chmod 700 scripts/ops/assert-true-production.sh
+          VM_ENV_FILE="$VM_ENV_FILE" API_BASE="$API_BASE" \
+            bash scripts/ops/assert-true-production.sh
+
+          docker exec -i brain-prod-postgres psql -X -U brain -d brain \
+            -v ON_ERROR_STOP=1 \
+            -v tenant_id="$TENANT_ID" \
+            -v projection_hours="$PROJECTION_HOURS" \
+            -v projection_end="$PROJECTION_END" \
+            -v fix_live_at="$FIX_LIVE_AT" \
+            -f - < scripts/ops/report-tenant-anchor-cost.sql
+
+          transaction_rows_json="$(docker exec -i brain-prod-postgres psql -X -U brain -d brain -qAt \
+            -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '15s';
+          WITH target_transactions AS (
+            SELECT onchain_tx_hash,
+                   COUNT(*)::int AS tenant_roots
+              FROM audit_anchors
+             WHERE tenant_id = :'tenant_id'
+               AND onchain_status = 'confirmed'
+               AND onchain_tx_hash IS NOT NULL
+             GROUP BY onchain_tx_hash
+          ), batch_totals AS (
+            SELECT anchor.onchain_tx_hash,
+                   COUNT(*)::int AS batch_roots
+              FROM audit_anchors anchor
+              JOIN target_transactions target USING (onchain_tx_hash)
+             WHERE anchor.onchain_status = 'confirmed'
+             GROUP BY anchor.onchain_tx_hash
+          )
+          SELECT COALESCE(json_agg(json_build_object(
+                   'transaction_hash', '0x' || encode(target.onchain_tx_hash, 'hex'),
+                   'tenant_roots', target.tenant_roots,
+                   'batch_roots', batch.batch_roots
+                 ) ORDER BY encode(target.onchain_tx_hash, 'hex')), '[]'::json)
+            FROM target_transactions target
+            JOIN batch_totals batch USING (onchain_tx_hash);
+          COMMIT;
+          SQL
+          )"
+          if [[ ! "$transaction_rows_json" =~ ^\[ ]]; then
+            echo "anchor receipt input was not a JSON array" >&2
+            exit 1
+          fi
+
+          echo 'anchor receipt cost attribution'
+          transaction_rows_b64="$(printf '%s' "$transaction_rows_json" | base64 | tr -d '\n')"
+          docker exec -i -e "TRANSACTION_ROWS_B64=$transaction_rows_b64" brain-prod-api node - <<'NODE'
+          const rows = JSON.parse(Buffer.from(process.env.TRANSACTION_ROWS_B64, "base64").toString("utf8"));
+          const rpcUrl = process.env.BASE_RPC_URL;
+          if (!rpcUrl) throw new Error("BASE_RPC_URL is not configured");
+
+          let requestId = 0;
+          async function rpc(method, params) {
+            const response = await fetch(rpcUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+            });
+            if (!response.ok) throw new Error(`RPC ${method} returned HTTP ${response.status}`);
+            const payload = await response.json();
+            if (payload.error) throw new Error(`RPC ${method} failed: ${payload.error.message}`);
+            return payload.result;
+          }
+
+          const asBigInt = (value) => value == null ? null : BigInt(value);
+          const detailed = [];
+          let totalTransactionGas = 0;
+          let attributedGas = 0;
+          let totalTransactionFeeWei = 0n;
+          let attributedFeeWei = 0n;
+          for (const row of rows) {
+            const [transaction, receipt] = await Promise.all([
+              rpc("eth_getTransactionByHash", [row.transaction_hash]),
+              rpc("eth_getTransactionReceipt", [row.transaction_hash]),
+            ]);
+            if (!transaction || !receipt) throw new Error(`missing receipt for ${row.transaction_hash}`);
+            const gasUsed = asBigInt(receipt.gasUsed);
+            const gasPrice = asBigInt(receipt.effectiveGasPrice ?? transaction.gasPrice);
+            const rawL1Fee = asBigInt(receipt.l1Fee ?? receipt.l1_fee);
+            const l1Fee = rawL1Fee ?? 0n;
+            const feeWei = gasUsed * gasPrice + l1Fee;
+            const numerator = BigInt(row.tenant_roots);
+            const denominator = BigInt(row.batch_roots);
+            const allocatedFee = feeWei * numerator / denominator;
+            const allocatedGas = Number(gasUsed) * row.tenant_roots / row.batch_roots;
+            totalTransactionGas += Number(gasUsed);
+            attributedGas += allocatedGas;
+            totalTransactionFeeWei += feeWei;
+            attributedFeeWei += allocatedFee;
+            detailed.push({
+              transaction_hash: row.transaction_hash,
+              tenant_roots: row.tenant_roots,
+              batch_roots: row.batch_roots,
+              gas_used: gasUsed.toString(),
+              gas_per_root: Number(gasUsed) / row.batch_roots,
+              effective_gas_price_gwei: Number(gasPrice) / 1e9,
+              l1_fee_available: rawL1Fee !== null,
+              receipt_fee_wei: feeWei.toString(),
+              attributed_gas: allocatedGas,
+              attributed_fee_wei: allocatedFee.toString(),
+            });
+          }
+          const gasPerRoot = detailed.flatMap((row) =>
+            Array.from({ length: row.tenant_roots }, () => row.gas_per_root),
+          );
+          console.log(JSON.stringify({
+            transactions: detailed,
+            summary: {
+              confirmed_tenant_roots: gasPerRoot.length,
+              transactions_containing_tenant_roots: detailed.length,
+              full_transaction_gas: totalTransactionGas,
+              attributed_gas: attributedGas,
+              minimum_gas_per_root: gasPerRoot.length === 0 ? null : Math.min(...gasPerRoot),
+              maximum_gas_per_root: gasPerRoot.length === 0 ? null : Math.max(...gasPerRoot),
+              total_transaction_fee_wei: totalTransactionFeeWei.toString(),
+              attributed_fee_wei: attributedFeeWei.toString(),
+              attributed_fee_eth: Number(attributedFeeWei) / 1e18,
+              complete_l1_fee_coverage: detailed.every((row) => row.l1_fee_available),
+            },
+          }, null, 2));
+          NODE
+          REMOTE
