@@ -9,6 +9,7 @@ const workflow = readFileSync(".github/workflows/deploy-azure-prod.yml", "utf8")
 const terraform = readFileSync("infra/main.tf", "utf8");
 const variables = readFileSync("infra/variables.tf", "utf8");
 const runner = readFileSync("infra/run.sh", "utf8");
+const infraReadme = readFileSync("infra/README.md", "utf8");
 const agentsDockerfile = readFileSync("services/agents/Dockerfile", "utf8");
 const agentsServer = readFileSync("services/agents/brain_agents/server.py", "utf8");
 const runtimeValidation = readFileSync("services/api/src/ops/azure-deploy-validation.ts", "utf8");
@@ -33,6 +34,15 @@ test("Terraform carries the full commit into the in-VNet validation job", () => 
   assert.match(terraform, /services\/api\/dist\/ops\/azure-deploy-validation\.js/);
   assert.match(terraform, /BRAIN_VALIDATION_EXPECTED_GIT_SHA/);
   assert.match(terraform, /value = var\.git_sha/);
+  const mainStackCommands =
+    infraReadme.match(/Then the main stack:\n\n```bash\n([\s\S]*?)\n```/)?.[1] ?? "";
+  const documentedCommands = mainStackCommands.match(
+    /terraform (?:plan|apply)[\s\S]*?(?=\nterraform |$)/g,
+  );
+  assert.equal(documentedCommands?.length, 2);
+  for (const command of documentedCommands ?? []) {
+    assert.match(command, /-var="git_sha=<full-commit-sha>"/);
+  }
 });
 
 test("deploy validation is in-VNet and covers every required dependency", () => {
