@@ -1,8 +1,9 @@
 # Azure staging Container Apps rehearsal scope
 
-Status: planning only. This document does not authorize a Terraform apply, an
-Azure resource creation, a credential or OIDC change, a deployment, a DNS
-change, a traffic change, or a feature-flag change.
+Status: planning only. The ephemeral operating model is approved as the default
+for further staging-stack work. This document does not authorize a Terraform
+apply, an Azure resource creation, a credential or OIDC change, a deployment, a
+DNS change, a traffic change, or a feature-flag change.
 
 Date: 2026-08-24
 
@@ -19,17 +20,19 @@ targets make an accidental production dispatch less likely and make GitHub
 environment protection easy to audit. Shared shell helpers may be reused after
 their production resource names are replaced with explicit required inputs.
 
-The full staging workload should be ephemeral. Keep only a small staging
+The chosen default is an ephemeral staging workload. Keep only a small staging
 foundation between rehearsals: Terraform state, the staging ACR, and the
 staging Key Vault. Create the Container Apps environment, apps, jobs, VNet,
 Postgres, Managed Redis, Blob account, private endpoints, and Log Analytics for
-an approved rehearsal window, then remove them through a separately approved
-teardown workflow after evidence is retained.
+an approved 8-to-24-hour rehearsal window, then remove them through a separately
+approved teardown workflow after evidence is retained. Further staging-stack
+design and implementation must assume this lifecycle rather than an always-on
+environment.
 
-This recommendation is based on current Canada Central retail rates. An
-always-on stack is expected to cost about USD 265 to USD 300 per month at low
-traffic, while an 8 to 24 hour rehearsal should cost about USD 15 to USD 30 in
-the month it runs. The estimate and assumptions appear below.
+This decision is based on current Canada Central retail rates. An always-on
+stack is expected to cost about USD 265 to USD 300 per month at low traffic,
+while an 8-to-24-hour rehearsal should cost about USD 15 to USD 30 in the month
+it runs. The estimate and assumptions appear below.
 
 ## Why the existing staging files are not a target
 
@@ -252,10 +255,13 @@ workload stack so its expensive resources can be removed without deleting the
 vault, ACR, or state account. Do not rely on repeated targeted destroys in the
 normal workflow.
 
-The implementation should either split foundation and ephemeral workload into
-two explicit Terraform roots or add a reviewed staging-only lifecycle boundary.
-The choice must be made before the first apply and tested with a complete
-create, validate, teardown, and recreate cycle.
+The implementation must create an explicit boundary between the persistent
+foundation and ephemeral workload. Two explicit Terraform roots and state files
+are preferred because they make teardown intent inspectable and avoid repeated
+targeted destroys. A different code layout requires equivalent plan-time proof
+that teardown cannot remove the staging state, ACR, or Key Vault. The completed
+boundary must be tested with a full create, validate, teardown, and recreate
+cycle.
 
 ## Identity and GitHub environment
 
@@ -533,7 +539,8 @@ expiry-policy alert when workload resources remain after the approved window.
 1. Review and approve this scope.
 2. Decide dedicated subscription versus same-subscription resource-group
    isolation.
-3. Choose foundation plus ephemeral workload Terraform boundaries.
+3. Design the approved persistent-foundation and ephemeral-workload Terraform
+   boundaries.
 4. Implement staging backend bootstrap and staging tfvars.
 5. Implement staging GitHub environment and both staging identities.
 6. Implement the separate staging deploy workflow and parameterized validation
@@ -554,9 +561,10 @@ expiry-policy alert when workload resources remain after the approved window.
 - [x] Defined staging resource, state, identity, data, and credential isolation.
 - [x] Scoped a separate staging workflow and per-gate evidence requirements.
 - [x] Estimated always-on and ephemeral cost from current official Azure rates.
-- [x] Recommended an ephemeral workload with a small persistent foundation.
+- [x] Approved the ephemeral workload as the default operating model.
+- [x] Approved retaining only a small state, ACR, and Key Vault foundation.
 - [ ] Approve subscription and resource-group isolation choice.
-- [ ] Approve foundation and ephemeral Terraform state boundaries.
+- [ ] Implement explicit foundation and ephemeral Terraform state boundaries.
 - [ ] Implement `backend-staging.hcl` and `staging.tfvars`.
 - [ ] Remove production defaults from environment-specific Terraform inputs.
 - [ ] Parameterize control-plane validation app and worker names.
