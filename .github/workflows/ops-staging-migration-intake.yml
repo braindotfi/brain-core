@@ -1,0 +1,205 @@
+name: ops-staging-migration-intake
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Prepare a run, validate its encrypted canary, or clean up after accepted deletion."
+        required: true
+        type: choice
+        options: [prepare, validate-canary, cleanup]
+      run_id:
+        description: "Approved lowercase migration run ID."
+        required: true
+        type: string
+      key_id:
+        description: "Exact versioned Key Vault key ID from prepare. Required for validate-canary and cleanup."
+        required: false
+        type: string
+        default: ""
+      canary_sha256:
+        description: "Plaintext SHA-256 from Sanket's mode-0600 canary receipt. Required for validate-canary."
+        required: false
+        type: string
+        default: ""
+      cleanup_confirmation:
+        description: "For cleanup only, enter DELETE-<run_id> after ciphertext retention is accepted."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  intake:
+    name: staging migration intake
+    runs-on: ubuntu-latest
+    environment: azure-staging-rehearsal
+    concurrency:
+      group: staging-migration-intake-${{ inputs.run_id }}
+      cancel-in-progress: false
+
+    env:
+      RG: ${{ vars.AZURE_STAGING_RESOURCE_GROUP }}
+      ENV_NAME: ${{ vars.AZURE_STAGING_CONTAINER_APP_ENVIRONMENT }}
+      PREPARE_JOB: ${{ vars.AZURE_STAGING_MIGRATION_PREPARE_JOB }}
+      VALIDATE_JOB: ${{ vars.AZURE_STAGING_MIGRATION_VALIDATE_JOB }}
+      EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Validate request
+        env:
+          ACTION: ${{ inputs.action }}
+          RUN_ID: ${{ inputs.run_id }}
+          KEY_ID: ${{ inputs.key_id }}
+          CANARY_SHA256: ${{ inputs.canary_sha256 }}
+          CLEANUP_CONFIRMATION: ${{ inputs.cleanup_confirmation }}
+        run: |
+          set -euo pipefail
+          for required in RG ENV_NAME PREPARE_JOB VALIDATE_JOB EXPECTED_SUBSCRIPTION_ID; do
+            if [ -z "${!required}" ]; then
+              echo "::error::missing azure-staging-rehearsal variable $required"
+              exit 1
+            fi
+          done
+          if [[ ! "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{2,39}$ ]]; then
+            echo "::error::run_id must be 3 to 40 lowercase letters, digits, or hyphens"
+            exit 1
+          fi
+          case "$ACTION" in
+            prepare)
+              test -z "$KEY_ID" && test -z "$CANARY_SHA256" && test -z "$CLEANUP_CONFIRMATION"
+              ;;
+            validate-canary)
+              [[ "$KEY_ID" =~ ^https://brain-staging-[a-z0-9-]+\.vault\.azure\.net/keys/migration-rehearsal-wrap/[A-Za-z0-9-]+$ ]]
+              [[ "$CANARY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              test -z "$CLEANUP_CONFIRMATION"
+              ;;
+            cleanup)
+              [[ "$KEY_ID" =~ ^https://brain-staging-[a-z0-9-]+\.vault\.azure\.net/keys/migration-rehearsal-wrap/[A-Za-z0-9-]+$ ]]
+              test "$CLEANUP_CONFIRMATION" = "DELETE-$RUN_ID"
+              test -z "$CANARY_SHA256"
+              ;;
+            *)
+              echo "::error::unsupported action"
+              exit 1
+              ;;
+          esac
+          if printf '%s\n' "$RG" "$ENV_NAME" "$PREPARE_JOB" "$VALIDATE_JOB" | grep -qi production; then
+            echo "::error::production target found in staging migration configuration"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Azure staging login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_STAGING_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
+
+      - name: Verify staging subscription
+        run: |
+          set -euo pipefail
+          actual=$(az account show --query id -o tsv)
+          if [ "${actual,,}" != "${EXPECTED_SUBSCRIPTION_ID,,}" ]; then
+            echo "::error::Azure login selected the wrong subscription"
+            exit 1
+          fi
+
+      - name: Start in-VNet intake job
+        id: start
+        env:
+          ACTION: ${{ inputs.action }}
+          RUN_ID: ${{ inputs.run_id }}
+          KEY_ID: ${{ inputs.key_id }}
+          CANARY_SHA256: ${{ inputs.canary_sha256 }}
+          CLEANUP_CONFIRMATION: ${{ inputs.cleanup_confirmation }}
+        run: |
+          set -euo pipefail
+          job="$VALIDATE_JOB"
+          mode="$ACTION"
+          if [ "$ACTION" = "prepare" ] || [ "$ACTION" = "cleanup" ]; then
+            job="$PREPARE_JOB"
+          fi
+          mapfile -t job_env < <(
+            az containerapp job show -n "$job" -g "$RG" \
+              --query "properties.template.containers[0].env" -o json |
+            jq -r '
+              .[]
+              | select(.name | test("^BRAIN_STAGING_MIGRATION_(MODE|RUN_ID|KEY_ID|CANARY_SHA256|CLEANUP_CONFIRMATION)$") | not)
+              | if .secretRef then "\(.name)=secretref:\(.secretRef)" else "\(.name)=\(.value)" end
+            '
+          )
+          if [ "${#job_env[@]}" -eq 0 ]; then
+            echo "::error::intake job environment could not be read"
+            exit 1
+          fi
+          exec_name=$(az containerapp job start -n "$job" -g "$RG" \
+            --env-vars "${job_env[@]}" \
+              "BRAIN_STAGING_MIGRATION_MODE=$mode" \
+              "BRAIN_STAGING_MIGRATION_RUN_ID=$RUN_ID" \
+              "BRAIN_STAGING_MIGRATION_KEY_ID=$KEY_ID" \
+              "BRAIN_STAGING_MIGRATION_CANARY_SHA256=$CANARY_SHA256" \
+              "BRAIN_STAGING_MIGRATION_CLEANUP_CONFIRMATION=$CLEANUP_CONFIRMATION" \
+            --query name -o tsv)
+          test -n "$exec_name"
+          echo "job=$job" >> "$GITHUB_OUTPUT"
+          echo "execution=$exec_name" >> "$GITHUB_OUTPUT"
+
+          status=""
+          for _ in $(seq 1 95); do
+            status=$(az containerapp job execution show -n "$job" -g "$RG" \
+              --job-execution-name "$exec_name" --query properties.status -o tsv 2>/dev/null || echo "")
+            case "$status" in
+              Succeeded) exit 0 ;;
+              Failed|Degraded)
+                echo "::error::staging migration intake job failed ($status)"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::staging migration intake job timed out"
+          exit 1
+
+      - name: Read redacted intake evidence
+        if: ${{ always() && steps.start.outputs.execution != '' }}
+        env:
+          ACTION: ${{ inputs.action }}
+          JOB: ${{ steps.start.outputs.job }}
+          EXECUTION: ${{ steps.start.outputs.execution }}
+        run: |
+          set -euo pipefail
+          az extension add -n log-analytics -y >/dev/null 2>&1 || true
+          workspace=$(az containerapp env show -n "$ENV_NAME" -g "$RG" \
+            --query properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -o tsv)
+          expected_summary="staging_migration_intake_prepared"
+          if [ "$ACTION" = "validate-canary" ]; then expected_summary="staging_migration_canary_validated"; fi
+          if [ "$ACTION" = "cleanup" ]; then expected_summary="staging_migration_intake_cleaned"; fi
+          found=false
+          for _ in $(seq 1 20); do
+            az monitor log-analytics query -w "$workspace" --analytics-query \
+              "ContainerAppConsoleLogs_CL
+               | where ContainerGroupName_s startswith '${EXECUTION}'
+               | project Log_s
+               | order by TimeGenerated asc" \
+              -o json | jq -r '.[].Log_s' > /tmp/staging-migration-intake.jsonl
+            if grep -q "\"summary\":\"$expected_summary\"" /tmp/staging-migration-intake.jsonl; then
+              found=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" != "true" ]; then
+            echo "::error::expected redacted intake evidence was not found"
+            exit 1
+          fi
+          grep "\"summary\":\"$expected_summary\"" /tmp/staging-migration-intake.jsonl
+          if ! grep -q "\"summary\":\"$expected_summary\",\"ok\":true" /tmp/staging-migration-intake.jsonl; then
+            echo "::error::intake evidence did not report success"
+            exit 1
+          fi

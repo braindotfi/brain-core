@@ -80,8 +80,11 @@ apply.
    on `brain-production-rg`, `brain-tfstate-rg`, or a production resource.
 6. Production principals receive no new role on a staging resource merely for
    convenience.
-7. Staging uses synthetic disposable data only. It never copies VM production,
-   Azure production, or Northstar presenter data.
+7. Staging application stores use synthetic disposable data only. An approved
+   migration rehearsal may place client-side encrypted VM production artifacts
+   in the dedicated migration-intake storage account for at most seven days.
+   Application identities cannot access that account, and its contents are
+   never loaded into the ordinary staging Raw, Blob, or Postgres stores.
 8. Staging never receives production email, OpenAI, payment, Plaid, signing,
    publisher, webhook, or Brain API credentials.
 9. Staging has no public Brain DNS name and receives no application traffic.
@@ -574,6 +577,9 @@ expiry-policy alert when workload resources remain after the approved window.
 - [ ] Configure staging-only secrets and variables.
 - [ ] Implement `deploy-azure-staging.yml`.
 - [ ] Implement a separately approved staging teardown workflow.
+- [x] Implement the reviewed encrypted migration-intake resources and canary
+      tooling without applying them.
+- [ ] Prove the temporary VM route and encrypted intake canary live.
 - [ ] Prove static Terraform and workflow tests.
 - [ ] Approve and create the staging foundation.
 - [ ] Run the first isolated staging rehearsal.
