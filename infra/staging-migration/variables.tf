@@ -20,7 +20,7 @@ variable "staging_resource_group_name" {
 }
 
 variable "staging_key_vault_name" {
-  description = "Existing persistent PR #745 staging Key Vault."
+  description = "Existing ephemeral staging foundation Key Vault."
   type        = string
   default     = "brain-staging-kv"
 
@@ -49,7 +49,7 @@ variable "staging_container_app_environment_name" {
 }
 
 variable "staging_acr_name" {
-  description = "Existing persistent PR #745 staging container registry."
+  description = "Existing ephemeral staging foundation container registry."
   type        = string
   default     = "brainstagingacr"
 }

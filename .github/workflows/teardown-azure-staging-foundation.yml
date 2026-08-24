@@ -1,0 +1,251 @@
+name: teardown-azure-staging-foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full main commit SHA containing the reviewed foundation."
+        required: true
+        type: string
+      action:
+        description: "Plan teardown, or apply an exact reviewed teardown plan."
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+      plan_run_id:
+        description: "Successful teardown-plan workflow run ID. Required for apply."
+        required: false
+        type: string
+        default: ""
+      teardown_confirmation:
+        description: "For apply, enter DESTROY-STAGING-FOUNDATION."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  teardown:
+    name: staging foundation teardown ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: azure-staging-rehearsal
+    concurrency:
+      group: azure-staging-foundation
+      cancel-in-progress: false
+
+    env:
+      EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID }}
+      DENIED_PRODUCTION_SUBSCRIPTION_ID: ${{ vars.AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY }}
+      TF_VAR_staging_subscription_id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
+      TF_VAR_staging_tenant_id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
+      TF_VAR_migration_operator_object_id: ${{ vars.AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID }}
+      TF_VAR_independent_verifier_object_id: ${{ vars.AZURE_STAGING_INDEPENDENT_VERIFIER_OBJECT_ID }}
+      TF_VAR_rehearsal_owner: ${{ vars.AZURE_STAGING_REHEARSAL_OWNER }}
+      TF_VAR_github_run_id: ${{ github.run_id }}
+      ARM_USE_CLI: true
+
+    steps:
+      - name: Validate request
+        env:
+          ACTION: ${{ inputs.action }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          TEARDOWN_CONFIRMATION: ${{ inputs.teardown_confirmation }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full lowercase 40-character commit SHA"
+            exit 1
+          fi
+          for required in EXPECTED_SUBSCRIPTION_ID DENIED_PRODUCTION_SUBSCRIPTION_ID \
+            TF_VAR_staging_subscription_id TF_VAR_staging_tenant_id \
+            TF_VAR_migration_operator_object_id TF_VAR_independent_verifier_object_id \
+            TF_VAR_rehearsal_owner; do
+            if [ -z "${!required}" ]; then
+              echo "::error::missing protected staging value $required"
+              exit 1
+            fi
+          done
+          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" != "${TF_VAR_staging_subscription_id,,}" ]; then
+            echo "::error::expected staging subscription values disagree"
+            exit 1
+          fi
+          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" = "${DENIED_PRODUCTION_SUBSCRIPTION_ID,,}" ]; then
+            echo "::error::staging subscription matches the denied production subscription"
+            exit 1
+          fi
+          case "$ACTION" in
+            plan)
+              test -z "$PLAN_RUN_ID"
+              test -z "$TEARDOWN_CONFIRMATION"
+              ;;
+            apply)
+              [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]]
+              test "$TEARDOWN_CONFIRMATION" = "DESTROY-STAGING-FOUNDATION"
+              ;;
+            *) exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify release commit
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$SHA" origin/main || {
+            echo "::error::$SHA is not reachable from main"
+            exit 1
+          }
+
+      - name: Azure staging login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_STAGING_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
+
+      - name: Verify isolated Azure target
+        run: |
+          set -euo pipefail
+          actual_subscription=$(az account show --query id -o tsv)
+          test "${actual_subscription,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
+          resource_group=$(az group show --name brain-staging-rg --output json)
+          test "$(jq -r '.tags.environment // ""' <<<"$resource_group")" = "staging"
+          if jq -r '.id' <<<"$resource_group" | grep -qi production; then
+            echo "::error::production marker found in staging resource group ID"
+            exit 1
+          fi
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.2
+          terraform_wrapper: false
+
+      - name: Initialize foundation state
+        working-directory: infra/staging-foundation
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure -input=false -backend-config=../backend-staging.hcl
+          terraform validate
+          echo "TF_VAR_rehearsal_expires_at=$(terraform output -raw expires_at)" >> "$GITHUB_ENV"
+
+      - name: Confirm dependent roots are gone
+        if: ${{ inputs.action == 'plan' }}
+        run: |
+          set -euo pipefail
+          unexpected=$(az resource list --resource-group brain-staging-rg --output json |
+            jq -r '.[]
+              | select((.tags.purpose // "") != "deploy-rehearsal-foundation")
+              | .id')
+          if [ -n "$unexpected" ]; then
+            echo "::error::dependent or unmanaged resources remain in brain-staging-rg"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+
+      - name: Create full teardown plan
+        if: ${{ inputs.action == 'plan' }}
+        working-directory: infra/staging-foundation
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          terraform plan -destroy -input=false -no-color -out=tfplan -var-file=staging.tfvars
+          terraform show -no-color tfplan | tee tfplan.txt
+          terraform show -json tfplan > tfplan.json
+          if grep -Eqi 'brain-production|brain-tfstate-rg|brainfitfstate([^s]|$)' tfplan.txt; then
+            echo "::error::production or retained-state marker found in teardown plan"
+            exit 1
+          fi
+          jq -e '
+            [.resource_changes[]?
+              | select(.mode == "managed")
+              | select(.change.actions != ["no-op"])
+              | select(.change.actions != ["delete"])]
+            | length == 0
+          ' tfplan.json >/dev/null || {
+            echo "::error::teardown plan contains an action other than delete"
+            exit 1
+          }
+          if jq -e '[.resource_changes[]? | select(.mode == "managed") | select(.type == "azurerm_resource_group" or .type == "azuread_application" or .type == "azuread_service_principal")] | length > 0' tfplan.json >/dev/null; then
+            echo "::error::teardown plan reaches a retained bootstrap resource"
+            exit 1
+          fi
+          jq -n \
+            --arg sha "$SHA" \
+            --arg subscription_id "$EXPECTED_SUBSCRIPTION_ID" \
+            --arg backend_key "foundation.terraform.tfstate" \
+            --arg plan_run_id "${{ github.run_id }}" \
+            '{sha:$sha,subscription_id:$subscription_id,backend_key:$backend_key,plan_run_id:$plan_run_id}' \
+            > plan-manifest.json
+
+      - name: Retain reviewed teardown plan
+        if: ${{ inputs.action == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-foundation-teardown-plan
+          path: |
+            infra/staging-foundation/tfplan
+            infra/staging-foundation/tfplan.txt
+            infra/staging-foundation/tfplan.json
+            infra/staging-foundation/plan-manifest.json
+          retention-days: 2
+          if-no-files-found: error
+
+      - name: Download reviewed teardown plan
+        if: ${{ inputs.action == 'apply' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-foundation-teardown-plan
+          path: infra/staging-foundation/reviewed
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run_id }}
+
+      - name: Verify source teardown workflow
+        if: ${{ inputs.action == 'apply' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          source_run=$(gh run view "$PLAN_RUN_ID" --json workflowName,conclusion,event)
+          test "$(jq -r '.workflowName' <<<"$source_run")" = "teardown-azure-staging-foundation"
+          test "$(jq -r '.conclusion' <<<"$source_run")" = "success"
+          test "$(jq -r '.event' <<<"$source_run")" = "workflow_dispatch"
+
+      - name: Verify and apply reviewed teardown plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/staging-foundation
+        env:
+          SHA: ${{ inputs.sha }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+        run: |
+          set -euo pipefail
+          manifest=reviewed/plan-manifest.json
+          test "$(jq -r '.sha' "$manifest")" = "$SHA"
+          test "$(jq -r '.plan_run_id' "$manifest")" = "$PLAN_RUN_ID"
+          test "$(jq -r '.subscription_id' "$manifest")" = "$EXPECTED_SUBSCRIPTION_ID"
+          test "$(jq -r '.backend_key' "$manifest")" = "foundation.terraform.tfstate"
+          cmp reviewed/tfplan.txt <(terraform show -no-color reviewed/tfplan)
+          cat reviewed/tfplan.txt
+          terraform apply -input=false -no-color reviewed/tfplan
+
+      - name: Verify billable foundation is gone
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+          set -euo pipefail
+          remaining=$(az resource list --resource-group brain-staging-rg --output json | jq 'length')
+          test "$remaining" = "0"
+          test "$(az group show --name brain-staging-rg --query tags.environment -o tsv)" = "staging"

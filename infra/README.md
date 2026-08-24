@@ -18,6 +18,10 @@ See `Brain_MVP_Architecture.md` §2 for the stack choices,
 | `production.tfvars` | Production values (no secrets) |
 | `backend-production.hcl` | Remote-state backend config |
 | `bootstrap/` | One-time: creates the storage account holding remote state |
+| `bootstrap-staging/` | One-time: creates isolated staging state, workload boundary, and GitHub OIDC trust |
+| `staging-foundation/` | Destroyable staging VNet, Key Vault, ACR, logs, and Container Apps environment |
+| `backend-staging.hcl` | Remote-state backend config for the staging foundation |
+| `backend-staging-migration.hcl` | Separate remote-state key for encrypted migration intake |
 | `staging-migration/` | Staging-only encrypted migration intake, Key Vault versioning, private Blob, and canary jobs |
 | `staging-migration-route/` | Temporary source-VNet Blob private endpoint and private DNS link, under separate approval |
 | `db-roles.sql` | Least-privilege roles + FORCE RLS sweep |

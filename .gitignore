@@ -72,6 +72,7 @@ tfplan
 !terraform.tfvars.example
 !infra/poc.tfvars
 !infra/production.tfvars
+!infra/staging-foundation/staging.tfvars
 
 # IDE / editor
 .vscode/
