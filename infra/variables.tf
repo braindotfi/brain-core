@@ -350,6 +350,16 @@ variable "image_tag" {
   default     = "latest"
 }
 
+variable "git_sha" {
+  description = "Full immutable Git commit baked into application images and required by deploy validation."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.git_sha))
+    error_message = "git_sha must be a full lowercase 40-character Git commit SHA."
+  }
+}
+
 variable "terraform_image_tag" {
   description = <<-EOT
     Tag for the in-VNet runner image (brain-terraform), which carries the baked

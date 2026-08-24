@@ -12,6 +12,7 @@ case "$ACTION" in
 esac
 
 : "${TF_IMAGE_TAG:?TF_IMAGE_TAG is required so the apply pins the images it deploys}"
+: "${TF_GIT_SHA:?TF_GIT_SHA is required so runtime validation checks the immutable release}"
 
 # The tag of THIS image. Empty means "same as TF_IMAGE_TAG"; it differs only for
 # an infra-only change, where the runner moves and the app images do not. The
@@ -42,6 +43,7 @@ terraform init -backend-config=backend-production.hcl -input=false
 echo "==> terraform plan (image_tag=${TF_IMAGE_TAG}, terraform_image_tag=${TF_TERRAFORM_IMAGE_TAG:-<same>}, target=${TF_TARGET:-<all>})"
 terraform plan -var-file=production.tfvars \
   -var="image_tag=${TF_IMAGE_TAG}" \
+  -var="git_sha=${TF_GIT_SHA}" \
   -var="terraform_image_tag=${TF_TERRAFORM_IMAGE_TAG}" \
   "${TARGET_ARGS[@]+"${TARGET_ARGS[@]}"}" \
   -input=false -no-color -out=/tmp/tfplan
