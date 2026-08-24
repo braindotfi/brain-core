@@ -36,7 +36,13 @@ async function gate(name: string, fn: () => Promise<string>): Promise<void> {
   }
 }
 
-async function fetchResponse(url: string, init?: RequestInit): Promise<Response> {
+interface ValidationRequestOptions {
+  method?: string;
+  headers?: Readonly<Record<string, string>>;
+  body?: string;
+}
+
+async function fetchResponse(url: string, init?: ValidationRequestOptions): Promise<Response> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
   return response;
 }
