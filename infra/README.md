@@ -18,6 +18,8 @@ See `Brain_MVP_Architecture.md` §2 for the stack choices,
 | `production.tfvars` | Production values (no secrets) |
 | `backend-production.hcl` | Remote-state backend config |
 | `bootstrap/` | One-time: creates the storage account holding remote state |
+| `staging-migration/` | Staging-only encrypted migration intake, Key Vault versioning, private Blob, and canary jobs |
+| `staging-migration-route/` | Temporary source-VNet Blob private endpoint and private DNS link, under separate approval |
 | `db-roles.sql` | Least-privilege roles + FORCE RLS sweep |
 | `db-roles.Dockerfile` + `db-roles-entrypoint.sh` | Image for the db-roles job |
 

@@ -168,6 +168,10 @@ COPY --from=builder /app/tools/static-jwks/dist tools/static-jwks/dist
 COPY --from=builder /app/tools/dev-token/dist tools/dev-token/dist
 COPY --from=builder /app/tools/seed-golden-path/dist tools/seed-golden-path/dist
 COPY --from=builder /app/tools/seed-northstar-demo/dist tools/seed-northstar-demo/dist
+# Staging-only migration intake jobs invoke these reviewed scripts from the
+# same immutable API image. They contain no environment names or credentials.
+COPY --from=builder /app/scripts/ops/staging-migration-envelope.mjs scripts/ops/staging-migration-envelope.mjs
+COPY --from=builder /app/scripts/ops/staging-migration-intake.mjs scripts/ops/staging-migration-intake.mjs
 
 # Migration SQL files. The migrate CLI discovers services/<svc>/migrations/*.sql
 # relative to the repo root (cwd). Without these the same runtime image cannot
