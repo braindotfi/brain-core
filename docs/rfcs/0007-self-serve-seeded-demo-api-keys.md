@@ -94,6 +94,24 @@ Northstar also uses fixed canonical names and totals with dates generated from
 the seed invocation's current `asOf` value. The existing presenter tenant was
 seeded once and is not regenerated when the presenter signs in.
 
+### 1.4 Ordinary signup in the current durable deployment
+
+The current app deployment already isolates ordinary signup users at the tenant
+boundary. `POST /api/auth/register` creates the BrainMVB account, then the first
+Brain-backed request enters `createDurableSession`. That path calls
+`POST /v1/tenants` with the stable BrainMVB user id as `founder_external_ref`
+and persists one `brain_identities` mapping for that user. It does not use a
+shared or default tenant.
+
+The remaining gap is seeding. For an ordinary registered email,
+`createDurableSession` omits `demo_seed`, so core does not run
+`seedBrainSaasDemo`. BrainMVB also skips `seedTenantDocuments`, leaving the new
+tenant empty. Demo identities take the same durable creation path with
+`demo_seed:true`, then receive both the core Brightline seed and generated Raw
+fixtures. The proposed signup work should converge these existing branches by
+changing the ordinary-signup decision, not introduce another provisioning
+path.
+
 ## 2. Proposed feature boundary
 
 The feature gives each eligible self-serve user:
@@ -138,6 +156,12 @@ After application signup and email ownership verification, BrainMVB should:
 8. Run the existing generated-document seed only once if the product still
    needs the upload and extraction walkthrough in addition to the core
    Brightline rows.
+
+This reuses the existing post-registration `createDurableSession` path. Tenant
+isolation, the stable external reference, the pending-invite veto, and the
+durable identity mapping already exist. The implementation gap is to opt an
+eligible ordinary signup into `demo_seed:true` and the same one-time Raw fixture
+generation used for demo identities.
 
 ### 3.2 Provisioning readiness
 
@@ -316,6 +340,24 @@ It needs a reviewed extension to PR #396's API-key scope policy plus a use-time
 tenant-state check. Production Raw keys remain out of scope and must continue to
 fail closed until the graduation policy is implemented and approved.
 
+### 6.1 Separate production route-enablement decision
+
+The Raw-scope exception and production API-key service enablement are separate
+go or no-go decisions:
+
+1. The scope-policy change decides whether an eligible synthetic demo tenant
+   may issue and use `raw:read` and `raw:write` on a sandbox key.
+2. The deployment decision sets `BRAIN_API_KEY_AUTH_ENABLED=true` in production
+   with a production pepper, rate limits, acceptance checks, monitoring, and a
+   rollback plan.
+
+Production currently leaves the flag off, so key issuance, listing, rotation,
+revocation, and usage routes return `route_not_found` regardless of the scopes a
+caller requests. The flag must not be flipped implicitly by merging the scope
+exception. Record an explicit approval after the production security review and
+staging acceptance suite, because enabling it exposes the existing read-only key
+surface as well as the proposed demo Raw surface.
+
 ## 7. API and test changes required during implementation
 
 Core:
@@ -373,6 +415,9 @@ Required regression coverage:
 - [x] Confirmed PR #483's 409 contract is reusable.
 - [x] Confirmed PR #396 is merged and currently rejects Raw scopes for all API
       keys.
+- [x] Confirmed ordinary signup tenant isolation is already implemented: one
+      durable tenant per BrainMVB user. The demo-seeding gap remains because
+      ordinary users omit `demo_seed` and skip Raw fixture generation.
 - [x] Defined the recommended manual-review graduation boundary.
 - [x] Defined that graduation creates a clean tenant rather than relabeling
       synthetic data.
@@ -385,7 +430,17 @@ Required regression coverage:
 - [ ] Decide the identity-transition contract for clean-tenant graduation.
 - [ ] Implement retry-safe Brightline provisioning and readiness reporting.
 - [ ] Implement the conditional sandbox Raw-key policy and use-time check.
-- [ ] Implement BrainMVB signup orchestration and one-time key display.
+- [ ] Converge ordinary signup with the existing demo provisioning behavior:
+      after `POST /api/auth/register`, make the existing `createDurableSession`
+      path pass `demo_seed:true`, require the `seedBrainSaasDemo` result, and run
+      the same one-time Raw fixture generation. Do not build a second tenant
+      creation path.
+- [ ] Implement one-time API-key display after the converged seed reaches its
+      ready state.
+- [ ] Make and record the independent production go or no-go decision for
+      `BRAIN_API_KEY_AUTH_ENABLED`, including the production pepper, rate limits,
+      acceptance test, monitoring, and rollback readiness. Do not combine this
+      operational flag flip with approval of the Raw-scope exception.
 - [ ] Implement manual production-access review and audit records.
 - [ ] Add all core, BFF, isolation, failure, and graduation regression tests.
 - [ ] Update API specifications, SDKs, public docs, and operational runbooks.
