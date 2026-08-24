@@ -83,7 +83,9 @@ Then the main stack:
 ```bash
 cd infra
 terraform init -backend-config=backend-production.hcl
-terraform plan  -var-file=production.tfvars -var="operator_ip=$(curl -s ifconfig.me)/32"
+terraform plan -var-file=production.tfvars \
+  -var="git_sha=<full-commit-sha>" \
+  -var="operator_ip=$(curl -s ifconfig.me)/32"
 terraform apply -var-file=production.tfvars -var="operator_ip=$(curl -s ifconfig.me)/32"
 ```
 

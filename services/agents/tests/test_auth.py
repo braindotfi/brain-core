@@ -124,6 +124,7 @@ async def test_health_route_is_not_gated(app_client: httpx.AsyncClient) -> None:
     """The /health probe must remain reachable for liveness checks."""
     resp = await app_client.get("/health")
     assert resp.status_code == 200
+    assert resp.json()["commit"] == "dev"
 
 
 def test_missing_secret_in_production_fails_at_boot(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -250,6 +250,15 @@ resource "azurerm_storage_container" "audit_exports" {
   container_access_type = "private"
 }
 
+# Disposable deploy canaries must never write into Raw's immutable container.
+# This private container has no retention policy so every validation run can
+# delete its uniquely prefixed object before reporting success.
+resource "azurerm_storage_container" "deploy_validation" {
+  name                  = "deploy-validation"
+  storage_account_id    = azurerm_storage_account.raw.id
+  container_access_type = "private"
+}
+
 # ---------------------------------------------------------------------------
 # Container Registry + Container Apps Environment
 # ---------------------------------------------------------------------------
@@ -344,6 +353,22 @@ locals {
   auth_kv_secrets = {
     for env_name, secret_name in local.auth_secret_env :
     secret_name => local.kv_secret_refs[secret_name]
+  }
+
+  # Secrets actively consumed by at least one deployed application. The
+  # validation job mounts the same Key Vault references under check-only env
+  # names and verifies that none resolved to an empty or placeholder value.
+  validation_secret_names = toset(concat(
+    values(local.secret_env),
+    values(local.auth_secret_env),
+    local.deploys_agents ? ["openai-api-key", "brain-api-token", "brain-agents-inbound-secret"] : [],
+  ))
+  validation_secret_refs = {
+    for name in local.validation_secret_names : name => local.kv_secret_refs[name]
+  }
+  validation_secret_env = {
+    for name in local.validation_secret_names :
+    "BRAIN_VALIDATION_SECRET_${upper(replace(name, "-", "_"))}" => name
   }
 
   # ENV_VAR => in-app secret name.
@@ -981,6 +1006,10 @@ resource "azurerm_container_app_job" "terraform" {
         name  = "TF_IMAGE_TAG"
         value = var.image_tag
       }
+      env {
+        name  = "TF_GIT_SHA"
+        value = var.git_sha
+      }
       # Persisted so a plain `az containerapp job start` (no --env-vars) is
       # self-consistent: run.sh feeds this straight back as terraform_image_tag,
       # so the runner does not plan a change to its own image.
@@ -1132,6 +1161,119 @@ resource "azurerm_container_app_job" "db_roles" {
       }
     }
   }
+}
+
+# In-VNet, fail-closed production dependency validation. GitHub-hosted runners
+# cannot reach the private Key Vault, Managed Redis, Postgres, or internal
+# agents ingress. This manual job carries only disposable canary behavior and
+# emits redacted gate results. The deploy workflow starts it after migrations.
+resource "azurerm_container_app_job" "deploy_validation" {
+  name                         = "${local.name_prefix}-deploy-validation"
+  resource_group_name          = azurerm_resource_group.primary.name
+  location                     = azurerm_resource_group.primary.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  workload_profile_name        = "Consumption"
+  replica_timeout_in_seconds   = 900
+  replica_retry_limit          = 0
+  tags                         = local.tags
+
+  manual_trigger_config {
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.services.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.services.id
+  }
+
+  dynamic "secret" {
+    for_each = local.validation_secret_refs
+    content {
+      name                = secret.key
+      identity            = azurerm_user_assigned_identity.services.id
+      key_vault_secret_id = secret.value
+    }
+  }
+
+  template {
+    container {
+      name    = "deploy-validation"
+      image   = local.api_image
+      cpu     = 0.5
+      memory  = "1.0Gi"
+      command = ["node", "services/api/dist/ops/azure-deploy-validation.js"]
+
+      dynamic "env" {
+        for_each = local.common_env
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.secret_env
+        content {
+          name        = env.key
+          secret_name = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.validation_secret_env
+        content {
+          name        = env.key
+          secret_name = env.value
+        }
+      }
+
+      env {
+        name  = "BRAIN_VALIDATION_REQUIRED_SECRET_ENVS"
+        value = join(",", sort(keys(local.validation_secret_env)))
+      }
+      env {
+        name  = "BRAIN_VALIDATION_DB_ROLE_ENVS"
+        value = jsonencode(local.db_role_urls)
+      }
+      env {
+        name  = "BRAIN_VALIDATION_API_BASE_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+      env {
+        name  = "BRAIN_VALIDATION_AUTH_BASE_URL"
+        value = "https://${azurerm_container_app.auth.ingress[0].fqdn}"
+      }
+      env {
+        name  = "BRAIN_VALIDATION_AGENTS_BASE_URL"
+        value = "https://${local.agents_fqdn}"
+      }
+      env {
+        name  = "BRAIN_VALIDATION_BLOB_CONTAINER"
+        value = azurerm_storage_container.deploy_validation.name
+      }
+      env {
+        name  = "BRAIN_VALIDATION_EXPECTED_GIT_SHA"
+        value = var.git_sha
+      }
+      env {
+        name  = "BRAIN_VALIDATION_RUN_ID"
+        value = "template-only"
+      }
+    }
+  }
+
+  depends_on = [
+    azurerm_container_app.api,
+    azurerm_container_app.auth,
+    azurerm_container_app.agents,
+    azurerm_storage_container.deploy_validation,
+  ]
 }
 
 # ---------------------------------------------------------------------------

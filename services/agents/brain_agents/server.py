@@ -190,7 +190,11 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
 
     @application.get("/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True, "service": "brain-agents"}
+        return {
+            "ok": True,
+            "service": "brain-agents",
+            "commit": os.environ.get("GIT_SHA", "dev"),
+        }
 
     return application
 

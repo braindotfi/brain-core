@@ -1,6 +1,8 @@
 # Container Apps deploy validation scope
 
-Status: scope only. This document does not authorize a Terraform apply, traffic cutover, DNS change, or feature-flag change.
+Status: scoped with partial implementation. This document does not authorize a Terraform apply, traffic cutover, DNS change, or feature-flag change.
+
+Implementation status: immutable image identity, control-plane readiness, and an in-VNet dependency validation job are implemented on `fix/azure-deploy-validation`. The production workflow is not ready to execute yet. Terraform still routes the API's latest revision at 100 percent during apply, before the new validation job runs. Candidate revisions at zero traffic and a non-production rehearsal remain required before production execution is safe.
 
 ## Goal
 
@@ -112,9 +114,9 @@ Automate image identity checks, plans, secret metadata checks, migration jobs, s
 - [x] Current build-argument and health-check gaps identified.
 - [x] Required service and dependency validation surfaces scoped.
 - [x] Cutover and API-key flag changes explicitly excluded.
-- [ ] Implement immutable SHA wiring for root and agents images.
+- [x] Implement immutable SHA wiring for root and agents images.
 - [ ] Add candidate-revision deployment behavior.
-- [ ] Add redacted Key Vault and Managed Redis canaries.
+- [x] Add redacted Key Vault and Managed Redis canaries.
 - [ ] Add auth, worker, agents, MCP, Blob, and Postgres validation.
 - [ ] Add the disposable signup validation.
 - [ ] Test the workflow in a non-production Azure environment.

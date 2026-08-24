@@ -60,6 +60,10 @@ env:
   API_APP: brain-production-api
   TF_JOB: brain-production-terraform
   ENV_NAME: brain-production-env
+  AUTH_APP: brain-production-auth
+  WORKER_APP: brain-production-worker
+  AGENTS_APP: brain-production-agents
+  VALIDATION_JOB: brain-production-deploy-validation
 
 jobs:
   deploy:
@@ -79,6 +83,10 @@ jobs:
         run: |
           SHA="${{ inputs.sha }}"
           if [ -z "$SHA" ]; then SHA="${{ github.sha }}"; fi
+          if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full lowercase 40-character commit SHA"
+            exit 1
+          fi
           # Short form is the image tag. It must match what terraform asks for,
           # or the apply references a tag that was never pushed.
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -88,6 +96,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify release commit
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$SHA" origin/main || {
+            echo "::error::$SHA is not reachable from main"
+            exit 1
+          }
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -111,14 +132,17 @@ jobs:
         if: ${{ inputs.build_images }}
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
+          SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           set -euo pipefail
           # az acr build resolves --file relative to the REPO ROOT, not to the
           # context argument. Naming it "Dockerfile" while passing a subdirectory
           # context pairs that context with the root Node image, which then fails
           # on a COPY of a file the subdirectory does not contain.
-          az acr build --registry "$ACR" --image "brain-api:latest" --image "brain-api:${TAG}" --file Dockerfile .
-          az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" --file services/agents/Dockerfile services/agents
+          az acr build --registry "$ACR" --image "brain-api:latest" --image "brain-api:${TAG}" \
+            --build-arg "GIT_SHA=$SHA" --file Dockerfile .
+          az acr build --registry "$ACR" --image "brain-agents:latest" --image "brain-agents:${TAG}" \
+            --build-arg "GIT_SHA=$SHA" --file services/agents/Dockerfile services/agents
           az acr build --registry "$ACR" --image "brain-db-roles:latest" --image "brain-db-roles:${TAG}" --file infra/db-roles.Dockerfile infra
 
       # Unconditional, and deliberately not part of the step above: this image
@@ -146,16 +170,23 @@ jobs:
         id: apptag
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
+          SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           set -euo pipefail
           if [ "${{ inputs.build_images }}" = "true" ]; then
             APP_TAG="$TAG"
+            APP_SHA="$SHA"
           else
             APP_TAG=$(az containerapp show -n "$API_APP" -g "$RG" \
               --query "properties.template.containers[0].image" -o tsv | sed 's/.*://')
+            FQDN=$(az containerapp show -n "$API_APP" -g "$RG" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+            APP_SHA=$(curl --fail --silent --show-error --max-time 20 "https://$FQDN/health" |
+              jq -er '.commit | select(test("^[0-9a-f]{40}$"))')
             echo "infra-only deploy: app images stay on the deployed tag '$APP_TAG'"
           fi
           echo "tag=$APP_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$APP_SHA" >> "$GITHUB_OUTPUT"
 
       # ⚠️ `--env-vars` REPLACES the container spec, it does not merge. Anything
       # not re-passed is dropped, including the Key Vault secret reference the
@@ -170,6 +201,7 @@ jobs:
           ACTION: ${{ inputs.terraform_action }}
           APP_TAG: ${{ steps.apptag.outputs.tag }}
           TF_TAG: ${{ steps.resolve.outputs.tag }}
+          APP_SHA: ${{ steps.apptag.outputs.sha }}
           TARGET: ${{ inputs.terraform_target }}
         run: |
           set -euo pipefail
@@ -179,7 +211,7 @@ jobs:
               --query "properties.template.containers[0].env" -o json |
             jq -r '
               .[]
-              | select(.name | test("^(ACTION|TF_IMAGE_TAG|TF_TERRAFORM_IMAGE_TAG|TF_TARGET)$") | not)
+              | select(.name | test("^(ACTION|TF_IMAGE_TAG|TF_GIT_SHA|TF_TERRAFORM_IMAGE_TAG|TF_TARGET)$") | not)
               | if .secretRef then "\(.name)=secretref:\(.secretRef)" else "\(.name)=\(.value)" end
             '
           )
@@ -195,6 +227,7 @@ jobs:
             --env-vars "${JOB_ENV[@]}" \
               "ACTION=${ACTION}" \
               "TF_IMAGE_TAG=${APP_TAG}" \
+              "TF_GIT_SHA=${APP_SHA}" \
               "TF_TERRAFORM_IMAGE_TAG=${TF_TAG}" \
               "TF_TARGET=${TARGET}" \
             --query name -o tsv)
@@ -277,23 +310,91 @@ jobs:
           run_job brain-production-migrate
           run_job brain-production-db-roles
 
-      - name: Health check
+      - name: Container Apps control-plane readiness
         if: ${{ inputs.terraform_action == 'apply' }}
+        env:
+          AZURE_RESOURCE_GROUP: ${{ env.RG }}
+          AZURE_ACR: ${{ env.ACR }}
+          AZURE_IMAGE_TAG: ${{ steps.apptag.outputs.tag }}
+          EXPECTED_GIT_SHA: ${{ steps.apptag.outputs.sha }}
         run: |
           set -euo pipefail
-          FQDN=$(az containerapp show -n "$API_APP" -g "$RG" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          echo "api: https://$FQDN"
-          for i in $(seq 1 30); do
-            code=$(curl -s -m 20 -o /tmp/health.json -w "%{http_code}" "https://$FQDN/health" || echo 000)
-            if [ "$code" = "200" ]; then
-              echo "health OK: $(cat /tmp/health.json)"
-              # Fail the deploy if a healthy response reports the wrong build.
-              grep -q '"ok":true' /tmp/health.json
-              exit 0
-            fi
-            echo "attempt $i: HTTP $code"
+          export AZURE_LOG_ANALYTICS_WORKSPACE_ID
+          AZURE_LOG_ANALYTICS_WORKSPACE_ID=$(az containerapp env show -n "$ENV_NAME" -g "$RG" \
+            --query properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -o tsv)
+          bash scripts/ops/validate-azure-container-apps.sh
+
+      - name: In-VNet runtime dependency validation
+        id: validation
+        if: ${{ inputs.terraform_action == 'apply' }}
+        env:
+          EXPECTED_SHA: ${{ steps.apptag.outputs.sha }}
+          RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mapfile -t JOB_ENV < <(
+            az containerapp job show -n "$VALIDATION_JOB" -g "$RG" \
+              --query "properties.template.containers[0].env" -o json |
+            jq -r '
+              .[]
+              | select(.name != "BRAIN_VALIDATION_RUN_ID" and .name != "BRAIN_VALIDATION_EXPECTED_GIT_SHA")
+              | if .secretRef then "\(.name)=secretref:\(.secretRef)" else "\(.name)=\(.value)" end
+            '
+          )
+          if [ "${#JOB_ENV[@]}" -eq 0 ]; then
+            echo "::error::validation job environment could not be read"
+            exit 1
+          fi
+          EXEC=$(az containerapp job start -n "$VALIDATION_JOB" -g "$RG" \
+            --env-vars "${JOB_ENV[@]}" \
+              "BRAIN_VALIDATION_EXPECTED_GIT_SHA=${EXPECTED_SHA}" \
+              "BRAIN_VALIDATION_RUN_ID=${RUN_ID}" \
+            --query name -o tsv)
+          echo "execution=$EXEC" >> "$GITHUB_OUTPUT"
+          status=""
+          for _ in $(seq 1 95); do
+            status=$(az containerapp job execution show -n "$VALIDATION_JOB" -g "$RG" \
+              --job-execution-name "$EXEC" --query properties.status -o tsv 2>/dev/null || echo "")
+            case "$status" in
+              Succeeded) break ;;
+              Failed|Degraded) echo "::error::runtime validation failed ($status)"; exit 1 ;;
+            esac
             sleep 10
           done
-          echo "::error::health check never returned 200"
-          exit 1
+          if [ "$status" != "Succeeded" ]; then
+            echo "::error::runtime validation timed out (last status: ${status:-unknown})"
+            exit 1
+          fi
+
+      - name: Runtime validation evidence
+        if: ${{ always() && inputs.terraform_action == 'apply' && steps.validation.outputs.execution != '' }}
+        env:
+          EXEC: ${{ steps.validation.outputs.execution }}
+        run: |
+          set -euo pipefail
+          az extension add -n log-analytics -y >/dev/null 2>&1 || true
+          WS=$(az containerapp env show -n "$ENV_NAME" -g "$RG" \
+            --query properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -o tsv)
+          found=false
+          for _ in $(seq 1 20); do
+            az monitor log-analytics query -w "$WS" --analytics-query \
+              "ContainerAppConsoleLogs_CL
+               | where ContainerGroupName_s startswith '${EXEC}'
+               | project TimeGenerated, Log_s
+               | order by TimeGenerated asc" \
+              -o json | jq -r '.[].Log_s' > /tmp/deploy-validation.jsonl
+            if grep -q '"summary":"azure_deploy_validation"' /tmp/deploy-validation.jsonl; then
+              found=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" != "true" ]; then
+            echo "::error::runtime validation evidence was not found"
+            exit 1
+          fi
+          sed -n '/"gate":/p;/"summary":/p' /tmp/deploy-validation.jsonl
+          if ! grep -q '"summary":"azure_deploy_validation","ok":true' /tmp/deploy-validation.jsonl; then
+            echo "::error::runtime validation did not pass every required gate"
+            exit 1
+          fi

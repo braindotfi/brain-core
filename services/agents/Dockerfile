@@ -2,6 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+
 # Apply Debian security updates that may land after the base image was built.
 RUN apt-get update \
   && apt-get upgrade -y \
