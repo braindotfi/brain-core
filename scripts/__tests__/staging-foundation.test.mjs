@@ -5,16 +5,20 @@ import test from "node:test";
 const read = (path) => readFile(path, "utf8");
 
 test("staging bootstrap isolates state and GitHub OIDC from production", async () => {
-  const [main, github, variables, backend] = await Promise.all([
+  const [main, github, variables, versions, backend, migrationBackend] = await Promise.all([
     read("infra/bootstrap-staging/main.tf"),
     read("infra/bootstrap-staging/github.tf"),
     read("infra/bootstrap-staging/variables.tf"),
+    read("infra/bootstrap-staging/versions.tf"),
     read("infra/backend-staging.hcl"),
+    read("infra/backend-staging-migration.hcl"),
   ]);
 
   assert.match(main, /name\s+= var\.state_resource_group_name/);
   assert.match(main, /name\s+= var\.workload_resource_group_name/);
   assert.match(main, /shared_access_key_enabled\s+= false/);
+  assert.match(main, /resource "azurerm_storage_container" "state"/);
+  assert.match(versions, /storage_use_azuread\s+= true/);
   assert.match(main, /prevent_destroy\s+= true/);
   assert.match(main, /repo:\$\{var\.github_repository\}:environment:\$\{var\.github_environment\}/);
   assert.match(main, /role_definition_name\s+= "Contributor"/);
@@ -40,14 +44,18 @@ test("staging bootstrap isolates state and GitHub OIDC from production", async (
   assert.match(backend, /key\s+= "foundation\.terraform\.tfstate"/);
   assert.match(backend, /use_azuread_auth\s+= true/);
   assert.match(backend, /use_cli\s+= true/);
+  assert.match(migrationBackend, /use_azuread_auth\s+= true/);
+  assert.match(migrationBackend, /use_cli\s+= true/);
   assert.doesNotMatch(backend, /production/);
+  assert.doesNotMatch(migrationBackend, /production/);
 });
 
 test("destroyable staging foundation exactly satisfies migration data sources", async () => {
-  const [main, variables, outputs, migration, tfvars] = await Promise.all([
+  const [main, variables, outputs, versions, migration, tfvars] = await Promise.all([
     read("infra/staging-foundation/main.tf"),
     read("infra/staging-foundation/variables.tf"),
     read("infra/staging-foundation/outputs.tf"),
+    read("infra/staging-foundation/versions.tf"),
     read("infra/staging-migration/main.tf"),
     read("infra/staging-foundation/staging.tfvars"),
   ]);
@@ -76,6 +84,8 @@ test("destroyable staging foundation exactly satisfies migration data sources", 
   assert.match(variables, /var\.acr_name == "brainstagingacr"/);
   assert.match(outputs, /key_vault_uri/);
   assert.match(tfvars, /vnet_address_space\s+= "10\.30\.0\.0\/16"/);
+  assert.doesNotMatch(main, /azurerm_storage_(?:container|blob|queue|share|table)/);
+  assert.doesNotMatch(versions, /storage_use_azuread\s+= false/);
 
   for (const dataSource of [
     'data "azurerm_resource_group" "staging"',

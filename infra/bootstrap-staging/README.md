@@ -23,6 +23,12 @@ preflight can prove there are no production resources or overlapping networks.
 It has no write role at subscription scope, no production role, and no client
 secret.
 
+The state account disables Shared Key. The AzureRM provider uses Microsoft
+Entra authentication for the Blob API while creating the private state
+container. The interactive bootstrap operator therefore also needs Storage
+Blob Data Contributor on the staging subscription until the account exists, or
+an equivalent two-stage assignment scoped to the new account.
+
 Plan from an encrypted operator directory after copying and completing
 `terraform.tfvars.example` outside the repository:
 

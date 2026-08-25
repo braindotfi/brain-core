@@ -18,8 +18,9 @@ terraform {
 }
 
 provider "azurerm" {
-  subscription_id = var.staging_subscription_id
-  tenant_id       = var.staging_tenant_id
+  subscription_id     = var.staging_subscription_id
+  tenant_id           = var.staging_tenant_id
+  storage_use_azuread = true
 
   features {
     resource_group {
