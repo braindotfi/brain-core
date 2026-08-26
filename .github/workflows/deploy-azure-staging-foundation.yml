@@ -1,0 +1,338 @@
+name: deploy-azure-staging-foundation
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full main commit SHA to plan or apply. Blank uses current main."
+        required: false
+        type: string
+        default: ""
+      action:
+        description: "Plan, or apply an exact plan from a reviewed workflow run."
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+      plan_run_id:
+        description: "Successful plan workflow run ID. Required for apply."
+        required: false
+        type: string
+        default: ""
+      apply_confirmation:
+        description: "For apply, enter APPLY-STAGING-FOUNDATION."
+        required: false
+        type: string
+        default: ""
+      rehearsal_expires_at:
+        description: "UTC RFC 3339 expiry, 8 to 24 hours after the plan starts."
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  foundation:
+    name: staging foundation ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: azure-staging-rehearsal
+    concurrency:
+      group: azure-staging-foundation
+      cancel-in-progress: false
+
+    env:
+      EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID }}
+      DENIED_PRODUCTION_SUBSCRIPTION_ID: ${{ vars.AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY }}
+      TF_VAR_staging_subscription_id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
+      TF_VAR_staging_tenant_id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
+      TF_VAR_migration_operator_object_id: ${{ vars.AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID }}
+      TF_VAR_independent_verifier_object_id: ${{ vars.AZURE_STAGING_INDEPENDENT_VERIFIER_OBJECT_ID }}
+      TF_VAR_rehearsal_owner: ${{ vars.AZURE_STAGING_REHEARSAL_OWNER }}
+      TF_VAR_rehearsal_expires_at: ${{ inputs.rehearsal_expires_at }}
+      TF_VAR_github_run_id: ${{ github.run_id }}
+      ARM_USE_CLI: true
+
+    steps:
+      - name: Validate request
+        env:
+          ACTION: ${{ inputs.action }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          APPLY_CONFIRMATION: ${{ inputs.apply_confirmation }}
+        run: |
+          set -euo pipefail
+          for required in EXPECTED_SUBSCRIPTION_ID DENIED_PRODUCTION_SUBSCRIPTION_ID \
+            TF_VAR_staging_subscription_id TF_VAR_staging_tenant_id \
+            TF_VAR_migration_operator_object_id TF_VAR_independent_verifier_object_id \
+            TF_VAR_rehearsal_owner TF_VAR_rehearsal_expires_at; do
+            if [ -z "${!required}" ]; then
+              echo "::error::missing protected staging value $required"
+              exit 1
+            fi
+          done
+          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" != "${TF_VAR_staging_subscription_id,,}" ]; then
+            echo "::error::expected staging subscription values disagree"
+            exit 1
+          fi
+          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" = "${DENIED_PRODUCTION_SUBSCRIPTION_ID,,}" ]; then
+            echo "::error::staging subscription matches the denied production subscription"
+            exit 1
+          fi
+          if [ "${TF_VAR_migration_operator_object_id,,}" = "${TF_VAR_independent_verifier_object_id,,}" ]; then
+            echo "::error::migration operator and verifier must be different principals"
+            exit 1
+          fi
+          case "$ACTION" in
+            plan)
+              test -z "$PLAN_RUN_ID"
+              test -z "$APPLY_CONFIRMATION"
+              ;;
+            apply)
+              [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]]
+              test "$APPLY_CONFIRMATION" = "APPLY-STAGING-FOUNDATION"
+              ;;
+            *)
+              echo "::error::unsupported action"
+              exit 1
+              ;;
+          esac
+          now=$(date -u +%s)
+          expiry=$(date -u -d "$TF_VAR_rehearsal_expires_at" +%s)
+          remaining=$((expiry - now))
+          if [ "$ACTION" = "plan" ] && { [ "$remaining" -lt 28800 ] || [ "$remaining" -gt 86400 ]; }; then
+            echo "::error::plan expiry must be 8 to 24 hours in the future"
+            exit 1
+          fi
+          if [ "$ACTION" = "apply" ] && [ "$remaining" -le 0 ]; then
+            echo "::error::reviewed staging foundation plan has expired"
+            exit 1
+          fi
+
+      - name: Resolve SHA
+        id: release
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          sha="$REQUESTED_SHA"
+          if [ -z "$sha" ]; then sha="${{ github.sha }}"; fi
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full lowercase 40-character commit SHA"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${sha:0:8}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify release commit
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$SHA" origin/main || {
+            echo "::error::$SHA is not reachable from main"
+            exit 1
+          }
+
+      - name: Azure staging login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_STAGING_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
+
+      - name: Verify isolated Azure target
+        run: |
+          set -euo pipefail
+          actual_subscription=$(az account show --query id -o tsv)
+          if [ "${actual_subscription,,}" != "${EXPECTED_SUBSCRIPTION_ID,,}" ]; then
+            echo "::error::Azure login selected the wrong subscription"
+            exit 1
+          fi
+          resource_group=$(az group show --name brain-staging-rg --output json)
+          test "$(jq -r '.name' <<<"$resource_group")" = "brain-staging-rg"
+          test "$(jq -r '.tags.environment // ""' <<<"$resource_group")" = "staging"
+          if jq -r '.id' <<<"$resource_group" | grep -qi production; then
+            echo "::error::production marker found in the staging resource group ID"
+            exit 1
+          fi
+          if az resource list --output json | jq -e '[.[] | select(.id | test("production"; "i"))] | length > 0' >/dev/null; then
+            echo "::error::production-named resource exists in the selected staging subscription"
+            exit 1
+          fi
+          az network vnet list --output json |
+            jq -r '.[] | select(.name != "brain-staging-vnet") | .addressSpace.addressPrefixes[]?' \
+            > /tmp/staging-existing-vnet-cidrs.txt
+          python3 - <<'PY'
+          import ipaddress
+
+          candidate = ipaddress.ip_network("10.30.0.0/16")
+          with open("/tmp/staging-existing-vnet-cidrs.txt", encoding="utf-8") as handle:
+              existing = [ipaddress.ip_network(line.strip()) for line in handle if line.strip()]
+          overlapping = [str(network) for network in existing if candidate.overlaps(network)]
+          if overlapping:
+              raise SystemExit(f"staging VNet CIDR overlaps existing networks: {', '.join(overlapping)}")
+          PY
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.2
+          terraform_wrapper: false
+
+      - name: Initialize and validate foundation
+        working-directory: infra/staging-foundation
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform init -reconfigure -input=false -backend-config=../backend-staging.hcl
+          terraform validate
+
+      - name: Create full foundation plan
+        if: ${{ inputs.action == 'plan' }}
+        working-directory: infra/staging-foundation
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          terraform plan -input=false -no-color -out=tfplan -var-file=staging.tfvars
+          terraform show -no-color tfplan | tee tfplan.txt
+          terraform show -json tfplan > tfplan.json
+          if grep -Eqi 'brain-production|brain-tfstate-rg|brainfitfstate([^s]|$)' tfplan.txt; then
+            echo "::error::production resource marker found in staging plan"
+            exit 1
+          fi
+          if jq -e '
+            [.resource_changes[]?
+              | select(.mode == "managed")
+              | select(.change.actions != ["no-op"])
+              | select(
+                  (.change.actions | index("delete")) != null or
+                  (.change.actions | index("replace")) != null
+                )]
+            | length > 0
+          ' tfplan.json >/dev/null; then
+            echo "::error::foundation deploy plan contains a delete or replacement"
+            exit 1
+          fi
+          jq -e '
+            [
+              "azurerm_virtual_network.staging",
+              "azurerm_subnet.apps",
+              "azurerm_subnet.private_endpoints",
+              "azurerm_log_analytics_workspace.staging",
+              "azurerm_container_app_environment.staging",
+              "azurerm_key_vault.staging",
+              "azurerm_private_dns_zone.key_vault",
+              "azurerm_private_dns_zone_virtual_network_link.key_vault",
+              "azurerm_private_endpoint.key_vault",
+              "azurerm_container_registry.staging",
+              "azurerm_role_assignment.migration_operator_evidence",
+              "azurerm_role_assignment.independent_verifier_evidence"
+            ] as $allowed
+            | [.resource_changes[]?
+                | select(.mode == "managed")
+                | select(.change.actions != ["no-op"])
+                | select(.address as $address | $allowed | index($address) | not)]
+            | length == 0
+          ' tfplan.json >/dev/null || {
+            echo "::error::plan contains a resource outside the staging foundation allowlist"
+            exit 1
+          }
+          jq -n \
+            --arg sha "$SHA" \
+            --arg subscription_id "$EXPECTED_SUBSCRIPTION_ID" \
+            --arg backend_key "foundation.terraform.tfstate" \
+            --arg plan_run_id "${{ github.run_id }}" \
+            --arg expires_at "$TF_VAR_rehearsal_expires_at" \
+            '{sha:$sha,subscription_id:$subscription_id,backend_key:$backend_key,plan_run_id:$plan_run_id,expires_at:$expires_at}' \
+            > plan-manifest.json
+
+      - name: Retain reviewed foundation plan
+        if: ${{ inputs.action == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-foundation-plan
+          path: |
+            infra/staging-foundation/tfplan
+            infra/staging-foundation/tfplan.txt
+            infra/staging-foundation/tfplan.json
+            infra/staging-foundation/plan-manifest.json
+          retention-days: 2
+          if-no-files-found: error
+
+      - name: Download reviewed foundation plan
+        if: ${{ inputs.action == 'apply' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-foundation-plan
+          path: infra/staging-foundation/reviewed
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run_id }}
+
+      - name: Verify source plan workflow
+        if: ${{ inputs.action == 'apply' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          source_run=$(gh run view "$PLAN_RUN_ID" --json workflowName,conclusion,event)
+          test "$(jq -r '.workflowName' <<<"$source_run")" = "deploy-azure-staging-foundation"
+          test "$(jq -r '.conclusion' <<<"$source_run")" = "success"
+          test "$(jq -r '.event' <<<"$source_run")" = "workflow_dispatch"
+
+      - name: Verify reviewed foundation plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/staging-foundation
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+        run: |
+          set -euo pipefail
+          manifest=reviewed/plan-manifest.json
+          test "$(jq -r '.sha' "$manifest")" = "$SHA"
+          test "$(jq -r '.plan_run_id' "$manifest")" = "$PLAN_RUN_ID"
+          test "$(jq -r '.subscription_id' "$manifest")" = "$EXPECTED_SUBSCRIPTION_ID"
+          test "$(jq -r '.backend_key' "$manifest")" = "foundation.terraform.tfstate"
+          test "$(jq -r '.expires_at' "$manifest")" = "$TF_VAR_rehearsal_expires_at"
+          cmp reviewed/tfplan.txt <(terraform show -no-color reviewed/tfplan)
+          if grep -Eqi 'brain-production|brain-tfstate-rg|brainfitfstate([^s]|$)' reviewed/tfplan.txt; then
+            echo "::error::production resource marker found in reviewed plan"
+            exit 1
+          fi
+          cat reviewed/tfplan.txt
+
+      - name: Apply exact reviewed foundation plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/staging-foundation
+        run: terraform apply -input=false -no-color reviewed/tfplan
+
+      - name: Verify applied staging resources
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/staging-foundation
+        run: |
+          set -euo pipefail
+          terraform output -json > applied-outputs.json
+          jq -e --arg subscription "$EXPECTED_SUBSCRIPTION_ID" '
+            .resource_ids.value
+            | to_entries
+            | all(
+                if .key == "resource_group"
+                then .value == "/subscriptions/" + $subscription + "/resourceGroups/brain-staging-rg"
+                else .value | startswith("/subscriptions/" + $subscription + "/resourceGroups/brain-staging-rg/")
+                end
+              )
+          ' applied-outputs.json >/dev/null
+          test "$(jq -r '.key_vault_uri.value' applied-outputs.json)" = "https://brain-staging-kv.vault.azure.net/"
+          az resource list --resource-group brain-staging-rg --output json |
+            jq -e 'all(.[]; .tags.environment == "staging" and .tags.lifecycle == "ephemeral")' >/dev/null
+          jq '{summary:"staging_foundation_applied",ok:true,key_vault_uri:.key_vault_uri.value,expires_at:.expires_at.value}' applied-outputs.json

@@ -1,0 +1,15 @@
+# Copy outside the repository and replace every placeholder before the approved
+# bootstrap plan. These values are identifiers, not credentials.
+
+staging_subscription_id = "<dedicated-staging-subscription-uuid>"
+staging_tenant_id       = "<entra-tenant-uuid>"
+owner                   = "<named-owner>"
+
+production_subscription_id_deny  = "<production-subscription-uuid>"
+migration_operator_object_id     = "<entra-object-uuid>"
+independent_verifier_object_id   = "<different-entra-object-uuid>"
+github_reviewer_user_ids         = [<github-numeric-user-id>]
+
+# Change only if the Azure name-availability inventory rejects the reviewed
+# default. Keep backend-staging.hcl synchronized with the approved value.
+state_storage_account_name = "brainfitfstatestg"

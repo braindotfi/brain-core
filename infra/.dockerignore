@@ -9,3 +9,4 @@
 !*.tf
 !*.tfvars
 !backend-production.hcl
+!backend-staging.hcl

@@ -20,14 +20,14 @@ targets make an accidental production dispatch less likely and make GitHub
 environment protection easy to audit. Shared shell helpers may be reused after
 their production resource names are replaced with explicit required inputs.
 
-The chosen default is an ephemeral staging workload. Keep only a small staging
-foundation between rehearsals: Terraform state, the staging ACR, and the
-staging Key Vault. Create the Container Apps environment, apps, jobs, VNet,
-Postgres, Managed Redis, Blob account, private endpoints, and Log Analytics for
-an approved 8-to-24-hour rehearsal window, then remove them through a separately
-approved teardown workflow after evidence is retained. Further staging-stack
-design and implementation must assume this lifecycle rather than an always-on
-environment.
+The chosen default is an ephemeral staging workload and foundation. Retain only
+Terraform state, the empty workload resource group, and the staging GitHub OIDC
+principal between rehearsals. Create ACR, Key Vault, the Container Apps
+environment, apps, jobs, VNet, Postgres, Managed Redis, Blob accounts, private
+endpoints, and Log Analytics for an approved 8-to-24-hour rehearsal window,
+then remove them through separately approved teardown workflows after evidence
+is retained. Further staging-stack work must assume this lifecycle rather than
+an always-on environment.
 
 This decision is based on current Canada Central retail rates. An always-on
 stack is expected to cost about USD 265 to USD 300 per month at low traffic,
@@ -252,11 +252,11 @@ Production safeguards cannot be copied mechanically into an ephemeral stack:
 - Key Vault uses purge protection and soft-delete recovery.
 - The provider refuses resource-group deletion when unmanaged resources remain.
 
-Keep `prevent_destroy` for the staging backend. Keep staging Key Vault recovery
-protection and retain the vault as part of the persistent foundation. Design the
-workload stack so its expensive resources can be removed without deleting the
-vault, ACR, or state account. Do not rely on repeated targeted destroys in the
-normal workflow.
+Keep `prevent_destroy` for the staging backend and empty workload resource
+group. Keep staging Key Vault recovery protection, while allowing the active
+vault and ACR resources to be removed with the destroyable foundation state.
+The provider recovers the soft-deleted vault during a later approved rehearsal.
+Do not rely on repeated targeted destroys in the normal workflow.
 
 The implementation must create an explicit boundary between the persistent
 foundation and ephemeral workload. Two explicit Terraform roots and state files
@@ -520,18 +520,19 @@ Assumptions:
 
 Assumptions:
 
-- Retain only staging state, ACR, and Key Vault between rehearsals.
+- Retain only staging state, the empty workload resource group, and OIDC
+  identity between rehearsals.
 - Run the full workload for 8 to 24 hours.
 - Bill app replicas at active rates during the window.
 - Use one B2s Postgres server, one Redis B0 instance, and two private endpoints.
 - Store only synthetic validation data.
 - Include a small allowance for image builds, logs, and storage operations.
 
-| Window                             | Approximate USD per rehearsal month |
-| ---------------------------------- | ----------------------------------: |
-| 8 hours                            |                            15 to 20 |
-| 24 hours                           |                            20 to 30 |
-| Persistent foundation between runs |             about 5 to 10 per month |
+| Window                      |       Approximate USD per rehearsal month |
+| --------------------------- | ----------------------------------------: |
+| 8 hours                     |                                  15 to 20 |
+| 24 hours                    |                                  20 to 30 |
+| Retained state between runs | less than 1 per month at low state volume |
 
 Provisioning delays, failed runs, retained logs, and external provider calls can
 increase those figures. Add a staging budget alert at USD 25 and USD 50, plus an
@@ -565,18 +566,18 @@ expiry-policy alert when workload resources remain after the approved window.
 - [x] Scoped a separate staging workflow and per-gate evidence requirements.
 - [x] Estimated always-on and ephemeral cost from current official Azure rates.
 - [x] Approved the ephemeral workload as the default operating model.
-- [x] Approved retaining only a small state, ACR, and Key Vault foundation.
+- [x] Approved retaining only state, an empty resource group, and OIDC identity.
 - [ ] Approve subscription and resource-group isolation choice.
-- [ ] Implement explicit foundation and ephemeral Terraform state boundaries.
-- [ ] Implement `backend-staging.hcl` and `staging.tfvars`.
+- [x] Implement explicit bootstrap and ephemeral foundation state boundaries.
+- [x] Implement `backend-staging.hcl` and foundation `staging.tfvars`.
 - [ ] Remove production defaults from environment-specific Terraform inputs.
 - [ ] Parameterize control-plane validation app and worker names.
-- [ ] Implement staging backend bootstrap.
+- [x] Implement staging backend bootstrap configuration.
 - [ ] Create the staging GitHub environment.
 - [ ] Create staging GitHub OIDC and Terraform runner principals.
 - [ ] Configure staging-only secrets and variables.
-- [ ] Implement `deploy-azure-staging.yml`.
-- [ ] Implement a separately approved staging teardown workflow.
+- [x] Implement protected staging foundation plan and apply workflow.
+- [x] Implement a separately protected staging foundation teardown workflow.
 - [x] Implement the reviewed encrypted migration-intake resources and canary
       tooling without applying them.
 - [ ] Prove the temporary VM route and encrypted intake canary live.

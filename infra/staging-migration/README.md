@@ -66,7 +66,7 @@ for the confirmed system-assigned identity.
 No values in this example are credentials:
 
 ```bash
-terraform init -reconfigure -backend-config=<approved-staging-migration-backend>
+terraform init -reconfigure -backend-config=../backend-staging-migration.hcl
 terraform plan \
   -var='staging_subscription_id=<staging-subscription-uuid>' \
   -var='migration_storage_account_name=brainstgmig<unique>' \
