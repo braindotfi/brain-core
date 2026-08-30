@@ -27,6 +27,15 @@ test("workflow validates, backs up, reloads, and live probes the route", () => {
   assert.match(workflow, /auth_token_missing/);
 });
 
+test("workflow resolves staging containers from Compose services", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /docker compose -p brain-staging --env-file \.env\.staging/);
+  assert.match(workflow, /ps -q caddy/);
+  assert.match(workflow, /ps -q surface-gateway/);
+  assert.doesNotMatch(workflow, /docker exec brain-prod-(?:caddy|surface-gateway)/);
+});
+
 test("workflow reports Slack secret presence without printing values", () => {
   const workflow = readFileSync(WORKFLOW, "utf8");
 
