@@ -51,6 +51,15 @@ jobs:
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
           ssh -i "$RUNNER_TEMP/id_target" -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
+          for name in SLACK_ENABLED TEAMS_ENABLED; do
+            value="$(docker exec brain-prod-surface-gateway printenv "$name" 2>/dev/null || true)"
+            printf 'surface_runtime_%s=%s\n' "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" "${value:-unset}"
+          done
+          if docker exec brain-prod-surface-gateway sh -c 'test -n "$BRAIN_SURFACE_ACTION_SECRET"'; then
+            echo 'surface_action_secret_present=true'
+          else
+            echo 'surface_action_secret_present=false'
+          fi
           docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
           BEGIN TRANSACTION READ ONLY;
           SET LOCAL statement_timeout = '10s';
@@ -110,7 +119,17 @@ jobs:
                   AND eo.payment_intent_id = p.proposal->'executionTarget'->>'id'
              )
            ORDER BY d.decided_at, d.proposal_id
-           LIMIT 500;
+          LIMIT 500;
+
+          \echo 'surface approval provider readiness'
+          SELECT (SELECT count(*) FROM surface_slack_installations WHERE status = 'active')
+                   AS active_slack_installations,
+                 (SELECT count(*) FROM surface_teams_installations WHERE status = 'active')
+                   AS active_teams_installations,
+                 (SELECT count(*) FROM member_identity_links WHERE surface = 'slack')
+                   AS slack_member_links,
+                 (SELECT count(*) FROM member_identity_links WHERE surface = 'teams')
+                   AS teams_member_links;
 
           COMMIT;
           SQL
