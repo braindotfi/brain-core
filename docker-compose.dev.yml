@@ -109,6 +109,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # For local testing of POST /v1/tenants (production tenancy). See .env.
       BRAIN_PLATFORM_SERVICE_SECRET: ${BRAIN_PLATFORM_SERVICE_SECRET:-}
+      BRAIN_SURFACE_ACTION_SECRET: ${BRAIN_SURFACE_ACTION_SECRET:-}
     volumes:
       - .:/app
       - bc_node_modules:/app/node_modules
@@ -175,6 +176,8 @@ services:
       EMAIL_DOMAIN_DKIM_PUBLIC_KEY: ${EMAIL_DOMAIN_DKIM_PUBLIC_KEY:-}
       BRAIN_SURFACE_SMOKE_ENABLED: ${BRAIN_SURFACE_SMOKE_ENABLED:-false}
       BRAIN_SURFACE_SMOKE_SECRET: ${BRAIN_SURFACE_SMOKE_SECRET:-}
+      BRAIN_SURFACE_ACTION_API_URL: http://api:3000
+      BRAIN_SURFACE_ACTION_SECRET: ${BRAIN_SURFACE_ACTION_SECRET:-}
     volumes:
       - .:/app
       - bc_node_modules:/app/node_modules

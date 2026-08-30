@@ -589,7 +589,14 @@ export class PaymentIntentService implements IPaymentIntentService {
   public async approve(
     ctx: ServiceCallContext,
     id: string,
-    opts: { assertedActorId?: string; payloadActorId?: unknown } = {},
+    opts: {
+      assertedActorId?: string;
+      payloadActorId?: unknown;
+      surfaceIdentity?: {
+        surface: "slack" | "teams" | "email";
+        externalRef: string;
+      };
+    } = {},
   ): Promise<PaymentIntent> {
     const intent = await this.requireIntent(ctx, id);
     if (intent.status !== "pending_approval" && intent.status !== "awaiting_second_approval") {
@@ -1424,10 +1431,25 @@ export class PaymentIntentService implements IPaymentIntentService {
 
   private async resolveApprovalActor(
     ctx: ServiceCallContext,
-    opts: { assertedActorId?: string; payloadActorId?: unknown },
+    opts: {
+      assertedActorId?: string;
+      payloadActorId?: unknown;
+      surfaceIdentity?: {
+        surface: "slack" | "teams" | "email";
+        externalRef: string;
+      };
+    },
   ): Promise<ActorContext> {
     if (this.deps.actorResolver === undefined) {
       throw brainError("internal_server_error", "approval actor resolver is not configured");
+    }
+    if (opts.surfaceIdentity !== undefined) {
+      return this.deps.actorResolver.resolve({
+        kind: "surface",
+        tenantId: ctx.tenantId,
+        surface: opts.surfaceIdentity.surface,
+        externalRef: opts.surfaceIdentity.externalRef,
+      });
     }
     if (ctx.principalType === "api_partner") {
       return this.deps.actorResolver.resolve({

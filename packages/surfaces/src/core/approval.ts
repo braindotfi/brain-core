@@ -76,8 +76,15 @@ export class ApprovalService {
       return { status: "denied", reason: verdict.reason ?? "Not authorized" };
     }
 
+    if (incoming.decision === "approved" && proposal.executionTarget === undefined) {
+      return {
+        status: "denied",
+        reason: "This proposal is not linked to a canonical executable action",
+      };
+    }
+
     const decidedAt = new Date().toISOString();
-    const actorLabel = actor.actorId;
+    const actorLabel = actor.displayName ?? "an authorized member";
 
     if (incoming.decision === "rejected") {
       const claim = await this.ports.decisions.claimTerminal({
@@ -106,7 +113,7 @@ export class ApprovalService {
         return {
           status: "already_decided",
           decision: claim.record.decision,
-          actorLabel: claim.record.actorId,
+          actorLabel: "an authorized member",
           decidedAt: claim.record.decidedAt,
         };
       }
@@ -148,6 +155,7 @@ export class ApprovalService {
     const approval = await this.ports.approvals.recordApproval({
       proposal,
       actorId: actor.actorId,
+      externalActorId: incoming.externalActorId,
       surface: incoming.surface,
       approverRole: verdict.approverRole,
     });
@@ -167,19 +175,29 @@ export class ApprovalService {
     });
     if (claim.status === "already_decided") {
       if (claim.record.decision === "approved" && !claim.record.applied) {
-        await this.ports.execution.enqueue({ proposal, actorId: claim.record.actorId });
+        await this.ports.execution.enqueue({
+          proposal,
+          actorId: claim.record.actorId,
+          externalActorId: incoming.externalActorId,
+          surface: incoming.surface,
+        });
         await this.ports.decisions.markTerminalApplied(claim.record);
       }
       return {
         status: "already_decided",
         decision: claim.record.decision,
-        actorLabel: claim.record.actorId,
+        actorLabel: "an authorized member",
         decidedAt: claim.record.decidedAt,
       };
     }
 
-    // 7. execution handoff, approvals only, never inside Brain
-    await this.ports.execution.enqueue({ proposal, actorId: actor.actorId });
+    // 7. canonical execution handoff, approvals only
+    await this.ports.execution.enqueue({
+      proposal,
+      actorId: actor.actorId,
+      externalActorId: incoming.externalActorId,
+      surface: incoming.surface,
+    });
 
     await this.ports.decisions.markTerminalApplied({
       proposalId: proposal.id,
@@ -211,6 +229,7 @@ export class ApprovalService {
           proposal,
           decision: incoming.decision,
           actorLabel,
+          actorSurfaceId: incoming.externalActorId,
         });
       } catch {
         // Surface update failure does not invalidate a recorded decision.

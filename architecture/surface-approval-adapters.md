@@ -112,5 +112,10 @@ callbacks, not tenant-admin onboarding calls.
 
 The production DB role is `brain_surface_gateway`. It is tenant-scoped, has no
 `BYPASSRLS`, and has no Ledger or execution outbox grants. Decisions delegate to
-the active Policy document at click time, write shared Audit with deterministic
-idempotency keys, and use the existing execution approval path for handoff.
+the active Policy document at click time and write shared Audit with deterministic
+idempotency keys. Executable cards carry a typed PaymentIntent reference. The
+gateway sends a tenant-bound, time-bounded HMAC request to core, which resolves
+the surface identity again, calls the canonical PaymentIntent approval service,
+then calls the same section 6 execution method used by the direct action API.
+That method atomically writes the execution outbox. Cards without a canonical
+reference fail closed and cannot report an accepted approval.

@@ -66,7 +66,7 @@ export type ResolveActorInput =
   | {
       kind: "surface";
       tenantId: string;
-      surface: Exclude<MemberIdentitySurface, "email">;
+      surface: MemberIdentitySurface;
       externalRef: string;
     }
   | {

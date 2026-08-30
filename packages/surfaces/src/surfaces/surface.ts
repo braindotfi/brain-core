@@ -22,5 +22,7 @@ export interface SurfaceAdapter {
     proposal: Proposal;
     decision: "approved" | "rejected" | "expired";
     actorLabel: string;
+    /** Verified provider user id. Slack uses this for a real mention. */
+    actorSurfaceId?: string | undefined;
   }): Promise<void>;
 }

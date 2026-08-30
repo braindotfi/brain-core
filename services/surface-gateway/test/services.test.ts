@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { InMemoryAuditEmitter, type ServiceCallContext } from "@brain/shared";
+import { InMemoryAuditEmitter } from "@brain/shared";
 import { contentHash, type PolicyDocument } from "@brain/policy";
-import type { ApprovalService as ExecutionApprovalService } from "@brain/execution";
 import {
   ApprovalService,
   SurfaceRegistry,
@@ -19,6 +18,7 @@ import {
   SurfaceExecutionQueue,
   SurfacePolicyEngine,
 } from "../src/services.js";
+import type { SurfaceActionClient, SurfaceActionRequest } from "../src/action-client.js";
 import { PostgresSurfaceIdentityStore } from "../src/storage.js";
 
 const TENANT_ID = "tnt_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -170,7 +170,7 @@ describe("surface gateway approval ordering", () => {
             throw new Error("self approval must not audit");
           },
         },
-        approvals: new SurfaceApprovalRecorder(approvals.asExecutionApprovals()),
+        approvals: new SurfaceApprovalRecorder(approvals),
         execution: {
           async enqueue() {
             throw new Error("self approval must not execute");
@@ -201,7 +201,7 @@ describe("surface gateway approval ordering", () => {
       requiresDualApproval: true,
     });
     const order: string[] = [];
-    const approvals = new ApprovalSpy([], order);
+    const approvals = new ApprovalSpy([], order, 2);
     const engine = new SurfacePolicyEngine(policyPool(policyWithRequire("finance_and_controller")));
     const service = new ApprovalService(
       {
@@ -223,14 +223,16 @@ describe("surface gateway approval ordering", () => {
             order.push(`audit:${event.actorId}`);
           },
         },
-        approvals: new SurfaceApprovalRecorder(approvals.asExecutionApprovals()),
+        approvals: new SurfaceApprovalRecorder(approvals),
         execution: {
           async enqueue(input) {
             order.push(`execute:${input.actorId}`);
-            await new SurfaceExecutionQueue().enqueueIdempotent({
+            await new SurfaceExecutionQueue(approvals).enqueueIdempotent({
               proposalId: input.proposal.id,
               proposal: input.proposal,
               actorId: input.actorId,
+              externalActorId: input.externalActorId,
+              surface: input.surface,
             });
           },
         },
@@ -293,7 +295,7 @@ describe("surface gateway approval ordering", () => {
             order.push(`audit:${event.actorId}`);
           },
         },
-        approvals: new SurfaceApprovalRecorder(approvals.asExecutionApprovals()),
+        approvals: new SurfaceApprovalRecorder(approvals),
         execution: {
           async enqueue(input) {
             order.push(`execute:${input.actorId}`);
@@ -339,7 +341,7 @@ describe("surface gateway approval ordering", () => {
     expect(approvals.signCalls).toHaveLength(0);
   });
 
-  it("rejects disabled users when recording approval signatures", async () => {
+  it("fails closed when the canonical action client is unavailable", async () => {
     const { services } = buildSurfaceGatewayServices({
       pool: disabledUserPool(),
       auditPool: disabledUserPool(),
@@ -350,40 +352,39 @@ describe("surface gateway approval ordering", () => {
       services.approvals.recordApproval({
         proposal: sampleProposal({ approverRoles: ["finance"] }),
         actorId: FINANCE_ACTOR,
+        externalActorId: "U_finance",
         surface: "slack",
         approverRole: "finance",
       }),
-    ).rejects.toMatchObject({ code: "approval_signer_revoked" });
+    ).rejects.toThrow("surface_action_client_unconfigured");
   });
 });
 
-class ApprovalSpy {
+class ApprovalSpy implements SurfaceActionClient {
   public readonly signCalls: Array<{ actor: ActorId; role: string | undefined }> = [];
 
   public constructor(
     private readonly signedRoles: string[],
     private readonly order?: string[],
+    private readonly requiredApprovals = 1,
   ) {}
 
-  public asExecutionApprovals(): ExecutionApprovalService {
-    return this as unknown as ExecutionApprovalService;
+  public async approve(
+    input: SurfaceActionRequest,
+  ): Promise<{ quorumMet: boolean; status: string }> {
+    const role = input.externalActorId === "U_controller" ? "controller" : "finance";
+    const actor = input.externalActorId === "U_controller" ? CONTROLLER_ACTOR : FINANCE_ACTOR;
+    this.signCalls.push({ actor, role });
+    this.signedRoles.push(role);
+    this.order?.push(`sign:${role}:${actor}`);
+    const quorumMet = new Set(this.signedRoles).size >= this.requiredApprovals;
+    return { quorumMet, status: quorumMet ? "approved" : "awaiting_second_approval" };
   }
 
-  public async signedValidRoles(): Promise<string[]> {
-    return [...this.signedRoles];
-  }
-
-  public async signAndCheckRequiredApprovals(
-    ctx: ServiceCallContext,
-    _subject: { type: "proposal"; id: string },
-    requiredRoles: readonly string[],
-    role?: string,
-  ): Promise<{ quorumMet: boolean }> {
-    this.signCalls.push({ actor: ctx.actor as ActorId, role });
-    if (role !== undefined) this.signedRoles.push(role);
-    this.order?.push(`sign:${role ?? ""}:${ctx.actor}`);
-    const signed = new Set(this.signedRoles);
-    return { quorumMet: requiredRoles.every((requiredRole) => signed.has(requiredRole)) };
+  public async execute(
+    _input: SurfaceActionRequest,
+  ): Promise<{ outboxId: string; status: string }> {
+    return { outboxId: "exo_test", status: "dispatching" };
   }
 }
 
@@ -401,6 +402,7 @@ function sampleProposal(input: {
     claim: "Vendor invoice appears to be a duplicate.",
     evidence: [{ label: "Invoice", value: "INV-1" }],
     action: { summary: "Hold payment", handoff: "erp", payload: {} },
+    executionTarget: { type: "payment_intent", id: "pi_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
     ...(input.payee !== undefined ? { payee: input.payee } : {}),
     policy: {
       gates: ["ROLE"],

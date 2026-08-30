@@ -83,8 +83,9 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
         id: string;
         role: string;
         email: string;
+        display_name: string;
       }>(
-        `SELECT m.id, m.role, m.email
+        `SELECT m.id, m.role, m.email, m.display_name
            FROM member_identity_links l
            JOIN members m
              ON m.tenant_id = l.tenant_id
@@ -99,7 +100,12 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
       return rows[0] ?? null;
     });
     if (linked !== null) {
-      return { actorId: linked.id as ActorId, roles: [linked.role], email: linked.email };
+      return {
+        actorId: linked.id as ActorId,
+        roles: [linked.role],
+        email: linked.email,
+        displayName: linked.display_name,
+      };
     }
     if (input.surface !== "email") return null;
 
@@ -108,8 +114,9 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
         id: string;
         role: string;
         email: string;
+        display_name: string;
       }>(
-        `SELECT id, role, email
+        `SELECT id, role, email, display_name
            FROM members
           WHERE tenant_id = $1
             AND lower(email) = lower($2)
@@ -121,7 +128,12 @@ export class PostgresSurfaceIdentityStore implements TenantIdentityStore {
     });
     return byEmail === null
       ? null
-      : { actorId: byEmail.id as ActorId, roles: [byEmail.role], email: byEmail.email };
+      : {
+          actorId: byEmail.id as ActorId,
+          roles: [byEmail.role],
+          email: byEmail.email,
+          displayName: byEmail.display_name,
+        };
   }
 
   private async lookupEmailActor(input: {

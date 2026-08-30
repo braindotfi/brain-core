@@ -51,6 +51,7 @@ export class TeamsAdapter implements SurfaceAdapter {
     proposal: Proposal;
     decision: "approved" | "rejected" | "expired";
     actorLabel: string;
+    actorSurfaceId?: string | undefined;
   }): Promise<void> {
     const text =
       input.decision === "approved"

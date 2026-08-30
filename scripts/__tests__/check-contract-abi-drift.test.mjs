@@ -74,6 +74,16 @@ test("aligned ABI: guard passes silently with exit 0", () => {
   assert.match(r.stdout, /OK -- 1 parseAbi block/);
 });
 
+test("ignored workspace context snapshots are outside the ABI scan", () => {
+  const r = runGuard({
+    tsSrc: `const ESCROW_ABI = parseAbi(["function stale(bytes32 id)"]);`,
+    abi: ALIGNED_ABI,
+    tsPath: ".context/snapshots/stale.ts",
+  });
+  assert.equal(r.code, 0, `stdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  assert.match(r.stdout, /no parseAbi blocks matched KNOWN_VARS/);
+});
+
 test("drifted signature name (function was renamed on chain) is flagged", () => {
   // The on-disk ABI has the function under a NEW name; the TS still calls the
   // old one. That is the exact "selector drift" the guard exists to catch.

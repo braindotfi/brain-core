@@ -8,9 +8,9 @@ import { z } from "zod";
  * by writing an adapter, never by changing the schema. Add an agent by writing
  * a proposal factory, never by teaching a surface about a new agent.
  *
- * Brain is propose-only. A proposal never executes anything. It carries a
- * recommended action that the customer's own systems carry out after a human
- * approves it.
+ * Agents are propose-only. A proposal never bypasses approval. When a proposal
+ * has a canonical executionTarget, an accepted human decision advances that
+ * PaymentIntent through core's normal gate and durable execution outbox.
  */
 
 // Branded ids prevent mixing a tenant id with a proposal id at compile time.
@@ -27,7 +27,7 @@ export const toActorId = (s: string): ActorId => s as ActorId;
 export const AGENT_KINDS = ["invoice", "collections", "cash", "close"] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
-/** Decision states. A proposal is propose-only, so terminal states never move money. */
+/** Decision states. Execution remains a separate gated core transition. */
 export const DECISIONS = ["pending", "approved", "rejected", "expired"] as const;
 export type Decision = (typeof DECISIONS)[number];
 
@@ -48,20 +48,31 @@ export const EvidenceItemSchema = z.object({
 export type EvidenceItem = z.infer<typeof EvidenceItemSchema>;
 
 /**
- * The recommended action. Brain proposes it. The customer's systems execute it.
- * `handoff` names the downstream rail and carries an opaque payload that the
- * customer's execution layer understands. Brain never calls it directly.
+ * The recommended action shown to the approver. `handoff` and `payload` remain
+ * presentation metadata. Execution uses only the typed executionTarget and the
+ * canonical PaymentIntent stored by core.
  */
 export const RecommendedActionSchema = z.object({
   summary: z.string().min(1),
   /** For example "netsuite", "quickbooks", "bank-portal", "email-send". */
   handoff: z.string().min(1),
-  /** Opaque to Brain. Validated and consumed by the customer execution layer. */
+  /** Display metadata only. Never used as executable input by the gateway. */
   payload: z.record(z.string(), z.unknown()).default({}),
   /** Display-only monetary impact, for example recovered or at-risk amount. */
   amount: z.object({ currency: z.string().length(3), minorUnits: z.number().int() }).optional(),
 });
 export type RecommendedAction = z.infer<typeof RecommendedActionSchema>;
+
+/**
+ * Canonical core action that an accepted surface approval is allowed to
+ * advance. Historic notification-only cards have no reference and therefore
+ * fail closed on approval instead of claiming that an opaque handoff ran.
+ */
+export const SurfaceExecutionTargetSchema = z.object({
+  type: z.literal("payment_intent"),
+  id: z.string().regex(/^pi_[A-Za-z0-9]+$/),
+});
+export type SurfaceExecutionTarget = z.infer<typeof SurfaceExecutionTargetSchema>;
 
 export const PAYEE_KINDS = ["vendor", "employee", "payroll", "other"] as const;
 export type PayeeKind = (typeof PAYEE_KINDS)[number];
@@ -99,6 +110,7 @@ export const ProposalSchema = z.object({
   claim: z.string().min(1),
   evidence: z.array(EvidenceItemSchema).default([]),
   action: RecommendedActionSchema,
+  executionTarget: SurfaceExecutionTargetSchema.optional(),
   payee: PayeeSchema.optional(),
   policy: PolicyResultSchema,
   /** ISO timestamp. After this the proposal auto expires and cannot be approved. */

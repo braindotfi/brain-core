@@ -127,6 +127,24 @@ test("enforces enabled application boot fences without affecting disabled integr
   );
 });
 
+test("requires the canonical action handoff secret when an approval surface is enabled", () => {
+  withFiles(
+    {
+      compose: "services: {}\n",
+      env: "SLACK_ENABLED=true\nSLACK_SIGNING_SECRET=slack-secret\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
+    },
+    (composePath, envPath) => {
+      assert.throws(
+        () => run(composePath, envPath),
+        (error) => {
+          assert.match(error.stderr, /missing secret: BRAIN_SURFACE_ACTION_SECRET/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
 test("requires app.brain.fi in the target CORS allowlist during the transition", () => {
   withFiles(
     {

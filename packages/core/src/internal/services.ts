@@ -56,6 +56,8 @@ export interface ExecutionQueue {
     proposalId: string;
     proposal: Proposal;
     actorId: ActorId;
+    externalActorId: string;
+    surface: SurfaceName;
   }): Promise<void>;
 }
 
@@ -63,6 +65,7 @@ export interface ApprovalRecorder {
   recordApproval(input: {
     proposal: Proposal;
     actorId: ActorId;
+    externalActorId: string;
     surface: SurfaceName;
     approverRole?: string | undefined;
   }): Promise<{ quorumMet: boolean }>;

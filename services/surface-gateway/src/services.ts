@@ -8,16 +8,16 @@ import type {
   SurfaceName,
 } from "@brain/surfaces";
 import type { AuditLog, CoreServices, ExecutionQueue, PolicyEngine } from "@brain/core";
-import { ApprovalService as ExecutionApprovalService, findAgent, findUser } from "@brain/execution";
 import { evaluate, getActive } from "@brain/policy";
 import type { Decision as PolicyDecision, PolicyDocument } from "@brain/policy";
-import type { AuditEmitter, ServiceCallContext } from "@brain/shared";
+import type { AuditEmitter } from "@brain/shared";
 import { withTenantScope } from "@brain/shared";
 import {
   PostgresSurfaceDecisionStore,
   PostgresSurfaceIdentityStore,
   PostgresSurfaceProposalStore,
 } from "./storage.js";
+import type { SurfaceActionClient } from "./action-client.js";
 
 type TerminalDecision = Exclude<Decision, "pending" | "expired">;
 
@@ -26,6 +26,7 @@ export interface SurfaceGatewayServiceOptions {
   auditPool: Pool;
   resolverPool?: Pool | undefined;
   audit: AuditEmitter;
+  actions?: SurfaceActionClient | undefined;
 }
 
 export function buildSurfaceGatewayServices(options: SurfaceGatewayServiceOptions): {
@@ -33,33 +34,27 @@ export function buildSurfaceGatewayServices(options: SurfaceGatewayServiceOption
   proposals: PostgresSurfaceProposalStore;
 } {
   const proposalStore = new PostgresSurfaceProposalStore(options.pool);
-  const approvals = new ExecutionApprovalService({
-    pool: options.pool,
-    audit: options.audit,
-    resolveRole: resolveRole(options.pool),
-    isApproverActive: isApproverActive(options.pool),
-    resolveSubjectOwnerTenant: async (ctx, subject) => {
-      if (subject.type !== "proposal") return null;
-      const proposal = await proposalStore.load({ tenantId: ctx.tenantId, proposalId: subject.id });
-      return proposal?.tenantId ?? null;
-    },
-    resolveActivePolicyVersion: async (ctx) =>
-      withTenantScope(options.pool, ctx.tenantId, async (c) => {
-        const active = await getActive(c);
-        return active?.version ?? null;
-      }),
-  });
-
+  const actions = options.actions ?? new UnconfiguredSurfaceActionClient();
   const services: CoreServices = {
     identity: new PostgresSurfaceIdentityStore(options.pool, options.resolverPool ?? options.pool),
     policy: new SurfacePolicyEngine(options.pool),
     audit: new SurfaceAuditLog(options.audit),
-    approvals: new SurfaceApprovalRecorder(approvals, options.pool),
-    execution: new SurfaceExecutionQueue(),
+    approvals: new SurfaceApprovalRecorder(actions),
+    execution: new SurfaceExecutionQueue(actions),
     decisions: new PostgresSurfaceDecisionStore(options.pool),
     proposals: proposalStore,
   };
   return { services, proposals: proposalStore };
+}
+
+class UnconfiguredSurfaceActionClient implements SurfaceActionClient {
+  public approve(): Promise<never> {
+    return Promise.reject(new Error("surface_action_client_unconfigured"));
+  }
+
+  public execute(): Promise<never> {
+    return Promise.reject(new Error("surface_action_client_unconfigured"));
+  }
 }
 
 export class SurfacePolicyEngine implements PolicyEngine {
@@ -177,81 +172,53 @@ export class SurfaceAuditLog implements AuditLog {
 }
 
 export class SurfaceApprovalRecorder {
-  public constructor(
-    private readonly approvals: ExecutionApprovalService,
-    private readonly pool?: Pool | undefined,
-  ) {}
+  public constructor(private readonly actions: SurfaceActionClient) {}
 
   public async recordApproval(input: {
     proposal: Proposal;
     actorId: ActorId;
+    externalActorId: string;
     surface: SurfaceName;
     approverRole?: string | undefined;
   }): Promise<{ quorumMet: boolean }> {
-    const ctx = context(input.proposal.tenantId, input.actorId);
-    const requiredRoles = await this.requiredRoles(input.proposal);
-    const result = await this.approvals.signAndCheckRequiredApprovals(
-      ctx,
-      { type: "proposal", id: input.proposal.id },
-      requiredRoles,
-      input.approverRole,
-    );
-    return { quorumMet: result.quorumMet };
-  }
-
-  private async requiredRoles(proposal: Proposal): Promise<string[]> {
-    if (this.pool === undefined) return proposal.policy.approverRoles;
-    return withTenantScope(this.pool, proposal.tenantId, async (c) => {
-      const active = await getActive(c);
-      if (active === null) return proposal.policy.approverRoles;
-      const activeDecision = evaluateForActorRoles(
-        active.content,
-        proposal,
-        proposal.policy.approverRoles,
-      );
-      return activeDecision.required_approvers.length > 0
-        ? activeDecision.required_approvers
-        : proposal.policy.approverRoles;
+    const target = requireExecutionTarget(input.proposal);
+    const result = await this.actions.approve({
+      tenantId: input.proposal.tenantId,
+      proposalId: input.proposal.id,
+      paymentIntentId: target.id,
+      surface: input.surface,
+      externalActorId: input.externalActorId,
     });
+    return { quorumMet: result.quorumMet };
   }
 }
 
 export class SurfaceExecutionQueue implements ExecutionQueue {
-  public async enqueueIdempotent(_input: {
+  public constructor(private readonly actions: SurfaceActionClient) {}
+
+  public async enqueueIdempotent(input: {
     proposalId: string;
     proposal: Proposal;
     actorId: ActorId;
+    externalActorId: string;
+    surface: SurfaceName;
   }): Promise<void> {
-    return;
+    const target = requireExecutionTarget(input.proposal);
+    await this.actions.execute({
+      tenantId: input.proposal.tenantId,
+      proposalId: input.proposalId,
+      paymentIntentId: target.id,
+      surface: input.surface,
+      externalActorId: input.externalActorId,
+    });
   }
 }
 
-function resolveRole(
-  pool: Pool,
-): (ctx: ServiceCallContext, principalId: string) => Promise<string | null> {
-  return async (ctx, principalId) =>
-    withTenantScope(pool, ctx.tenantId, async (c) => {
-      const agent = await findAgent(c, principalId);
-      if (agent !== null) return agent.role;
-      const user = await findUser(c, principalId);
-      return user?.role ?? null;
-    });
-}
-
-function isApproverActive(
-  pool: Pool,
-): (ctx: ServiceCallContext, principalId: string) => Promise<boolean> {
-  return async (ctx, principalId) =>
-    withTenantScope(pool, ctx.tenantId, async (c) => {
-      const agent = await findAgent(c, principalId);
-      if (agent !== null) return agent.state === "active";
-      const user = await findUser(c, principalId);
-      return user?.status === "active";
-    });
-}
-
-function context(tenantId: string, actor: string): ServiceCallContext {
-  return { tenantId, actor, principalType: "user", scopes: [] };
+function requireExecutionTarget(proposal: Proposal): NonNullable<Proposal["executionTarget"]> {
+  if (proposal.executionTarget === undefined) {
+    throw new Error("surface_proposal_execution_target_missing");
+  }
+  return proposal.executionTarget;
 }
 
 function firstMatchingRole(

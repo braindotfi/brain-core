@@ -5,9 +5,8 @@ import type { Proposal, ActorId, Decision } from "../proposal/schema.js";
  *
  * This package never reaches into brain-core directly. brain-core (or a thin
  * binding in brain-core) implements these ports and injects them. That
- * keeps this package publishable-shaped, keeps brain-core as the single source
- * of truth for policy and audit, and keeps the propose-only line clean: nothing
- * here can move money, because no port exposes a way to.
+ * keeps this package publishable-shaped and keeps brain-core as the single
+ * source of truth for policy, audit, and gated execution.
  */
 
 /** Resolves a surface-native identity into a Brain actor with roles. */
@@ -27,6 +26,8 @@ export interface IdentityResolver {
 export interface ResolvedActor {
   actorId: ActorId;
   roles: string[];
+  /** Safe human-readable fallback when the provider user id is unavailable. */
+  displayName?: string | undefined;
   /** Server-resolved email, used for actor-payee checks when available. */
   email?: string | undefined;
 }
@@ -72,12 +73,16 @@ export interface AuditEvent {
 }
 
 /**
- * Hands an approved proposal to the customer's execution rail. Brain does not
- * execute. This port enqueues the handoff and returns. The downstream system
- * (ERP, bank portal, email send) performs the action under its own credentials.
+ * Hands an approved proposal to core's canonical execution service. The
+ * adapter does not construct rail payloads or bypass the section 6 gate.
  */
 export interface ExecutionHandoff {
-  enqueue(input: { proposal: Proposal; actorId: ActorId }): Promise<void>;
+  enqueue(input: {
+    proposal: Proposal;
+    actorId: ActorId;
+    externalActorId: string;
+    surface: SurfaceName;
+  }): Promise<void>;
 }
 
 /**
@@ -89,6 +94,7 @@ export interface ApprovalRecorder {
   recordApproval(input: {
     proposal: Proposal;
     actorId: ActorId;
+    externalActorId: string;
     surface: SurfaceName;
     approverRole?: string | undefined;
   }): Promise<{ quorumMet: boolean }>;

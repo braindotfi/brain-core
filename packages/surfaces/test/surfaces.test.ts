@@ -16,17 +16,20 @@ import type { BrainCorePorts } from "../src/core/ports.js";
 import type { TerminalDecisionRecord } from "../src/core/ports.js";
 
 function sampleProposal(): Proposal {
-  return buildInvoiceProposal({
-    tenantId: "t_1",
-    vendorName: "Acme Supplies",
-    invoiceNumber: "INV-4821",
-    amountMinorUnits: 1250000,
-    currency: "USD",
-    reason: "duplicate",
-    handoffPayload: { billId: "b_99" },
-    approverRoles: ["ap_lead", "controller"],
-    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
-  });
+  return {
+    ...buildInvoiceProposal({
+      tenantId: "t_1",
+      vendorName: "Acme Supplies",
+      invoiceNumber: "INV-4821",
+      amountMinorUnits: 1250000,
+      currency: "USD",
+      reason: "duplicate",
+      handoffPayload: { billId: "b_99" },
+      approverRoles: ["ap_lead", "controller"],
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }),
+    executionTarget: { type: "payment_intent", id: "pi_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+  };
 }
 
 function memoryDecisions(): BrainCorePorts["decisions"] {
@@ -127,9 +130,10 @@ test("dispatcher validates, hashes, and delivers to a surface", async () => {
   assert.deepEqual(persisted, ["ts_1"]);
 });
 
-test("Slack adapter passes tenant id to the injected Slack client", async () => {
+test("Slack adapter uses the verified Slack user id and never mentions the Brain member id", async () => {
   const proposal = withContentHash(sampleProposal());
   const tenantIds: Array<string | undefined> = [];
+  let updatedBlocks: unknown[] = [];
   const client: SlackClient = {
     async postMessage(args) {
       tenantIds.push(args.tenantId);
@@ -137,6 +141,7 @@ test("Slack adapter passes tenant id to the injected Slack client", async () => 
     },
     async update(args) {
       tenantIds.push(args.tenantId);
+      updatedBlocks = args.blocks;
       return { ok: true };
     },
   };
@@ -148,10 +153,38 @@ test("Slack adapter passes tenant id to the injected Slack client", async () => 
     to: "C_AP",
     proposal,
     decision: "approved",
-    actorLabel: "U_1",
+    actorLabel: "Damon",
+    actorSurfaceId: "U_SLACK_1",
   });
 
   assert.deepEqual(tenantIds, [proposal.tenantId, proposal.tenantId]);
+  const rendered = JSON.stringify(updatedBlocks);
+  assert.match(rendered, /<@U_SLACK_1>/);
+  assert.doesNotMatch(rendered, /user_01/);
+});
+
+test("Slack adapter falls back to a plain display name without a raw internal id", async () => {
+  const proposal = withContentHash(sampleProposal());
+  let updatedBlocks: unknown[] = [];
+  const adapter = new SlackAdapter({
+    async postMessage() {
+      return { ok: true };
+    },
+    async update(args) {
+      updatedBlocks = args.blocks;
+      return { ok: true };
+    },
+  });
+  await adapter.updateDecision({
+    ref: "ts_1",
+    to: "C_AP",
+    proposal,
+    decision: "approved",
+    actorLabel: "Damon",
+  });
+  const rendered = JSON.stringify(updatedBlocks);
+  assert.match(rendered, /Approved by Damon/);
+  assert.doesNotMatch(rendered, /<@/);
 });
 
 test("Slack approval card escapes proposal-derived mrkdwn strings", () => {

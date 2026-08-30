@@ -19,6 +19,7 @@ import type { SurfaceClients } from "@brain/core";
 import { DnsDomainVerifier } from "./domain-verifier.js";
 import { buildSurfaceGatewayApp } from "./server.js";
 import { buildSurfaceGatewayServices } from "./services.js";
+import { HttpSurfaceActionClient } from "./action-client.js";
 import {
   PostgresEmailOnboardingStore,
   PostgresSlackInstallationStore,
@@ -78,11 +79,26 @@ async function main(): Promise<void> {
     allowUnencrypted: cfg.BRAIN_ALLOW_UNENCRYPTED_SOURCE_CREDENTIALS,
   });
   const sourceCredential = await credentialKeyProvider.load();
+  const needsSurfaceActions =
+    surfaceConfig.slack.enabled ||
+    surfaceConfig.teams.enabled ||
+    surfaceConfig.email.enabled ||
+    cfg.BRAIN_SURFACE_SMOKE_ENABLED;
+  const surfaceActionSecret = requiredIf(
+    cfg.BRAIN_SURFACE_ACTION_SECRET,
+    "BRAIN_SURFACE_ACTION_SECRET",
+    needsSurfaceActions,
+  );
+  const actions =
+    surfaceActionSecret.length > 0
+      ? new HttpSurfaceActionClient(cfg.BRAIN_SURFACE_ACTION_API_URL, surfaceActionSecret)
+      : undefined;
   const { services, proposals } = buildSurfaceGatewayServices({
     pool: surfacePool,
     auditPool,
     resolverPool,
     audit,
+    ...(actions !== undefined ? { actions } : {}),
   });
   const slackInstallations = new PostgresSlackInstallationStore(
     surfacePool,
