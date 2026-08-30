@@ -371,8 +371,17 @@ suite("Wedge acceptance (ingestion architecture, Appendix A definition of done)"
     // Counterparty resolution first: under canonical projection the doc and bill
     // vendors are distinct observations, so obligation matching across sources
     // follows the resolved counterparty link (link, don't merge).
-    await recon.run(ctx, { match_types: ["counterparty_duplicate"] });
-    await recon.run(ctx, { match_types: ["obligation_duplicate"] });
+    // Keep the rolling production scan window from making this fixed-date
+    // acceptance fixture expire as wall-clock time advances.
+    const fixtureSince = "2026-06-01T00:00:00.000Z";
+    await recon.run(ctx, {
+      match_types: ["counterparty_duplicate"],
+      since: fixtureSince,
+    });
+    await recon.run(ctx, {
+      match_types: ["obligation_duplicate"],
+      since: fixtureSince,
+    });
 
     const view = await resolveObligationView(pool, ctx, docObligation.id);
     expect(view).not.toBeNull();
