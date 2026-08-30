@@ -69,9 +69,15 @@ jobs:
           source_file=Caddyfile
           candidate="$(mktemp)"
           validation_path=/tmp/Caddyfile.staging-surface-candidate
+          compose=(docker compose -p brain-staging --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.caddy.yml)
+          caddy_container="$("${compose[@]}" ps -q caddy)"
+          if [[ -z "$caddy_container" ]]; then
+            echo "staging caddy compose service is not running"
+            exit 1
+          fi
           cleanup() {
             rm -f "$candidate" /tmp/ensure-staging-surface-route.py
-            docker exec brain-prod-caddy rm -f "$validation_path" >/dev/null 2>&1 || true
+            docker exec "$caddy_container" rm -f "$validation_path" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
@@ -80,8 +86,8 @@ jobs:
             --input "$source_file" \
             --output "$candidate"
           chmod --reference="$source_file" "$candidate"
-          docker cp "$candidate" "brain-prod-caddy:$validation_path"
-          docker exec brain-prod-caddy caddy validate \
+          docker cp "$candidate" "$caddy_container:$validation_path"
+          docker exec "$caddy_container" caddy validate \
             --config "$validation_path" \
             --adapter caddyfile
           echo "staging_surface_route_candidate_valid=true"
@@ -107,13 +113,13 @@ jobs:
           chmod 600 .staging-surface-route-backup
           rollback() {
             cp --preserve=mode,ownership,timestamps "$backup" "$source_file"
-            docker exec brain-prod-caddy caddy reload \
+            docker exec "$caddy_container" caddy reload \
               --config /etc/caddy/Caddyfile \
               --adapter caddyfile >/dev/null 2>&1 || true
           }
           trap 'rollback; cleanup' ERR
           mv "$candidate" "$source_file"
-          docker exec brain-prod-caddy caddy reload \
+          docker exec "$caddy_container" caddy reload \
             --config /etc/caddy/Caddyfile \
             --adapter caddyfile
           trap cleanup EXIT
@@ -142,7 +148,10 @@ jobs:
             esac
             test -f "$backup"
             cp --preserve=mode,ownership,timestamps "$backup" Caddyfile
-            docker exec brain-prod-caddy caddy reload \
+            compose=(docker compose -p brain-staging --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.caddy.yml)
+            caddy_container="$("${compose[@]}" ps -q caddy)"
+            test -n "$caddy_container"
+            docker exec "$caddy_container" caddy reload \
               --config /etc/caddy/Caddyfile \
               --adapter caddyfile
             rm -f "$marker"
@@ -194,7 +203,13 @@ jobs:
           ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
             "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          container=brain-prod-surface-gateway
+          cd ~/brain-core
+          compose=(docker compose -p brain-staging --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.caddy.yml)
+          container="$("${compose[@]}" ps -q surface-gateway)"
+          if [[ -z "$container" ]]; then
+            echo "staging surface-gateway compose service is not running"
+            exit 1
+          fi
           enabled="$(docker exec "$container" printenv SLACK_ENABLED 2>/dev/null || true)"
           printf 'SLACK_ENABLED=%s\n' "${enabled:-unset}"
           for name in \
