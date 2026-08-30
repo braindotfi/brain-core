@@ -46,6 +46,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
           ssh -i "$RUNNER_TEMP/id_target" -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
