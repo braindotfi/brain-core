@@ -304,6 +304,7 @@ import {
   makeResolveTenantOnchainSigner,
 } from "./gate-loaders/index.js";
 import { buildPaymentIntentService } from "./composition/payment-intent-service.js";
+import { registerSurfaceActionHandoffRoutes } from "./surface-actions/routes.js";
 import { assertDbIsolationFences } from "./composition/db-isolation.js";
 import { assertRuntimeDbRoles } from "./composition/runtime-db-roles.js";
 import {
@@ -2290,6 +2291,18 @@ async function main(): Promise<void> {
             getPaymentIntentAgent(pool, ctx, id),
           );
         });
+        const surfaceActionSecret = cfg.BRAIN_SURFACE_ACTION_SECRET;
+        if (surfaceActionSecret !== undefined) {
+          await v1.register(async (child) =>
+            registerSurfaceActionHandoffRoutes(child, {
+              pool,
+              paymentIntents: piService,
+              approvals: piApprovals,
+              actorResolver,
+              signingSecret: surfaceActionSecret,
+            }),
+          );
+        }
         await v1.register(async (child) =>
           registerProposalReadRoutes(child, {
             pool,

@@ -1,0 +1,115 @@
+name: ops-surface-approval-handoff-audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment to inspect with a read-only transaction."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
+      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Select isolated target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == "staging" ]]; then
+            printf '%s' "$VM_SSH_KEY_STAGING" > "$RUNNER_TEMP/id_target"
+            echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
+          elif [[ "$TARGET" == "production" ]]; then
+            printf '%s' "$VM_SSH_KEY_PRODUCTION" > "$RUNNER_TEMP/id_target"
+            echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
+          else
+            echo "unsupported target"
+            exit 1
+          fi
+          chmod 600 "$RUNNER_TEMP/id_target"
+
+      - name: Read accepted surface decision state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+          ssh -i "$RUNNER_TEMP/id_target" -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '10s';
+          SET LOCAL lock_timeout = '1s';
+
+          \echo 'accepted surface handoff summary'
+          WITH accepted AS (
+            SELECT d.tenant_id,
+                   d.proposal_id,
+                   d.decided_at,
+                   d.applied,
+                   p.proposal->'executionTarget'->>'id' AS payment_intent_id
+              FROM surface_decisions d
+              LEFT JOIN surface_proposals p
+                ON p.tenant_id = d.tenant_id
+               AND p.proposal_id = d.proposal_id
+             WHERE d.decision = 'approved'
+          )
+          SELECT count(*) AS accepted_count,
+                 count(*) FILTER (WHERE applied) AS marked_applied_count,
+                 count(*) FILTER (WHERE payment_intent_id IS NULL) AS legacy_unlinked_count,
+                 count(*) FILTER (
+                   WHERE payment_intent_id IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM execution_outbox eo
+                        WHERE eo.tenant_id = accepted.tenant_id
+                          AND eo.payment_intent_id = accepted.payment_intent_id
+                     )
+                 ) AS linked_without_outbox_count,
+                 count(*) FILTER (
+                   WHERE payment_intent_id IS NOT NULL
+                     AND EXISTS (
+                       SELECT 1
+                         FROM execution_outbox eo
+                        WHERE eo.tenant_id = accepted.tenant_id
+                          AND eo.payment_intent_id = accepted.payment_intent_id
+                     )
+                 ) AS linked_with_outbox_count
+            FROM accepted;
+
+          \echo 'accepted decisions without a durable execution handoff'
+          SELECT d.tenant_id,
+                 d.proposal_id,
+                 p.proposal->'executionTarget'->>'id' AS payment_intent_id,
+                 d.decided_at,
+                 d.applied
+            FROM surface_decisions d
+            LEFT JOIN surface_proposals p
+              ON p.tenant_id = d.tenant_id
+             AND p.proposal_id = d.proposal_id
+           WHERE d.decision = 'approved'
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM execution_outbox eo
+                WHERE eo.tenant_id = d.tenant_id
+                  AND eo.payment_intent_id = p.proposal->'executionTarget'->>'id'
+             )
+           ORDER BY d.decided_at, d.proposal_id
+           LIMIT 500;
+
+          COMMIT;
+          SQL
+          REMOTE

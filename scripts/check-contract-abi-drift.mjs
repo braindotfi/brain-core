@@ -131,6 +131,7 @@ const SKIP_DIRS = new Set([
   ".turbo",
   ".pnpm-store",
   ".claude",
+  ".context",
   "out",
 ]);
 

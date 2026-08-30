@@ -12,8 +12,8 @@ import { buildSurfaceRuntime } from "../src/composition/surfaceRuntime.js";
 import type { CoreServices } from "../src/internal/services.js";
 
 function sampleProposal(): Proposal {
-  return withContentHash(
-    buildInvoiceProposal({
+  return withContentHash({
+    ...buildInvoiceProposal({
       tenantId: "t_1",
       vendorName: "Acme Supplies",
       invoiceNumber: "INV-4821",
@@ -24,7 +24,8 @@ function sampleProposal(): Proposal {
       approverRoles: ["ap_lead"],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     }),
-  );
+    executionTarget: { type: "payment_intent", id: "pi_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+  });
 }
 
 /** In-memory stand-ins for the real brain-core services. */

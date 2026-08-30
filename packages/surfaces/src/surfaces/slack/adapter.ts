@@ -54,8 +54,9 @@ export class SlackAdapter implements SurfaceAdapter {
     proposal: Proposal;
     decision: "approved" | "rejected" | "expired";
     actorLabel: string;
+    actorSurfaceId?: string | undefined;
   }): Promise<void> {
-    const banner = decisionBanner(input.decision, input.actorLabel);
+    const banner = decisionBanner(input.decision, input.actorLabel, input.actorSurfaceId);
     await this.client.update({
       tenantId: input.proposal.tenantId,
       channel: input.to,
@@ -72,13 +73,22 @@ export class SlackAdapter implements SurfaceAdapter {
   }
 }
 
-function decisionBanner(decision: "approved" | "rejected" | "expired", actorLabel: string): string {
+function decisionBanner(
+  decision: "approved" | "rejected" | "expired",
+  actorLabel: string,
+  actorSurfaceId?: string,
+): string {
+  const actor = actorSurfaceId === undefined ? escapeSlackText(actorLabel) : `<@${actorSurfaceId}>`;
   switch (decision) {
     case "approved":
-      return `:white_check_mark: Approved by <@${actorLabel}>. Handed off for execution.`;
+      return `:white_check_mark: Approved by ${actor}. Handed off for execution.`;
     case "rejected":
-      return `:no_entry: Held by <@${actorLabel}>. No action taken.`;
+      return `:no_entry: Held by ${actor}. No action taken.`;
     case "expired":
       return ":hourglass: Expired. No action taken.";
   }
+}
+
+function escapeSlackText(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }

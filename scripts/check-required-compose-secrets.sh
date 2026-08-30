@@ -128,6 +128,9 @@ fi
 if is_enabled BRAIN_SURFACE_SMOKE_ENABLED; then
   add_requirement BRAIN_SURFACE_SMOKE_SECRET
 fi
+if is_enabled SLACK_ENABLED || is_enabled TEAMS_ENABLED || is_enabled EMAIL_ENABLED || is_enabled BRAIN_SURFACE_SMOKE_ENABLED; then
+  add_requirement BRAIN_SURFACE_ACTION_SECRET
+fi
 # RFC 0002 Phase C, increments 3-4: BRAIN_AGENT_RELAYER_MODE is an enum
 # ("off"/"custodial"/"tenant_signed"), not a boolean, so it needs its own
 # check rather than is_enabled. Both attested modes need the same signer key

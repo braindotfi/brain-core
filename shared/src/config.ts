@@ -308,6 +308,10 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default(false),
   BRAIN_SURFACE_SMOKE_SECRET: optionalNonEmptyString(),
+  /** Internal core API origin used only for canonical surface action handoff. */
+  BRAIN_SURFACE_ACTION_API_URL: z.string().url().default("http://api:3000"),
+  /** Narrow HMAC key shared by the surface gateway and core API. */
+  BRAIN_SURFACE_ACTION_SECRET: optionalNonEmptyString(),
 
   // ---- CORS ----
   /** Comma-separated list of allowed origins. Use "*" only in local dev, never in staging/prod. */

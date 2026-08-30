@@ -28,8 +28,8 @@ import { encodeAction } from "../src/surfaces/slack/blockkit.js";
 const SIGNING_SECRET = "slack_secret";
 
 function sampleProposal(expiresAt = new Date(Date.now() + 86_400_000).toISOString()): Proposal {
-  return withContentHash(
-    buildInvoiceProposal({
+  return withContentHash({
+    ...buildInvoiceProposal({
       tenantId: "t_1",
       vendorName: "Acme Supplies",
       invoiceNumber: "INV-4821",
@@ -40,7 +40,8 @@ function sampleProposal(expiresAt = new Date(Date.now() + 86_400_000).toISOStrin
       approverRoles: ["ap_lead"],
       expiresAt,
     }),
-  );
+    executionTarget: { type: "payment_intent", id: "pi_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+  });
 }
 
 function makeSlackSignature(rawBody: string, timestamp: string): string {
