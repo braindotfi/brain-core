@@ -1,0 +1,217 @@
+name: ops-route-staging-surfaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Check the candidate or apply it to staging."
+        required: true
+        type: choice
+        options:
+          - check
+          - apply
+      confirmation:
+        description: "Type staging-surface-route to continue."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    env:
+      MODE: ${{ inputs.mode }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      VM_HOST: ${{ secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY_STAGING }}
+      PUBLIC_ORIGIN: https://staging-api.brain.fi
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Validate fixed staging target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CONFIRMATION" != "staging-surface-route" ]]; then
+            echo "confirmation did not match"
+            exit 1
+          fi
+          if [[ "$MODE" != "check" && "$MODE" != "apply" ]]; then
+            echo "unsupported mode"
+            exit 1
+          fi
+
+      - name: Configure staging SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > "$RUNNER_TEMP/id_staging"
+          chmod 600 "$RUNNER_TEMP/id_staging"
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Build and validate staging Caddy candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i "$RUNNER_TEMP/id_staging" \
+            scripts/ops/ensure-staging-surface-route.py \
+            "azureuser@$VM_HOST:/tmp/ensure-staging-surface-route.py"
+          ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
+            "azureuser@$VM_HOST" "MODE='$MODE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+          source_file=Caddyfile
+          candidate="$(mktemp)"
+          validation_path=/tmp/Caddyfile.staging-surface-candidate
+          cleanup() {
+            rm -f "$candidate" /tmp/ensure-staging-surface-route.py
+            docker exec brain-prod-caddy rm -f "$validation_path" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          test -f "$source_file"
+          python3 /tmp/ensure-staging-surface-route.py \
+            --input "$source_file" \
+            --output "$candidate"
+          chmod --reference="$source_file" "$candidate"
+          docker cp "$candidate" "brain-prod-caddy:$validation_path"
+          docker exec brain-prod-caddy caddy validate \
+            --config "$validation_path" \
+            --adapter caddyfile
+          echo "staging_surface_route_candidate_valid=true"
+
+          if cmp -s "$source_file" "$candidate"; then
+            echo "staging_surface_route_change=none"
+          else
+            echo "staging_surface_route_change=pending"
+          fi
+
+          if [[ "$MODE" == "check" ]]; then
+            exit 0
+          fi
+
+          if cmp -s "$source_file" "$candidate"; then
+            echo "staging_surface_route_applied=already_present"
+            exit 0
+          fi
+
+          backup="Caddyfile.backup.$(date -u +%Y%m%dT%H%M%SZ)"
+          cp --preserve=mode,ownership,timestamps "$source_file" "$backup"
+          printf '%s\n' "$backup" > .staging-surface-route-backup
+          chmod 600 .staging-surface-route-backup
+          rollback() {
+            cp --preserve=mode,ownership,timestamps "$backup" "$source_file"
+            docker exec brain-prod-caddy caddy reload \
+              --config /etc/caddy/Caddyfile \
+              --adapter caddyfile >/dev/null 2>&1 || true
+          }
+          trap 'rollback; cleanup' ERR
+          mv "$candidate" "$source_file"
+          docker exec brain-prod-caddy caddy reload \
+            --config /etc/caddy/Caddyfile \
+            --adapter caddyfile
+          trap cleanup EXIT
+          echo "staging_surface_route_applied=true"
+          echo "staging_surface_route_backup=$backup"
+          REMOTE
+
+      - name: Verify live staging routing
+        if: inputs.mode == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rollback_route() {
+            ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
+              "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+            set -euo pipefail
+            cd ~/brain-core
+            marker=.staging-surface-route-backup
+            if [[ ! -f "$marker" ]]; then
+              exit 0
+            fi
+            backup="$(cat "$marker")"
+            case "$backup" in
+              Caddyfile.backup.*) ;;
+              *) echo "invalid staging Caddy backup marker"; exit 1 ;;
+            esac
+            test -f "$backup"
+            cp --preserve=mode,ownership,timestamps "$backup" Caddyfile
+            docker exec brain-prod-caddy caddy reload \
+              --config /etc/caddy/Caddyfile \
+              --adapter caddyfile
+            rm -f "$marker"
+            echo "staging_surface_route_rolled_back=true"
+            REMOTE
+          }
+          probe() {
+            local method="$1"
+            local path="$2"
+            local body_file="$RUNNER_TEMP/$(printf '%s' "$path" | tr '/' '_').body"
+            local status
+            status="$(curl -sS --connect-timeout 10 --max-time 30 \
+              --request "$method" \
+              --header 'content-type: application/json' \
+              --data '{}' \
+              --output "$body_file" \
+              --write-out '%{http_code}' \
+              "$PUBLIC_ORIGIN$path")"
+            if grep -q 'auth_token_missing' "$body_file"; then
+              echo "$path still reached the main API"
+              return 1
+            fi
+            printf 'route=%s status=%s body=%s\n' \
+              "$path" "$status" "$(tr -d '\n' < "$body_file" | head -c 160)"
+          }
+
+          if ! probe GET /surfaces/slack/oauth/callback || \
+             ! probe POST /surfaces/slack/interactions || \
+             ! probe POST /surfaces/slack/events; then
+            rollback_route
+            exit 1
+          fi
+
+          callback_body="$RUNNER_TEMP/_surfaces_slack_oauth_callback.body"
+          if ! grep -Eq 'missing code or state|slack oauth disabled' "$callback_body"; then
+            echo "callback did not return a surface-gateway validation response"
+            rollback_route
+            exit 1
+          fi
+          ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
+            "azureuser@$VM_HOST" \
+            'rm -f ~/brain-core/.staging-surface-route-backup'
+
+      - name: Report redacted staging Slack readiness
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
+            "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          container=brain-prod-surface-gateway
+          enabled="$(docker exec "$container" printenv SLACK_ENABLED 2>/dev/null || true)"
+          printf 'SLACK_ENABLED=%s\n' "${enabled:-unset}"
+          for name in \
+            SLACK_SIGNING_SECRET \
+            SLACK_CLIENT_ID \
+            SLACK_CLIENT_SECRET \
+            SLACK_INSTALL_STATE_SECRET \
+            BRAIN_SURFACE_ACTION_SECRET; do
+            if docker exec "$container" sh -c "test -n \"\${$name:-}\""; then
+              printf '%s=present\n' "$name"
+            else
+              printf '%s=unset\n' "$name"
+            fi
+          done
+          REMOTE
+
+      - name: Remove staging SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/id_staging"
