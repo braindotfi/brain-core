@@ -31,10 +31,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$TARGET" == "staging" ]]; then
-            printf '%s' "$VM_SSH_KEY_STAGING" > "$RUNNER_TEMP/id_target"
+            printf '%s\n' "$VM_SSH_KEY_STAGING" > "$RUNNER_TEMP/id_target"
             echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
           elif [[ "$TARGET" == "production" ]]; then
-            printf '%s' "$VM_SSH_KEY_PRODUCTION" > "$RUNNER_TEMP/id_target"
+            printf '%s\n' "$VM_SSH_KEY_PRODUCTION" > "$RUNNER_TEMP/id_target"
             echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
           else
             echo "unsupported target"
