@@ -1,10 +1,10 @@
 variable "staging_subscription_id" {
-  description = "Subscription containing only the approved staging rehearsal resources."
+  description = "Shared Azure subscription containing the resource-group-isolated staging rehearsal resources."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.staging_subscription_id))
-    error_message = "staging_subscription_id must be an Azure subscription UUID."
+    condition     = lower(var.staging_subscription_id) == "861547ad-b8ea-4f52-a51e-0638a4d4d446"
+    error_message = "staging_subscription_id must be the approved shared Azure subscription."
   }
 }
 
@@ -32,10 +32,10 @@ variable "location" {
 variable "state_resource_group_name" {
   description = "Dedicated resource group for staging Terraform state."
   type        = string
-  default     = "brain-staging-tfstate-rg"
+  default     = "brain-core-staging-tfstate-rg"
 
   validation {
-    condition     = var.state_resource_group_name == "brain-staging-tfstate-rg"
+    condition     = var.state_resource_group_name == "brain-core-staging-tfstate-rg"
     error_message = "The staging state resource group name is fixed by the isolation contract."
   }
 }
@@ -43,10 +43,10 @@ variable "state_resource_group_name" {
 variable "workload_resource_group_name" {
   description = "Empty staging workload boundary retained between rehearsals."
   type        = string
-  default     = "brain-staging-rg"
+  default     = "brain-core-staging-api-rg"
 
   validation {
-    condition     = var.workload_resource_group_name == "brain-staging-rg"
+    condition     = var.workload_resource_group_name == "brain-core-staging-api-rg"
     error_message = "The staging workload resource group name is fixed by the isolation contract."
   }
 }
@@ -54,7 +54,7 @@ variable "workload_resource_group_name" {
 variable "state_storage_account_name" {
   description = "Globally unique account containing only staging Terraform state."
   type        = string
-  default     = "brainfitfstatestg"
+  default     = "braincoretfstatestg"
 
   validation {
     condition     = can(regex("^brain[a-z0-9]{10,19}$", var.state_storage_account_name))
@@ -65,10 +65,10 @@ variable "state_storage_account_name" {
 variable "state_container_name" {
   description = "Container containing staging Terraform state only."
   type        = string
-  default     = "tfstate-staging"
+  default     = "tfstate-core-staging"
 
   validation {
-    condition     = var.state_container_name == "tfstate-staging"
+    condition     = var.state_container_name == "tfstate-core-staging"
     error_message = "The staging state container name is fixed by the isolation contract."
   }
 }
@@ -102,16 +102,6 @@ variable "github_reviewer_user_ids" {
   validation {
     condition     = length(var.github_reviewer_user_ids) >= 1 && length(var.github_reviewer_user_ids) <= 6 && alltrue([for id in var.github_reviewer_user_ids : id > 0])
     error_message = "github_reviewer_user_ids must contain one to six positive GitHub user IDs."
-  }
-}
-
-variable "production_subscription_id_deny" {
-  description = "Production subscription UUID that staging workflows must reject."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.production_subscription_id_deny))
-    error_message = "production_subscription_id_deny must be an Azure subscription UUID."
   }
 }
 

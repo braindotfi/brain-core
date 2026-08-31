@@ -7,7 +7,6 @@ locals {
   }
   github_environment_variables = {
     AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID       = var.staging_subscription_id
-    AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY        = var.production_subscription_id_deny
     AZURE_STAGING_RESOURCE_GROUP                 = azurerm_resource_group.workload.name
     AZURE_STAGING_STATE_ACCOUNT                  = azurerm_storage_account.state.name
     AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID   = var.migration_operator_object_id

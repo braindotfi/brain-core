@@ -1,5 +1,5 @@
 locals {
-  name_prefix = "brain-staging-migration"
+  name_prefix = "brain-core-staging-migration"
   tags = {
     service     = "brain"
     environment = "staging"

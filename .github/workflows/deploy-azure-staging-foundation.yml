@@ -45,7 +45,6 @@ jobs:
 
     env:
       EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID }}
-      DENIED_PRODUCTION_SUBSCRIPTION_ID: ${{ vars.AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY }}
       TF_VAR_staging_subscription_id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
       TF_VAR_staging_tenant_id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
       TF_VAR_migration_operator_object_id: ${{ vars.AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID }}
@@ -63,7 +62,7 @@ jobs:
           APPLY_CONFIRMATION: ${{ inputs.apply_confirmation }}
         run: |
           set -euo pipefail
-          for required in EXPECTED_SUBSCRIPTION_ID DENIED_PRODUCTION_SUBSCRIPTION_ID \
+          for required in EXPECTED_SUBSCRIPTION_ID \
             TF_VAR_staging_subscription_id TF_VAR_staging_tenant_id \
             TF_VAR_migration_operator_object_id TF_VAR_independent_verifier_object_id \
             TF_VAR_rehearsal_owner TF_VAR_rehearsal_expires_at; do
@@ -74,10 +73,6 @@ jobs:
           done
           if [ "${EXPECTED_SUBSCRIPTION_ID,,}" != "${TF_VAR_staging_subscription_id,,}" ]; then
             echo "::error::expected staging subscription values disagree"
-            exit 1
-          fi
-          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" = "${DENIED_PRODUCTION_SUBSCRIPTION_ID,,}" ]; then
-            echo "::error::staging subscription matches the denied production subscription"
             exit 1
           fi
           if [ "${TF_VAR_migration_operator_object_id,,}" = "${TF_VAR_independent_verifier_object_id,,}" ]; then
@@ -157,19 +152,10 @@ jobs:
             echo "::error::Azure login selected the wrong subscription"
             exit 1
           fi
-          resource_group=$(az group show --name brain-staging-rg --output json)
-          test "$(jq -r '.name' <<<"$resource_group")" = "brain-staging-rg"
-          test "$(jq -r '.tags.environment // ""' <<<"$resource_group")" = "staging"
-          if jq -r '.id' <<<"$resource_group" | grep -qi production; then
-            echo "::error::production marker found in the staging resource group ID"
-            exit 1
-          fi
-          if az resource list --output json | jq -e '[.[] | select(.id | test("production"; "i"))] | length > 0' >/dev/null; then
-            echo "::error::production-named resource exists in the selected staging subscription"
-            exit 1
-          fi
+          scripts/ops/check-staging-resource-group-isolation.sh \
+            --resource-group brain-core-staging-api-rg
           az network vnet list --output json |
-            jq -r '.[] | select(.name != "brain-staging-vnet") | .addressSpace.addressPrefixes[]?' \
+            jq -r '.[] | select(.name != "brain-core-staging-vnet") | .addressSpace.addressPrefixes[]?' \
             > /tmp/staging-existing-vnet-cidrs.txt
           python3 - <<'PY'
           import ipaddress
@@ -327,12 +313,12 @@ jobs:
             | to_entries
             | all(
                 if .key == "resource_group"
-                then .value == "/subscriptions/" + $subscription + "/resourceGroups/brain-staging-rg"
-                else .value | startswith("/subscriptions/" + $subscription + "/resourceGroups/brain-staging-rg/")
+                then .value == "/subscriptions/" + $subscription + "/resourceGroups/brain-core-staging-api-rg"
+                else .value | startswith("/subscriptions/" + $subscription + "/resourceGroups/brain-core-staging-api-rg/")
                 end
               )
           ' applied-outputs.json >/dev/null
-          test "$(jq -r '.key_vault_uri.value' applied-outputs.json)" = "https://brain-staging-kv.vault.azure.net/"
-          az resource list --resource-group brain-staging-rg --output json |
+          test "$(jq -r '.key_vault_uri.value' applied-outputs.json)" = "https://brain-core-staging-kv.vault.azure.net/"
+          az resource list --resource-group brain-core-staging-api-rg --output json |
             jq -e 'all(.[]; .tags.environment == "staging" and .tags.lifecycle == "ephemeral")' >/dev/null
           jq '{summary:"staging_foundation_applied",ok:true,key_vault_uri:.key_vault_uri.value,expires_at:.expires_at.value}' applied-outputs.json

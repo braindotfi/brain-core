@@ -3,7 +3,7 @@
 This root creates the low-cost resources that must survive rehearsal teardown:
 
 - the staging Terraform state resource group, account, and container
-- the empty `brain-staging-rg` authorization boundary
+- the empty `brain-core-staging-api-rg` authorization boundary
 - the staging-only GitHub OIDC application, service principal, and federated
   credential
 - resource-group-scoped deployment roles and state-blob access
@@ -17,9 +17,9 @@ variables write access. This is a one-time bootstrap, not a GitHub workflow.
 
 The recurring GitHub principal has no subscription-wide write role. It has
 Contributor and Role Based Access Control Administrator only on
-`brain-staging-rg`, plus Storage Blob Data Contributor only on the staging state
-account. It also has Reader on the dedicated staging subscription so workflow
-preflight can prove there are no production resources or overlapping networks.
+`brain-core-staging-api-rg`, plus Storage Blob Data Contributor only on the staging state
+account. It also has Reader on the shared subscription so workflow preflight
+can verify its target resource group and check for overlapping networks.
 It has no write role at subscription scope, no production role, and no client
 secret.
 
@@ -41,8 +41,8 @@ terraform show -no-color <approved-bootstrap-plan-path>
 ```
 
 Do not apply until that bootstrap plan receives separate approval. The plan is
-expected to contain 22 creates, zero changes, and zero destroys on a new
-subscription. A different count requires review.
+expected to contain 21 creates, zero changes, and zero destroys before the
+bootstrap has been applied. A different count requires review.
 
 The bootstrap creates the protected `azure-staging-rehearsal` GitHub
 environment, required reviewers, protected-branch policy, secrets, and
@@ -57,9 +57,8 @@ The bootstrap creates these environment secrets from non-secret identifiers:
 It also creates these environment variables:
 
 - `AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID`
-- `AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY`
-- `AZURE_STAGING_RESOURCE_GROUP=brain-staging-rg`
-- `AZURE_STAGING_STATE_ACCOUNT=brainfitfstatestg`
+- `AZURE_STAGING_RESOURCE_GROUP=brain-core-staging-api-rg`
+- `AZURE_STAGING_STATE_ACCOUNT=braincoretfstatestg`
 - `AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID`
 - `AZURE_STAGING_INDEPENDENT_VERIFIER_OBJECT_ID`
 - `AZURE_STAGING_REHEARSAL_OWNER`

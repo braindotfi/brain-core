@@ -37,7 +37,8 @@ test("migration envelope encrypts with AES-256-GCM and RSA-OAEP-256", async () =
       outputPath: ciphertext,
       envelopePath,
       publicKeyPath,
-      keyId: "https://brain-staging-kv.vault.azure.net/keys/migration-rehearsal-wrap/version-one",
+      keyId:
+        "https://brain-core-staging-kv.vault.azure.net/keys/migration-rehearsal-wrap/version-one",
     });
     assert.equal(written.content_algorithm, "AES-256-GCM");
     assert.equal(written.wrap_algorithm, "RSA-OAEP-256");
@@ -84,7 +85,8 @@ test("migration envelope fails closed on ciphertext tampering", async () => {
       outputPath: ciphertext,
       envelopePath,
       publicKeyPath,
-      keyId: "https://brain-staging-kv.vault.azure.net/keys/migration-rehearsal-wrap/version-two",
+      keyId:
+        "https://brain-core-staging-kv.vault.azure.net/keys/migration-rehearsal-wrap/version-two",
     });
     const parsed = await readEnvelope(envelopePath);
     const dataKey = privateDecrypt(
@@ -223,7 +225,7 @@ fi
         AZ_ARGS_FILE: argsFile,
         MIGRATION_RUN_DIR: runDirectory,
         MIGRATION_RUN_ID: "run-123",
-        MIGRATION_STORAGE_ACCOUNT: "brainstgmigfixture",
+        MIGRATION_STORAGE_ACCOUNT: "braincorestgmigfixture",
         MIGRATION_MEASURED_TRANSFER_SECONDS: "7200",
       },
     });

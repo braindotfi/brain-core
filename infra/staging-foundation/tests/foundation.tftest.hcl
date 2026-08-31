@@ -3,7 +3,7 @@ mock_provider "azurerm" {}
 override_data {
   target = data.azurerm_client_config.current
   values = {
-    subscription_id = "11111111-1111-1111-1111-111111111111"
+    subscription_id = "861547ad-b8ea-4f52-a51e-0638a4d4d446"
     tenant_id       = "22222222-2222-2222-2222-222222222222"
     object_id       = "33333333-3333-3333-3333-333333333333"
   }
@@ -12,8 +12,8 @@ override_data {
 override_data {
   target = data.azurerm_resource_group.staging
   values = {
-    id       = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/brain-staging-rg"
-    name     = "brain-staging-rg"
+    id       = "/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-core-staging-api-rg"
+    name     = "brain-core-staging-api-rg"
     location = "canadacentral"
     tags = {
       environment = "staging"
@@ -25,7 +25,7 @@ run "isolated_foundation_plan" {
   command = plan
 
   variables {
-    staging_subscription_id        = "11111111-1111-1111-1111-111111111111"
+    staging_subscription_id        = "861547ad-b8ea-4f52-a51e-0638a4d4d446"
     staging_tenant_id              = "22222222-2222-2222-2222-222222222222"
     migration_operator_object_id   = "44444444-4444-4444-4444-444444444444"
     independent_verifier_object_id = "55555555-5555-5555-5555-555555555555"
@@ -35,7 +35,7 @@ run "isolated_foundation_plan" {
   }
 
   assert {
-    condition     = azurerm_virtual_network.staging.name == "brain-staging-vnet"
+    condition     = azurerm_virtual_network.staging.name == "brain-core-staging-vnet"
     error_message = "The staging VNet name drifted."
   }
 
@@ -45,17 +45,22 @@ run "isolated_foundation_plan" {
   }
 
   assert {
-    condition     = azurerm_key_vault.staging.name == "brain-staging-kv" && !azurerm_key_vault.staging.public_network_access_enabled
+    condition     = azurerm_key_vault.staging.name == "brain-core-staging-kv" && !azurerm_key_vault.staging.public_network_access_enabled
     error_message = "The staging Key Vault must be private and use the reviewed name."
   }
 
   assert {
-    condition     = azurerm_container_app_environment.staging.name == "brain-staging-env"
+    condition     = azurerm_container_app_environment.staging.name == "brain-core-staging-env"
     error_message = "The staging Container Apps environment name drifted."
   }
 
   assert {
-    condition     = azurerm_container_registry.staging.name == "brainstagingacr" && !azurerm_container_registry.staging.admin_enabled
+    condition     = azurerm_log_analytics_workspace.staging.name == "brain-core-staging-logs"
+    error_message = "The staging Log Analytics workspace name drifted."
+  }
+
+  assert {
+    condition     = azurerm_container_registry.staging.name == "braincorestagingacr" && !azurerm_container_registry.staging.admin_enabled
     error_message = "The staging ACR must use the reviewed name with admin access disabled."
   }
 

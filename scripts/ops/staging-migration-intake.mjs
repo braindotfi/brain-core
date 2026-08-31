@@ -24,8 +24,8 @@ function validateConfig() {
     );
   }
   const storageAccount = requiredEnv("BRAIN_STAGING_MIGRATION_STORAGE_ACCOUNT");
-  if (!/^brainstgmig[a-z0-9]{3,14}$/.test(storageAccount)) {
-    throw new Error("migration storage account must use the brainstgmig prefix");
+  if (!/^braincorestgmig[a-z0-9]{3,9}$/.test(storageAccount)) {
+    throw new Error("migration storage account must use the braincorestgmig prefix");
   }
   const vaultUri = requiredEnv("BRAIN_STAGING_MIGRATION_KEY_VAULT_URI").replace(/\/$/, "");
   if (!/^https:\/\/brain-staging-[a-z0-9-]+\.vault\.azure\.net$/.test(vaultUri)) {

@@ -40,7 +40,6 @@ jobs:
 
     env:
       EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_STAGING_EXPECTED_SUBSCRIPTION_ID }}
-      DENIED_PRODUCTION_SUBSCRIPTION_ID: ${{ vars.AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY }}
       TF_VAR_staging_subscription_id: ${{ secrets.AZURE_STAGING_SUBSCRIPTION_ID }}
       TF_VAR_staging_tenant_id: ${{ secrets.AZURE_STAGING_TENANT_ID }}
       TF_VAR_migration_operator_object_id: ${{ vars.AZURE_STAGING_MIGRATION_OPERATOR_OBJECT_ID }}
@@ -62,7 +61,7 @@ jobs:
             echo "::error::sha must be a full lowercase 40-character commit SHA"
             exit 1
           fi
-          for required in EXPECTED_SUBSCRIPTION_ID DENIED_PRODUCTION_SUBSCRIPTION_ID \
+          for required in EXPECTED_SUBSCRIPTION_ID \
             TF_VAR_staging_subscription_id TF_VAR_staging_tenant_id \
             TF_VAR_migration_operator_object_id TF_VAR_independent_verifier_object_id \
             TF_VAR_rehearsal_owner; do
@@ -73,10 +72,6 @@ jobs:
           done
           if [ "${EXPECTED_SUBSCRIPTION_ID,,}" != "${TF_VAR_staging_subscription_id,,}" ]; then
             echo "::error::expected staging subscription values disagree"
-            exit 1
-          fi
-          if [ "${EXPECTED_SUBSCRIPTION_ID,,}" = "${DENIED_PRODUCTION_SUBSCRIPTION_ID,,}" ]; then
-            echo "::error::staging subscription matches the denied production subscription"
             exit 1
           fi
           case "$ACTION" in
@@ -120,12 +115,8 @@ jobs:
           set -euo pipefail
           actual_subscription=$(az account show --query id -o tsv)
           test "${actual_subscription,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
-          resource_group=$(az group show --name brain-staging-rg --output json)
-          test "$(jq -r '.tags.environment // ""' <<<"$resource_group")" = "staging"
-          if jq -r '.id' <<<"$resource_group" | grep -qi production; then
-            echo "::error::production marker found in staging resource group ID"
-            exit 1
-          fi
+          scripts/ops/check-staging-resource-group-isolation.sh \
+            --resource-group brain-core-staging-api-rg
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -144,12 +135,12 @@ jobs:
         if: ${{ inputs.action == 'plan' }}
         run: |
           set -euo pipefail
-          unexpected=$(az resource list --resource-group brain-staging-rg --output json |
+          unexpected=$(az resource list --resource-group brain-core-staging-api-rg --output json |
             jq -r '.[]
               | select((.tags.purpose // "") != "deploy-rehearsal-foundation")
               | .id')
           if [ -n "$unexpected" ]; then
-            echo "::error::dependent or unmanaged resources remain in brain-staging-rg"
+            echo "::error::dependent or unmanaged resources remain in brain-core-staging-api-rg"
             printf '%s\n' "$unexpected"
             exit 1
           fi
@@ -246,6 +237,6 @@ jobs:
         if: ${{ inputs.action == 'apply' }}
         run: |
           set -euo pipefail
-          remaining=$(az resource list --resource-group brain-staging-rg --output json | jq 'length')
+          remaining=$(az resource list --resource-group brain-core-staging-api-rg --output json | jq 'length')
           test "$remaining" = "0"
-          test "$(az group show --name brain-staging-rg --query tags.environment -o tsv)" = "staging"
+          test "$(az group show --name brain-core-staging-api-rg --query tags.environment -o tsv)" = "staging"

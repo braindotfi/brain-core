@@ -1,6 +1,11 @@
 variable "staging_subscription_id" {
   description = "Subscription containing the isolated staging rehearsal VNet."
   type        = string
+
+  validation {
+    condition     = lower(var.staging_subscription_id) == "861547ad-b8ea-4f52-a51e-0638a4d4d446"
+    error_message = "staging_subscription_id must be the approved shared Azure subscription."
+  }
 }
 
 variable "source_subscription_id" {
@@ -10,10 +15,10 @@ variable "source_subscription_id" {
 
 variable "staging_resource_group_name" {
   type    = string
-  default = "brain-staging-rg"
+  default = "brain-core-staging-api-rg"
 
   validation {
-    condition     = startswith(var.staging_resource_group_name, "brain-staging-")
+    condition     = startswith(var.staging_resource_group_name, "brain-core-staging-")
     error_message = "staging_resource_group_name must be staging-scoped."
   }
 }
@@ -38,8 +43,8 @@ variable "migration_storage_account_id" {
   type        = string
 
   validation {
-    condition     = startswith(lower(var.migration_storage_account_id), "/subscriptions/${lower(var.staging_subscription_id)}/") && strcontains(lower(var.migration_storage_account_id), "/storageaccounts/brainstgmig") && !strcontains(lower(var.migration_storage_account_id), "production")
-    error_message = "migration_storage_account_id must be the staging brainstgmig account in the expected subscription."
+    condition     = startswith(lower(var.migration_storage_account_id), "/subscriptions/${lower(var.staging_subscription_id)}/") && strcontains(lower(var.migration_storage_account_id), "/storageaccounts/braincorestgmig") && !strcontains(lower(var.migration_storage_account_id), "production")
+    error_message = "migration_storage_account_id must be the staging braincorestgmig account in the expected subscription."
   }
 }
 
