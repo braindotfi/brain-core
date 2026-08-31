@@ -3,11 +3,11 @@
 # by the protected workflow so this file cannot silently target another tenant.
 
 location                       = "canadacentral"
-resource_group_name            = "brain-staging-rg"
-vnet_name                      = "brain-staging-vnet"
+resource_group_name            = "brain-core-staging-api-rg"
+vnet_name                      = "brain-core-staging-vnet"
 vnet_address_space             = "10.30.0.0/16"
-key_vault_name                 = "brain-staging-kv"
-container_app_environment_name = "brain-staging-env"
-acr_name                       = "brainstagingacr"
-log_analytics_name             = "brain-staging-logs"
+key_vault_name                 = "brain-core-staging-kv"
+container_app_environment_name = "brain-core-staging-env"
+acr_name                       = "braincorestagingacr"
+log_analytics_name             = "brain-core-staging-logs"
 log_retention_days             = 30

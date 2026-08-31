@@ -1,31 +1,31 @@
 variable "staging_subscription_id" {
-  description = "Subscription containing only the approved Azure staging rehearsal resources."
+  description = "Shared Azure subscription containing the resource-group-isolated staging rehearsal resources."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.staging_subscription_id))
-    error_message = "staging_subscription_id must be an Azure subscription UUID."
+    condition     = lower(var.staging_subscription_id) == "861547ad-b8ea-4f52-a51e-0638a4d4d446"
+    error_message = "staging_subscription_id must be the approved shared Azure subscription."
   }
 }
 
 variable "staging_resource_group_name" {
   description = "Existing PR #745 ephemeral workload resource group."
   type        = string
-  default     = "brain-staging-rg"
+  default     = "brain-core-staging-api-rg"
 
   validation {
-    condition     = startswith(var.staging_resource_group_name, "brain-staging-") && !strcontains(lower(var.staging_resource_group_name), "production")
-    error_message = "staging_resource_group_name must be an isolated brain-staging resource group."
+    condition     = startswith(var.staging_resource_group_name, "brain-core-staging-") && !strcontains(lower(var.staging_resource_group_name), "production")
+    error_message = "staging_resource_group_name must be an isolated brain-core-staging resource group."
   }
 }
 
 variable "staging_key_vault_name" {
   description = "Existing ephemeral staging foundation Key Vault."
   type        = string
-  default     = "brain-staging-kv"
+  default     = "brain-core-staging-kv"
 
   validation {
-    condition     = startswith(var.staging_key_vault_name, "brain-staging-") && !strcontains(lower(var.staging_key_vault_name), "production")
+    condition     = startswith(var.staging_key_vault_name, "brain-core-staging-") && !strcontains(lower(var.staging_key_vault_name), "production")
     error_message = "staging_key_vault_name must identify the staging vault."
   }
 }
@@ -33,7 +33,7 @@ variable "staging_key_vault_name" {
 variable "staging_vnet_name" {
   description = "Existing ephemeral PR #745 staging VNet."
   type        = string
-  default     = "brain-staging-vnet"
+  default     = "brain-core-staging-vnet"
 }
 
 variable "staging_private_endpoint_subnet_name" {
@@ -45,13 +45,13 @@ variable "staging_private_endpoint_subnet_name" {
 variable "staging_container_app_environment_name" {
   description = "Existing ephemeral PR #745 Container Apps environment."
   type        = string
-  default     = "brain-staging-env"
+  default     = "brain-core-staging-env"
 }
 
 variable "staging_acr_name" {
   description = "Existing ephemeral staging foundation container registry."
   type        = string
-  default     = "brainstagingacr"
+  default     = "braincorestagingacr"
 }
 
 variable "migration_storage_account_name" {
@@ -59,8 +59,8 @@ variable "migration_storage_account_name" {
   type        = string
 
   validation {
-    condition     = can(regex("^brainstgmig[a-z0-9]{3,14}$", var.migration_storage_account_name))
-    error_message = "migration_storage_account_name must be 14 to 24 lowercase alphanumerics beginning with brainstgmig."
+    condition     = can(regex("^braincorestgmig[a-z0-9]{3,9}$", var.migration_storage_account_name))
+    error_message = "migration_storage_account_name must be 18 to 24 lowercase alphanumerics beginning with braincorestgmig."
   }
 }
 
@@ -112,8 +112,8 @@ variable "api_image" {
   type        = string
 
   validation {
-    condition     = can(regex("^brainstagingacr\\.azurecr\\.io/brain-api:[0-9a-f]{8}$", var.api_image))
-    error_message = "api_image must be a SHA-tagged image in brainstagingacr."
+    condition     = can(regex("^braincorestagingacr\\.azurecr\\.io/brain-api:[0-9a-f]{8}$", var.api_image))
+    error_message = "api_image must be a SHA-tagged image in braincorestagingacr."
   }
 }
 

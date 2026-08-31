@@ -3,13 +3,13 @@
 This root creates the destroyable prerequisites consumed as data sources by
 `infra/staging-migration`:
 
-- `brain-staging-vnet`, `snet-apps`, and `snet-private-endpoints`
-- `brain-staging-kv` with RBAC, purge protection, public access disabled, a
+- `brain-core-staging-vnet`, `snet-apps`, and `snet-private-endpoints`
+- `brain-core-staging-kv` with RBAC, purge protection, public access disabled, a
   private endpoint, and private DNS
-- `brain-staging-env` and its directly required Log Analytics workspace
-- `brainstagingacr` with admin credentials disabled
+- `brain-core-staging-env` and its directly required Log Analytics workspace
+- `braincorestagingacr` with admin credentials disabled
 
-The empty `brain-staging-rg`, staging state backend, and GitHub OIDC principal
+The empty `brain-core-staging-api-rg`, staging state backend, and GitHub OIDC principal
 are created by `infra/bootstrap-staging`. They remain after teardown so a later
 rehearsal can recreate the foundation without subscription-wide GitHub rights.
 An empty resource group and workload identity have no usage charge. The state
@@ -47,7 +47,7 @@ review, dispatch `action=apply` with the plan run ID and exact confirmation. The
 apply consumes that reviewed plan and refuses to create a new one.
 
 The plan must contain no replacement, destroy, production name, production
-resource ID, or resource outside `brain-staging-rg`. The first live plan also
+resource ID, or resource outside `brain-core-staging-api-rg`. The first live plan also
 confirms whether the globally scoped Key Vault and ACR names are available and
 whether `10.30.0.0/16` is non-overlapping.
 

@@ -1,10 +1,10 @@
 variable "staging_subscription_id" {
-  description = "Subscription containing only the approved staging rehearsal resources."
+  description = "Shared Azure subscription containing the resource-group-isolated staging rehearsal resources."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.staging_subscription_id))
-    error_message = "staging_subscription_id must be an Azure subscription UUID."
+    condition     = lower(var.staging_subscription_id) == "861547ad-b8ea-4f52-a51e-0638a4d4d446"
+    error_message = "staging_subscription_id must be the approved shared Azure subscription."
   }
 }
 
@@ -32,21 +32,21 @@ variable "location" {
 variable "resource_group_name" {
   description = "Pre-created staging workload resource group."
   type        = string
-  default     = "brain-staging-rg"
+  default     = "brain-core-staging-api-rg"
 
   validation {
-    condition     = var.resource_group_name == "brain-staging-rg"
-    error_message = "The foundation may target only brain-staging-rg."
+    condition     = var.resource_group_name == "brain-core-staging-api-rg"
+    error_message = "The foundation may target only brain-core-staging-api-rg."
   }
 }
 
 variable "vnet_name" {
   description = "Staging-only virtual network name."
   type        = string
-  default     = "brain-staging-vnet"
+  default     = "brain-core-staging-vnet"
 
   validation {
-    condition     = var.vnet_name == "brain-staging-vnet"
+    condition     = var.vnet_name == "brain-core-staging-vnet"
     error_message = "The foundation VNet name is fixed by the staging contract."
   }
 }
@@ -65,10 +65,10 @@ variable "vnet_address_space" {
 variable "key_vault_name" {
   description = "Globally unique staging Key Vault name."
   type        = string
-  default     = "brain-staging-kv"
+  default     = "brain-core-staging-kv"
 
   validation {
-    condition     = var.key_vault_name == "brain-staging-kv"
+    condition     = var.key_vault_name == "brain-core-staging-kv"
     error_message = "The staging Key Vault name is fixed by the reviewed contract."
   }
 }
@@ -76,10 +76,10 @@ variable "key_vault_name" {
 variable "container_app_environment_name" {
   description = "Staging Container Apps environment name."
   type        = string
-  default     = "brain-staging-env"
+  default     = "brain-core-staging-env"
 
   validation {
-    condition     = var.container_app_environment_name == "brain-staging-env"
+    condition     = var.container_app_environment_name == "brain-core-staging-env"
     error_message = "The staging Container Apps environment name is fixed by the reviewed contract."
   }
 }
@@ -87,10 +87,10 @@ variable "container_app_environment_name" {
 variable "acr_name" {
   description = "Globally unique staging Azure Container Registry name."
   type        = string
-  default     = "brainstagingacr"
+  default     = "braincorestagingacr"
 
   validation {
-    condition     = var.acr_name == "brainstagingacr"
+    condition     = var.acr_name == "braincorestagingacr"
     error_message = "The staging ACR name is fixed by the reviewed contract."
   }
 }
@@ -98,10 +98,10 @@ variable "acr_name" {
 variable "log_analytics_name" {
   description = "Staging-only Log Analytics workspace name."
   type        = string
-  default     = "brain-staging-logs"
+  default     = "brain-core-staging-logs"
 
   validation {
-    condition     = var.log_analytics_name == "brain-staging-logs"
+    condition     = var.log_analytics_name == "brain-core-staging-logs"
     error_message = "The staging Log Analytics name is fixed by the reviewed contract."
   }
 }

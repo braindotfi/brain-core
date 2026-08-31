@@ -27,13 +27,6 @@ check "staging_tenant" {
   }
 }
 
-check "dedicated_staging_subscription" {
-  assert {
-    condition     = lower(var.staging_subscription_id) != lower(var.production_subscription_id_deny)
-    error_message = "The staging and denied production subscription IDs must differ."
-  }
-}
-
 check "migration_separation_of_duties" {
   assert {
     condition     = lower(var.migration_operator_object_id) != lower(var.independent_verifier_object_id)

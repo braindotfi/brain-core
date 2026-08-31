@@ -97,11 +97,12 @@ apply.
     `purpose=deploy-rehearsal`, an owner, an expiry timestamp, and the GitHub
     run ID that created it.
 
-The preferred isolation boundary is a dedicated non-production Azure
-subscription. If the organization uses the current subscription instead, both
-staging principals must be limited to the staging workload resource group and
-the staging state account. Subscription-wide Contributor or Role Based Access
-Control Administrator is not acceptable for staging.
+The approved isolation boundary is the existing Azure subscription
+`861547ad-b8ea-4f52-a51e-0638a4d4d446`, with staging writes limited to
+`brain-core-staging-api-rg` and the staging state account. Subscription-wide
+Contributor or Role Based Access Control Administrator is not acceptable for
+staging. Subscription-wide Reader remains permitted for target verification
+and VNet overlap inventory.
 
 ## Proposed names and ownership
 
@@ -109,31 +110,31 @@ Names are provisional until a read-only Azure inventory proves that each global
 name is available and that no historical proof-of-concept resource would be
 adopted accidentally.
 
-| Resource                   | Proposed staging name             | Isolation requirement                         |
-| -------------------------- | --------------------------------- | --------------------------------------------- |
-| Workload resource group    | `brain-staging-rg`                | Contains no production resources              |
-| State resource group       | `brain-staging-tfstate-rg`        | Separate from `brain-tfstate-rg`              |
-| Container Apps environment | `brain-staging-env`               | Separate VNet injection and logs              |
-| VNet                       | `brain-staging-vnet`              | Non-overlapping CIDR selected after inventory |
-| Services identity          | `brain-staging-services`          | Key Vault read and ACR pull only              |
-| Terraform runner identity  | `brain-staging-terraform`         | Staging scopes only                           |
-| Key Vault                  | `brain-staging-kv`                | Staging secrets only                          |
-| Postgres                   | `brain-staging-pg`                | New empty staging database                    |
-| Managed Redis              | `brain-staging-redis`             | New private staging cache                     |
-| Blob account               | `brainstagingraw`                 | New staging containers and keys               |
-| ACR                        | `brainstagingacr`                 | Staging images only                           |
-| Log Analytics              | `brain-staging-logs`              | Staging evidence only                         |
-| API app                    | `brain-staging-api`               | Generated Azure FQDN only                     |
-| Auth app                   | `brain-staging-auth`              | Generated Azure FQDN only                     |
-| Worker app                 | `brain-staging-worker`            | No public ingress                             |
-| Agents app                 | `brain-staging-agents`            | Internal ingress only                         |
-| Terraform job              | `brain-staging-terraform`         | Uses staging state and principal              |
-| Migration job              | `brain-staging-migrate`           | Staging Postgres only                         |
-| Database roles job         | `brain-staging-db-roles`          | Runs after staging migrations                 |
-| Validation job             | `brain-staging-deploy-validation` | Staging dependencies only                     |
-| State account              | `brainfitfstatestg`               | Global availability must be checked           |
-| State container            | `tfstate-staging`                 | Staging principal access only                 |
-| State key                  | `staging.terraform.tfstate`       | Never reused by production                    |
+| Resource                   | Proposed staging name                  | Isolation requirement                         |
+| -------------------------- | -------------------------------------- | --------------------------------------------- |
+| Workload resource group    | `brain-core-staging-api-rg`            | Contains no production resources              |
+| State resource group       | `brain-core-staging-tfstate-rg`        | Separate from `brain-tfstate-rg`              |
+| Container Apps environment | `brain-core-staging-env`               | Separate VNet injection and logs              |
+| VNet                       | `brain-core-staging-vnet`              | Non-overlapping CIDR selected after inventory |
+| Services identity          | `brain-core-staging-services`          | Key Vault read and ACR pull only              |
+| Terraform runner identity  | `brain-core-staging-terraform`         | Staging scopes only                           |
+| Key Vault                  | `brain-core-staging-kv`                | Staging secrets only                          |
+| Postgres                   | `brain-core-staging-pg`                | New empty staging database                    |
+| Managed Redis              | `brain-core-staging-redis`             | New private staging cache                     |
+| Blob account               | `braincorestagingraw`                  | New staging containers and keys               |
+| ACR                        | `braincorestagingacr`                  | Staging images only                           |
+| Log Analytics              | `brain-core-staging-logs`              | Staging evidence only                         |
+| API app                    | `brain-core-staging-api`               | Generated Azure FQDN only                     |
+| Auth app                   | `brain-core-staging-auth`              | Generated Azure FQDN only                     |
+| Worker app                 | `brain-core-staging-worker`            | No public ingress                             |
+| Agents app                 | `brain-core-staging-agents`            | Internal ingress only                         |
+| Terraform job              | `brain-core-staging-terraform`         | Uses staging state and principal              |
+| Migration job              | `brain-core-staging-migrate`           | Staging Postgres only                         |
+| Database roles job         | `brain-core-staging-db-roles`          | Runs after staging migrations                 |
+| Validation job             | `brain-core-staging-deploy-validation` | Staging dependencies only                     |
+| State account              | `braincoretfstatestg`                  | Global availability must be checked           |
+| State container            | `tfstate-core-staging`                 | Staging principal access only                 |
+| State key                  | `staging.terraform.tfstate`            | Never reused by production                    |
 
 ## Terraform structure
 
@@ -197,7 +198,7 @@ Remove production-specific defaults and require environment-specific values for:
 The control-plane validation helper should accept required environment
 variables for API, auth, worker, and agents names. Its tests must prove that a
 staging invocation never references `brain-production-*` and a production
-invocation never references `brain-staging-*`.
+invocation never references `brain-core-staging-*`.
 
 The in-VNet validation job is already derived from Terraform resources and can
 be reused. Its run-time inputs must still be read from the staging job and the
@@ -208,7 +209,7 @@ expected SHA must come from the staging image build.
 The staging backend must be created before the main stack. The implementation
 plan is:
 
-1. A human approves creation of `brain-staging-tfstate-rg`, the staging state
+1. A human approves creation of `brain-core-staging-tfstate-rg`, the staging state
    account, and the staging state container.
 2. Versioning and 30-day blob and container delete retention are enabled.
 3. Shared-key access is disabled if supported by the chosen backend flow.
@@ -389,7 +390,7 @@ must never accept `destroy` as a free-form Terraform action.
    tfvars, image tag, and full SHA.
 5. Run staging migrations, then staging database roles.
 6. Run control-plane readiness with staging app names.
-7. Start `brain-staging-deploy-validation` with a unique run ID.
+7. Start `brain-core-staging-deploy-validation` with a unique run ID.
 8. Retrieve redacted per-gate evidence even when validation fails.
 9. Stop on any failed gate. Do not repair or retry automatically.
 
@@ -541,8 +542,7 @@ expiry-policy alert when workload resources remain after the approved window.
 ## Recommended sequencing
 
 1. Review and approve this scope.
-2. Decide dedicated subscription versus same-subscription resource-group
-   isolation.
+2. Use the approved shared-subscription, resource-group isolation model.
 3. Design the approved persistent-foundation and ephemeral-workload Terraform
    boundaries.
 4. Implement staging backend bootstrap and staging tfvars.
@@ -567,7 +567,7 @@ expiry-policy alert when workload resources remain after the approved window.
 - [x] Estimated always-on and ephemeral cost from current official Azure rates.
 - [x] Approved the ephemeral workload as the default operating model.
 - [x] Approved retaining only state, an empty resource group, and OIDC identity.
-- [ ] Approve subscription and resource-group isolation choice.
+- [x] Approved shared-subscription, resource-group isolation.
 - [x] Implement explicit bootstrap and ephemeral foundation state boundaries.
 - [x] Implement `backend-staging.hcl` and foundation `staging.tfvars`.
 - [ ] Remove production defaults from environment-specific Terraform inputs.

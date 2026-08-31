@@ -32,7 +32,7 @@ if [[ ! "$MIGRATION_RUN_ID" =~ ^[a-z0-9][a-z0-9-]{2,39}$ ]]; then
   echo "staging-migration-upload: invalid run ID" >&2
   exit 1
 fi
-if [[ ! "$MIGRATION_STORAGE_ACCOUNT" =~ ^brainstgmig[a-z0-9]{3,14}$ ]]; then
+if [[ ! "$MIGRATION_STORAGE_ACCOUNT" =~ ^braincorestgmig[a-z0-9]{3,9}$ ]]; then
   echo "staging-migration-upload: storage account is not staging migration intake" >&2
   exit 1
 fi

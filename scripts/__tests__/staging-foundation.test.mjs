@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
 import test from "node:test";
 
 const read = (path) => readFile(path, "utf8");
@@ -37,10 +40,11 @@ test("staging bootstrap isolates state and GitHub OIDC from production", async (
   assert.match(github, /prevent_self_review\s+= true/);
   assert.match(github, /protected_branches\s+= true/);
   assert.match(github, /AZURE_STAGING_CLIENT_ID/);
-  assert.match(github, /AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY/);
+  assert.doesNotMatch(github, /AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY/);
+  assert.doesNotMatch(main, /dedicated_staging_subscription|production_subscription_id_deny/);
   assert.doesNotMatch(github, /AZURE_CLIENT_ID\b/);
-  assert.match(variables, /brain-staging-tfstate-rg/);
-  assert.match(variables, /brain-staging-rg/);
+  assert.match(variables, /brain-core-staging-tfstate-rg/);
+  assert.match(variables, /brain-core-staging-api-rg/);
   assert.match(backend, /key\s+= "foundation\.terraform\.tfstate"/);
   assert.match(backend, /use_azuread_auth\s+= true/);
   assert.match(backend, /use_cli\s+= true/);
@@ -78,10 +82,10 @@ test("destroyable staging foundation exactly satisfies migration data sources", 
   assert.match(main, /role_definition_name\s+= "Key Vault Secrets User"/);
   assert.doesNotMatch(main, /resource "azurerm_resource_group"/);
   assert.doesNotMatch(main, /prevent_destroy/);
-  assert.match(variables, /var\.resource_group_name == "brain-staging-rg"/);
-  assert.match(variables, /var\.key_vault_name == "brain-staging-kv"/);
-  assert.match(variables, /var\.container_app_environment_name == "brain-staging-env"/);
-  assert.match(variables, /var\.acr_name == "brainstagingacr"/);
+  assert.match(variables, /var\.resource_group_name == "brain-core-staging-api-rg"/);
+  assert.match(variables, /var\.key_vault_name == "brain-core-staging-kv"/);
+  assert.match(variables, /var\.container_app_environment_name == "brain-core-staging-env"/);
+  assert.match(variables, /var\.acr_name == "braincorestagingacr"/);
   assert.match(outputs, /key_vault_uri/);
   assert.match(tfvars, /vnet_address_space\s+= "10\.30\.0\.0\/16"/);
   assert.doesNotMatch(main, /azurerm_storage_(?:container|blob|queue|share|table)/);
@@ -99,7 +103,7 @@ test("destroyable staging foundation exactly satisfies migration data sources", 
   }
 });
 
-test("staging workflows require reviewed exact plans and deny production", async () => {
+test("staging workflows require reviewed exact plans and resource-group isolation", async () => {
   const [deploy, teardown] = await Promise.all([
     read(".github/workflows/deploy-azure-staging-foundation.yml"),
     read(".github/workflows/teardown-azure-staging-foundation.yml"),
@@ -108,8 +112,12 @@ test("staging workflows require reviewed exact plans and deny production", async
   for (const workflow of [deploy, teardown]) {
     assert.match(workflow, /environment: azure-staging-rehearsal/);
     assert.match(workflow, /AZURE_STAGING_CLIENT_ID/);
-    assert.match(workflow, /AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY/);
-    assert.match(workflow, /staging subscription matches the denied production subscription/);
+    assert.doesNotMatch(workflow, /AZURE_PRODUCTION_SUBSCRIPTION_ID_DENY/);
+    assert.doesNotMatch(
+      workflow,
+      /staging subscription matches the denied production subscription/,
+    );
+    assert.match(workflow, /check-staging-resource-group-isolation\.sh/);
     assert.match(workflow, /actions\/download-artifact@v4/);
     assert.match(workflow, /terraform apply -input=false -no-color reviewed\/tfplan/);
     assert.doesNotMatch(workflow, /AZURE_CLIENT_ID\b/);
@@ -122,4 +130,79 @@ test("staging workflows require reviewed exact plans and deny production", async
   assert.match(teardown, /DESTROY-STAGING-FOUNDATION/);
   assert.match(teardown, /teardown plan contains an action other than delete/);
   assert.match(teardown, /dependent or unmanaged resources remain/);
+});
+
+const runIsolationGuard = async (targetResources) => {
+  const directory = await mkdtemp(join(tmpdir(), "brain-staging-rg-guard-"));
+  const az = join(directory, "az");
+  await writeFile(
+    az,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == "group show" ]]; then
+  printf '%s' '{"name":"brain-core-staging-api-rg","id":"/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-core-staging-api-rg","tags":{"environment":"staging"}}'
+  exit 0
+fi
+if [[ "$1 $2" == "resource list" ]]; then
+  if [[ " $* " != *" --resource-group brain-core-staging-api-rg "* ]]; then
+    printf '%s' '[{"name":"brain-production-api","id":"/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-production-rg/providers/Microsoft.App/containerApps/brain-production-api"}]'
+    exit 0
+  fi
+  printf '%s' "$TARGET_RESOURCES_JSON"
+  exit 0
+fi
+echo "unexpected az invocation: $*" >&2
+exit 2
+`,
+  );
+  await chmod(az, 0o755);
+
+  const result = await new Promise((resolve) => {
+    const child = spawn(
+      "bash",
+      [
+        "scripts/ops/check-staging-resource-group-isolation.sh",
+        "--resource-group",
+        "brain-core-staging-api-rg",
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          TARGET_RESOURCES_JSON: JSON.stringify(targetResources),
+        },
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+  await rm(directory, { recursive: true, force: true });
+  return result;
+};
+
+test("resource-group guard ignores production resources elsewhere in the subscription", async () => {
+  const result = await runIsolationGuard([
+    {
+      name: "brain-core-staging-kv",
+      id: "/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-core-staging-api-rg/providers/Microsoft.KeyVault/vaults/brain-core-staging-kv",
+    },
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /staging_resource_group_isolation=verified/);
+});
+
+test("resource-group guard rejects a production-named resource inside the target group", async () => {
+  const result = await runIsolationGuard([
+    {
+      name: "production-shadow",
+      id: "/subscriptions/861547ad-b8ea-4f52-a51e-0638a4d4d446/resourceGroups/brain-core-staging-api-rg/providers/Microsoft.Storage/storageAccounts/production-shadow",
+    },
+  ]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /production-named resource found inside brain-core-staging-api-rg/);
 });

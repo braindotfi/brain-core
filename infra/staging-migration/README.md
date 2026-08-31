@@ -69,10 +69,10 @@ No values in this example are credentials:
 terraform init -reconfigure -backend-config=../backend-staging-migration.hcl
 terraform plan \
   -var='staging_subscription_id=<staging-subscription-uuid>' \
-  -var='migration_storage_account_name=brainstgmig<unique>' \
+  -var='migration_storage_account_name=braincorestgmig<unique>' \
   -var='source_upload_auth_mode=managed_identity' \
   -var='source_uploader_principal_id=<task-1-principal-uuid>' \
-  -var='api_image=brainstagingacr.azurecr.io/brain-api:<short-sha>' \
+  -var='api_image=braincorestagingacr.azurecr.io/brain-api:<short-sha>' \
   -var='rehearsal_owner=<name>' \
   -var='rehearsal_expires_at=<rfc3339>' \
   -var='github_run_id=<digits>'

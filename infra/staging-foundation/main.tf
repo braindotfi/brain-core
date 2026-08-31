@@ -34,7 +34,7 @@ check "staging_tenant" {
 check "resource_group_isolation" {
   assert {
     condition = (
-      data.azurerm_resource_group.staging.name == "brain-staging-rg" &&
+      data.azurerm_resource_group.staging.name == "brain-core-staging-api-rg" &&
       try(data.azurerm_resource_group.staging.tags["environment"], "") == "staging"
     )
     error_message = "The target resource group is not the approved tagged staging boundary."
@@ -129,7 +129,7 @@ resource "azurerm_private_dns_zone" "key_vault" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
-  name                  = "brain-staging-key-vault-link"
+  name                  = "brain-core-staging-key-vault-link"
   resource_group_name   = data.azurerm_resource_group.staging.name
   private_dns_zone_name = azurerm_private_dns_zone.key_vault.name
   virtual_network_id    = azurerm_virtual_network.staging.id
@@ -138,14 +138,14 @@ resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
 }
 
 resource "azurerm_private_endpoint" "key_vault" {
-  name                = "brain-staging-key-vault-pe"
+  name                = "brain-core-staging-key-vault-pe"
   resource_group_name = data.azurerm_resource_group.staging.name
   location            = data.azurerm_resource_group.staging.location
   subnet_id           = azurerm_subnet.private_endpoints.id
   tags                = local.tags
 
   private_service_connection {
-    name                           = "brain-staging-key-vault-psc"
+    name                           = "brain-core-staging-key-vault-psc"
     private_connection_resource_id = azurerm_key_vault.staging.id
     subresource_names              = ["vault"]
     is_manual_connection           = false
