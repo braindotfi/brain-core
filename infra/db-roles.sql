@@ -289,6 +289,11 @@ GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receip
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
   member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,
   oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
+-- API-key authentication resolves the key before a tenant scope exists. Raw
+-- keys additionally need only the server-owned demo eligibility columns, not
+-- unrestricted tenant metadata.
+GRANT SELECT (id, provisioning_state, data_profile, access_stage)
+  ON tenants TO brain_resolver;
 
 -- brain_surface_gateway: tenant-scoped webhook decisions and delivery state.
 -- No ledger_* or execution_outbox grants. The handoff stops at approvals.

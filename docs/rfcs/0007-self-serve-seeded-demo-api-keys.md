@@ -229,9 +229,10 @@ re-seeding a tenant.
 
 ### 4.2 Authorization policy
 
-The current `API_KEY_PERMITTED_SCOPES` is a universal allowlist containing only
+The base `API_KEY_PERMITTED_SCOPES` is a universal allowlist containing only
 `ledger:read`, `audit:read`, and `governance:read`. It rejects `raw:read` and
-`raw:write` even when `environment='sandbox'`.
+`raw:write` even when `environment='sandbox'`. The reviewed exception keeps
+that base set unchanged and adds a separate synthetic-demo scope set.
 
 Replace the universal issuance decision with a context-aware policy:
 
@@ -325,20 +326,24 @@ promotion cannot expose production systems.
 PR #396 is already merged. There is no remaining "before #396 merges" release
 window.
 
-Its current implementation blocks the requested demo Raw key in two ways:
+Before the conditional exception, the implementation blocked the requested
+demo Raw key in two ways:
 
-1. `API_KEY_PERMITTED_SCOPES` excludes `raw:read` and `raw:write` for every API
-   key. The check does not distinguish sandbox keys, live keys, seeded tenants,
-   or unseeded tenants.
+1. Before the RFC 0007 exception, `API_KEY_PERMITTED_SCOPES` excluded
+   `raw:read` and `raw:write` for every API key. The exception is deliberately
+   separate from this universal read-only set and requires the trusted tenant
+   state at issuance, rotation, and use time.
 2. API-key routes and gateway authentication are mounted only when
    `BRAIN_API_KEY_AUTH_ENABLED=true` with a configured pepper. Repository
    production examples keep the flag off, while staging deployment enables it.
    Actual environment enablement must be verified before release.
 
-Therefore the feature cannot ship merely by asking for a `brain_sk_test_` prefix.
-It needs a reviewed extension to PR #396's API-key scope policy plus a use-time
-tenant-state check. Production Raw keys remain out of scope and must continue to
-fail closed until the graduation policy is implemented and approved.
+Therefore the feature cannot ship merely by asking for a `brain_sk_test_`
+prefix. The reviewed PR #396 extension adds the conditional scope policy and
+use-time tenant-state check, but route enablement, converged signup provisioning,
+and one-time key display remain separate release requirements. Production Raw
+keys remain out of scope and must continue to fail closed until the graduation
+policy is implemented and approved.
 
 ### 6.1 Separate production route-enablement decision
 
@@ -425,11 +430,13 @@ Required regression coverage:
 ### Pending implementation and decisions
 
 - [ ] Decide whether registered seeded demos target staging or true production.
-- [ ] Approve the tenant classification and provisioning-state schema.
+- [x] Persist the approved tenant classification and provisioning-state schema,
+      leaving legacy tenants unclassified so they fail closed.
 - [ ] Decide demo tenant and key TTL, storage quota, and request limits.
 - [ ] Decide the identity-transition contract for clean-tenant graduation.
 - [ ] Implement retry-safe Brightline provisioning and readiness reporting.
-- [ ] Implement the conditional sandbox Raw-key policy and use-time check.
+- [x] Implement the conditional sandbox Raw-key policy and use-time check for
+      `brain_sk_test_` keys on `ready_demo` synthetic Brightline tenants.
 - [ ] Converge ordinary signup with the existing demo provisioning behavior:
       after `POST /api/auth/register`, make the existing `createDurableSession`
       path pass `demo_seed:true`, require the `seedBrainSaasDemo` result, and run

@@ -112,6 +112,11 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
         "  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,\n" +
         "  oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;",
     );
+    expect(SQL).toContain(
+      "GRANT SELECT (id, provisioning_state, data_profile, access_stage)\n" +
+        "  ON tenants TO brain_resolver;",
+    );
+    expect(SQL).not.toContain("GRANT SELECT ON tenants TO brain_resolver");
     const artifactGrant = SQL.match(
       /GRANT SELECT \(([\s\S]*?)\) ON raw_artifacts TO brain_mcp_reader/,
     );

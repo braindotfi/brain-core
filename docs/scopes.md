@@ -46,21 +46,27 @@ Each non-human credential class has its own scope allowlist, both defined in
 - **Per-customer API keys** hold `API_KEY_PERMITTED_SCOPES` (3 scopes):
   `ledger:read`, `audit:read`, and `governance:read`. API keys may read their
   own tenant's commercial API surfaces for ledger, audit, and governance data.
-  They cannot ingest raw data, propose actions, approve, execute, sign policy, or
-  administer the tenant.
+  `API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES` adds `raw:read` and `raw:write` only
+  for sandbox keys on tenants whose trusted state is `ready_demo`,
+  `synthetic_brightline_v1`, and `demo`. Live keys and customer-data tenants
+  cannot receive Raw scopes. No API key can propose actions, approve, execute,
+  sign policy, or administer the tenant.
 
-These caps are enforced **at issuance, not at verify time**:
+The universal cap is enforced at issuance. The synthetic Raw exception is
+enforced at issuance and re-checked on every API-key authentication:
 
-- API-key issuance validates the requested scopes against `API_KEY_PERMITTED_SCOPES`
-  (`parseIssuedScopes` in `services/api/src/production-tenancy/api-key-routes.ts`).
+- API-key issuance validates requested scopes against the universal or
+  synthetic-demo set, then loads the server-owned tenant classification.
+- API-key authentication rejects a Raw-scoped key unless it still has the test
+  prefix, sandbox environment, and all three required tenant markers.
 - SIWX agent tokens draw their scopes from fixed per-role sets that stay within the
   allowlist (`scopesForRole` in `services/api/src/auth/siwx.ts`).
 
 The JWT verifier (`projectPrincipal` in `shared/src/auth/jwt.ts`) does **not**
 re-apply these per-principal-type caps. It only rejects a token whose scopes fall
 outside the full `VALID_SCOPES` vocabulary. A token minted with an in-vocabulary but
-principal-inappropriate scope would still verify: the caps are trusted to have been
-applied when the token was issued.
+principal-inappropriate scope would still verify. API keys use their separate
+database authenticator, including the use-time synthetic Raw eligibility check.
 
 ## Divergence from docs.brain.fi
 

@@ -49,14 +49,39 @@ interface FakeApiKeyRow {
   rotated_from_id: string | null;
 }
 
+interface FakeTenantState {
+  provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
+  data_profile: "synthetic_brightline_v1" | "customer" | null;
+  access_stage: "demo" | "production_review" | "production" | null;
+}
+
 interface FakeStore {
   tenants: Set<string>;
+  tenantStates: Map<string, FakeTenantState>;
   apiKeys: Map<string, FakeApiKeyRow>;
   auditEvents: Array<AuditEventInput & { id: string; createdAt: string }>;
 }
 
 function makeStore(seedTenantId: string): FakeStore {
-  return { tenants: new Set([seedTenantId]), apiKeys: new Map(), auditEvents: [] };
+  return {
+    tenants: new Set([seedTenantId]),
+    tenantStates: new Map([
+      [
+        seedTenantId,
+        { provisioning_state: null, data_profile: "customer", access_stage: "production" },
+      ],
+    ]),
+    apiKeys: new Map(),
+    auditEvents: [],
+  };
+}
+
+function makeVerifiedSynthetic(store: FakeStore, tenantId: string): void {
+  store.tenantStates.set(tenantId, {
+    provisioning_state: "ready_demo",
+    data_profile: "synthetic_brightline_v1",
+    access_stage: "demo",
+  });
 }
 
 function makeAppPool(
@@ -76,9 +101,12 @@ function makeAppPool(
       if (sql.startsWith("SELECT set_config")) {
         return { rows: [], rowCount: 0 };
       }
-      if (sql.includes("SELECT id FROM tenants WHERE id = $1")) {
+      if (sql.includes("FROM tenants") && sql.includes("WHERE id = $1")) {
         const [id] = values as [string];
-        return store.tenants.has(id) ? { rows: [{ id }], rowCount: 1 } : { rows: [], rowCount: 0 };
+        const state = store.tenantStates.get(id);
+        return store.tenants.has(id) && state !== undefined
+          ? { rows: [state], rowCount: 1 }
+          : { rows: [], rowCount: 0 };
       }
       if (sql.includes("FROM members")) {
         const [memberId, tenantId] = values as [string, string];
@@ -198,11 +226,11 @@ function makeAppPool(
 function makeResolverPool(store: FakeStore) {
   return {
     query: async (sql: string, values: unknown[] = []) => {
-      if (sql.includes("WHERE key_prefix = $1 AND key_last4 = $2")) {
+      if (sql.includes("WHERE k.key_prefix = $1 AND k.key_last4 = $2")) {
         const [keyPrefix, keyLast4] = values as [string, string];
-        const rows = [...store.apiKeys.values()].filter(
-          (row) => row.key_prefix === keyPrefix && row.key_last4 === keyLast4,
-        );
+        const rows = [...store.apiKeys.values()]
+          .filter((row) => row.key_prefix === keyPrefix && row.key_last4 === keyLast4)
+          .map((row) => ({ ...row, ...store.tenantStates.get(row.tenant_id) }));
         return { rows, rowCount: rows.length };
       }
       if (sql.includes("SELECT tenant_id FROM api_keys WHERE id = $1")) {
@@ -286,6 +314,14 @@ async function buildApp(
   });
   app.get("/audit-scope", async (request) => {
     requireScope(request.principal!.scopes, "audit:read");
+    return { ok: true, key_id: request.apiKeyId ?? null };
+  });
+  app.get("/raw-read-scope", async (request) => {
+    requireScope(request.principal!.scopes, "raw:read");
+    return { ok: true, key_id: request.apiKeyId ?? null };
+  });
+  app.post("/raw-write-scope", async (request) => {
+    requireScope(request.principal!.scopes, "raw:write");
     return { ok: true, key_id: request.apiKeyId ?? null };
   });
   app.get("/audited", async (request) => {
@@ -460,7 +496,7 @@ describe("per-customer API keys", () => {
     }
   });
 
-  it("rejects invalid scopes and cross-tenant admins", async () => {
+  it("rejects scopes outside both API key allowlists and cross-tenant admins", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
     const { app } = await buildApp(store);
@@ -469,7 +505,7 @@ describe("per-customer API keys", () => {
         method: "POST",
         url: `/tenants/${tenantId}/keys`,
         headers: { authorization: `Bearer ${await adminToken(tenantId)}` },
-        payload: { name: "Bad", environment: "sandbox", scopes: ["raw:read"] },
+        payload: { name: "Bad", environment: "sandbox", scopes: ["execution:propose"] },
       });
       expect(badScope.statusCode).toBe(400);
 
@@ -483,6 +519,185 @@ describe("per-customer API keys", () => {
     } finally {
       await app.close();
     }
+  });
+
+  it("issues and uses raw scopes only for a verified synthetic demo sandbox key", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    makeVerifiedSynthetic(store, tenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          name: "Synthetic Raw key",
+          environment: "sandbox",
+          scopes: ["raw:read", "raw:write"],
+        },
+      });
+      expect(issue.statusCode).toBe(201);
+      const issued = issue.json();
+      expect(issued.secret).toMatch(/^brain_sk_test_/);
+      expect(issued.scopes).toEqual(["raw:read", "raw:write"]);
+
+      const read = await app.inject({
+        method: "GET",
+        url: "/raw-read-scope",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(read.statusCode).toBe(200);
+
+      const write = await app.inject({
+        method: "POST",
+        url: "/raw-write-scope",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(write.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    [null, null, null],
+    ["provisioning", "synthetic_brightline_v1", "demo"],
+    ["seed_failed", "synthetic_brightline_v1", "demo"],
+    ["archived", "synthetic_brightline_v1", "demo"],
+    ["ready_demo", "customer", "demo"],
+    ["ready_demo", "synthetic_brightline_v1", "production_review"],
+    ["ready_demo", "synthetic_brightline_v1", "production"],
+  ] as const)(
+    "rejects raw scope issuance for tenant state %s/%s/%s",
+    async (provisioningState, dataProfile, accessStage) => {
+      const tenantId = newTenantId();
+      const store = makeStore(tenantId);
+      store.tenantStates.set(tenantId, {
+        provisioning_state: provisioningState,
+        data_profile: dataProfile,
+        access_stage: accessStage,
+      });
+      const { app } = await buildApp(store);
+      try {
+        const issue = await app.inject({
+          method: "POST",
+          url: `/tenants/${tenantId}/keys`,
+          headers: { authorization: `Bearer ${await adminToken(tenantId)}` },
+          payload: { name: "Denied Raw key", environment: "sandbox", scopes: ["raw:read"] },
+        });
+        expect(issue.statusCode).toBe(400);
+        expect(issue.json().error).toMatchObject({
+          code: "request_body_invalid",
+          details: {
+            environment: "sandbox",
+            provisioning_state: provisioningState,
+            data_profile: dataProfile,
+            access_stage: accessStage,
+          },
+        });
+        expect(store.apiKeys.size).toBe(0);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("rejects raw scopes on a live key even for a verified synthetic demo tenant", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    makeVerifiedSynthetic(store, tenantId);
+    const { app } = await buildApp(store);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${await adminToken(tenantId)}` },
+        payload: { name: "Live Raw key", environment: "live", scopes: ["raw:write"] },
+      });
+      expect(issue.statusCode).toBe(400);
+      expect(issue.json().error).toMatchObject({
+        code: "request_body_invalid",
+        details: { environment: "live" },
+      });
+      expect(store.apiKeys.size).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails a demo Raw key closed at use and rotation time after tenant state changes", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    makeVerifiedSynthetic(store, tenantId);
+    const { app } = await buildApp(store);
+    const token = await adminToken(tenantId);
+    try {
+      const issue = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/keys`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: "Graduating Raw key", environment: "sandbox", scopes: ["raw:write"] },
+      });
+      expect(issue.statusCode).toBe(201);
+      const issued = issue.json();
+
+      store.tenantStates.set(tenantId, {
+        provisioning_state: "ready_demo",
+        data_profile: "synthetic_brightline_v1",
+        access_stage: "production_review",
+      });
+
+      const use = await app.inject({
+        method: "POST",
+        url: "/raw-write-scope",
+        headers: { authorization: `Bearer ${issued.secret}` },
+      });
+      expect(use.statusCode).toBe(401);
+      expect(use.json().error.code).toBe("auth_invalid_key");
+
+      const rotate = await app.inject({
+        method: "POST",
+        url: `/keys/${issued.id}/rotate`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(rotate.statusCode).toBe(400);
+      expect(rotate.json().error.code).toBe("request_body_invalid");
+      expect(store.apiKeys.get(issued.id)?.revoked_at).toBeNull();
+      expect(store.apiKeys.size).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects a Raw-scoped key whose stored environment uses the live prefix", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    makeVerifiedSynthetic(store, tenantId);
+    const secret = "brain_sk_live_forgedraw";
+    store.apiKeys.set("akey_forged", {
+      id: "akey_forged",
+      tenant_id: tenantId,
+      name: "Forged Raw key",
+      environment: "live",
+      scopes: ["raw:read"],
+      key_prefix: "brain_sk_live_",
+      key_last4: secret.slice(-4),
+      hashed_secret: hashApiKeySecret(secret, PEPPER),
+      created_at: new Date().toISOString(),
+      last_used_at: null,
+      revoked_at: null,
+      expires_at: null,
+      rotated_from_id: null,
+    });
+    const authenticate = buildApiKeyAuthenticator({
+      pool: makeAppPool(store) as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+    });
+
+    await expect(authenticate(secret)).resolves.toBeNull();
   });
 
   it("enforces route scopes carried by the key principal", async () => {

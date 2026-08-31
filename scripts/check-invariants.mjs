@@ -341,10 +341,10 @@ check(
 check(
   "production tenant creation stamps production and rejects demo-fence auth",
   productionTenancy.includes('"/tenants"') &&
-    productionTenancy.includes(
-      "INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)",
+    /INSERT INTO tenants\s*\(\s*id,\s*kind,\s*sandbox,\s*created_via,\s*audit_anchor_mode,/u.test(
+      productionTenancy,
     ) &&
-    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin', $2)") &&
+    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5)") &&
     productionTenancy.includes('request.headers["x-demo-provision-auth"]'),
   "POST /v1/tenants must create tenant.kind production and reject demo provision credentials",
 );

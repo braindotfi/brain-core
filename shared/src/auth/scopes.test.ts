@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { isBrainError } from "../errors.js";
 import {
   AGENT_PERMITTED_SCOPES,
+  API_KEY_PERMITTED_SCOPES,
+  API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES,
   VALID_SCOPES,
   hasScope,
   isValidScope,
@@ -25,6 +27,21 @@ describe("VALID_SCOPES", () => {
     ] as const) {
       expect(VALID_SCOPES.has(s)).toBe(true);
     }
+  });
+});
+
+describe("API key scope sets", () => {
+  it("keeps the universal set read-only and isolates Raw scopes to the synthetic-demo set", () => {
+    expect([...API_KEY_PERMITTED_SCOPES]).toEqual(["ledger:read", "audit:read", "governance:read"]);
+    expect([...API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES]).toEqual([
+      "ledger:read",
+      "audit:read",
+      "governance:read",
+      "raw:read",
+      "raw:write",
+    ]);
+    expect(API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES.has("execution:propose")).toBe(false);
+    expect(API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES.has("payment_intent:approve")).toBe(false);
   });
 });
 
