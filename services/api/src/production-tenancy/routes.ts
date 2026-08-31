@@ -202,9 +202,18 @@ export async function registerProductionTenancyRoutes(
     try {
       agentResult = await withTenantScope(deps.pool, tenantId, async (client) => {
         await client.query(
-          `INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)
-             VALUES ($1, 'production', FALSE, 'admin', $2)`,
-          [tenantId, demoSeedRequested ? "db_only" : "onchain"],
+          `INSERT INTO tenants (
+             id, kind, sandbox, created_via, audit_anchor_mode,
+             provisioning_state, data_profile, access_stage
+           )
+           VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5)`,
+          [
+            tenantId,
+            demoSeedRequested ? "db_only" : "onchain",
+            demoSeedRequested ? "provisioning" : null,
+            demoSeedRequested ? "synthetic_brightline_v1" : "customer",
+            demoSeedRequested ? "demo" : "production",
+          ],
         );
         await client.query(
           `INSERT INTO users (id, tenant_id, email, role)
@@ -308,12 +317,25 @@ export async function registerProductionTenancyRoutes(
 
     let demoSeed: ProductionTenantDemoSeed | null = null;
     if (demoSeeder !== undefined) {
-      demoSeed = await demoSeeder({
-        tenantId,
-        actor: memberId,
-        companyName,
-        founderEmail,
-      });
+      try {
+        demoSeed = await demoSeeder({
+          tenantId,
+          actor: memberId,
+          companyName,
+          founderEmail,
+        });
+        await setDemoProvisioningState(deps.pool, tenantId, "provisioning", "ready_demo");
+      } catch (err) {
+        try {
+          await setDemoProvisioningState(deps.pool, tenantId, "provisioning", "seed_failed");
+        } catch (stateErr) {
+          request.log.error(
+            { err: stateErr, tenant_id: tenantId },
+            "failed to record durable demo seed failure state",
+          );
+        }
+        throw err;
+      }
       await deps.audit.emit({
         tenantId,
         layer: "execution",
@@ -652,6 +674,31 @@ export async function registerProductionTenancyRoutes(
       };
     },
   );
+}
+
+async function setDemoProvisioningState(
+  pool: Pool,
+  tenantId: string,
+  from: "provisioning",
+  to: "ready_demo" | "seed_failed",
+): Promise<void> {
+  const changed = await withTenantScope(pool, tenantId, (client) =>
+    client.query(
+      `UPDATE tenants
+          SET provisioning_state = $2,
+              updated_at = now()
+        WHERE id = $1
+          AND provisioning_state = $3
+          AND data_profile = 'synthetic_brightline_v1'
+          AND access_stage = 'demo'`,
+      [tenantId, to, from],
+    ),
+  );
+  if (changed.rowCount !== 1) {
+    throw brainError("internal_server_error", "durable demo provisioning state transition failed", {
+      details: { tenant_id: tenantId, from, to },
+    });
+  }
 }
 
 /**

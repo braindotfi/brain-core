@@ -122,6 +122,18 @@ export const API_KEY_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 ]);
 
 /**
+ * Issuance vocabulary for a sandbox key on a verified synthetic demo tenant.
+ * Runtime callers must still prove the tenant is synthetic_brightline_v1,
+ * access_stage=demo, and provisioning_state=ready_demo. This separate set
+ * preserves API_KEY_PERMITTED_SCOPES as the universal API-key ceiling.
+ */
+export const API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
+  ...API_KEY_PERMITTED_SCOPES,
+  "raw:read",
+  "raw:write",
+]);
+
+/**
  * Canonical scope set for the demo `payment` agent role (a subset of
  * AGENT_PERMITTED_SCOPES — no `raw:write`). Single source of truth shared by
  * SIWX token issuance (scopesForRole), the BrainSaaS demo seed

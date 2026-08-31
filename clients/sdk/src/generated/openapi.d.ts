@@ -448,8 +448,12 @@ export interface paths {
          * @description Requires an authenticated same-tenant admin session. Generates a
          *     `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
          *     SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
-         *     plaintext secret exactly once. Current API-key scopes are
-         *     `ledger:read`, `audit:read`, and `governance:read`.
+         *     plaintext secret exactly once. Universal API-key scopes are
+         *     `ledger:read`, `audit:read`, and `governance:read`. A sandbox
+         *     `brain_sk_test_` key may additionally request `raw:read` and
+         *     `raw:write` only when its tenant is a fully provisioned, verified
+         *     synthetic Brightline demo. Core re-checks that tenant state on every
+         *     Raw-key authentication and fails the key closed if the state changes.
          */
         post: operations["issueApiKey"];
         delete?: never;
@@ -534,13 +538,14 @@ export interface paths {
         put?: never;
         /**
          * Ingest a financial artifact
-         * @description Requires `raw:write` on a bearer user JWT or a registered external-agent
-         *     JWT. Standard `brain_sk_` tenant API keys are read-only and cannot be
-         *     issued `raw:write`; API-key authentication is not enabled on the
-         *     production API at launch. Accepts a financial artifact via direct upload
-         *     or URL reference. Content is stored immutably with SHA-256 content
-         *     addressing. Duplicate artifacts (same tenant, same SHA-256) return the
-         *     existing raw_id.
+         * @description Requires `raw:write` on a bearer user JWT, a registered external-agent
+         *     JWT, or an eligible synthetic-demo `brain_sk_test_` key. Raw scopes are
+         *     never available to `brain_sk_live_` keys or customer-data tenants. Core
+         *     verifies the sandbox prefix plus the tenant's `ready_demo`,
+         *     `synthetic_brightline_v1`, and `demo` state on every API-key use. Accepts
+         *     a financial artifact via direct upload or URL reference. Content is
+         *     stored immutably with SHA-256 content addressing. Duplicate artifacts
+         *     (same tenant, same SHA-256) return the existing raw_id.
          */
         post: operations["ingestRaw"];
         delete?: never;
@@ -6288,7 +6293,7 @@ export interface operations {
                     name: string;
                     /** @enum {string} */
                     environment: "sandbox" | "live";
-                    scopes: ("ledger:read" | "audit:read" | "governance:read")[];
+                    scopes: ("ledger:read" | "audit:read" | "governance:read" | "raw:read" | "raw:write")[];
                 };
             };
         };

@@ -45,9 +45,10 @@ Two body shapes are supported on `POST /v1/raw/ingest`: a binary upload via `mul
 
 Use `source_type: other` to submit an artifact from a source without a native
 Brain connector. This route requires a bearer principal with `raw:write`: a
-human JWT or a registered SIWX agent JWT that was granted that scope. Standard
-`brain_sk_` tenant API keys are read-only and cannot be issued `raw:write`; at
-launch API-key authentication is also disabled on the production API. A custom
+human JWT, a registered SIWX agent JWT that was granted that scope, or an
+eligible synthetic-demo `brain_sk_test_` key. `brain_sk_live_` keys and keys on
+customer-data tenants are read-only. Core re-checks the tenant's `ready_demo`,
+`synthetic_brightline_v1`, and `demo` markers on every Raw-key use. A custom
 artifact is stored as raw evidence and is projected only after a compatible
 parser is registered. It is not a direct arbitrary Ledger-event write API.
 

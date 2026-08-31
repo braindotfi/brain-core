@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   API_KEY_PERMITTED_SCOPES,
+  API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES,
   brainError,
   newApiKeyId,
   requireAdminMember,
@@ -67,6 +68,15 @@ interface ApiKeyRow {
   revoked_at: Date | string | null;
   expires_at: Date | string | null;
   rotated_from_id: string | null;
+  provisioning_state?: TenantApiKeyState["provisioning_state"];
+  data_profile?: TenantApiKeyState["data_profile"];
+  access_stage?: TenantApiKeyState["access_stage"];
+}
+
+interface TenantApiKeyState {
+  provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
+  data_profile: "synthetic_brightline_v1" | "customer" | null;
+  access_stage: "demo" | "production_review" | "production" | null;
 }
 
 export async function registerApiKeyRoutes(
@@ -137,6 +147,13 @@ export async function registerApiKeyRoutes(
         const old = await lockActiveKey(client, request.params.id);
         if (old === null) {
           throw brainError("api_key_not_found", "api key is not active", { statusOverride: 404 });
+        }
+        if (hasDemoRawScope(old.scopes)) {
+          const tenant = await loadTenantApiKeyState(client, tenantId);
+          if (tenant === null) {
+            throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
+          }
+          assertScopesAllowedForTenant(old.environment, old.scopes, tenant);
         }
         await client.query(
           `UPDATE api_keys
@@ -262,11 +279,13 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     }
     const hashedSecret = hashApiKeySecret(secret, deps.pepper);
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
-      `SELECT id, tenant_id, name, environment, scopes, key_prefix, key_last4,
-              hashed_secret, created_at, last_used_at, revoked_at, expires_at, rotated_from_id
-         FROM api_keys
-        WHERE key_prefix = $1 AND key_last4 = $2
-        ORDER BY created_at DESC, id DESC`,
+      `SELECT k.id, k.tenant_id, k.name, k.environment, k.scopes, k.key_prefix, k.key_last4,
+              k.hashed_secret, k.created_at, k.last_used_at, k.revoked_at, k.expires_at,
+              k.rotated_from_id, t.provisioning_state, t.data_profile, t.access_stage
+         FROM api_keys k
+         JOIN tenants t ON t.id = k.tenant_id
+        WHERE k.key_prefix = $1 AND k.key_last4 = $2
+        ORDER BY k.created_at DESC, k.id DESC`,
       [lookup.keyPrefix, lookup.keyLast4],
     );
     const row = rows.find((candidate) => hashesEqual(candidate.hashed_secret, hashedSecret));
@@ -276,6 +295,9 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
       row.revoked_at !== null ||
       (row.expires_at !== null && Date.parse(String(row.expires_at)) <= nowMs)
     ) {
+      return null;
+    }
+    if (hasDemoRawScope(row.scopes) && !isVerifiedSyntheticDemoKey(row)) {
       return null;
     }
 
@@ -406,18 +428,64 @@ function parseIssuedScopes(input: unknown): Scope[] {
   }
   const scopes: Scope[] = [];
   for (const value of input) {
-    if (typeof value !== "string" || !API_KEY_PERMITTED_SCOPES.has(value as Scope)) {
+    if (typeof value !== "string" || !API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES.has(value as Scope)) {
       throw brainError(
         "request_body_invalid",
         `scope not permitted for an api key: ${String(value)}`,
         {
-          details: { scope: value, permitted: [...API_KEY_PERMITTED_SCOPES] },
+          details: { scope: value, permitted: [...API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES] },
         },
       );
     }
     if (!scopes.includes(value as Scope)) scopes.push(value as Scope);
   }
   return scopes;
+}
+
+function hasDemoRawScope(scopes: readonly Scope[]): boolean {
+  return scopes.includes("raw:read") || scopes.includes("raw:write");
+}
+
+function isVerifiedSyntheticDemoKey(
+  key: Pick<ApiKeyRow, "environment" | "key_prefix"> & Partial<TenantApiKeyState>,
+): boolean {
+  return (
+    key.environment === "sandbox" &&
+    key.key_prefix === ENV_PREFIX.sandbox &&
+    key.provisioning_state === "ready_demo" &&
+    key.data_profile === "synthetic_brightline_v1" &&
+    key.access_stage === "demo"
+  );
+}
+
+function assertScopesAllowedForTenant(
+  environment: ApiKeyEnvironment,
+  scopes: readonly Scope[],
+  tenant: TenantApiKeyState,
+): void {
+  if (!hasDemoRawScope(scopes)) return;
+  if (
+    isVerifiedSyntheticDemoKey({
+      environment,
+      key_prefix: ENV_PREFIX[environment],
+      ...tenant,
+    })
+  ) {
+    return;
+  }
+  throw brainError(
+    "request_body_invalid",
+    "raw scopes require a sandbox key on a ready synthetic demo tenant",
+    {
+      details: {
+        environment,
+        provisioning_state: tenant.provisioning_state,
+        data_profile: tenant.data_profile,
+        access_stage: tenant.access_stage,
+        permitted: [...API_KEY_PERMITTED_SCOPES],
+      },
+    },
+  );
 }
 
 function parseUsageWindow(input: unknown): string {
@@ -439,14 +507,26 @@ async function issueKey(
   },
 ): Promise<{ row: ApiKeyRow; secret: string }> {
   return withTenantScope(pool, input.tenantId, async (client) => {
-    const tenant = await client.query<{ id: string }>(`SELECT id FROM tenants WHERE id = $1`, [
-      input.tenantId,
-    ]);
-    if (tenant.rows[0] === undefined) {
+    const state = await loadTenantApiKeyState(client, input.tenantId);
+    if (state === null) {
       throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
     }
+    assertScopesAllowedForTenant(input.environment, input.scopes, state);
     return insertGeneratedKey(client, input);
   });
+}
+
+async function loadTenantApiKeyState(
+  client: TenantScopedClient,
+  tenantId: string,
+): Promise<TenantApiKeyState | null> {
+  const tenant = await client.query<TenantApiKeyState>(
+    `SELECT provisioning_state, data_profile, access_stage
+       FROM tenants
+      WHERE id = $1`,
+    [tenantId],
+  );
+  return tenant.rows[0] ?? null;
 }
 
 async function insertGeneratedKey(

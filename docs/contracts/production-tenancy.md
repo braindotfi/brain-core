@@ -39,6 +39,20 @@ TTL, and does not make the tenant eligible for demo cleanup. If the seeder is no
 throws, the request fails visibly rather than returning an empty durable tenant as a successful
 demo.
 
+Trusted demo provisioning writes `provisioning_state='provisioning'`,
+`data_profile='synthetic_brightline_v1'`, and `access_stage='demo'` with the
+tenant. It moves the state to `ready_demo` only after the full Brightline seeder
+succeeds. A failed seeder records `seed_failed`. Existing tenants are classified
+as unknown because the old schema cannot prove their origin and receive no
+Raw-key eligibility by migration.
+
+Tenant API keys universally permit only `ledger:read`, `audit:read`, and
+`governance:read`. The sole Raw exception is a sandbox `brain_sk_test_` key on a
+tenant that still has all three trusted markers: `ready_demo`,
+`synthetic_brightline_v1`, and `demo`. Issuance, rotation, and every
+key-authenticated use enforce this state. `brain_sk_live_` keys and all other
+tenant states remain ineligible for `raw:read` and `raw:write`.
+
 ## Sessions (exchange model; ACTOR = SESSION preserved)
 
 POST /v1/sessions (auth: platform service credential)

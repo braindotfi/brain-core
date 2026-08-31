@@ -1579,8 +1579,12 @@ paths:
         Requires an authenticated same-tenant admin session. Generates a
         `brain_sk_test_...` or `brain_sk_live_...` secret, stores only
         SHA-256 over `BRAIN_API_KEY_PEPPER + "." + secret`, and returns the
-        plaintext secret exactly once. Current API-key scopes are
-        `ledger:read`, `audit:read`, and `governance:read`.
+        plaintext secret exactly once. Universal API-key scopes are
+        `ledger:read`, `audit:read`, and `governance:read`. A sandbox
+        `brain_sk_test_` key may additionally request `raw:read` and
+        `raw:write` only when its tenant is a fully provisioned, verified
+        synthetic Brightline demo. Core re-checks that tenant state on every
+        Raw-key authentication and fails the key closed if the state changes.
       operationId: issueApiKey
       parameters:
         - name: tenantId
@@ -1600,7 +1604,7 @@ paths:
                 scopes:
                   type: array
                   items:
-                    { type: string, enum: ['ledger:read', 'audit:read', 'governance:read'] }
+                    { type: string, enum: ['ledger:read', 'audit:read', 'governance:read', 'raw:read', 'raw:write'] }
       responses:
         '201':
           description: API key issued; plaintext key returned exactly once
@@ -1808,13 +1812,14 @@ paths:
       tags: [Raw]
       summary: Ingest a financial artifact
       description: |
-        Requires `raw:write` on a bearer user JWT or a registered external-agent
-        JWT. Standard `brain_sk_` tenant API keys are read-only and cannot be
-        issued `raw:write`; API-key authentication is not enabled on the
-        production API at launch. Accepts a financial artifact via direct upload
-        or URL reference. Content is stored immutably with SHA-256 content
-        addressing. Duplicate artifacts (same tenant, same SHA-256) return the
-        existing raw_id.
+        Requires `raw:write` on a bearer user JWT, a registered external-agent
+        JWT, or an eligible synthetic-demo `brain_sk_test_` key. Raw scopes are
+        never available to `brain_sk_live_` keys or customer-data tenants. Core
+        verifies the sandbox prefix plus the tenant's `ready_demo`,
+        `synthetic_brightline_v1`, and `demo` state on every API-key use. Accepts
+        a financial artifact via direct upload or URL reference. Content is
+        stored immutably with SHA-256 content addressing. Duplicate artifacts
+        (same tenant, same SHA-256) return the existing raw_id.
       operationId: ingestRaw
       requestBody:
         required: true
@@ -7248,8 +7253,11 @@ components:
         JWT bearer token or first-class Brain API key. JWTs contain tenant_id
         and scopes. API keys use the `brain_sk_test_...` or `brain_sk_live_...`
         prefixes and are accepted only when `BRAIN_API_KEY_AUTH_ENABLED=true`.
-        API keys can hold `ledger:read`, `audit:read`, and `governance:read`
-        today. For agent
+        API keys universally permit `ledger:read`, `audit:read`, and
+        `governance:read`. A `brain_sk_test_` key may also hold `raw:read` and
+        `raw:write` only while its tenant is a fully provisioned, verified
+        synthetic demo. Live keys and customer-data tenants remain read-only.
+        For agent
         principals, tokens are issued either by the sandbox/testnet-only
         `POST /auth/service-token` (this API), the production tenancy paths
         (`POST /tenants`, `POST /tenants/{tenant_id}/agent-token`), or the

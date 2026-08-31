@@ -45,6 +45,12 @@ interface ProductionAgentTokenRow {
   revoked_at: string | null;
 }
 
+interface DemoProvisioningState {
+  provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | null;
+  data_profile: "synthetic_brightline_v1" | "customer";
+  access_stage: "demo" | "production";
+}
+
 function memberRow(overrides: Record<string, unknown> = {}) {
   return {
     tenant_id: newTenantId(),
@@ -68,6 +74,7 @@ function appPool(
 ) {
   const calls: QueryCall[] = [];
   const tenants = new Map<string, "production" | "demo">();
+  const tenantStates = new Map<string, DemoProvisioningState>();
   const agents = new Map<string, AgentRow>();
   const productionAgentTokens = new Map<string, ProductionAgentTokenRow>();
   const client = {
@@ -81,9 +88,38 @@ function appPool(
       ) {
         return Promise.resolve({ rows: [], rowCount: 0 });
       }
-      if (sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)")) {
-        const [tenantId] = values as [string];
+      if (sql.includes("INSERT INTO tenants (") && sql.includes("provisioning_state")) {
+        const [tenantId, , provisioningState, dataProfile, accessStage] = values as [
+          string,
+          string,
+          DemoProvisioningState["provisioning_state"],
+          DemoProvisioningState["data_profile"],
+          DemoProvisioningState["access_stage"],
+        ];
         tenants.set(tenantId, "production");
+        tenantStates.set(tenantId, {
+          provisioning_state: provisioningState,
+          data_profile: dataProfile,
+          access_stage: accessStage,
+        });
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }
+      if (sql.includes("UPDATE tenants") && sql.includes("SET provisioning_state = $2")) {
+        const [tenantId, to, from] = values as [
+          string,
+          DemoProvisioningState["provisioning_state"],
+          DemoProvisioningState["provisioning_state"],
+        ];
+        const state = tenantStates.get(tenantId);
+        if (
+          state === undefined ||
+          state.provisioning_state !== from ||
+          state.data_profile !== "synthetic_brightline_v1" ||
+          state.access_stage !== "demo"
+        ) {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        state.provisioning_state = to;
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
       if (opts.failPlatformIdentityLink && sql.includes("INSERT INTO member_identity_links")) {
@@ -179,6 +215,7 @@ function appPool(
   return {
     calls,
     tenants,
+    tenantStates,
     agents,
     productionAgentTokens,
     pool: { connect: vi.fn(() => Promise.resolve(client)) },
@@ -303,14 +340,15 @@ describe("production tenancy routes", () => {
       expect(body.agent.scopes).not.toContain("payment_intent:approve");
       expect(body.agent.scopes).not.toContain("payment_intent:execute");
       expect(
-        appDb.calls.some((c) =>
-          c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
+        appDb.calls.some(
+          (c) => c.sql.includes("INSERT INTO tenants (") && c.sql.includes("provisioning_state"),
         ),
       ).toBe(true);
-      const tenantInsert = appDb.calls.find((c) =>
-        c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
+      const tenantInsert = appDb.calls.find(
+        (c) => c.sql.includes("INSERT INTO tenants (") && c.sql.includes("provisioning_state"),
       );
       expect(tenantInsert?.values?.[1]).toBe("onchain");
+      expect(tenantInsert?.values?.slice(2)).toEqual([null, "customer", "production"]);
       expect(
         appDb.calls.some(
           (c) =>
@@ -433,10 +471,20 @@ describe("production tenancy routes", () => {
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(appDb.tenants.get(body.tenant_id)).toBe("production");
-      const tenantInsert = appDb.calls.find((c) =>
-        c.sql.includes("INSERT INTO tenants (id, kind, sandbox, created_via, audit_anchor_mode)"),
+      const tenantInsert = appDb.calls.find(
+        (c) => c.sql.includes("INSERT INTO tenants (") && c.sql.includes("provisioning_state"),
       );
       expect(tenantInsert?.values?.[1]).toBe("db_only");
+      expect(tenantInsert?.values?.slice(2)).toEqual([
+        "provisioning",
+        "synthetic_brightline_v1",
+        "demo",
+      ]);
+      expect(appDb.tenantStates.get(body.tenant_id)).toEqual({
+        provisioning_state: "ready_demo",
+        data_profile: "synthetic_brightline_v1",
+        access_stage: "demo",
+      });
       expect(demoSeeder).toHaveBeenCalledWith({
         tenantId: body.tenant_id,
         actor: expect.stringMatching(/^user_/),
@@ -464,6 +512,35 @@ describe("production tenancy routes", () => {
         (call) => call[0],
       );
       expect(auditEvents.some((event) => event.action === "tenant.demo_seeded")).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("marks a durable synthetic demo tenant seed_failed when seeding throws", async () => {
+    const demoSeeder = vi.fn<ProductionTenantDemoSeeder>(async () => {
+      throw new Error("synthetic seed failed");
+    });
+    const { app, appDb } = await build({ demoSeeder });
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/tenants",
+        headers: { "x-platform-service-auth": platformSecret },
+        payload: {
+          company_name: "Brightline Systems Inc.",
+          founder: { email: "founder@example.com", display_name: "Founder" },
+          founder_external_ref: "platform-user-1",
+          demo_seed: true,
+        },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(appDb.tenantStates.size).toBe(1);
+      expect([...appDb.tenantStates.values()][0]).toEqual({
+        provisioning_state: "seed_failed",
+        data_profile: "synthetic_brightline_v1",
+        access_stage: "demo",
+      });
     } finally {
       await app.close();
     }
