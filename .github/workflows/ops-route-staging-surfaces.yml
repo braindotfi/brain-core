@@ -102,29 +102,37 @@ jobs:
             exit 0
           fi
 
-          if cmp -s "$source_file" "$candidate"; then
-            echo "staging_surface_route_applied=already_present"
-            exit 0
+          route_changed=false
+          if ! cmp -s "$source_file" "$candidate"; then
+            route_changed=true
+            backup="Caddyfile.backup.$(date -u +%Y%m%dT%H%M%SZ)"
+            cp --preserve=mode,ownership,timestamps "$source_file" "$backup"
+            printf '%s\n' "$backup" > .staging-surface-route-backup
+            chmod 600 .staging-surface-route-backup
+            # Keep the bind-mounted inode stable for subsequent reloads.
+            cp --preserve=mode,ownership,timestamps "$candidate" "$source_file"
           fi
-
-          backup="Caddyfile.backup.$(date -u +%Y%m%dT%H%M%SZ)"
-          cp --preserve=mode,ownership,timestamps "$source_file" "$backup"
-          printf '%s\n' "$backup" > .staging-surface-route-backup
-          chmod 600 .staging-surface-route-backup
           rollback() {
-            cp --preserve=mode,ownership,timestamps "$backup" "$source_file"
-            docker exec "$caddy_container" caddy reload \
-              --config /etc/caddy/Caddyfile \
-              --adapter caddyfile >/dev/null 2>&1 || true
+            if [[ "$route_changed" == "true" ]]; then
+              cp --preserve=mode,ownership,timestamps "$backup" "$source_file"
+              docker exec "$caddy_container" caddy reload \
+                --config /etc/caddy/Caddyfile \
+                --adapter caddyfile >/dev/null 2>&1 || true
+            fi
           }
           trap 'rollback; cleanup' ERR
-          mv "$candidate" "$source_file"
+          # Reload the validated copy directly. This also repairs a stale bind
+          # mount left by an older workflow that replaced the host file inode.
           docker exec "$caddy_container" caddy reload \
-            --config /etc/caddy/Caddyfile \
+            --config "$validation_path" \
             --adapter caddyfile
           trap cleanup EXIT
-          echo "staging_surface_route_applied=true"
-          echo "staging_surface_route_backup=$backup"
+          if [[ "$route_changed" == "true" ]]; then
+            echo "staging_surface_route_applied=true"
+            echo "staging_surface_route_backup=$backup"
+          else
+            echo "staging_surface_route_applied=already_present_and_reloaded"
+          fi
           REMOTE
 
       - name: Verify live staging routing
@@ -135,28 +143,28 @@ jobs:
           rollback_route() {
             ssh -i "$RUNNER_TEMP/id_staging" -o ServerAliveInterval=30 \
               "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
-            set -euo pipefail
-            cd ~/brain-core
-            marker=.staging-surface-route-backup
-            if [[ ! -f "$marker" ]]; then
-              exit 0
-            fi
-            backup="$(cat "$marker")"
-            case "$backup" in
-              Caddyfile.backup.*) ;;
-              *) echo "invalid staging Caddy backup marker"; exit 1 ;;
-            esac
-            test -f "$backup"
-            cp --preserve=mode,ownership,timestamps "$backup" Caddyfile
-            compose=(docker compose -p brain-staging --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.caddy.yml)
-            caddy_container="$("${compose[@]}" ps -q caddy)"
-            test -n "$caddy_container"
-            docker exec "$caddy_container" caddy reload \
-              --config /etc/caddy/Caddyfile \
-              --adapter caddyfile
-            rm -f "$marker"
-            echo "staging_surface_route_rolled_back=true"
-            REMOTE
+          set -euo pipefail
+          cd ~/brain-core
+          marker=.staging-surface-route-backup
+          if [[ ! -f "$marker" ]]; then
+            exit 0
+          fi
+          backup="$(cat "$marker")"
+          case "$backup" in
+            Caddyfile.backup.*) ;;
+            *) echo "invalid staging Caddy backup marker"; exit 1 ;;
+          esac
+          test -f "$backup"
+          cp --preserve=mode,ownership,timestamps "$backup" Caddyfile
+          compose=(docker compose -p brain-staging --env-file .env.staging -f docker-compose.prod.yml -f docker-compose.caddy.yml)
+          caddy_container="$("${compose[@]}" ps -q caddy)"
+          test -n "$caddy_container"
+          docker exec "$caddy_container" caddy reload \
+            --config /etc/caddy/Caddyfile \
+            --adapter caddyfile
+          rm -f "$marker"
+          echo "staging_surface_route_rolled_back=true"
+          REMOTE
           }
           probe() {
             local method="$1"
