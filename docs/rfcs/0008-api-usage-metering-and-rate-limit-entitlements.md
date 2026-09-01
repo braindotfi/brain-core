@@ -1,6 +1,7 @@
 # RFC 0008. API usage metering and rate-limit entitlements
 
-- **Status:** Proposed. Scope only, no implementation.
+- **Status:** Implementation in progress. Phase 1 complete on a feature branch;
+  rate tiers and billing foundation pending.
 - **Date:** 2026-09-01
 - **Affects:** API gateway authentication, API-key rate limiting, usage storage,
   production tenancy, OpenAPI, SDK types, BrainMVB Developers and Billing
@@ -540,12 +541,20 @@ metering foundation and route contract should land first.
 - [x] Defined request, scope, route, method, outcome, and tier attribution.
 - [x] Separated billing prerequisites from optional analytics.
 - [x] Defined sequencing, effort, and validation expectations.
+- [x] Added the append-only, tenant-RLS `api_request_meter_events` store.
+- [x] Replaced `audit_events` as the tenant usage endpoint's count source.
+- [x] Added declarative operation, required-scope, and product-family route metadata.
+- [x] Metered successful responses, known-key failures, scope failures, server failures,
+      and API-key rate-limit rejections through one gateway finalizer.
+- [x] Kept missing, malformed, disabled, and unknown credentials in separate security
+      telemetry with no guessed tenant or key attribution.
+- [x] Added structural route coverage and OpenAPI operation-id drift tests.
 
 ### Pending implementation or decision
 
 - [ ] Approve Phase 0 billing and limiter decisions.
-- [ ] Implement the dedicated request meter and security telemetry.
-- [ ] Add route metering metadata and drift guards.
+- [x] Implement the dedicated request meter and security telemetry.
+- [x] Add route metering metadata and drift guards.
 - [ ] Add server-owned entitlements and dynamic Redis enforcement.
 - [ ] Replace BrainMVB audit aggregation and local tier claims.
 - [ ] Complete a zero-charge shadow and reconciliation period.

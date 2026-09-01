@@ -14,6 +14,8 @@ import {
   type AuditEmitter,
   type AuditEvent,
   type AuditEventInput,
+  type ApiRequestMeter,
+  type ApiRequestMeterEvent,
   type Scope,
 } from "@brain/shared";
 import {
@@ -60,6 +62,7 @@ interface FakeStore {
   tenantStates: Map<string, FakeTenantState>;
   apiKeys: Map<string, FakeApiKeyRow>;
   auditEvents: Array<AuditEventInput & { id: string; createdAt: string }>;
+  requestMeterEvents: ApiRequestMeterEvent[];
 }
 
 function makeStore(seedTenantId: string): FakeStore {
@@ -73,6 +76,7 @@ function makeStore(seedTenantId: string): FakeStore {
     ]),
     apiKeys: new Map(),
     auditEvents: [],
+    requestMeterEvents: [],
   };
 }
 
@@ -193,26 +197,25 @@ function makeAppPool(
         if (row !== undefined) row.last_used_at = new Date().toISOString();
         return { rows: [], rowCount: row !== undefined ? 1 : 0 };
       }
-      if (sql.includes("FROM audit_events e")) {
+      if (sql.includes("FROM api_request_meter_events e")) {
         const [tenantId] = values as [string];
         const keyFilter = values.find(
           (value) => typeof value === "string" && value.startsWith("akey_"),
         );
         const environmentFilter = values.find((value) => value === "sandbox" || value === "live");
         const counts = new Map<string, number>();
-        for (const event of store.auditEvents) {
-          if (event.tenantId !== tenantId || event.keyId === undefined) continue;
+        for (const event of store.requestMeterEvents) {
+          if (event.tenantId !== tenantId) continue;
           if (keyFilter !== undefined && event.keyId !== keyFilter) continue;
-          const key = store.apiKeys.get(event.keyId);
-          if (environmentFilter !== undefined && key?.environment !== environmentFilter) continue;
+          if (environmentFilter !== undefined && event.environment !== environmentFilter) continue;
           counts.set(event.keyId, (counts.get(event.keyId) ?? 0) + 1);
         }
-        const rows = [...counts].map(([key_id, event_count]) => ({
+        const rows = [...counts].map(([key_id, request_count]) => ({
           key_id,
           environment: store.apiKeys.get(key_id)?.environment ?? null,
-          event_count,
-          first_event_at: new Date().toISOString(),
-          last_event_at: new Date().toISOString(),
+          request_count,
+          first_request_at: new Date().toISOString(),
+          last_request_at: new Date().toISOString(),
         }));
         return { rows, rowCount: rows.length };
       }
@@ -253,6 +256,14 @@ class StoreAuditEmitter implements AuditEmitter {
     const createdAt = new Date().toISOString();
     this.store.auditEvents.push({ ...event, id, createdAt });
     return { ...event, id, createdAt, eventHash: "0".repeat(64), prevEventHash: null };
+  }
+}
+
+class StoreRequestMeter implements ApiRequestMeter {
+  public constructor(private readonly store: FakeStore) {}
+
+  public async record(event: ApiRequestMeterEvent): Promise<void> {
+    this.store.requestMeterEvents.push(event);
   }
 }
 
@@ -302,7 +313,7 @@ async function buildApp(
       pepper: PEPPER,
       rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 100 }),
     }),
-    apiKeyUsageAudit: audit,
+    apiKeyRequestMeter: new StoreRequestMeter(store),
   });
   await registerApiKeyRoutes(app, { pool, resolverPool, audit, pepper: PEPPER });
   app.get("/read-only", async (request) => {
@@ -378,7 +389,11 @@ describe("per-customer API keys", () => {
         headers: { authorization: `Bearer ${token}` },
       });
       expect(usage.statusCode).toBe(200);
-      expect(usage.json()).toMatchObject({ total_events: 1, key_id: issued.id });
+      expect(usage.json()).toMatchObject({
+        total_requests: 1,
+        total_events: 1,
+        key_id: issued.id,
+      });
 
       const rotate = await app.inject({
         method: "POST",
@@ -412,12 +427,28 @@ describe("per-customer API keys", () => {
       });
       expect(newRejected.statusCode).toBe(401);
       expect(newRejected.json().error.code).toBe("auth_invalid_key");
+      expect(store.requestMeterEvents.filter((event) => event.outcome === "auth_rejected")).toEqual(
+        [
+          expect.objectContaining({
+            keyId: issued.id,
+            tenantId,
+            rejectionReason: "revoked",
+            statusCode: 401,
+          }),
+          expect.objectContaining({
+            keyId: rotated.id,
+            tenantId,
+            rejectionReason: "revoked",
+            statusCode: 401,
+          }),
+        ],
+      );
     } finally {
       await app.close();
     }
   });
 
-  it("attributes API key usage for successful read requests without domain audit events", async () => {
+  it("attributes API key usage without creating a domain audit substitute", async () => {
     const tenantId = newTenantId();
     const store = makeStore(tenantId);
     const { app } = await buildApp(store);
@@ -450,19 +481,21 @@ describe("per-customer API keys", () => {
         headers: { authorization: `Bearer ${token}` },
       });
       expect(usage.statusCode).toBe(200);
-      expect(usage.json()).toMatchObject({ total_events: 1, key_id: issued.id });
-      expect(store.auditEvents).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            tenantId,
-            actor: issued.id,
-            action: "http.request",
-            keyId: issued.id,
-            inputs: { method: "GET", route: "/read-only" },
-            outputs: { status_code: 200 },
-          }),
-        ]),
-      );
+      expect(usage.json()).toMatchObject({
+        total_requests: 1,
+        total_events: 1,
+        key_id: issued.id,
+      });
+      expect(store.requestMeterEvents).toEqual([
+        expect.objectContaining({
+          tenantId,
+          keyId: issued.id,
+          method: "GET",
+          routeTemplate: "/read-only",
+          outcome: "success",
+        }),
+      ]);
+      expect(store.auditEvents.some((event) => event.action === "http.request")).toBe(false);
     } finally {
       await app.close();
     }
@@ -656,6 +689,14 @@ describe("per-customer API keys", () => {
       });
       expect(use.statusCode).toBe(401);
       expect(use.json().error.code).toBe("auth_invalid_key");
+      expect(store.requestMeterEvents).toEqual([
+        expect.objectContaining({
+          keyId: issued.id,
+          tenantId,
+          outcome: "auth_rejected",
+          rejectionReason: "tenant_ineligible",
+        }),
+      ]);
 
       const rotate = await app.inject({
         method: "POST",
@@ -697,7 +738,11 @@ describe("per-customer API keys", () => {
       pepper: PEPPER,
     });
 
-    await expect(authenticate(secret)).resolves.toBeNull();
+    await expect(authenticate(secret)).resolves.toMatchObject({
+      kind: "known_rejected",
+      reason: "tenant_ineligible",
+      attribution: { keyId: "akey_forged", tenantId },
+    });
   });
 
   it("enforces route scopes carried by the key principal", async () => {
@@ -1027,8 +1072,14 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
     await expect(authenticate(validSecret)).resolves.toMatchObject({
       principal: { tenantId, scopes: ["ledger:read"] },
     });
-    await expect(authenticate(expiredSecret)).resolves.toBeNull();
-    await expect(authenticate("brain_sk_test_wrong")).resolves.toBeNull();
+    await expect(authenticate(expiredSecret)).resolves.toMatchObject({
+      kind: "known_rejected",
+      reason: "expired",
+    });
+    await expect(authenticate("brain_sk_test_wrong")).resolves.toMatchObject({
+      kind: "unknown_rejected",
+      reason: "unknown",
+    });
   });
 
   it("rate-limits by API key id", async () => {
@@ -1045,8 +1096,10 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
     });
 
     await expect(authenticate(secret)).resolves.toBeTruthy();
-    await expect(authenticate(secret)).rejects.toMatchObject({
-      code: "rate_limited",
+    await expect(authenticate(secret)).resolves.toMatchObject({
+      kind: "known_rejected",
+      reason: "rate_limited",
+      rateLimit: { allowed: false, limit: 1, count: 2 },
     });
   });
 });

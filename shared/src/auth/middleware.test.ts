@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import { extractBearer } from "./middleware.js";
 import authPlugin from "./middleware.js";
 import requestIdPlugin from "../http/request-id.js";
-import { InMemoryAuditEmitter } from "../audit/emitter.js";
-import { CorrelatingAuditEmitter } from "../correlation.js";
+import type {
+  ApiKeySecurityTelemetryEvent,
+  ApiRequestMeter,
+  ApiRequestMeterEvent,
+} from "./api-key-metering.js";
 import type { JwtVerifier } from "./jwt.js";
 import type { Principal } from "./principal.js";
+import { requireScope } from "./scopes.js";
 
 describe("extractBearer", () => {
   it("extracts the token when header is well-formed", () => {
@@ -36,15 +40,15 @@ describe("extractBearer", () => {
   });
 });
 
-// Review P2: prior code relied entirely on CorrelatingAuditEmitter pulling
-// keyId out of AsyncLocalStorage for the api-key usage-tracking audit event.
-// Live testing (sequential + 20-request concurrent, two different keys)
-// showed ALS attribution actually works correctly in this codebase, but the
-// design was still fragile, request.apiKeyId was already in scope at the
-// emit() call site and simply wasn't being used. This suite proves the fix
-// (passing keyId explicitly) with a plain, non-ALS-wrapping emitter, so
-// there is zero dependency on AsyncLocalStorage for this specific test.
-describe("onResponse api key usage attribution (no ALS involved)", () => {
+class InMemoryRequestMeter implements ApiRequestMeter {
+  public readonly events: ApiRequestMeterEvent[] = [];
+
+  public async record(event: ApiRequestMeterEvent): Promise<void> {
+    this.events.push(event);
+  }
+}
+
+describe("API key request metering", () => {
   const fakePrincipal: Principal = {
     id: "agent_test",
     type: "api_partner",
@@ -54,22 +58,32 @@ describe("onResponse api key usage attribution (no ALS involved)", () => {
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
   };
 
-  async function buildApp(audit: InMemoryAuditEmitter, keyId: string) {
+  async function buildApp(meter: InMemoryRequestMeter, keyId: string) {
     const app = Fastify({ logger: false });
     await app.register(authPlugin, {
-      verifier: {} as unknown as JwtVerifier, // unused: only the api-key path is exercised
+      verifier: {} as unknown as JwtVerifier,
       apiKeyAuthenticator: async (secret: string) =>
         secret === "brain_sk_test_valid" ? { principal: fakePrincipal, keyId } : null,
-      apiKeyUsageAudit: audit,
+      apiKeyRequestMeter: meter,
+      apiKeyRouteContracts: [
+        {
+          method: "GET",
+          route: "/probe",
+          operationId: "meterProbe",
+          requiredScope: "ledger:read",
+          productFamily: "ledger",
+          metered: true,
+        },
+      ],
     });
     app.get("/probe", async () => ({ ok: true }));
     await app.ready();
     return app;
   }
 
-  it("attributes keyId directly on the emitted event, with no CorrelatingAuditEmitter in the chain", async () => {
-    const audit = new InMemoryAuditEmitter();
-    const app = await buildApp(audit, "akey_direct_test");
+  it("records one route-attributed event for a successful request", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = await buildApp(meter, "akey_direct_test");
     try {
       const res = await app.inject({
         method: "GET",
@@ -77,15 +91,65 @@ describe("onResponse api key usage attribution (no ALS involved)", () => {
         headers: { authorization: "Bearer brain_sk_test_valid" },
       });
       expect(res.statusCode).toBe(200);
-      expect(audit.events).toHaveLength(1);
-      expect(audit.events[0]).toMatchObject({ keyId: "akey_direct_test", action: "http.request" });
+      expect(meter.events).toHaveLength(1);
+      expect(meter.events[0]).toMatchObject({
+        keyId: "akey_direct_test",
+        operationId: "meterProbe",
+        requiredScope: "ledger:read",
+        productFamily: "ledger",
+        routeTemplate: "/probe",
+        statusCode: 200,
+        outcome: "success",
+      });
     } finally {
       await app.close();
     }
   });
 
-  it("does not record usage for a non-2xx response", async () => {
-    const audit = new InMemoryAuditEmitter();
+  it("attaches an unversioned contract to a route mounted under /v1", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyAuthenticator: async () => ({ principal: fakePrincipal, keyId: "akey_prefixed" }),
+      apiKeyRequestMeter: meter,
+      apiKeyRouteContracts: [
+        {
+          method: "GET",
+          route: "/ledger/accounts",
+          operationId: "listAccounts",
+          requiredScope: "ledger:read",
+          productFamily: "ledger",
+          metered: true,
+        },
+      ],
+    });
+    await app.register(
+      async (v1) => {
+        v1.get("/ledger/accounts", async () => ({ accounts: [] }));
+      },
+      { prefix: "/v1" },
+    );
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/ledger/accounts",
+        headers: { authorization: "Bearer brain_sk_test_valid" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(meter.events[0]).toMatchObject({
+        routeTemplate: "/v1/ledger/accounts",
+        operationId: "listAccounts",
+        requiredScope: "ledger:read",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records server failures instead of dropping them", async () => {
+    const meter = new InMemoryRequestMeter();
     const app = Fastify({ logger: false });
     await app.register(authPlugin, {
       verifier: {} as unknown as JwtVerifier,
@@ -93,7 +157,7 @@ describe("onResponse api key usage attribution (no ALS involved)", () => {
         secret === "brain_sk_test_valid"
           ? { principal: fakePrincipal, keyId: "akey_should_not_appear" }
           : null,
-      apiKeyUsageAudit: audit,
+      apiKeyRequestMeter: meter,
     });
     app.get("/fails", async (_req, reply) => {
       reply.status(500);
@@ -107,22 +171,19 @@ describe("onResponse api key usage attribution (no ALS involved)", () => {
         headers: { authorization: "Bearer brain_sk_test_valid" },
       });
       expect(res.statusCode).toBe(500);
-      expect(audit.events).toHaveLength(0);
+      expect(meter.events).toHaveLength(1);
+      expect(meter.events[0]).toMatchObject({
+        keyId: "akey_should_not_appear",
+        statusCode: 500,
+        outcome: "server_error",
+      });
     } finally {
       await app.close();
     }
   });
 });
 
-// Same property as above, but on ONE app with a shared emitter wrapped in
-// CorrelatingAuditEmitter, matching the real wiring in services/api/src/main.ts
-// (~line 499 constructs it, ~line 1701 passes it as apiKeyUsageAudit). Two
-// different presented secrets resolve to two different key ids; interleaved
-// concurrent requests for both must never cross-attribute. Unlike a two-app
-// setup (structurally incapable of crossover), this one app / one emitter /
-// two keys shape would catch a regression back to ALS-only attribution
-// (e.g. AsyncLocalStorage context bleeding between concurrent requests).
-describe("onResponse api key usage attribution (via CorrelatingAuditEmitter)", () => {
+describe("concurrent API key request attribution", () => {
   const fakePrincipal: Principal = {
     id: "agent_test",
     type: "api_partner",
@@ -133,15 +194,8 @@ describe("onResponse api key usage attribution (via CorrelatingAuditEmitter)", (
   };
 
   it("keeps two concurrent keys' events correctly isolated with no crossover", async () => {
-    const inner = new InMemoryAuditEmitter();
-    const audit = new CorrelatingAuditEmitter(inner);
+    const meter = new InMemoryRequestMeter();
     const app = Fastify({ logger: false });
-    // Registration order matches production (services/api/src/main.ts):
-    // request-id/correlation plugin BEFORE auth. Each request gets its own
-    // AsyncLocalStorage context from beginRequestAuditContext, which is what
-    // the dedupe guard (currentRequestHasApiKeyAuditEvent) in middleware.ts
-    // relies on to stay per-request instead of leaking across concurrent
-    // requests sharing one app instance.
     await app.register(requestIdPlugin);
     await app.register(authPlugin, {
       verifier: {} as unknown as JwtVerifier, // unused: only the api-key path is exercised
@@ -150,7 +204,7 @@ describe("onResponse api key usage attribution (via CorrelatingAuditEmitter)", (
         if (secret === "brain_sk_test_B") return { principal: fakePrincipal, keyId: "akey_B" };
         return null;
       },
-      apiKeyUsageAudit: audit,
+      apiKeyRequestMeter: meter,
     });
     app.get("/probe", async () => ({ ok: true }));
     await app.ready();
@@ -178,10 +232,144 @@ describe("onResponse api key usage attribution (via CorrelatingAuditEmitter)", (
         expect(res.statusCode).toBe(200);
       }
 
-      expect(inner.events).toHaveLength(20);
-      expect(inner.events.filter((e) => e.keyId === "akey_A")).toHaveLength(10);
-      expect(inner.events.filter((e) => e.keyId === "akey_B")).toHaveLength(10);
-      expect(inner.events.every((e) => e.keyId === "akey_A" || e.keyId === "akey_B")).toBe(true);
+      expect(meter.events).toHaveLength(20);
+      expect(meter.events.filter((e) => e.keyId === "akey_A")).toHaveLength(10);
+      expect(meter.events.filter((e) => e.keyId === "akey_B")).toHaveLength(10);
+      expect(meter.events.every((e) => e.keyId === "akey_A" || e.keyId === "akey_B")).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("API key rejection separation", () => {
+  const principal: Principal = {
+    id: "akey_known",
+    type: "api_partner",
+    tenantId: "tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ",
+    scopes: ["ledger:read"],
+    tokenId: "akey_known",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+  };
+
+  it("meters a known rate-limit rejection with its exact decision", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyRateLimitWindowSeconds: 60,
+      apiKeyAuthenticator: async () => ({
+        kind: "known_rejected",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+        reason: "rate_limited",
+        rateLimit: { allowed: false, count: 601, limit: 600 },
+      }),
+    });
+    app.get("/limited", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/limited",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(429);
+      expect(meter.events).toHaveLength(1);
+      expect(meter.events[0]).toMatchObject({
+        tenantId: principal.tenantId,
+        keyId: "akey_known",
+        outcome: "rate_limited",
+        rejectionReason: "rate_limited",
+        rateLimitCount: 601,
+        rateLimitValue: 600,
+        rateLimitWindowSeconds: 60,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records unknown credentials only in security telemetry", async () => {
+    const meter = new InMemoryRequestMeter();
+    const securityEvents: ApiKeySecurityTelemetryEvent[] = [];
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeySecurityTelemetry: { record: (event) => securityEvents.push(event) },
+      apiKeyAuthenticator: async () => ({ kind: "unknown_rejected", reason: "unknown" }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_not_a_match" },
+      });
+      expect(response.statusCode).toBe(401);
+      expect(meter.events).toHaveLength(0);
+      expect(securityEvents).toEqual([
+        expect.objectContaining({ reason: "unknown", routeTemplate: "/probe" }),
+      ]);
+      expect(JSON.stringify(securityEvents)).not.toContain("brain_sk_test_not_a_match");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records the declared missing scope for a known key", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyRouteContracts: [
+        {
+          method: "GET",
+          route: "/raw-probe",
+          operationId: "rawProbe",
+          requiredScope: "raw:read",
+          productFamily: "raw",
+          metered: true,
+        },
+      ],
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+      }),
+    });
+    app.get("/raw-probe", async (request) => {
+      requireScope(request.principal!.scopes, "raw:read");
+      return { ok: true };
+    });
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/raw-probe",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(meter.events[0]).toMatchObject({
+        operationId: "rawProbe",
+        requiredScope: "raw:read",
+        outcome: "scope_rejected",
+        rejectionReason: "auth_scope_insufficient",
+      });
     } finally {
       await app.close();
     }
