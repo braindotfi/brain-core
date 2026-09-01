@@ -118,7 +118,7 @@ jobs:
           scripts/ops/check-staging-resource-group-isolation.sh \
             --resource-group brain-core-staging-api-rg
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.13.2
           terraform_wrapper: false
