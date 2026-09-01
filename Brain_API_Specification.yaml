@@ -1752,9 +1752,11 @@ paths:
       tags: [Tenancy]
       summary: Aggregate per-key usage
       description: |
-        Requires `audit:read` for the same tenant. Counts attributed audit
-        events over the requested window and optionally filters by environment
-        and key id.
+        Requires `audit:read` for the same tenant. Counts dedicated,
+        append-only API request meter rows over the requested window and
+        optionally filters by environment and key id. General audit activity
+        is not included. `total_events` and per-key `event_count` remain
+        compatibility aliases during the usage-contract transition.
       operationId: getTenantUsage
       parameters:
         - name: tenantId
@@ -1775,7 +1777,7 @@ paths:
           schema: { type: string, pattern: '^akey_[0-9A-HJKMNP-TV-Z]{26}$' }
       responses:
         '200':
-          description: Usage counts
+          description: API-key request counts
           content:
             application/json:
               schema:
@@ -1785,6 +1787,7 @@ paths:
                   window: { type: string }
                   environment: { type: string }
                   key_id: { type: string }
+                  total_requests: { type: integer }
                   total_events: { type: integer }
                   keys:
                     type: array
@@ -1793,7 +1796,10 @@ paths:
                       properties:
                         key_id: { type: string }
                         environment: { type: [string, "null"] }
+                        request_count: { type: integer }
                         event_count: { type: integer }
+                        first_request_at: { type: [string, "null"], format: date-time }
+                        last_request_at: { type: [string, "null"], format: date-time }
                         first_event_at: { type: [string, "null"], format: date-time }
                         last_event_at: { type: [string, "null"], format: date-time }
         '403':

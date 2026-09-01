@@ -101,6 +101,8 @@ import {
   buildApiKeyAuthenticator,
   registerApiKeyRoutes,
 } from "./production-tenancy/api-key-routes.js";
+import { API_KEY_ROUTE_CONTRACTS } from "./usage/api-key-route-contracts.js";
+import { PostgresApiRequestMeter } from "./usage/request-meter.js";
 import { registerProofViewRoute } from "./proof/view.js";
 import { registerAuditHealthRoute } from "./audit-health/route.js";
 import {
@@ -2050,10 +2052,32 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER === undefined) {
     throw new Error("BRAIN_API_KEY_PEPPER is required when BRAIN_API_KEY_AUTH_ENABLED=true");
   }
+  const apiKeyRequestMeter = new PostgresApiRequestMeter(pool);
   await app.register(authPlugin, {
     verifier: jwtVerifier,
     ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
-    apiKeyUsageAudit: audit,
+    apiKeyRequestMeter,
+    apiKeyRouteContracts: API_KEY_ROUTE_CONTRACTS,
+    apiKeyRateLimitWindowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
+    apiKeySecurityTelemetry: {
+      record: (event) => {
+        metrics.increment("brain.api_key.security_auth_rejection.count", {
+          method: event.method,
+          route: event.routeTemplate,
+          reason: event.reason,
+        });
+        log.warn(
+          {
+            security_event: "api_credential_rejected",
+            request_id: event.requestId,
+            method: event.method,
+            route: event.routeTemplate,
+            reason: event.reason,
+          },
+          "API credential rejected before tenant attribution",
+        );
+      },
+    },
   });
   const idempotencyStore = new RedisIdempotencyStore(redis);
   await app.register(idempotencyPlugin, {
