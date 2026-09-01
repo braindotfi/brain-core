@@ -514,9 +514,11 @@ export interface paths {
         };
         /**
          * Aggregate per-key usage
-         * @description Requires `audit:read` for the same tenant. Counts attributed audit
-         *     events over the requested window and optionally filters by environment
-         *     and key id.
+         * @description Requires `audit:read` for the same tenant. Counts dedicated,
+         *     append-only API request meter rows over the requested window and
+         *     optionally filters by environment and key id. General audit activity
+         *     is not included. `total_events` and per-key `event_count` remain
+         *     compatibility aliases during the usage-contract transition.
          */
         get: operations["getTenantUsage"];
         put?: never;
@@ -6454,7 +6456,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Usage counts */
+            /** @description API-key request counts */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6465,11 +6467,17 @@ export interface operations {
                         window?: string;
                         environment?: string;
                         key_id?: string;
+                        total_requests?: number;
                         total_events?: number;
                         keys?: {
                             key_id?: string;
                             environment?: string | null;
+                            request_count?: number;
                             event_count?: number;
+                            /** Format: date-time */
+                            first_request_at?: string | null;
+                            /** Format: date-time */
+                            last_request_at?: string | null;
                             /** Format: date-time */
                             first_event_at?: string | null;
                             /** Format: date-time */

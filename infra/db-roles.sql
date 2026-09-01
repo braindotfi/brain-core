@@ -390,6 +390,18 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_tenant_deletion, brain_surface_gateway,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
+-- RFC 0008 request-meter facts are immutable to request-path roles. They are
+-- intentionally separate from audit_events, but carry the same append-only
+-- runtime guarantee. The tenant-deletion role retains DELETE for an approved
+-- GDPR erasure through its broad RLS-table grant above.
+REVOKE UPDATE, DELETE, TRUNCATE ON api_request_meter_events
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

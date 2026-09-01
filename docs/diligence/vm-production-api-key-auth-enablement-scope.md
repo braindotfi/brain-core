@@ -194,7 +194,7 @@ presenter tenant or a customer tenant. It must:
    that scope-policy change is independent.
 3. Call `GET /v1/ledger/accounts` with the key and receive 200.
 4. Call one permitted audit or governance read route and receive 200.
-5. Verify key-attributed audit usage appears for the exact key id.
+5. Verify key-attributed request-meter usage appears for the exact key id.
 6. Rotate the key, prove the old key receives `auth_invalid_key`, and prove the
    replacement key works.
 7. Revoke the replacement key and prove it receives `auth_invalid_key`.

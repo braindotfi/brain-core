@@ -63,6 +63,7 @@ export {
   type RevocationStore,
 } from "./auth/revocation.js";
 export { default as authPlugin, extractBearer } from "./auth/middleware.js";
+export * from "./auth/api-key-metering.js";
 export {
   requireAdminMember,
   type MemberAuthorityRow,

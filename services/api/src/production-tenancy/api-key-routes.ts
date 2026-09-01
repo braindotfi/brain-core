@@ -10,7 +10,9 @@ import {
   requireScope,
   withTenantScope,
   type AuditEmitter,
+  type ApiKeyAuthenticationResult,
   type Principal,
+  type RateLimitDecision,
   type Scope,
   type SlidingWindowRateLimiter,
   type TenantScopedClient,
@@ -245,19 +247,25 @@ export async function registerApiKeyRoutes(
           ...(keyId !== undefined ? { keyId } : {}),
         }),
       );
-      const total = rows.reduce((sum, row) => sum + Number(row.event_count), 0);
+      const total = rows.reduce((sum, row) => sum + Number(row.request_count), 0);
       return {
         tenant_id: request.params.tenantId,
         window,
         ...(environment !== undefined ? { environment } : {}),
         ...(keyId !== undefined ? { key_id: keyId } : {}),
+        total_requests: total,
+        // Compatibility alias for BrainMVB until its Phase 3 usage view moves
+        // to the expanded request-meter contract.
         total_events: total,
         keys: rows.map((row) => ({
           key_id: row.key_id,
           environment: row.environment,
-          event_count: Number(row.event_count),
-          first_event_at: toIso(row.first_event_at),
-          last_event_at: toIso(row.last_event_at),
+          request_count: Number(row.request_count),
+          event_count: Number(row.request_count),
+          first_request_at: toIso(row.first_request_at),
+          last_request_at: toIso(row.last_request_at),
+          first_event_at: toIso(row.first_request_at),
+          last_event_at: toIso(row.last_request_at),
         })),
       };
     },
@@ -272,10 +280,10 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
   // that's an acceptable tradeoff for this field.
   const lastWrittenAt = new Map<string, number>();
 
-  return async (secret: string): Promise<{ principal: Principal; keyId: string } | null> => {
+  return async (secret: string): Promise<ApiKeyAuthenticationResult> => {
     const lookup = parseApiKeyLookup(secret);
     if (lookup === null) {
-      return null;
+      return { kind: "unknown_rejected", reason: "malformed" };
     }
     const hashedSecret = hashApiKeySecret(secret, deps.pepper);
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
@@ -290,23 +298,35 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     );
     const row = rows.find((candidate) => hashesEqual(candidate.hashed_secret, hashedSecret));
     const nowMs = now();
-    if (
-      row === undefined ||
-      row.revoked_at !== null ||
-      (row.expires_at !== null && Date.parse(String(row.expires_at)) <= nowMs)
-    ) {
-      return null;
+    if (row === undefined) {
+      return { kind: "unknown_rejected", reason: "unknown" };
+    }
+    const attribution = {
+      keyId: row.id,
+      tenantId: row.tenant_id,
+      environment: row.environment,
+      accessStage: row.access_stage ?? null,
+    };
+    if (row.revoked_at !== null) {
+      return { kind: "known_rejected", attribution, reason: "revoked" };
+    }
+    if (row.expires_at !== null && Date.parse(String(row.expires_at)) <= nowMs) {
+      return { kind: "known_rejected", attribution, reason: "expired" };
     }
     if (hasDemoRawScope(row.scopes) && !isVerifiedSyntheticDemoKey(row)) {
-      return null;
+      return { kind: "known_rejected", attribution, reason: "tenant_ineligible" };
     }
 
+    let rateLimit: RateLimitDecision | undefined;
     if (deps.rateLimiter !== undefined) {
-      const decision = await deps.rateLimiter.hit(`api-key:${row.id}`);
-      if (!decision.allowed) {
-        throw brainError("rate_limited", "api key rate limit exceeded", {
-          details: { key_id: row.id, limit: decision.limit, count: decision.count },
-        });
+      rateLimit = await deps.rateLimiter.hit(`api-key:${row.id}`);
+      if (!rateLimit.allowed) {
+        return {
+          kind: "known_rejected",
+          attribution,
+          reason: "rate_limited",
+          rateLimit,
+        };
       }
     }
 
@@ -328,7 +348,10 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     }
 
     return {
+      kind: "authenticated",
       keyId: row.id,
+      attribution,
+      ...(rateLimit !== undefined ? { rateLimit } : {}),
       principal: {
         id: row.id,
         type: "api_partner",
@@ -616,9 +639,9 @@ async function resolveKeyTenant(pool: Pool, id: string): Promise<string | null> 
 interface UsageRow {
   key_id: string;
   environment: ApiKeyEnvironment | null;
-  event_count: string | number;
-  first_event_at: Date | string | null;
-  last_event_at: Date | string | null;
+  request_count: string | number;
+  first_request_at: Date | string | null;
+  last_request_at: Date | string | null;
 }
 
 async function queryUsage(
@@ -631,14 +654,10 @@ async function queryUsage(
   },
 ): Promise<UsageRow[]> {
   const params: unknown[] = [input.tenantId, intervalForWindow(input.window)];
-  const filters = [
-    "e.tenant_id = $1",
-    "e.created_at >= now() - $2::interval",
-    "e.key_id IS NOT NULL",
-  ];
+  const filters = ["e.tenant_id = $1", "e.occurred_at >= now() - $2::interval"];
   if (input.environment !== undefined) {
     params.push(input.environment);
-    filters.push(`k.environment = $${params.length}`);
+    filters.push(`e.environment = $${params.length}`);
   }
   if (input.keyId !== undefined) {
     params.push(input.keyId);
@@ -646,15 +665,14 @@ async function queryUsage(
   }
   const { rows } = await client.query<UsageRow>(
     `SELECT e.key_id,
-            k.environment,
-            count(*) AS event_count,
-            min(e.created_at) AS first_event_at,
-            max(e.created_at) AS last_event_at
-       FROM audit_events e
-       LEFT JOIN api_keys k ON k.id = e.key_id AND k.tenant_id = e.tenant_id
+            e.environment,
+            count(*) AS request_count,
+            min(e.occurred_at) AS first_request_at,
+            max(e.occurred_at) AS last_request_at
+       FROM api_request_meter_events e
       WHERE ${filters.join(" AND ")}
-      GROUP BY e.key_id, k.environment
-      ORDER BY event_count DESC, e.key_id ASC`,
+      GROUP BY e.key_id, e.environment
+      ORDER BY request_count DESC, e.key_id ASC`,
     params,
   );
   return rows;
