@@ -249,6 +249,23 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Protected-workflow-only commercial entitlement control plane. This
+  # one-shot has no listener and is never part of the normal runtime profile.
+  entitlement-operator:
+    profiles: ["ops"]
+    image: brain-core:${BRAIN_IMAGE_TAG:-prod}
+    container_name: brain-prod-entitlement-operator
+    command: ["node", "services/api/dist/usage/entitlement-operator-cli.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:?BRAIN_PRIVILEGED_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_AUDIT_DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}@postgres:5432/brain
+      DATABASE_SSL: disable
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    restart: "no"
+
   # `auth`: the OAuth 2.0 authorization server at AUTH_ISSUER (auth.brain.fi).
   # RFC 8414 metadata + JWKS discovery, real /authorize and /token (PKCE,
   # consent, code exchange, refresh rotation) via oauthCore, DCR registration,

@@ -1,0 +1,183 @@
+name: ops-api-usage-shadow
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        required: true
+        type: choice
+        options: [staging, production]
+      action:
+        required: true
+        type: choice
+        options: [reconcile, close-shadow, adjust]
+      tenant_id:
+        required: true
+        type: string
+      key_environment:
+        required: true
+        type: choice
+        options: [sandbox, live]
+      period_start:
+        description: "UTC boundary for reconcile, for example 2026-09-01T00:00:00Z."
+        required: false
+        type: string
+      period_end:
+        description: "Exclusive UTC boundary for reconcile."
+        required: false
+        type: string
+      gateway_request_count:
+        description: "Known-key gateway count from observability for reconcile."
+        required: false
+        type: string
+      limiter_decision_count:
+        description: "Limiter decision count from observability for reconcile."
+        required: false
+        type: string
+      meter_persistence_failures:
+        description: "Meter append failures from observability for reconcile."
+        required: false
+        default: "0"
+        type: string
+      reconciliation_run_id:
+        required: false
+        type: string
+      billing_period_id:
+        required: false
+        type: string
+      unit_delta:
+        required: false
+        type: string
+      reason:
+        required: true
+        type: string
+      confirm_tenant_id:
+        description: "Repeat the exact tenant id."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  usage_shadow:
+    name: ${{ inputs.action }} API usage on ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.target == 'production' && 'production' || 'staging' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'promote-prod' || 'deploy-staging-refs/heads/main' }}
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ inputs.target == 'production' && secrets.VM_HOST || secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ inputs.target == 'production' && secrets.VM_SSH_KEY || secrets.VM_SSH_KEY_STAGING }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Validate and build command envelope
+        shell: bash
+        env:
+          PAYLOAD: ${{ toJSON(inputs) }}
+          ACTOR: github:${{ github.actor }}
+          IDEMPOTENCY_KEY: github-run-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          data = json.loads(os.environ["PAYLOAD"])
+          data["actor"] = os.environ["ACTOR"]
+          data["idempotency_key"] = os.environ["IDEMPOTENCY_KEY"]
+          if not re.fullmatch(r"tnt_[0-9A-HJKMNP-TV-Z]{26}", data["tenant_id"]):
+              raise SystemExit("invalid tenant_id")
+          if data["confirm_tenant_id"] != data["tenant_id"]:
+              raise SystemExit("confirm_tenant_id must exactly match tenant_id")
+          if not 10 <= len(data["reason"]) <= 240 or "\n" in data["reason"]:
+              raise SystemExit("reason must be 10 to 240 characters on one line")
+          if data["action"] == "reconcile":
+              for name in ("period_start", "period_end"):
+                  if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T00:00:00Z", data[name]):
+                      raise SystemExit(f"{name} must be a UTC day boundary")
+              for name in ("gateway_request_count", "limiter_decision_count", "meter_persistence_failures"):
+                  if not re.fullmatch(r"[0-9]+", data[name]):
+                      raise SystemExit(f"{name} must be a nonnegative integer")
+          if data["action"] == "close-shadow" and not re.fullmatch(r"urr_[0-9A-HJKMNP-TV-Z]{26}", data["reconciliation_run_id"]):
+              raise SystemExit("close-shadow requires reconciliation_run_id")
+          if data["action"] == "adjust":
+              if not re.fullmatch(r"ubp_[0-9A-HJKMNP-TV-Z]{26}", data["billing_period_id"]):
+                  raise SystemExit("adjust requires billing_period_id")
+              if not re.fullmatch(r"-?[1-9][0-9]*", data["unit_delta"]):
+                  raise SystemExit("adjust requires a nonzero unit_delta")
+          with open("usage-shadow-command.json", "w", encoding="utf-8") as handle:
+              json.dump(data, handle)
+          os.chmod("usage-shadow-command.json", 0o600)
+          PY
+
+      - name: Run protected shadow command
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_json="/tmp/api-usage-shadow-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          remote_runner="/tmp/api-usage-shadow-${{ github.run_id }}-${{ github.run_attempt }}.py"
+          scp -i ~/.ssh/id_deploy usage-shadow-command.json "azureuser@$VM_HOST:$remote_json"
+          cat > usage-shadow-runner.py <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          production = data["target"] == "production"
+          env_file = ".env.prod" if production else ".env.staging"
+          project = "brain-prod" if production else "brain-staging"
+          if production:
+              subprocess.run(
+                  ["bash", "scripts/ops/assert-true-production.sh"],
+                  check=True,
+                  env={**os.environ, "API_BASE": "https://api.brain.fi", "VM_ENV_FILE": env_file},
+              )
+          command = [
+              "docker", "compose", "-p", project, "--env-file", env_file,
+              "-f", "docker-compose.prod.yml", "--profile", "ops", "run", "--rm",
+              "--no-deps", "entitlement-operator", "node",
+              "services/api/dist/usage/billing-operator-cli.js", data["action"],
+              "--tenant-id", data["tenant_id"], "--environment", data["key_environment"],
+              "--actor", data["actor"], "--reason", data["reason"],
+          ]
+          if data["action"] == "reconcile":
+              command.extend([
+                  "--period-start", data["period_start"], "--period-end", data["period_end"],
+                  "--gateway-request-count", data["gateway_request_count"],
+                  "--limiter-decision-count", data["limiter_decision_count"],
+                  "--meter-persistence-failures", data["meter_persistence_failures"],
+                  "--idempotency-key", data["idempotency_key"],
+              ])
+          elif data["action"] == "close-shadow":
+              command.extend(["--reconciliation-run-id", data["reconciliation_run_id"]])
+          else:
+              command.extend([
+                  "--billing-period-id", data["billing_period_id"],
+                  "--unit-delta", data["unit_delta"],
+              ])
+          subprocess.run(command, check=True)
+          PY
+          chmod 600 usage-shadow-runner.py
+          scp -i ~/.ssh/id_deploy usage-shadow-runner.py "azureuser@$VM_HOST:$remote_runner"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 '$remote_runner' '$remote_json'; rc=\$?; rm -f '$remote_runner' '$remote_json'; exit \$rc"
+
+      - name: Remove local command material
+        if: always()
+        shell: bash
+        run: rm -f usage-shadow-command.json usage-shadow-runner.py ~/.ssh/id_deploy

@@ -213,11 +213,26 @@ function makeAppPool(
         const rows = [...counts].map(([key_id, request_count]) => ({
           key_id,
           environment: store.apiKeys.get(key_id)?.environment ?? null,
+          usage_date: new Date().toISOString().slice(0, 10),
+          method: "GET",
+          operation_id: "unclassified",
+          route_template: "/read-only",
+          required_scope: null,
+          product_family: null,
+          outcome: "success",
+          metering_policy_version: "requests_v1_shadow",
           request_count,
+          billable_units: 0,
           first_request_at: new Date().toISOString(),
           last_request_at: new Date().toISOString(),
         }));
         return { rows, rowCount: rows.length };
+      }
+      if (sql.includes("FROM api_usage_reconciliation_runs")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM api_billing_periods")) {
+        return { rows: [], rowCount: 0 };
       }
       if (sql.includes("FROM tenant_api_entitlements ent")) {
         return {
@@ -416,7 +431,7 @@ describe("per-customer API keys", () => {
 
       const usage = await app.inject({
         method: "GET",
-        url: `/tenants/${tenantId}/usage?window=30d&environment=sandbox&key_id=${issued.id}`,
+        url: `/tenants/${tenantId}/usage?window=current_month&environment=sandbox&key_id=${issued.id}`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(usage.statusCode).toBe(200);
@@ -424,6 +439,16 @@ describe("per-customer API keys", () => {
         total_requests: 1,
         total_events: 1,
         key_id: issued.id,
+        window: "current_month",
+        authenticated_requests: 1,
+        rejected_requests: 0,
+        billable_units: 0,
+        source: "raw_meter",
+        completeness: { status: "unreconciled", meter_persistence_failures: 0 },
+        breakdowns: {
+          methods: [{ method: "GET", request_count: 1 }],
+          outcomes: [{ outcome: "success", request_count: 1 }],
+        },
         entitlement: {
           tier_id: "sandbox_demo_v1",
           display_name: "Demo",

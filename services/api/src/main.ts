@@ -2062,7 +2062,40 @@ async function main(): Promise<void> {
     verifier: jwtVerifier,
     ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
     apiKeyRequestMeter,
+    apiKeyMeterFailureMode: "shadow_fail_open",
     apiKeyRouteContracts: API_KEY_ROUTE_CONTRACTS,
+    apiKeyGatewayTelemetry: {
+      record: (event) => {
+        metrics.increment("brain.api_key.gateway_attributed_request.count", {
+          tenant_id: event.tenantId,
+          environment: event.environment,
+        });
+        if (event.limiterDecision) {
+          metrics.increment("brain.api_key.rate_limit_decision.count", {
+            tenant_id: event.tenantId,
+            environment: event.environment,
+          });
+        }
+      },
+    },
+    apiKeyMeterFailureTelemetry: {
+      record: (event) => {
+        metrics.increment("brain.api_key.request_meter.append_failure.count", {
+          tenant_id: event.tenantId,
+          environment: event.environment,
+        });
+        log.error(
+          {
+            event: "api_request_meter_append_failure",
+            request_id: event.requestId,
+            tenant_id: event.tenantId,
+            key_id: event.keyId,
+            environment: event.environment,
+          },
+          "API request meter persistence failed; shadow period is incomplete",
+        );
+      },
+    },
     apiKeySecurityTelemetry: {
       record: (event) => {
         metrics.increment("brain.api_key.security_auth_rejection.count", {

@@ -249,13 +249,15 @@ export async function registerApiKeyRoutes(
         throw brainError("request_params_invalid", "key_id must not be empty");
       }
 
-      const [rows, entitlement] = await withTenantScope(
+      const bounds = usageBounds(window, new Date());
+      const [rows, entitlement, completeness] = await withTenantScope(
         deps.pool,
         request.params.tenantId,
         async (client) => {
           const usageRows = await queryUsage(client, {
             tenantId: request.params.tenantId,
-            window,
+            periodStart: bounds.periodStart,
+            periodEnd: bounds.periodEnd,
             ...(environment !== undefined ? { environment } : {}),
             ...(keyId !== undefined ? { keyId } : {}),
           });
@@ -267,30 +269,43 @@ export async function registerApiKeyRoutes(
                   environment,
                   ...(keyId !== undefined ? { keyId } : {}),
                 });
-          return [usageRows, effectiveEntitlement] as const;
+          const usageCompleteness = await loadUsageCompleteness(client, {
+            tenantId: request.params.tenantId,
+            periodStart: bounds.periodStart,
+            periodEnd: bounds.periodEnd,
+            ...(environment !== undefined ? { environment } : {}),
+          });
+          return [usageRows, effectiveEntitlement, usageCompleteness] as const;
         },
       );
       const total = rows.reduce((sum, row) => sum + Number(row.request_count), 0);
+      const billableUnits = rows.reduce((sum, row) => sum + Number(row.billable_units), 0);
+      const rejectedRequests = rows
+        .filter((row) => row.outcome !== "success")
+        .reduce((sum, row) => sum + Number(row.request_count), 0);
       return {
         tenant_id: request.params.tenantId,
         window,
+        period_start: bounds.periodStart.toISOString(),
+        period_end: bounds.periodEnd.toISOString(),
         ...(environment !== undefined ? { environment } : {}),
         ...(keyId !== undefined ? { key_id: keyId } : {}),
         entitlement,
         total_requests: total,
+        authenticated_requests: total,
+        rejected_requests: rejectedRequests,
+        billable_units: billableUnits,
+        source: completeness.closed ? "closed_period" : "raw_meter",
+        completeness: {
+          status: completeness.status,
+          last_reconciled_at: completeness.lastReconciledAt,
+          meter_persistence_failures: completeness.meterPersistenceFailures,
+        },
+        breakdowns: summarizeUsage(rows),
         // Compatibility alias for BrainMVB until its Phase 3 usage view moves
         // to the expanded request-meter contract.
         total_events: total,
-        keys: rows.map((row) => ({
-          key_id: row.key_id,
-          environment: row.environment,
-          request_count: Number(row.request_count),
-          event_count: Number(row.request_count),
-          first_request_at: toIso(row.first_request_at),
-          last_request_at: toIso(row.last_request_at),
-          first_event_at: toIso(row.first_request_at),
-          last_event_at: toIso(row.last_request_at),
-        })),
+        keys: summarizeKeys(rows),
       };
     },
   );
@@ -604,8 +619,14 @@ function assertScopesAllowedForTenant(
 
 function parseUsageWindow(input: unknown): string {
   if (input === undefined) return DEFAULT_USAGE_WINDOW;
-  if (typeof input !== "string" || !/^[1-9][0-9]*(d|h)$/.test(input)) {
-    throw brainError("request_params_invalid", "window must be an interval like 30d or 24h");
+  if (
+    typeof input !== "string" ||
+    (input !== "current_month" && !/^[1-9][0-9]*(d|h)$/.test(input))
+  ) {
+    throw brainError(
+      "request_params_invalid",
+      "window must be current_month or an interval like 30d or 24h",
+    );
   }
   return input;
 }
@@ -728,9 +749,18 @@ async function resolveKeyTenant(pool: Pool, id: string): Promise<string | null> 
 }
 
 interface UsageRow {
+  usage_date: Date | string;
   key_id: string;
   environment: ApiKeyEnvironment | null;
+  method: string;
+  operation_id: string;
+  route_template: string;
+  required_scope: string | null;
+  product_family: string | null;
+  outcome: string;
+  metering_policy_version: string;
   request_count: string | number;
+  billable_units: string | number;
   first_request_at: Date | string | null;
   last_request_at: Date | string | null;
 }
@@ -802,13 +832,14 @@ async function queryUsage(
   client: TenantScopedClient,
   input: {
     tenantId: string;
-    window: string;
+    periodStart: Date;
+    periodEnd: Date;
     environment?: ApiKeyEnvironment;
     keyId?: string;
   },
 ): Promise<UsageRow[]> {
-  const params: unknown[] = [input.tenantId, intervalForWindow(input.window)];
-  const filters = ["e.tenant_id = $1", "e.occurred_at >= now() - $2::interval"];
+  const params: unknown[] = [input.tenantId, input.periodStart, input.periodEnd];
+  const filters = ["e.tenant_id = $1", "e.occurred_at >= $2", "e.occurred_at < $3"];
   if (input.environment !== undefined) {
     params.push(input.environment);
     filters.push(`e.environment = $${params.length}`);
@@ -820,21 +851,196 @@ async function queryUsage(
   const { rows } = await client.query<UsageRow>(
     `SELECT e.key_id,
             e.environment,
+            (e.occurred_at AT TIME ZONE 'UTC')::date AS usage_date,
+            e.method,
+            e.operation_id,
+            e.route_template,
+            e.required_scope,
+            e.product_family,
+            e.outcome,
+            e.metering_policy_version,
             count(*) AS request_count,
+            sum(e.billable_units) AS billable_units,
             min(e.occurred_at) AS first_request_at,
             max(e.occurred_at) AS last_request_at
        FROM api_request_meter_events e
       WHERE ${filters.join(" AND ")}
-      GROUP BY e.key_id, e.environment
+      GROUP BY e.key_id, e.environment, (e.occurred_at AT TIME ZONE 'UTC')::date,
+               e.method, e.operation_id,
+               e.route_template, e.required_scope, e.product_family, e.outcome,
+               e.metering_policy_version
       ORDER BY request_count DESC, e.key_id ASC`,
     params,
   );
   return rows;
 }
 
-function intervalForWindow(window: string): string {
+interface UsageCompletenessRow {
+  status: "matched" | "mismatch" | "incomplete";
+  meter_persistence_failures: string | number;
+  created_at: Date | string;
+}
+
+async function loadUsageCompleteness(
+  client: TenantScopedClient,
+  input: {
+    tenantId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    environment?: ApiKeyEnvironment;
+  },
+) {
+  const params: unknown[] = [input.tenantId, input.periodStart, input.periodEnd];
+  const environmentFilter =
+    input.environment === undefined ? "" : `AND environment = $${params.push(input.environment)}`;
+  const { rows } = await client.query<UsageCompletenessRow>(
+    `SELECT status, meter_persistence_failures, created_at
+       FROM api_usage_reconciliation_runs
+      WHERE tenant_id = $1 AND period_start = $2 AND period_end = $3
+        ${environmentFilter}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    params,
+  );
+  const reconciliation = rows[0];
+  const closed = await client.query<{ id: string }>(
+    `SELECT id FROM api_billing_periods
+      WHERE tenant_id = $1 AND period_start = $2 AND period_end = $3
+        ${environmentFilter}
+      LIMIT 1`,
+    params,
+  );
+  return {
+    closed: closed.rows[0] !== undefined,
+    status:
+      closed.rows[0] !== undefined
+        ? "closed"
+        : reconciliation?.status === "matched"
+          ? "reconciled"
+          : (reconciliation?.status ?? "unreconciled"),
+    lastReconciledAt: reconciliation === undefined ? null : toIso(reconciliation.created_at),
+    meterPersistenceFailures: Number(reconciliation?.meter_persistence_failures ?? 0),
+  };
+}
+
+function usageBounds(window: string, now: Date): { periodStart: Date; periodEnd: Date } {
+  if (window === "current_month") {
+    return {
+      periodStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+      periodEnd: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
+    };
+  }
   const amount = Number(window.slice(0, -1));
-  return window.endsWith("d") ? `${amount} days` : `${amount} hours`;
+  const milliseconds = amount * (window.endsWith("d") ? 86_400_000 : 3_600_000);
+  return { periodStart: new Date(now.getTime() - milliseconds), periodEnd: now };
+}
+
+function summarizeUsage(rows: UsageRow[]) {
+  const methods = new Map<string, { count: number; daily: Map<string, number> }>();
+  const scopes = new Map<string, number>();
+  const routes = new Map<string, number>();
+  const outcomes = new Map<string, number>();
+  const daily = new Map<string, number>();
+  for (const row of rows) {
+    const count = Number(row.request_count);
+    const date = toDateKey(row.usage_date);
+    const method = methods.get(row.method) ?? { count: 0, daily: new Map<string, number>() };
+    method.count += count;
+    add(method.daily, date, count);
+    methods.set(row.method, method);
+    add(scopes, row.required_scope ?? "unclassified", count);
+    add(routes, row.operation_id, count);
+    add(outcomes, row.outcome, count);
+    add(daily, date, count);
+  }
+  return {
+    methods: [...methods.entries()]
+      .sort(([leftKey, left], [rightKey, right]) =>
+        right.count === left.count ? leftKey.localeCompare(rightKey) : right.count - left.count,
+      )
+      .map(([method, value]) => ({
+        method,
+        request_count: value.count,
+        daily: serializeDaily(value.daily),
+      })),
+    scopes: serializeBreakdown(scopes, "scope"),
+    routes: serializeBreakdown(routes, "operation_id"),
+    outcomes: serializeBreakdown(outcomes, "outcome"),
+    daily: serializeDaily(daily),
+  };
+}
+
+function serializeDaily(target: Map<string, number>) {
+  return [...target.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, requestCount]) => ({ date, request_count: requestCount }));
+}
+
+function toDateKey(value: Date | string): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function summarizeKeys(rows: UsageRow[]) {
+  const keys = new Map<
+    string,
+    {
+      key_id: string;
+      environment: ApiKeyEnvironment | null;
+      request_count: number;
+      first_request_at: string | null;
+      last_request_at: string | null;
+    }
+  >();
+  for (const row of rows) {
+    const existing = keys.get(row.key_id);
+    const first = toIso(row.first_request_at);
+    const last = toIso(row.last_request_at);
+    if (existing === undefined) {
+      keys.set(row.key_id, {
+        key_id: row.key_id,
+        environment: row.environment,
+        request_count: Number(row.request_count),
+        first_request_at: first,
+        last_request_at: last,
+      });
+      continue;
+    }
+    existing.request_count += Number(row.request_count);
+    if (
+      first !== null &&
+      (existing.first_request_at === null || first < existing.first_request_at)
+    ) {
+      existing.first_request_at = first;
+    }
+    if (last !== null && (existing.last_request_at === null || last > existing.last_request_at)) {
+      existing.last_request_at = last;
+    }
+  }
+  return [...keys.values()]
+    .sort((left, right) =>
+      right.request_count === left.request_count
+        ? left.key_id.localeCompare(right.key_id)
+        : right.request_count - left.request_count,
+    )
+    .map((key) => ({
+      ...key,
+      event_count: key.request_count,
+      first_event_at: key.first_request_at,
+      last_event_at: key.last_request_at,
+    }));
+}
+
+function add(target: Map<string, number>, key: string, count: number): void {
+  target.set(key, (target.get(key) ?? 0) + count);
+}
+
+function serializeBreakdown(target: Map<string, number>, keyName: string) {
+  return [...target.entries()]
+    .sort(([leftKey, leftCount], [rightKey, rightCount]) =>
+      rightCount === leftCount ? leftKey.localeCompare(rightKey) : rightCount - leftCount,
+    )
+    .map(([key, requestCount]) => ({ [keyName]: key, request_count: requestCount }));
 }
 
 function serializeKey(row: ApiKeyRow, secret?: string) {

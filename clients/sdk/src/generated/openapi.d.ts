@@ -513,11 +513,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Aggregate per-key usage
+         * Aggregate API-key request usage
          * @description Requires `audit:read` for the same tenant. Counts dedicated,
          *     append-only API request meter rows over the requested window and
-         *     optionally filters by environment and key id. General audit activity
-         *     is not included. `total_events` and per-key `event_count` remain
+         *     optionally filters by environment and key id. `current_month` uses
+         *     exact UTC calendar boundaries. General audit activity is not included.
+         *     Billable units are policy-versioned shadow measurements and do not
+         *     represent a charge. `total_events` and per-key `event_count` remain
          *     compatibility aliases during the usage-contract transition.
          */
         get: operations["getTenantUsage"];
@@ -6465,6 +6467,10 @@ export interface operations {
                     "application/json": {
                         tenant_id?: string;
                         window?: string;
+                        /** Format: date-time */
+                        period_start?: string;
+                        /** Format: date-time */
+                        period_end?: string;
                         environment?: string;
                         key_id?: string;
                         entitlement?: {
@@ -6485,6 +6491,47 @@ export interface operations {
                             } | null;
                         } | null;
                         total_requests?: number;
+                        authenticated_requests?: number;
+                        rejected_requests?: number;
+                        /** @description Policy-versioned measured units. Shadow periods remain zero-charge. */
+                        billable_units?: number;
+                        /** @enum {string} */
+                        source?: "raw_meter" | "closed_period";
+                        completeness?: {
+                            /** @enum {string} */
+                            status?: "unreconciled" | "reconciled" | "mismatch" | "incomplete" | "closed";
+                            /** Format: date-time */
+                            last_reconciled_at?: string | null;
+                            meter_persistence_failures?: number;
+                        };
+                        breakdowns?: {
+                            methods?: {
+                                method?: string;
+                                request_count?: number;
+                                daily?: {
+                                    /** Format: date */
+                                    date?: string;
+                                    request_count?: number;
+                                }[];
+                            }[];
+                            scopes?: {
+                                scope?: string;
+                                request_count?: number;
+                            }[];
+                            routes?: {
+                                operation_id?: string;
+                                request_count?: number;
+                            }[];
+                            outcomes?: {
+                                outcome?: string;
+                                request_count?: number;
+                            }[];
+                            daily?: {
+                                /** Format: date */
+                                date?: string;
+                                request_count?: number;
+                            }[];
+                        };
                         total_events?: number;
                         keys?: {
                             key_id?: string;

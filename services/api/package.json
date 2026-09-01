@@ -29,7 +29,9 @@
     "test:coverage": "vitest run --coverage",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
-    "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts"
+    "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts",
+    "entitlement-operator": "tsx src/usage/entitlement-operator-cli.ts",
+    "billing-operator": "tsx src/usage/billing-operator-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
