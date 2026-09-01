@@ -16,10 +16,12 @@ import { newRequestId } from "../ids.js";
 import type {
   ApiKeyAuthenticationResult,
   ApiKeyAttribution,
+  ApiKeyGatewayTelemetry,
   ApiKeyKnownRejectionReason,
   ApiKeyRouteContract,
   ApiKeyRouteMeteringContract,
   ApiKeySecurityTelemetry,
+  ApiKeyMeterFailureTelemetry,
   ApiRequestMeter,
   ApiRequestMeterOutcome,
 } from "./api-key-metering.js";
@@ -49,6 +51,7 @@ interface ApiKeyMeterRequestContext {
     windowSeconds: number;
   } | null;
   errorCode: string | null;
+  finalized: boolean;
 }
 
 declare module "fastify" {
@@ -80,6 +83,9 @@ export interface AuthPluginOptions {
   ) => Promise<ApiKeyAuthenticationResult | LegacyApiKeyAuthenticationResult>;
   apiKeyRequestMeter?: ApiRequestMeter;
   apiKeySecurityTelemetry?: ApiKeySecurityTelemetry;
+  apiKeyMeterFailureTelemetry?: ApiKeyMeterFailureTelemetry;
+  apiKeyGatewayTelemetry?: ApiKeyGatewayTelemetry;
+  apiKeyMeterFailureMode?: "shadow_fail_open" | "billable_fail_closed";
   apiKeyRouteContracts?: readonly ApiKeyRouteContract[];
   apiKeyRateLimitWindowSeconds?: number;
 }
@@ -103,6 +109,9 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     apiKeyAuthenticator,
     apiKeyRequestMeter,
     apiKeySecurityTelemetry,
+    apiKeyMeterFailureTelemetry,
+    apiKeyGatewayTelemetry,
+    apiKeyMeterFailureMode = "shadow_fail_open",
     apiKeyRateLimitWindowSeconds,
   } = opts;
   const routeContracts = validateApiKeyRouteContracts(opts.apiKeyRouteContracts ?? []);
@@ -174,7 +183,15 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
               },
         rateLimitPolicy: result.rateLimit?.policy ?? result.rateLimitPolicy ?? null,
         errorCode: null,
+        finalized: false,
       };
+      apiKeyGatewayTelemetry?.record({
+        requestId: meterRequestId,
+        tenantId: result.attribution.tenantId,
+        keyId: result.attribution.keyId,
+        environment: result.attribution.environment,
+        limiterDecision: result.rateLimit !== undefined,
+      });
 
       if (result.rateLimit !== undefined) {
         const remaining = Math.max(
@@ -229,9 +246,11 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     }
   });
 
-  fastify.addHook("onResponse", async (request, reply) => {
+  fastify.addHook("onSend", async (request, reply, payload) => {
     const context = request.apiKeyMeterContext;
-    if (apiKeyRequestMeter === undefined || context === undefined) return;
+    if (apiKeyRequestMeter === undefined || context === undefined || context.finalized)
+      return payload;
+    context.finalized = true;
 
     const contract = request.routeOptions.config?.apiKeyMetering;
     const outcome = classifyOutcome(reply.statusCode, context.knownRejection, context.errorCode);
@@ -262,8 +281,22 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
         rateLimitRejectedBy: context.rateLimit?.rejectedBy ?? null,
       });
     } catch (err) {
+      apiKeyMeterFailureTelemetry?.record({
+        requestId: context.meterRequestId,
+        tenantId: context.attribution.tenantId,
+        keyId: context.attribution.keyId,
+        environment: context.attribution.environment,
+      });
       request.log.error({ err, request_id: request.id }, "api key request meter append failed");
+      if (
+        apiKeyMeterFailureMode === "billable_fail_closed" &&
+        context.attribution.environment === "live" &&
+        context.attribution.accessStage === "production"
+      ) {
+        throw brainError("dependency_unavailable", "API request meter is unavailable");
+      }
     }
+    return payload;
   });
 };
 

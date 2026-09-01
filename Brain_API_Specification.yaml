@@ -1750,12 +1750,14 @@ paths:
   /tenants/{tenantId}/usage:
     get:
       tags: [Tenancy]
-      summary: Aggregate per-key usage
+      summary: Aggregate API-key request usage
       description: |
         Requires `audit:read` for the same tenant. Counts dedicated,
         append-only API request meter rows over the requested window and
-        optionally filters by environment and key id. General audit activity
-        is not included. `total_events` and per-key `event_count` remain
+        optionally filters by environment and key id. `current_month` uses
+        exact UTC calendar boundaries. General audit activity is not included.
+        Billable units are policy-versioned shadow measurements and do not
+        represent a charge. `total_events` and per-key `event_count` remain
         compatibility aliases during the usage-contract transition.
       operationId: getTenantUsage
       parameters:
@@ -1766,7 +1768,10 @@ paths:
         - name: window
           in: query
           required: false
-          schema: { type: string, default: 30d }
+          schema:
+            type: string
+            default: 30d
+            description: "`current_month` or a positive hour/day interval such as `24h` or `30d`."
         - name: environment
           in: query
           required: false
@@ -1785,6 +1790,8 @@ paths:
                 properties:
                   tenant_id: { type: string }
                   window: { type: string }
+                  period_start: { type: string, format: date-time }
+                  period_end: { type: string, format: date-time }
                   environment: { type: string }
                   key_id: { type: string }
                   entitlement:
@@ -1818,6 +1825,65 @@ paths:
                               - type: "null"
                       - type: "null"
                   total_requests: { type: integer }
+                  authenticated_requests: { type: integer }
+                  rejected_requests: { type: integer }
+                  billable_units:
+                    type: integer
+                    description: Policy-versioned measured units. Shadow periods remain zero-charge.
+                  source: { type: string, enum: [raw_meter, closed_period] }
+                  completeness:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [unreconciled, reconciled, mismatch, incomplete, closed]
+                      last_reconciled_at: { type: [string, "null"], format: date-time }
+                      meter_persistence_failures: { type: integer }
+                  breakdowns:
+                    type: object
+                    properties:
+                      methods:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            method: { type: string }
+                            request_count: { type: integer }
+                            daily:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  date: { type: string, format: date }
+                                  request_count: { type: integer }
+                      scopes:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            scope: { type: string }
+                            request_count: { type: integer }
+                      routes:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            operation_id: { type: string }
+                            request_count: { type: integer }
+                      outcomes:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            outcome: { type: string }
+                            request_count: { type: integer }
+                      daily:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date: { type: string, format: date }
+                            request_count: { type: integer }
                   total_events: { type: integer }
                   keys:
                     type: array

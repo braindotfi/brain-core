@@ -87,6 +87,8 @@ export interface ApiRequestMeterEvent {
   readonly rateLimitTenantCount: number | null;
   readonly rateLimitTenantValue: number | null;
   readonly rateLimitRejectedBy: "key" | "tenant" | "key_and_tenant" | null;
+  readonly meteringPolicyVersion?: string;
+  readonly billableUnits?: number;
 }
 
 export interface ApiRequestMeter {
@@ -102,6 +104,29 @@ export interface ApiKeySecurityTelemetryEvent {
 
 export interface ApiKeySecurityTelemetry {
   record(event: ApiKeySecurityTelemetryEvent): void;
+}
+
+export interface ApiKeyMeterFailureTelemetryEvent {
+  readonly requestId: string;
+  readonly tenantId: string;
+  readonly keyId: string;
+  readonly environment: ApiKeyEnvironment;
+}
+
+export interface ApiKeyMeterFailureTelemetry {
+  record(event: ApiKeyMeterFailureTelemetryEvent): void;
+}
+
+export interface ApiKeyGatewayTelemetryEvent {
+  readonly requestId: string;
+  readonly tenantId: string;
+  readonly keyId: string;
+  readonly environment: ApiKeyEnvironment;
+  readonly limiterDecision: boolean;
+}
+
+export interface ApiKeyGatewayTelemetry {
+  record(event: ApiKeyGatewayTelemetryEvent): void;
 }
 
 export function routeContractKey(method: string, route: string): string {

@@ -150,6 +150,21 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     );
   });
 
+  it("limits billing reconciliation and entitlement evidence writes to the operator role", () => {
+    expect(SQL).toContain(
+      "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_metering_policies,\n" +
+        "  api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,\n" +
+        "  api_billing_adjustments, api_entitlement_change_log FROM brain_app;",
+    );
+    expect(SQL).toContain(
+      "GRANT INSERT, UPDATE, DELETE ON api_usage_daily_rollups TO brain_privileged;",
+    );
+    expect(SQL).toContain(
+      "GRANT INSERT ON api_usage_reconciliation_runs, api_billing_periods,\n" +
+        "  api_billing_adjustments, api_entitlement_change_log TO brain_privileged;",
+    );
+  });
+
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {
     const revoke = SQL.match(/REVOKE UPDATE, DELETE, TRUNCATE ON audit_events\s+FROM[\s\S]*?;/);
     expect(revoke).not.toBeNull();

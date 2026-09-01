@@ -4,6 +4,8 @@ import { extractBearer } from "./middleware.js";
 import authPlugin from "./middleware.js";
 import requestIdPlugin from "../http/request-id.js";
 import type {
+  ApiKeyGatewayTelemetryEvent,
+  ApiKeyMeterFailureTelemetryEvent,
   ApiKeySecurityTelemetryEvent,
   ApiRequestMeter,
   ApiRequestMeterEvent,
@@ -416,6 +418,139 @@ describe("API key rejection separation", () => {
           entitlementVersion: 1,
         }),
       ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("emits reconcilable gateway and limiter decision telemetry for known keys", async () => {
+    const meter = new InMemoryRequestMeter();
+    const gatewayEvents: ApiKeyGatewayTelemetryEvent[] = [];
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyGatewayTelemetry: { record: (event) => gatewayEvents.push(event) },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "live",
+          accessStage: "production",
+        },
+        rateLimit: {
+          allowed: true,
+          count: 1,
+          limit: 60,
+          tenantCount: 1,
+          tenantLimit: 600,
+          rejectedBy: null,
+          policy: {
+            tierId: "starter_v1",
+            entitlementVersion: 1,
+            windowSeconds: 60,
+            keyLimit: 60,
+            tenantLimit: 600,
+          },
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_live_known" },
+      });
+      expect(gatewayEvents).toEqual([
+        expect.objectContaining({
+          tenantId: principal.tenantId,
+          keyId: "akey_known",
+          environment: "live",
+          limiterDecision: true,
+        }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("emits a completeness signal when the durable meter append fails", async () => {
+    const failures: ApiKeyMeterFailureTelemetryEvent[] = [];
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyMeterFailureTelemetry: { record: (event) => failures.push(event) },
+      apiKeyRequestMeter: {
+        record: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(failures).toEqual([
+        expect.objectContaining({ tenantId: principal.tenantId, keyId: "akey_known" }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails closed before sending a billable response when configured after shadow", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyMeterFailureMode: "billable_fail_closed",
+      apiKeyRequestMeter: {
+        record: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_live",
+        attribution: {
+          keyId: "akey_live",
+          tenantId: principal.tenantId,
+          environment: "live",
+          accessStage: "production",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_live_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json().message).toBe("API request meter is unavailable");
     } finally {
       await app.close();
     }
