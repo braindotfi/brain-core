@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   API_KEY_PERMITTED_SCOPES,
@@ -12,9 +12,10 @@ import {
   type AuditEmitter,
   type ApiKeyAuthenticationResult,
   type Principal,
-  type RateLimitDecision,
+  type ApiRateLimitDecision,
+  type ApiRateLimitPolicy,
+  type ApiSlidingWindowRateLimiter,
   type Scope,
-  type SlidingWindowRateLimiter,
   type TenantScopedClient,
 } from "@brain/shared";
 
@@ -39,7 +40,7 @@ export interface ApiKeyAuthenticatorDeps {
   pool: Pool;
   resolverPool: Pool;
   pepper: string;
-  rateLimiter?: SlidingWindowRateLimiter;
+  rateLimiter: ApiSlidingWindowRateLimiter;
   /**
    * Minimum time between `last_used_at` DB writes for the same key (Review P3).
    * A busy key would otherwise fire one unawaited UPDATE per request; this
@@ -73,6 +74,15 @@ interface ApiKeyRow {
   provisioning_state?: TenantApiKeyState["provisioning_state"];
   data_profile?: TenantApiKeyState["data_profile"];
   access_stage?: TenantApiKeyState["access_stage"];
+  tier_id?: string | null;
+  tier_display_name?: string | null;
+  entitlement_version?: number | null;
+  entitlement_status?: "active" | "suspended" | null;
+  rate_window_seconds?: number | null;
+  tier_key_limit?: number | null;
+  tenant_limit?: number | null;
+  override_key_limit?: number | null;
+  override_expires_at?: Date | string | null;
 }
 
 interface TenantApiKeyState {
@@ -239,13 +249,26 @@ export async function registerApiKeyRoutes(
         throw brainError("request_params_invalid", "key_id must not be empty");
       }
 
-      const rows = await withTenantScope(deps.pool, request.params.tenantId, (client) =>
-        queryUsage(client, {
-          tenantId: request.params.tenantId,
-          window,
-          ...(environment !== undefined ? { environment } : {}),
-          ...(keyId !== undefined ? { keyId } : {}),
-        }),
+      const [rows, entitlement] = await withTenantScope(
+        deps.pool,
+        request.params.tenantId,
+        async (client) => {
+          const usageRows = await queryUsage(client, {
+            tenantId: request.params.tenantId,
+            window,
+            ...(environment !== undefined ? { environment } : {}),
+            ...(keyId !== undefined ? { keyId } : {}),
+          });
+          const effectiveEntitlement =
+            environment === undefined
+              ? null
+              : await loadUsageEntitlement(client, {
+                  tenantId: request.params.tenantId,
+                  environment,
+                  ...(keyId !== undefined ? { keyId } : {}),
+                });
+          return [usageRows, effectiveEntitlement] as const;
+        },
       );
       const total = rows.reduce((sum, row) => sum + Number(row.request_count), 0);
       return {
@@ -253,6 +276,7 @@ export async function registerApiKeyRoutes(
         window,
         ...(environment !== undefined ? { environment } : {}),
         ...(keyId !== undefined ? { key_id: keyId } : {}),
+        entitlement,
         total_requests: total,
         // Compatibility alias for BrainMVB until its Phase 3 usage view moves
         // to the expanded request-meter contract.
@@ -280,7 +304,10 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
   // that's an acceptable tradeoff for this field.
   const lastWrittenAt = new Map<string, number>();
 
-  return async (secret: string): Promise<ApiKeyAuthenticationResult> => {
+  return async (
+    secret: string,
+    requestContext?: { requestId: string },
+  ): Promise<ApiKeyAuthenticationResult> => {
     const lookup = parseApiKeyLookup(secret);
     if (lookup === null) {
       return { kind: "unknown_rejected", reason: "malformed" };
@@ -289,9 +316,20 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
       `SELECT k.id, k.tenant_id, k.name, k.environment, k.scopes, k.key_prefix, k.key_last4,
               k.hashed_secret, k.created_at, k.last_used_at, k.revoked_at, k.expires_at,
-              k.rotated_from_id, t.provisioning_state, t.data_profile, t.access_stage
+              k.rotated_from_id, t.provisioning_state, t.data_profile, t.access_stage,
+              ent.tier_id, tier.display_name AS tier_display_name,
+              ent.version AS entitlement_version, ent.status AS entitlement_status,
+              tier.window_seconds AS rate_window_seconds,
+              tier.key_limit AS tier_key_limit, tier.tenant_limit,
+              override.key_limit AS override_key_limit,
+              override.expires_at AS override_expires_at
          FROM api_keys k
          JOIN tenants t ON t.id = k.tenant_id
+         LEFT JOIN tenant_api_entitlements ent
+           ON ent.tenant_id = k.tenant_id AND ent.environment = k.environment
+         LEFT JOIN api_rate_limit_tiers tier ON tier.id = ent.tier_id
+         LEFT JOIN api_key_rate_limit_overrides override
+           ON override.key_id = k.id AND override.tenant_id = k.tenant_id
         WHERE k.key_prefix = $1 AND k.key_last4 = $2
         ORDER BY k.created_at DESC, k.id DESC`,
       [lookup.keyPrefix, lookup.keyLast4],
@@ -316,18 +354,37 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     if (hasDemoRawScope(row.scopes) && !isVerifiedSyntheticDemoKey(row)) {
       return { kind: "known_rejected", attribution, reason: "tenant_ineligible" };
     }
+    if (row.entitlement_status === "suspended") {
+      return { kind: "known_rejected", attribution, reason: "tenant_ineligible" };
+    }
 
-    let rateLimit: RateLimitDecision | undefined;
-    if (deps.rateLimiter !== undefined) {
-      rateLimit = await deps.rateLimiter.hit(`api-key:${row.id}`);
-      if (!rateLimit.allowed) {
-        return {
-          kind: "known_rejected",
-          attribution,
-          reason: "rate_limited",
-          rateLimit,
-        };
-      }
+    const policy = resolveApiRateLimitPolicy(row, nowMs);
+    if (policy === null) {
+      return { kind: "known_rejected", attribution, reason: "rate_limiter_unavailable" };
+    }
+    let rateLimit: ApiRateLimitDecision;
+    try {
+      rateLimit = await deps.rateLimiter.hit({
+        keyBucket: `api-rate:key:${row.id}`,
+        tenantBucket: `api-rate:tenant:${row.tenant_id}:${row.environment}`,
+        requestId: requestContext?.requestId ?? randomUUID(),
+        policy,
+      });
+    } catch {
+      return {
+        kind: "known_rejected",
+        attribution,
+        reason: "rate_limiter_unavailable",
+        rateLimitPolicy: policy,
+      };
+    }
+    if (!rateLimit.allowed) {
+      return {
+        kind: "known_rejected",
+        attribution,
+        reason: "rate_limited",
+        rateLimit,
+      };
     }
 
     // Ceiling on the never-evicted cooldown map (revoked/rotated keys never get
@@ -351,7 +408,8 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
       kind: "authenticated",
       keyId: row.id,
       attribution,
-      ...(rateLimit !== undefined ? { rateLimit } : {}),
+      rateLimit,
+      rateLimitPolicy: rateLimit.policy,
       principal: {
         id: row.id,
         type: "api_partner",
@@ -361,6 +419,39 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
         expiresAt: Number.MAX_SAFE_INTEGER,
       },
     };
+  };
+}
+
+function resolveApiRateLimitPolicy(row: ApiKeyRow, nowMs: number): ApiRateLimitPolicy | null {
+  if (
+    row.entitlement_status !== "active" ||
+    row.tier_id === null ||
+    row.tier_id === undefined ||
+    row.entitlement_version === null ||
+    row.entitlement_version === undefined ||
+    row.rate_window_seconds === null ||
+    row.rate_window_seconds === undefined ||
+    row.tier_key_limit === null ||
+    row.tier_key_limit === undefined ||
+    row.tenant_limit === null ||
+    row.tenant_limit === undefined
+  ) {
+    return null;
+  }
+  const overrideActive =
+    row.override_key_limit !== null &&
+    row.override_key_limit !== undefined &&
+    (row.override_expires_at === null ||
+      row.override_expires_at === undefined ||
+      Date.parse(String(row.override_expires_at)) > nowMs);
+  return {
+    tierId: row.tier_id,
+    entitlementVersion: row.entitlement_version,
+    windowSeconds: row.rate_window_seconds,
+    keyLimit: overrideActive
+      ? Math.min(row.tier_key_limit, row.override_key_limit!)
+      : row.tier_key_limit,
+    tenantLimit: row.tenant_limit,
   };
 }
 
@@ -642,6 +733,69 @@ interface UsageRow {
   request_count: string | number;
   first_request_at: Date | string | null;
   last_request_at: Date | string | null;
+}
+
+interface UsageEntitlementRow {
+  tier_id: string;
+  display_name: string;
+  entitlement_version: number;
+  status: "active" | "suspended";
+  window_seconds: number;
+  key_limit: number;
+  tenant_limit: number;
+  override_key_limit: number | null;
+  override_version: number | null;
+  override_expires_at: Date | string | null;
+}
+
+async function loadUsageEntitlement(
+  client: TenantScopedClient,
+  input: { tenantId: string; environment: ApiKeyEnvironment; keyId?: string },
+) {
+  const params: unknown[] = [input.tenantId, input.environment];
+  const overrideJoin =
+    input.keyId === undefined
+      ? "LEFT JOIN api_key_rate_limit_overrides override ON FALSE"
+      : `LEFT JOIN api_key_rate_limit_overrides override
+           ON override.tenant_id = ent.tenant_id AND override.key_id = $3`;
+  if (input.keyId !== undefined) params.push(input.keyId);
+  const { rows } = await client.query<UsageEntitlementRow>(
+    `SELECT ent.tier_id, tier.display_name, ent.version AS entitlement_version,
+            ent.status, tier.window_seconds, tier.key_limit, tier.tenant_limit,
+            override.key_limit AS override_key_limit,
+            override.version AS override_version,
+            override.expires_at AS override_expires_at
+       FROM tenant_api_entitlements ent
+       JOIN api_rate_limit_tiers tier ON tier.id = ent.tier_id
+       ${overrideJoin}
+      WHERE ent.tenant_id = $1 AND ent.environment = $2`,
+    params,
+  );
+  const row = rows[0];
+  if (row === undefined) return null;
+  const overrideActive =
+    row.override_key_limit !== null &&
+    (row.override_expires_at === null || Date.parse(String(row.override_expires_at)) > Date.now());
+  return {
+    tier_id: row.tier_id,
+    display_name: row.display_name,
+    entitlement_version: row.entitlement_version,
+    status: row.status,
+    window_seconds: row.window_seconds,
+    key_limit: row.key_limit,
+    tenant_limit: row.tenant_limit,
+    effective_key_limit: overrideActive
+      ? Math.min(row.key_limit, row.override_key_limit!)
+      : row.key_limit,
+    key_override:
+      overrideActive && row.override_key_limit !== null
+        ? {
+            key_limit: Math.min(row.key_limit, row.override_key_limit),
+            version: row.override_version,
+            expires_at: toIso(row.override_expires_at),
+          }
+        : null,
+  };
 }
 
 async function queryUsage(

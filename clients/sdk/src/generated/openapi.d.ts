@@ -6467,6 +6467,23 @@ export interface operations {
                         window?: string;
                         environment?: string;
                         key_id?: string;
+                        entitlement?: {
+                            tier_id: string;
+                            display_name: string;
+                            entitlement_version: number;
+                            /** @enum {string} */
+                            status: "active" | "suspended";
+                            window_seconds: number;
+                            key_limit: number;
+                            tenant_limit: number;
+                            effective_key_limit: number;
+                            key_override?: {
+                                key_limit?: number;
+                                version?: number | null;
+                                /** Format: date-time */
+                                expires_at?: string | null;
+                            } | null;
+                        } | null;
                         total_requests?: number;
                         total_events?: number;
                         keys?: {

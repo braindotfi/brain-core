@@ -109,7 +109,8 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     // ledger_payment_intents) between the two halves and stay green.
     expect(SQL).toContain(
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,\n" +
-        "  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,\n" +
+        "  member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,\n" +
+        "  tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,\n" +
         "  oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;",
     );
     expect(SQL).toContain(
@@ -133,6 +134,20 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).not.toContain("ON policy_decisions TO brain_mcp_reader");
     expect(SQL).not.toContain("ON policies TO brain_mcp_reader");
     expect(SQL).not.toContain("ON audit_events TO brain_mcp_reader");
+  });
+
+  it("keeps API entitlements outside member request-path mutation", () => {
+    expect(SQL).toContain(
+      "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_rate_limit_tiers,\n" +
+        "  tenant_api_entitlements, api_key_rate_limit_overrides\n" +
+        "  FROM brain_app",
+    );
+    expect(SQL).toContain(
+      "GRANT SELECT, INSERT, UPDATE ON tenant_api_entitlements TO brain_privileged",
+    );
+    expect(SQL).toContain(
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON api_key_rate_limit_overrides TO brain_privileged",
+    );
   });
 
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {

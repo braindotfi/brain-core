@@ -1787,6 +1787,36 @@ paths:
                   window: { type: string }
                   environment: { type: string }
                   key_id: { type: string }
+                  entitlement:
+                    oneOf:
+                      - type: object
+                        required:
+                          - tier_id
+                          - display_name
+                          - entitlement_version
+                          - status
+                          - window_seconds
+                          - key_limit
+                          - tenant_limit
+                          - effective_key_limit
+                        properties:
+                          tier_id: { type: string }
+                          display_name: { type: string }
+                          entitlement_version: { type: integer }
+                          status: { type: string, enum: [active, suspended] }
+                          window_seconds: { type: integer }
+                          key_limit: { type: integer }
+                          tenant_limit: { type: integer }
+                          effective_key_limit: { type: integer }
+                          key_override:
+                            oneOf:
+                              - type: object
+                                properties:
+                                  key_limit: { type: integer }
+                                  version: { type: [integer, "null"] }
+                                  expires_at: { type: [string, "null"], format: date-time }
+                              - type: "null"
+                      - type: "null"
                   total_requests: { type: integer }
                   total_events: { type: integer }
                   keys:

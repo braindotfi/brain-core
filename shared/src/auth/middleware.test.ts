@@ -106,6 +106,29 @@ describe("API key request metering", () => {
     }
   });
 
+  it("does not trust a repeated client correlation id as meter idempotency", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = await buildApp(meter, "akey_direct_test");
+    try {
+      const request = () =>
+        app.inject({
+          method: "GET",
+          url: "/probe",
+          headers: {
+            authorization: "Bearer brain_sk_test_valid",
+            "x-request-id": "client_reused_id",
+          },
+        });
+      expect((await request()).statusCode).toBe(200);
+      expect((await request()).statusCode).toBe(200);
+      expect(meter.events).toHaveLength(2);
+      expect(new Set(meter.events.map((event) => event.requestId)).size).toBe(2);
+      expect(meter.events.map((event) => event.requestId)).not.toContain("client_reused_id");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("attaches an unversioned contract to a route mounted under /v1", async () => {
     const meter = new InMemoryRequestMeter();
     const app = Fastify({ logger: false });
@@ -268,7 +291,21 @@ describe("API key rejection separation", () => {
           accessStage: "demo",
         },
         reason: "rate_limited",
-        rateLimit: { allowed: false, count: 601, limit: 600 },
+        rateLimit: {
+          allowed: false,
+          count: 601,
+          limit: 600,
+          tenantCount: 610,
+          tenantLimit: 6000,
+          rejectedBy: "key",
+          policy: {
+            tierId: "sandbox_demo_v1",
+            entitlementVersion: 1,
+            windowSeconds: 60,
+            keyLimit: 600,
+            tenantLimit: 6000,
+          },
+        },
       }),
     });
     app.get("/limited", async () => ({ ok: true }));
@@ -289,6 +326,18 @@ describe("API key rejection separation", () => {
         rateLimitCount: 601,
         rateLimitValue: 600,
         rateLimitWindowSeconds: 60,
+        effectiveTierId: "sandbox_demo_v1",
+        entitlementVersion: 1,
+        rateLimitTenantCount: 610,
+        rateLimitTenantValue: 6000,
+        rateLimitRejectedBy: "key",
+      });
+      expect(response.headers).toMatchObject({
+        "ratelimit-limit": "600",
+        "ratelimit-remaining": "0",
+        "ratelimit-reset": "60",
+        "x-ratelimit-tier": "sandbox_demo_v1",
+        "x-ratelimit-tenant-limit": "6000",
       });
     } finally {
       await app.close();
@@ -319,6 +368,54 @@ describe("API key rejection separation", () => {
         expect.objectContaining({ reason: "unknown", routeTemplate: "/probe" }),
       ]);
       expect(JSON.stringify(securityEvents)).not.toContain("brain_sk_test_not_a_match");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails closed and meters a known key when the entitlement limiter is unavailable", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyAuthenticator: async () => ({
+        kind: "known_rejected",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+        reason: "rate_limiter_unavailable",
+        rateLimitPolicy: {
+          tierId: "sandbox_demo_v1",
+          entitlementVersion: 1,
+          windowSeconds: 60,
+          keyLimit: 600,
+          tenantLimit: 6000,
+        },
+      }),
+    });
+    app.get("/redis-down", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/redis-down",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(meter.events).toEqual([
+        expect.objectContaining({
+          tenantId: principal.tenantId,
+          keyId: "akey_known",
+          outcome: "server_error",
+          rejectionReason: "rate_limiter_unavailable",
+          effectiveTierId: "sandbox_demo_v1",
+          entitlementVersion: 1,
+        }),
+      ]);
     } finally {
       await app.close();
     }

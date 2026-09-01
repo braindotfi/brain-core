@@ -1,7 +1,8 @@
 # RFC 0008. API usage metering and rate-limit entitlements
 
-- **Status:** Implementation in progress. Phase 1 complete on a feature branch;
-  rate tiers and billing foundation pending.
+- **Status:** Implementation in progress. Request metering, route contracts, and
+  server-owned rate tiers are complete on feature branches. Billing foundation
+  remains pending.
 - **Date:** 2026-09-01
 - **Affects:** API gateway authentication, API-key rate limiting, usage storage,
   production tenancy, OpenAPI, SDK types, BrainMVB Developers and Billing
@@ -95,10 +96,10 @@ Core currently has two relevant controls:
   `BRAIN_API_KEY_RATE_LIMIT` and `BRAIN_API_KEY_RATE_WINDOW_SECONDS`, with
   defaults of 600 requests per 60 seconds.
 
-The key limiter has no tenant or key tier. Its Redis member identifier uses a
-process-local sequence, which should be made globally unique before relying on
-the count across multiple replicas. It also deliberately allows a request when
-the Redis count cannot be read.
+Before Phase 2, the key limiter had no tenant or key tier. Its Redis member
+identifier used a process-local sequence and it deliberately allowed a request
+when the Redis count could not be read. Phase 2 replaces that path with one
+atomic, request-id-based key and tenant decision that fails closed.
 
 BrainMVB's selected billing plan is stored only in
 `client/src/lib/planStore.ts`. The displayed Starter, Standard, Scale, and
@@ -361,11 +362,10 @@ Return standard rate-limit headers using the effective policy. The usage API
 and BrainMVB must read the same tier revision rather than copying numeric plan
 constants.
 
-The current fail-open Redis behavior needs an explicit launch decision. A
-contractual tier cannot silently disappear during a Redis fault. The preferred
-production posture is a bounded local emergency limiter plus a prominent
-degraded signal, or fail closed if the commercial availability policy accepts
-that tradeoff. This choice is a go/no-go item for tier launch.
+The approved production posture is fail closed for commercial API-key traffic
+when Redis cannot return a valid decision. The separate IP limiter remains an
+abuse control with a default ceiling above the largest catalog tenant tier, so
+it does not silently replace a sold entitlement.
 
 ### 7.3 BrainMVB changes
 
@@ -552,10 +552,15 @@ metering foundation and route contract should land first.
 
 ### Pending implementation or decision
 
-- [ ] Approve Phase 0 billing and limiter decisions.
+- [x] Approve sliding-window semantics, restrictive overrides, fail-closed
+      Redis behavior, and a separate high-headroom IP abuse limit.
 - [x] Implement the dedicated request meter and security telemetry.
 - [x] Add route metering metadata and drift guards.
-- [ ] Add server-owned entitlements and dynamic Redis enforcement.
-- [ ] Replace BrainMVB audit aggregation and local tier claims.
+- [x] Add immutable rate-tier revisions, tenant entitlements, restrictive key
+      overrides, and atomic Redis enforcement at both key and tenant level.
+- [x] Replace BrainMVB local-storage tier claims with the effective core
+      entitlement.
+- [ ] Replace BrainMVB general-audit usage aggregation with request-meter
+      summaries in Phase 3.
 - [ ] Complete a zero-charge shadow and reconciliation period.
 - [ ] Approve a future billing-system implementation separately.
