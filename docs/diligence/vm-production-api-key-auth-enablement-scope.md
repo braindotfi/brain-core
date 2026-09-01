@@ -27,8 +27,10 @@ runs the API-key lifecycle acceptance test:
 
 - `BRAIN_API_KEY_AUTH_ENABLED=true`
 - `BRAIN_API_KEY_PEPPER=<environment-specific secret>`
-- `BRAIN_API_KEY_RATE_LIMIT=600`
-- `BRAIN_API_KEY_RATE_WINDOW_SECONDS=60`
+- `BRAIN_EDGE_RATE_LIMIT=100000` for coarse IP abuse protection. Commercial
+  key and tenant limits are read from server-owned entitlements.
+- `BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS=2000` so Redis faults fail closed within
+  a bounded interval.
 
 PR #582 supplies the appropriate control pattern for production: a fixed,
 target-bounded workflow, the protected `production` GitHub environment, the

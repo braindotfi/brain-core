@@ -30,6 +30,7 @@ import {
   RedisIdempotencyStore,
   RedisRevocationStore,
   RedisSlidingWindowRateLimiter,
+  RedisApiSlidingWindowRateLimiter,
   createLogger,
   createPool,
   createBlobAdapter,
@@ -2031,15 +2032,19 @@ async function main(): Promise<void> {
   await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
   // P1.4: strict CSP + security headers (was contentSecurityPolicy:false).
   await registerSecurityHeaders(app, { connectSrc: corsOrigins });
-  await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
+  await app.register(fastifyRateLimit, {
+    max: cfg.BRAIN_EDGE_RATE_LIMIT,
+    timeWindow: "1 minute",
+  });
 
   // Shared plugins registered ONCE.
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
-  const apiKeyRateLimiter = new RedisSlidingWindowRateLimiter(redis, {
-    windowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
-    limit: cfg.BRAIN_API_KEY_RATE_LIMIT,
-  });
+  const apiKeyRateLimiter = new RedisApiSlidingWindowRateLimiter(
+    redis,
+    Date.now,
+    cfg.BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS,
+  );
   const apiKeyAuthenticator =
     cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER !== undefined
       ? buildApiKeyAuthenticator({
@@ -2058,7 +2063,6 @@ async function main(): Promise<void> {
     ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
     apiKeyRequestMeter,
     apiKeyRouteContracts: API_KEY_ROUTE_CONTRACTS,
-    apiKeyRateLimitWindowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
     apiKeySecurityTelemetry: {
       record: (event) => {
         metrics.increment("brain.api_key.security_auth_rejection.count", {

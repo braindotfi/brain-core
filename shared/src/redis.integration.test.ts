@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RedisIdempotencyStore, hashBody, idempotencyRedisKey } from "./idempotency/store.js";
-import { RedisSlidingWindowRateLimiter } from "./ratelimit/sliding-window.js";
+import {
+  RedisApiSlidingWindowRateLimiter,
+  RedisSlidingWindowRateLimiter,
+} from "./ratelimit/sliding-window.js";
 
 const runRedisIntegration = process.env.REDIS_INTEGRATION_TESTS === "true";
 const redisUrl = process.env.REDIS_URL;
@@ -71,5 +74,37 @@ describe.runIf(runRedisIntegration)("ioredis v6 integration", () => {
     expect(await limiter.hit(rateLimitKey)).toMatchObject({ allowed: true, count: 2, limit: 2 });
     expect(await limiter.hit(rateLimitKey)).toMatchObject({ allowed: false, count: 3, limit: 2 });
     expect(await redis.pttl(rateLimitKey)).toBeGreaterThan(0);
+  });
+
+  it("atomically enforces API key and tenant sliding windows", async () => {
+    const limiter = new RedisApiSlidingWindowRateLimiter(redis);
+    const policy = {
+      tierId: "starter_v1",
+      entitlementVersion: 1,
+      windowSeconds: 60,
+      keyLimit: 1,
+      tenantLimit: 2,
+    };
+    const tenantBucket = key("api-rate-tenant");
+    const hit = (keyBucket: string, requestId: string) =>
+      limiter.hit({ keyBucket, tenantBucket, requestId, policy });
+
+    expect(await hit(key("api-rate-key-1"), "req_1")).toMatchObject({
+      allowed: true,
+      count: 1,
+      tenantCount: 1,
+    });
+    expect(await hit(key("api-rate-key-1"), "req_2")).toMatchObject({
+      allowed: false,
+      rejectedBy: "key",
+    });
+    expect(await hit(key("api-rate-key-2"), "req_3")).toMatchObject({
+      allowed: true,
+      tenantCount: 2,
+    });
+    expect(await hit(key("api-rate-key-3"), "req_4")).toMatchObject({
+      allowed: false,
+      rejectedBy: "tenant",
+    });
   });
 });

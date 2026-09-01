@@ -430,8 +430,10 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default(false),
   BRAIN_API_KEY_PEPPER: optionalNonEmptyString(),
-  BRAIN_API_KEY_RATE_LIMIT: z.coerce.number().int().positive().default(600),
-  BRAIN_API_KEY_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  /** Coarse IP abuse ceiling. Commercial key and tenant limits are server-owned. */
+  BRAIN_EDGE_RATE_LIMIT: z.coerce.number().int().positive().default(100_000),
+  /** Maximum Redis wait before commercial API-key traffic fails closed. */
+  BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
 
   // ---- Self-serve onboarding (RFC 0002) ----
   /**

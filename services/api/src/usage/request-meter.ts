@@ -11,11 +11,13 @@ export class PostgresApiRequestMeter implements ApiRequestMeter {
            id, request_id, tenant_id, key_id, occurred_at, environment, access_stage,
            method, route_template, operation_id, required_scope, product_family,
            status_code, outcome, rejection_reason, rate_limit_count,
-           rate_limit_value, rate_limit_window_seconds
+           rate_limit_value, rate_limit_window_seconds, effective_tier_id,
+           entitlement_version, rate_limit_tenant_count, rate_limit_tenant_value,
+           rate_limit_rejected_by
          )
          VALUES (
            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-           $15, $16, $17, $18
+           $15, $16, $17, $18, $19, $20, $21, $22, $23
          )
          ON CONFLICT (tenant_id, request_id) DO NOTHING`,
         [
@@ -37,6 +39,11 @@ export class PostgresApiRequestMeter implements ApiRequestMeter {
           event.rateLimitCount,
           event.rateLimitValue,
           event.rateLimitWindowSeconds,
+          event.effectiveTierId,
+          event.entitlementVersion,
+          event.rateLimitTenantCount,
+          event.rateLimitTenantValue,
+          event.rateLimitRejectedBy,
         ],
       );
     });

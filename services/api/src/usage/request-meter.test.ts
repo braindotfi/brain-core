@@ -31,6 +31,11 @@ describe("PostgresApiRequestMeter", () => {
       rateLimitCount: 1,
       rateLimitValue: 600,
       rateLimitWindowSeconds: 60,
+      effectiveTierId: "sandbox_demo_v1",
+      entitlementVersion: 1,
+      rateLimitTenantCount: 7,
+      rateLimitTenantValue: 6000,
+      rateLimitRejectedBy: null,
     };
 
     await meter.record(event);
@@ -62,6 +67,11 @@ describe("PostgresApiRequestMeter", () => {
       event.rateLimitCount,
       event.rateLimitValue,
       event.rateLimitWindowSeconds,
+      event.effectiveTierId,
+      event.entitlementVersion,
+      event.rateLimitTenantCount,
+      event.rateLimitTenantValue,
+      event.rateLimitRejectedBy,
     ]);
   });
 });

@@ -287,7 +287,8 @@ GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receip
 -- through an already-tenant-scoped code or refresh token, never a pre-tenant
 -- lookup.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
-  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,
+  member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,
+  tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,
   oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
 -- API-key authentication resolves the key before a tenant scope exists. Raw
 -- keys additionally need only the server-owned demo eligibility columns, not
@@ -402,6 +403,18 @@ REVOKE UPDATE, DELETE, TRUNCATE ON api_request_meter_events
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_surface_gateway,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
+-- Commercial API entitlements are server-owned. Member request paths may
+-- read the effective policy but cannot assign a tier or key override.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_rate_limit_tiers,
+  tenant_api_entitlements, api_key_rate_limit_overrides
+  FROM brain_app, brain_wiki_reader, brain_mcp_reader, brain_raw_worker,
+       brain_canonical_projector, brain_ledger_projector, brain_execution_worker,
+       brain_audit_verifier, brain_audit_publisher, brain_resolver,
+       brain_surface_gateway, brain_surface_audit_writer, brain_auth,
+       brain_auth_audit_writer;
+GRANT SELECT, INSERT, UPDATE ON tenant_api_entitlements TO brain_privileged;
+GRANT SELECT, INSERT, UPDATE, DELETE ON api_key_rate_limit_overrides TO brain_privileged;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

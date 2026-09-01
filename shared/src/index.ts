@@ -87,9 +87,15 @@ export { default as idempotencyPlugin } from "./idempotency/middleware.js";
 export {
   RedisSlidingWindowRateLimiter,
   InMemorySlidingWindowRateLimiter,
+  RedisApiSlidingWindowRateLimiter,
+  InMemoryApiSlidingWindowRateLimiter,
   type SlidingWindowRateLimiter,
   type SlidingWindowOptions,
   type RateLimitDecision,
+  type ApiRateLimitPolicy,
+  type ApiRateLimitDecision,
+  type ApiSlidingWindowHit,
+  type ApiSlidingWindowRateLimiter,
 } from "./ratelimit/sliding-window.js";
 
 // Audit (§1 principle 4)
