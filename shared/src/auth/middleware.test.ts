@@ -479,6 +479,45 @@ describe("API key rejection separation", () => {
     }
   });
 
+  it("awaits durable gateway evidence and fails closed when it cannot be written", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyGatewayTelemetry: {
+        record: async () => {
+          throw new Error("gateway observation unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({
+        statusCode: 503,
+        message: "API usage observation is unavailable",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("emits a completeness signal when the durable meter append fails", async () => {
     const failures: ApiKeyMeterFailureTelemetryEvent[] = [];
     const app = Fastify({ logger: false });

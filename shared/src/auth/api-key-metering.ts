@@ -111,6 +111,7 @@ export interface ApiKeyMeterFailureTelemetryEvent {
   readonly tenantId: string;
   readonly keyId: string;
   readonly environment: ApiKeyEnvironment;
+  readonly occurredAt: Date;
 }
 
 export interface ApiKeyMeterFailureTelemetry {
@@ -122,6 +123,7 @@ export interface ApiKeyGatewayTelemetryEvent {
   readonly tenantId: string;
   readonly keyId: string;
   readonly environment: ApiKeyEnvironment;
+  readonly occurredAt: Date;
   readonly limiterDecision: boolean;
 }
 

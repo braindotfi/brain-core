@@ -201,6 +201,8 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "api_usage_reconciliation_runs", column: "tenant_id" },
   { table: "api_usage_daily_rollups", column: "tenant_id" },
   { table: "api_entitlement_change_log", column: "tenant_id" },
+  { table: "api_meter_persistence_failure_events", column: "tenant_id" },
+  { table: "api_gateway_request_observations", column: "tenant_id" },
   { table: "api_request_meter_events", column: "tenant_id" },
   { table: "api_key_rate_limit_overrides", column: "tenant_id" },
   { table: "api_keys", column: "tenant_id" },

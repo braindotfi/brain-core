@@ -15,9 +15,6 @@ export interface ReconcileUsageInput {
   periodEnd: Date;
   idempotencyKey: string;
   actor: string;
-  gatewayRequestCount: number;
-  limiterDecisionCount: number;
-  meterPersistenceFailures: number;
 }
 
 export interface UsageReconciliationResult {
@@ -39,14 +36,18 @@ interface CountRow {
   high_water_id?: string | null;
 }
 
+interface GatewayObservationTotalsRow {
+  gateway_request_count: string | number;
+  limiter_decision_count: string | number;
+  missing_meter_count: string | number;
+  explicit_meter_failure_count: string | number;
+}
+
 export async function reconcileUsagePeriod(
   pool: Pool,
   input: ReconcileUsageInput,
 ): Promise<UsageReconciliationResult> {
   assertPeriod(input.periodStart, input.periodEnd);
-  assertNonNegativeInteger(input.gatewayRequestCount, "gatewayRequestCount");
-  assertNonNegativeInteger(input.limiterDecisionCount, "limiterDecisionCount");
-  assertNonNegativeInteger(input.meterPersistenceFailures, "meterPersistenceFailures");
 
   return withTenantScope(pool, input.tenantId, async (client) => {
     const existing = await client.query<{
@@ -71,26 +72,33 @@ export async function reconcileUsagePeriod(
     await rebuildDailyRollups(client, input);
     const raw = await rawTotals(client, input);
     const rollup = await rollupTotals(client, input);
+    const observed = await gatewayObservationTotals(client, input);
     const rawRequestCount = Number(raw.request_count);
     const rawBillableUnits = Number(raw.billable_units);
     const rawLimiterDecisionCount = Number(raw.limiter_decision_count ?? 0);
     const rollupRequestCount = Number(rollup.request_count);
     const rollupBillableUnits = Number(rollup.billable_units);
+    const gatewayRequestCount = Number(observed.gateway_request_count);
+    const limiterDecisionCount = Number(observed.limiter_decision_count);
+    const missingMeterCount = Number(observed.missing_meter_count);
+    const explicitMeterFailureCount = Number(observed.explicit_meter_failure_count);
+    const meterPersistenceFailures = Math.max(missingMeterCount, explicitMeterFailureCount);
     const discrepancy: UsageReconciliationResult["discrepancy"] = {};
     compare(discrepancy, "rollup_requests", rawRequestCount, rollupRequestCount);
     compare(discrepancy, "rollup_units", rawBillableUnits, rollupBillableUnits);
-    compare(discrepancy, "gateway_requests", rawRequestCount, input.gatewayRequestCount);
-    compare(discrepancy, "limiter_decisions", rawLimiterDecisionCount, input.limiterDecisionCount);
+    compare(discrepancy, "gateway_requests", rawRequestCount, gatewayRequestCount);
+    compare(discrepancy, "limiter_decisions", rawLimiterDecisionCount, limiterDecisionCount);
+    compare(discrepancy, "explicit_meter_failures", missingMeterCount, explicitMeterFailureCount);
     const status =
-      input.meterPersistenceFailures > 0
+      meterPersistenceFailures > 0
         ? "incomplete"
         : Object.keys(discrepancy).length === 0
           ? "matched"
           : "mismatch";
-    if (input.meterPersistenceFailures > 0) {
+    if (meterPersistenceFailures > 0) {
       discrepancy.meter_persistence_failures = {
         expected: 0,
-        actual: input.meterPersistenceFailures,
+        actual: meterPersistenceFailures,
       };
     }
     const id = newApiUsageReconciliationRunId();
@@ -118,9 +126,9 @@ export async function reconcileUsagePeriod(
         rawLimiterDecisionCount,
         rollupRequestCount,
         rollupBillableUnits,
-        input.gatewayRequestCount,
-        input.limiterDecisionCount,
-        input.meterPersistenceFailures,
+        gatewayRequestCount,
+        limiterDecisionCount,
+        meterPersistenceFailures,
         status,
         JSON.stringify(discrepancy),
         raw.high_water_at ?? null,
@@ -329,6 +337,38 @@ async function rollupTotals(
   return rows[0] ?? { request_count: 0, billable_units: 0 };
 }
 
+async function gatewayObservationTotals(
+  client: TenantScopedClient,
+  input: ReconcileUsageInput,
+): Promise<GatewayObservationTotalsRow> {
+  const { rows } = await client.query<GatewayObservationTotalsRow>(
+    `SELECT count(*) AS gateway_request_count,
+            count(*) FILTER (WHERE observation.limiter_decision) AS limiter_decision_count,
+            count(*) FILTER (WHERE meter.request_id IS NULL) AS missing_meter_count,
+            (
+              SELECT count(*)
+                FROM api_meter_persistence_failure_events failure
+               WHERE failure.tenant_id = $1 AND failure.environment = $2
+                 AND failure.occurred_at >= $3 AND failure.occurred_at < $4
+            ) AS explicit_meter_failure_count
+       FROM api_gateway_request_observations observation
+       LEFT JOIN api_request_meter_events meter
+         ON meter.tenant_id = observation.tenant_id
+        AND meter.request_id = observation.request_id
+      WHERE observation.tenant_id = $1 AND observation.environment = $2
+        AND observation.occurred_at >= $3 AND observation.occurred_at < $4`,
+    [input.tenantId, input.environment, input.periodStart, input.periodEnd],
+  );
+  return (
+    rows[0] ?? {
+      gateway_request_count: 0,
+      limiter_decision_count: 0,
+      missing_meter_count: 0,
+      explicit_meter_failure_count: 0,
+    }
+  );
+}
+
 function compare(
   target: UsageReconciliationResult["discrepancy"],
   key: string,
@@ -375,11 +415,5 @@ function assertPeriod(start: Date, end: Date): void {
     end.getUTCMilliseconds() !== 0
   ) {
     throw new Error("reconciliation periods must use UTC day boundaries");
-  }
-}
-
-function assertNonNegativeInteger(value: number, name: string): void {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${name} must be a nonnegative safe integer`);
   }
 }

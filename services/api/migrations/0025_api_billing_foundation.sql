@@ -31,6 +31,7 @@ ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE api_request_meter_events
   ADD COLUMN IF NOT EXISTS metering_policy_version TEXT
+    DEFAULT 'requests_v1_shadow'
     REFERENCES api_metering_policies(id),
   ADD COLUMN IF NOT EXISTS billable_units BIGINT NOT NULL DEFAULT 0;
 

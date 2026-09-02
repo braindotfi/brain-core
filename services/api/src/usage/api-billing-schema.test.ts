@@ -6,12 +6,34 @@ const migration = readFileSync(
   resolve(process.cwd(), "migrations/0025_api_billing_foundation.sql"),
   "utf8",
 );
+const observationsMigration = readFileSync(
+  resolve(process.cwd(), "migrations/0026_api_usage_gateway_observations.sql"),
+  "utf8",
+);
 
 describe("RFC 0008 billing foundation schema", () => {
   it("keeps request facts policy-versioned and unit-bearing", () => {
     expect(migration).toContain("metering_policy_version TEXT");
+    expect(migration).toContain("DEFAULT 'requests_v1_shadow'");
     expect(migration).toContain("billable_units BIGINT NOT NULL DEFAULT 0");
     expect(migration).toContain("'requests_v1_shadow'");
+  });
+
+  it.each(["api_gateway_request_observations", "api_meter_persistence_failure_events"])(
+    "makes independent reconciliation evidence append-only and tenant scoped on %s",
+    (table) => {
+      expect(observationsMigration).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+      expect(observationsMigration).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
+      expect(observationsMigration).toMatch(
+        new RegExp(`REVOKE UPDATE, DELETE, TRUNCATE ON[\\s\\S]*${table}`),
+      );
+    },
+  );
+
+  it("keeps the Phase 1 writer compatible while the new API image is starting", () => {
+    expect(migration).toMatch(
+      /metering_policy_version TEXT\s+DEFAULT 'requests_v1_shadow'\s+REFERENCES/,
+    );
   });
 
   it.each([

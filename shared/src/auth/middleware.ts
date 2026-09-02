@@ -185,13 +185,22 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
         errorCode: null,
         finalized: false,
       };
-      apiKeyGatewayTelemetry?.record({
-        requestId: meterRequestId,
-        tenantId: result.attribution.tenantId,
-        keyId: result.attribution.keyId,
-        environment: result.attribution.environment,
-        limiterDecision: result.rateLimit !== undefined,
-      });
+      try {
+        await apiKeyGatewayTelemetry?.record({
+          requestId: meterRequestId,
+          tenantId: result.attribution.tenantId,
+          keyId: result.attribution.keyId,
+          environment: result.attribution.environment,
+          occurredAt: request.apiKeyMeterContext.occurredAt,
+          limiterDecision: result.rateLimit !== undefined,
+        });
+      } catch (err) {
+        request.log.error(
+          { err, request_id: request.id },
+          "durable API key gateway observation failed",
+        );
+        throw brainError("dependency_unavailable", "API usage observation is unavailable");
+      }
 
       if (result.rateLimit !== undefined) {
         const remaining = Math.max(
@@ -281,12 +290,20 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
         rateLimitRejectedBy: context.rateLimit?.rejectedBy ?? null,
       });
     } catch (err) {
-      apiKeyMeterFailureTelemetry?.record({
-        requestId: context.meterRequestId,
-        tenantId: context.attribution.tenantId,
-        keyId: context.attribution.keyId,
-        environment: context.attribution.environment,
-      });
+      try {
+        await apiKeyMeterFailureTelemetry?.record({
+          requestId: context.meterRequestId,
+          tenantId: context.attribution.tenantId,
+          keyId: context.attribution.keyId,
+          environment: context.attribution.environment,
+          occurredAt: context.occurredAt,
+        });
+      } catch (telemetryError) {
+        request.log.error(
+          { err: telemetryError, request_id: request.id },
+          "durable API request meter failure observation failed",
+        );
+      }
       request.log.error({ err, request_id: request.id }, "api key request meter append failed");
       if (
         apiKeyMeterFailureMode === "billable_fail_closed" &&
