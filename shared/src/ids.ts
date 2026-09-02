@@ -107,6 +107,12 @@ export const ID_PREFIX = {
   apiBillingPeriod: "ubp",
   apiBillingAdjustment: "uadj",
   apiEntitlementChange: "echg",
+  // RFC 0010 production graduation. Verification evidence remains bound to
+  // the synthetic source tenant until a fresh production tenant is created.
+  tenantGraduationRequest: "grad",
+  tenantGraduationEvidence: "gve",
+  tenantGraduationAssessment: "gva",
+  tenantGraduationReview: "gvr",
   // OAuth 2.1 authorization server (Phase 2a increment 3, OAUTH-AS-PLAN.md
   // section 4). oauth_clients.client_id is minted by scripts/ops/
   // register-oauth-client.ts, not this file's generic prefix; the constant
@@ -180,6 +186,13 @@ export const newApiUsageReconciliationRunId = (): string =>
 export const newApiBillingPeriodId = (): string => brainId(ID_PREFIX.apiBillingPeriod);
 export const newApiBillingAdjustmentId = (): string => brainId(ID_PREFIX.apiBillingAdjustment);
 export const newApiEntitlementChangeId = (): string => brainId(ID_PREFIX.apiEntitlementChange);
+export const newTenantGraduationRequestId = (): string =>
+  brainId(ID_PREFIX.tenantGraduationRequest);
+export const newTenantGraduationEvidenceId = (): string =>
+  brainId(ID_PREFIX.tenantGraduationEvidence);
+export const newTenantGraduationAssessmentId = (): string =>
+  brainId(ID_PREFIX.tenantGraduationAssessment);
+export const newTenantGraduationReviewId = (): string => brainId(ID_PREFIX.tenantGraduationReview);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 export const newGovernanceReportSnapshotId = (): string =>
   brainId(ID_PREFIX.governanceReportSnapshot);

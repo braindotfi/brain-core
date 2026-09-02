@@ -22,6 +22,10 @@ import {
   newReconciliationMatchId,
   newRequestId,
   newTenantId,
+  newTenantGraduationAssessmentId,
+  newTenantGraduationEvidenceId,
+  newTenantGraduationRequestId,
+  newTenantGraduationReviewId,
   newTokenId,
   newTransactionId,
   newTransferId,
@@ -59,6 +63,10 @@ describe("convenience generators", () => {
     expect(newExecutionId().startsWith("exec_")).toBe(true);
     expect(newPolicyId().startsWith("pol_")).toBe(true);
     expect(newGovernanceReportSnapshotId().startsWith("grpt_")).toBe(true);
+    expect(newTenantGraduationRequestId().startsWith("grad_")).toBe(true);
+    expect(newTenantGraduationEvidenceId().startsWith("gve_")).toBe(true);
+    expect(newTenantGraduationAssessmentId().startsWith("gva_")).toBe(true);
+    expect(newTenantGraduationReviewId().startsWith("gvr_")).toBe(true);
   });
 });
 

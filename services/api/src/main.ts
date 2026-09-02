@@ -98,6 +98,10 @@ import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerDemoPolicyActivateRoute } from "./demo/policy-activate-route.js";
 import { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
+import { registerGraduationRoutes } from "./graduation/routes.js";
+import { PostgresGraduationVerificationRepository } from "./graduation/repository.js";
+import { GraduationVerificationService } from "./graduation/service.js";
+import { buildPendingComplianceGraduationVerifier } from "./graduation/verifier.js";
 import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
   buildApiKeyAuthenticator,
@@ -2572,6 +2576,17 @@ async function main(): Promise<void> {
               : {}),
             ...(deliverSetPasswordEmail !== undefined ? { deliverSetPasswordEmail } : {}),
             demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
+          }),
+        );
+        const graduationVerificationService = new GraduationVerificationService(
+          new PostgresGraduationVerificationRepository(pool),
+          buildPendingComplianceGraduationVerifier(),
+          audit,
+        );
+        await v1.register(async (child) =>
+          registerGraduationRoutes(child, {
+            pool,
+            service: graduationVerificationService,
           }),
         );
         await v1.register(async (child) =>
