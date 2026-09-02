@@ -84,14 +84,22 @@ CREATE OR REPLACE FUNCTION create_default_api_entitlements()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
-  INSERT INTO tenant_api_entitlements (tenant_id, environment, tier_id, source)
-  VALUES
-    (NEW.id, 'sandbox', 'sandbox_demo_v1', 'tenant_provisioning'),
-    (NEW.id, 'live', 'starter_v1', 'tenant_provisioning')
-  ON CONFLICT (tenant_id, environment) DO NOTHING;
+  -- Resolve the entitlement table in the same schema as the trigger's tenants
+  -- table. Production uses public, while integration tests apply migrations to
+  -- isolated schemas. Identifier formatting keeps the SECURITY DEFINER target
+  -- explicit without trusting the caller's search_path.
+  EXECUTE format(
+    'INSERT INTO %I.tenant_api_entitlements '
+    '(tenant_id, environment, tier_id, source) '
+    'VALUES '
+    '($1, ''sandbox'', ''sandbox_demo_v1'', ''tenant_provisioning''), '
+    '($1, ''live'', ''starter_v1'', ''tenant_provisioning'') '
+    'ON CONFLICT (tenant_id, environment) DO NOTHING',
+    TG_TABLE_SCHEMA
+  ) USING NEW.id;
   RETURN NEW;
 END;
 $$;
