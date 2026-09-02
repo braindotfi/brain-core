@@ -9,6 +9,10 @@ function fakePool(options: {
   rawLimiterDecisions?: number;
   rollupRequests?: number;
   rollupUnits?: number;
+  gatewayRequests?: number;
+  gatewayLimiterDecisions?: number;
+  missingMeterEvents?: number;
+  explicitMeterFailures?: number;
   reconciliation?: Record<string, unknown>;
 }) {
   const queries: Array<{ sql: string; values: readonly unknown[] }> = [];
@@ -38,6 +42,19 @@ function fakePool(options: {
             {
               request_count: options.rollupRequests ?? 3,
               billable_units: options.rollupUnits ?? 2,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM api_gateway_request_observations observation")) {
+        return {
+          rows: [
+            {
+              gateway_request_count: options.gatewayRequests ?? 3,
+              limiter_decision_count: options.gatewayLimiterDecisions ?? 3,
+              missing_meter_count: options.missingMeterEvents ?? 0,
+              explicit_meter_failure_count: options.explicitMeterFailures ?? 0,
             },
           ],
           rowCount: 1,
@@ -79,9 +96,6 @@ const reconcileInput = {
   periodEnd: new Date("2026-10-01T00:00:00.000Z"),
   idempotencyKey: "github-run-123",
   actor: operatorActor,
-  gatewayRequestCount: 3,
-  limiterDecisionCount: 3,
-  meterPersistenceFailures: 0,
 };
 
 describe("usage billing foundation", () => {
@@ -106,16 +120,27 @@ describe("usage billing foundation", () => {
   });
 
   it("fails reconciliation when gateway evidence or persistence completeness differs", async () => {
-    const { pool } = fakePool({});
-    const result = await reconcileUsagePeriod(pool, {
-      ...reconcileInput,
-      gatewayRequestCount: 4,
-      meterPersistenceFailures: 1,
+    const { pool } = fakePool({
+      gatewayRequests: 4,
+      missingMeterEvents: 1,
+      explicitMeterFailures: 1,
     });
+    const result = await reconcileUsagePeriod(pool, reconcileInput);
 
     expect(result.status).toBe("incomplete");
     expect(result.discrepancy).toMatchObject({
       gateway_requests: { expected: 3, actual: 4 },
+      meter_persistence_failures: { expected: 0, actual: 1 },
+    });
+  });
+
+  it("detects an unmetered observation even when explicit failure recording also failed", async () => {
+    const { pool } = fakePool({ missingMeterEvents: 1, explicitMeterFailures: 0 });
+    const result = await reconcileUsagePeriod(pool, reconcileInput);
+
+    expect(result.status).toBe("incomplete");
+    expect(result.discrepancy).toMatchObject({
+      explicit_meter_failures: { expected: 1, actual: 0 },
       meter_persistence_failures: { expected: 0, actual: 1 },
     });
   });

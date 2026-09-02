@@ -34,9 +34,6 @@ async function main(): Promise<void> {
         periodEnd: requiredDate(flags, "period-end"),
         idempotencyKey: required(flags, "idempotency-key"),
         actor,
-        gatewayRequestCount: nonNegativeInteger(flags, "gateway-request-count"),
-        limiterDecisionCount: nonNegativeInteger(flags, "limiter-decision-count"),
-        meterPersistenceFailures: nonNegativeInteger(flags, "meter-persistence-failures"),
       });
       await audit.emit({
         tenantId,
@@ -120,12 +117,6 @@ function requiredEnvironment(flags: Flags): "sandbox" | "live" {
 function requiredDate(flags: Flags, name: string): Date {
   const value = new Date(required(flags, name));
   if (!Number.isFinite(value.getTime())) throw new Error(`--${name} must be an ISO timestamp`);
-  return value;
-}
-
-function nonNegativeInteger(flags: Flags, name: string): number {
-  const value = Number(required(flags, name));
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`--${name} must be nonnegative`);
   return value;
 }
 

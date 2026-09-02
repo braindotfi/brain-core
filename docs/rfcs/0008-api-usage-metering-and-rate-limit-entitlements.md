@@ -435,7 +435,9 @@ general audit feed remains available under Audit Log only.
 The implementation uses indexed raw queries for the live current-month view and
 reproducible UTC daily rollups for reconciliation and close. Each reconciliation
 records its source high-water mark and compares raw rows, rollups, known-key
-gateway observations, limiter decisions, and meter-persistence failures.
+gateway observations, limiter decisions, and meter-persistence failures. The
+gateway evidence is an independent append-only stream, not an operator-entered
+count derived from request-meter rows.
 
 ## 9. Minimum billing foundation versus deferrable analytics
 
@@ -524,8 +526,8 @@ charts are deferrable.
 
 - Add rollup reconciliation, period close, completeness alarms, adjustments,
   and export.
-- Run a zero-charge shadow period and compare gateway, Redis, raw meter, and
-  rollup totals.
+- Run a zero-charge shadow period and compare durable gateway observations,
+  limiter decisions, raw meter, and rollup totals.
 - Approve a production billing start timestamp. Do not back-bill earlier
   traffic.
 
@@ -596,6 +598,8 @@ metering foundation and route contract should land first.
       reconciliation evidence, immutable period close, and adjustment records.
 - [x] Add protected, audited operator workflows for entitlement changes and
       zero-charge shadow reconciliation and close.
+- [x] Persist independent, tenant-filterable gateway observations, limiter
+      decisions, and meter-persistence failures for restart-safe reconciliation.
 - [ ] Deploy the final phase and complete a measured zero-charge production
-      shadow period with zero persistence failures and matched external counts.
+      shadow period with zero persistence failures and matched independent counts.
 - [ ] Approve a future billing-system implementation separately.

@@ -404,6 +404,18 @@ REVOKE UPDATE, DELETE, TRUNCATE ON api_request_meter_events
        brain_resolver, brain_surface_gateway,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 
+-- RFC 0008's independent gateway observations and explicit meter-failure
+-- events are reconciliation evidence. The request path may append them but
+-- no runtime role may rewrite or erase them.
+REVOKE UPDATE, DELETE, TRUNCATE ON api_gateway_request_observations,
+  api_meter_persistence_failure_events
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
 -- Commercial API entitlements are server-owned. Member request paths may
 -- read the effective policy but cannot assign a tier or key override.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_rate_limit_tiers,
@@ -429,7 +441,9 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_metering_policies,
 GRANT SELECT ON api_metering_policies, api_request_meter_events, api_keys,
   api_rate_limit_tiers, tenant_api_entitlements, api_key_rate_limit_overrides,
   api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,
-  api_billing_adjustments, api_entitlement_change_log TO brain_privileged;
+  api_billing_adjustments, api_entitlement_change_log,
+  api_gateway_request_observations, api_meter_persistence_failure_events
+  TO brain_privileged;
 GRANT INSERT, UPDATE, DELETE ON api_usage_daily_rollups TO brain_privileged;
 GRANT INSERT ON api_usage_reconciliation_runs, api_billing_periods,
   api_billing_adjustments, api_entitlement_change_log TO brain_privileged;
