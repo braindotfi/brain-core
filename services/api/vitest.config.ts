@@ -21,6 +21,8 @@ export default defineConfig({
         "src/anchorBroadcaster.ts",
         "src/main.ts",
         "src/tenant-deletion/audit-outbox-cli.ts",
+        "src/usage/billing-operator-cli.ts",
+        "src/usage/entitlement-operator-cli.ts",
         "src/auth/siwe.ts",
         "src/sandbox/resolvers.ts",
       ],
