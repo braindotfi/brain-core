@@ -349,8 +349,8 @@ jobs:
           {
             printf 'BRAIN_API_KEY_AUTH_ENABLED=true\n'
             printf 'BRAIN_API_KEY_PEPPER=%s\n' "$BRAIN_API_KEY_PEPPER_STAGING"
-            printf 'BRAIN_API_KEY_RATE_LIMIT=600\n'
-            printf 'BRAIN_API_KEY_RATE_WINDOW_SECONDS=60\n'
+            printf 'BRAIN_EDGE_RATE_LIMIT=100000\n'
+            printf 'BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS=2000\n'
           } > "$tmp"
           cat > "$script_tmp" <<'PY'
           from pathlib import Path

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool } from "pg";
 import {
   API_KEY_PERMITTED_SCOPES,
@@ -12,9 +12,10 @@ import {
   type AuditEmitter,
   type ApiKeyAuthenticationResult,
   type Principal,
-  type RateLimitDecision,
+  type ApiRateLimitDecision,
+  type ApiRateLimitPolicy,
+  type ApiSlidingWindowRateLimiter,
   type Scope,
-  type SlidingWindowRateLimiter,
   type TenantScopedClient,
 } from "@brain/shared";
 
@@ -39,7 +40,7 @@ export interface ApiKeyAuthenticatorDeps {
   pool: Pool;
   resolverPool: Pool;
   pepper: string;
-  rateLimiter?: SlidingWindowRateLimiter;
+  rateLimiter: ApiSlidingWindowRateLimiter;
   /**
    * Minimum time between `last_used_at` DB writes for the same key (Review P3).
    * A busy key would otherwise fire one unawaited UPDATE per request; this
@@ -73,6 +74,15 @@ interface ApiKeyRow {
   provisioning_state?: TenantApiKeyState["provisioning_state"];
   data_profile?: TenantApiKeyState["data_profile"];
   access_stage?: TenantApiKeyState["access_stage"];
+  tier_id?: string | null;
+  tier_display_name?: string | null;
+  entitlement_version?: number | null;
+  entitlement_status?: "active" | "suspended" | null;
+  rate_window_seconds?: number | null;
+  tier_key_limit?: number | null;
+  tenant_limit?: number | null;
+  override_key_limit?: number | null;
+  override_expires_at?: Date | string | null;
 }
 
 interface TenantApiKeyState {
@@ -239,34 +249,63 @@ export async function registerApiKeyRoutes(
         throw brainError("request_params_invalid", "key_id must not be empty");
       }
 
-      const rows = await withTenantScope(deps.pool, request.params.tenantId, (client) =>
-        queryUsage(client, {
-          tenantId: request.params.tenantId,
-          window,
-          ...(environment !== undefined ? { environment } : {}),
-          ...(keyId !== undefined ? { keyId } : {}),
-        }),
+      const bounds = usageBounds(window, new Date());
+      const [rows, entitlement, completeness] = await withTenantScope(
+        deps.pool,
+        request.params.tenantId,
+        async (client) => {
+          const usageRows = await queryUsage(client, {
+            tenantId: request.params.tenantId,
+            periodStart: bounds.periodStart,
+            periodEnd: bounds.periodEnd,
+            ...(environment !== undefined ? { environment } : {}),
+            ...(keyId !== undefined ? { keyId } : {}),
+          });
+          const effectiveEntitlement =
+            environment === undefined
+              ? null
+              : await loadUsageEntitlement(client, {
+                  tenantId: request.params.tenantId,
+                  environment,
+                  ...(keyId !== undefined ? { keyId } : {}),
+                });
+          const usageCompleteness = await loadUsageCompleteness(client, {
+            tenantId: request.params.tenantId,
+            periodStart: bounds.periodStart,
+            periodEnd: bounds.periodEnd,
+            ...(environment !== undefined ? { environment } : {}),
+          });
+          return [usageRows, effectiveEntitlement, usageCompleteness] as const;
+        },
       );
       const total = rows.reduce((sum, row) => sum + Number(row.request_count), 0);
+      const billableUnits = rows.reduce((sum, row) => sum + Number(row.billable_units), 0);
+      const rejectedRequests = rows
+        .filter((row) => row.outcome !== "success")
+        .reduce((sum, row) => sum + Number(row.request_count), 0);
       return {
         tenant_id: request.params.tenantId,
         window,
+        period_start: bounds.periodStart.toISOString(),
+        period_end: bounds.periodEnd.toISOString(),
         ...(environment !== undefined ? { environment } : {}),
         ...(keyId !== undefined ? { key_id: keyId } : {}),
+        entitlement,
         total_requests: total,
+        authenticated_requests: total,
+        rejected_requests: rejectedRequests,
+        billable_units: billableUnits,
+        source: completeness.closed ? "closed_period" : "raw_meter",
+        completeness: {
+          status: completeness.status,
+          last_reconciled_at: completeness.lastReconciledAt,
+          meter_persistence_failures: completeness.meterPersistenceFailures,
+        },
+        breakdowns: summarizeUsage(rows),
         // Compatibility alias for BrainMVB until its Phase 3 usage view moves
         // to the expanded request-meter contract.
         total_events: total,
-        keys: rows.map((row) => ({
-          key_id: row.key_id,
-          environment: row.environment,
-          request_count: Number(row.request_count),
-          event_count: Number(row.request_count),
-          first_request_at: toIso(row.first_request_at),
-          last_request_at: toIso(row.last_request_at),
-          first_event_at: toIso(row.first_request_at),
-          last_event_at: toIso(row.last_request_at),
-        })),
+        keys: summarizeKeys(rows),
       };
     },
   );
@@ -280,7 +319,10 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
   // that's an acceptable tradeoff for this field.
   const lastWrittenAt = new Map<string, number>();
 
-  return async (secret: string): Promise<ApiKeyAuthenticationResult> => {
+  return async (
+    secret: string,
+    requestContext?: { requestId: string },
+  ): Promise<ApiKeyAuthenticationResult> => {
     const lookup = parseApiKeyLookup(secret);
     if (lookup === null) {
       return { kind: "unknown_rejected", reason: "malformed" };
@@ -289,9 +331,20 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     const { rows } = await deps.resolverPool.query<ApiKeyRow>(
       `SELECT k.id, k.tenant_id, k.name, k.environment, k.scopes, k.key_prefix, k.key_last4,
               k.hashed_secret, k.created_at, k.last_used_at, k.revoked_at, k.expires_at,
-              k.rotated_from_id, t.provisioning_state, t.data_profile, t.access_stage
+              k.rotated_from_id, t.provisioning_state, t.data_profile, t.access_stage,
+              ent.tier_id, tier.display_name AS tier_display_name,
+              ent.version AS entitlement_version, ent.status AS entitlement_status,
+              tier.window_seconds AS rate_window_seconds,
+              tier.key_limit AS tier_key_limit, tier.tenant_limit,
+              override.key_limit AS override_key_limit,
+              override.expires_at AS override_expires_at
          FROM api_keys k
          JOIN tenants t ON t.id = k.tenant_id
+         LEFT JOIN tenant_api_entitlements ent
+           ON ent.tenant_id = k.tenant_id AND ent.environment = k.environment
+         LEFT JOIN api_rate_limit_tiers tier ON tier.id = ent.tier_id
+         LEFT JOIN api_key_rate_limit_overrides override
+           ON override.key_id = k.id AND override.tenant_id = k.tenant_id
         WHERE k.key_prefix = $1 AND k.key_last4 = $2
         ORDER BY k.created_at DESC, k.id DESC`,
       [lookup.keyPrefix, lookup.keyLast4],
@@ -316,18 +369,37 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
     if (hasDemoRawScope(row.scopes) && !isVerifiedSyntheticDemoKey(row)) {
       return { kind: "known_rejected", attribution, reason: "tenant_ineligible" };
     }
+    if (row.entitlement_status === "suspended") {
+      return { kind: "known_rejected", attribution, reason: "tenant_ineligible" };
+    }
 
-    let rateLimit: RateLimitDecision | undefined;
-    if (deps.rateLimiter !== undefined) {
-      rateLimit = await deps.rateLimiter.hit(`api-key:${row.id}`);
-      if (!rateLimit.allowed) {
-        return {
-          kind: "known_rejected",
-          attribution,
-          reason: "rate_limited",
-          rateLimit,
-        };
-      }
+    const policy = resolveApiRateLimitPolicy(row, nowMs);
+    if (policy === null) {
+      return { kind: "known_rejected", attribution, reason: "rate_limiter_unavailable" };
+    }
+    let rateLimit: ApiRateLimitDecision;
+    try {
+      rateLimit = await deps.rateLimiter.hit({
+        keyBucket: `api-rate:key:${row.id}`,
+        tenantBucket: `api-rate:tenant:${row.tenant_id}:${row.environment}`,
+        requestId: requestContext?.requestId ?? randomUUID(),
+        policy,
+      });
+    } catch {
+      return {
+        kind: "known_rejected",
+        attribution,
+        reason: "rate_limiter_unavailable",
+        rateLimitPolicy: policy,
+      };
+    }
+    if (!rateLimit.allowed) {
+      return {
+        kind: "known_rejected",
+        attribution,
+        reason: "rate_limited",
+        rateLimit,
+      };
     }
 
     // Ceiling on the never-evicted cooldown map (revoked/rotated keys never get
@@ -351,7 +423,8 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
       kind: "authenticated",
       keyId: row.id,
       attribution,
-      ...(rateLimit !== undefined ? { rateLimit } : {}),
+      rateLimit,
+      rateLimitPolicy: rateLimit.policy,
       principal: {
         id: row.id,
         type: "api_partner",
@@ -361,6 +434,39 @@ export function buildApiKeyAuthenticator(deps: ApiKeyAuthenticatorDeps) {
         expiresAt: Number.MAX_SAFE_INTEGER,
       },
     };
+  };
+}
+
+function resolveApiRateLimitPolicy(row: ApiKeyRow, nowMs: number): ApiRateLimitPolicy | null {
+  if (
+    row.entitlement_status !== "active" ||
+    row.tier_id === null ||
+    row.tier_id === undefined ||
+    row.entitlement_version === null ||
+    row.entitlement_version === undefined ||
+    row.rate_window_seconds === null ||
+    row.rate_window_seconds === undefined ||
+    row.tier_key_limit === null ||
+    row.tier_key_limit === undefined ||
+    row.tenant_limit === null ||
+    row.tenant_limit === undefined
+  ) {
+    return null;
+  }
+  const overrideActive =
+    row.override_key_limit !== null &&
+    row.override_key_limit !== undefined &&
+    (row.override_expires_at === null ||
+      row.override_expires_at === undefined ||
+      Date.parse(String(row.override_expires_at)) > nowMs);
+  return {
+    tierId: row.tier_id,
+    entitlementVersion: row.entitlement_version,
+    windowSeconds: row.rate_window_seconds,
+    keyLimit: overrideActive
+      ? Math.min(row.tier_key_limit, row.override_key_limit!)
+      : row.tier_key_limit,
+    tenantLimit: row.tenant_limit,
   };
 }
 
@@ -513,8 +619,14 @@ function assertScopesAllowedForTenant(
 
 function parseUsageWindow(input: unknown): string {
   if (input === undefined) return DEFAULT_USAGE_WINDOW;
-  if (typeof input !== "string" || !/^[1-9][0-9]*(d|h)$/.test(input)) {
-    throw brainError("request_params_invalid", "window must be an interval like 30d or 24h");
+  if (
+    typeof input !== "string" ||
+    (input !== "current_month" && !/^[1-9][0-9]*(d|h)$/.test(input))
+  ) {
+    throw brainError(
+      "request_params_invalid",
+      "window must be current_month or an interval like 30d or 24h",
+    );
   }
   return input;
 }
@@ -637,24 +749,97 @@ async function resolveKeyTenant(pool: Pool, id: string): Promise<string | null> 
 }
 
 interface UsageRow {
+  usage_date: Date | string;
   key_id: string;
   environment: ApiKeyEnvironment | null;
+  method: string;
+  operation_id: string;
+  route_template: string;
+  required_scope: string | null;
+  product_family: string | null;
+  outcome: string;
+  metering_policy_version: string;
   request_count: string | number;
+  billable_units: string | number;
   first_request_at: Date | string | null;
   last_request_at: Date | string | null;
+}
+
+interface UsageEntitlementRow {
+  tier_id: string;
+  display_name: string;
+  entitlement_version: number;
+  status: "active" | "suspended";
+  window_seconds: number;
+  key_limit: number;
+  tenant_limit: number;
+  override_key_limit: number | null;
+  override_version: number | null;
+  override_expires_at: Date | string | null;
+}
+
+async function loadUsageEntitlement(
+  client: TenantScopedClient,
+  input: { tenantId: string; environment: ApiKeyEnvironment; keyId?: string },
+) {
+  const params: unknown[] = [input.tenantId, input.environment];
+  const overrideJoin =
+    input.keyId === undefined
+      ? "LEFT JOIN api_key_rate_limit_overrides override ON FALSE"
+      : `LEFT JOIN api_key_rate_limit_overrides override
+           ON override.tenant_id = ent.tenant_id AND override.key_id = $3`;
+  if (input.keyId !== undefined) params.push(input.keyId);
+  const { rows } = await client.query<UsageEntitlementRow>(
+    `SELECT ent.tier_id, tier.display_name, ent.version AS entitlement_version,
+            ent.status, tier.window_seconds, tier.key_limit, tier.tenant_limit,
+            override.key_limit AS override_key_limit,
+            override.version AS override_version,
+            override.expires_at AS override_expires_at
+       FROM tenant_api_entitlements ent
+       JOIN api_rate_limit_tiers tier ON tier.id = ent.tier_id
+       ${overrideJoin}
+      WHERE ent.tenant_id = $1 AND ent.environment = $2`,
+    params,
+  );
+  const row = rows[0];
+  if (row === undefined) return null;
+  const overrideActive =
+    row.override_key_limit !== null &&
+    (row.override_expires_at === null || Date.parse(String(row.override_expires_at)) > Date.now());
+  return {
+    tier_id: row.tier_id,
+    display_name: row.display_name,
+    entitlement_version: row.entitlement_version,
+    status: row.status,
+    window_seconds: row.window_seconds,
+    key_limit: row.key_limit,
+    tenant_limit: row.tenant_limit,
+    effective_key_limit: overrideActive
+      ? Math.min(row.key_limit, row.override_key_limit!)
+      : row.key_limit,
+    key_override:
+      overrideActive && row.override_key_limit !== null
+        ? {
+            key_limit: Math.min(row.key_limit, row.override_key_limit),
+            version: row.override_version,
+            expires_at: toIso(row.override_expires_at),
+          }
+        : null,
+  };
 }
 
 async function queryUsage(
   client: TenantScopedClient,
   input: {
     tenantId: string;
-    window: string;
+    periodStart: Date;
+    periodEnd: Date;
     environment?: ApiKeyEnvironment;
     keyId?: string;
   },
 ): Promise<UsageRow[]> {
-  const params: unknown[] = [input.tenantId, intervalForWindow(input.window)];
-  const filters = ["e.tenant_id = $1", "e.occurred_at >= now() - $2::interval"];
+  const params: unknown[] = [input.tenantId, input.periodStart, input.periodEnd];
+  const filters = ["e.tenant_id = $1", "e.occurred_at >= $2", "e.occurred_at < $3"];
   if (input.environment !== undefined) {
     params.push(input.environment);
     filters.push(`e.environment = $${params.length}`);
@@ -666,21 +851,196 @@ async function queryUsage(
   const { rows } = await client.query<UsageRow>(
     `SELECT e.key_id,
             e.environment,
+            (e.occurred_at AT TIME ZONE 'UTC')::date AS usage_date,
+            e.method,
+            e.operation_id,
+            e.route_template,
+            e.required_scope,
+            e.product_family,
+            e.outcome,
+            e.metering_policy_version,
             count(*) AS request_count,
+            sum(e.billable_units) AS billable_units,
             min(e.occurred_at) AS first_request_at,
             max(e.occurred_at) AS last_request_at
        FROM api_request_meter_events e
       WHERE ${filters.join(" AND ")}
-      GROUP BY e.key_id, e.environment
+      GROUP BY e.key_id, e.environment, (e.occurred_at AT TIME ZONE 'UTC')::date,
+               e.method, e.operation_id,
+               e.route_template, e.required_scope, e.product_family, e.outcome,
+               e.metering_policy_version
       ORDER BY request_count DESC, e.key_id ASC`,
     params,
   );
   return rows;
 }
 
-function intervalForWindow(window: string): string {
+interface UsageCompletenessRow {
+  status: "matched" | "mismatch" | "incomplete";
+  meter_persistence_failures: string | number;
+  created_at: Date | string;
+}
+
+async function loadUsageCompleteness(
+  client: TenantScopedClient,
+  input: {
+    tenantId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    environment?: ApiKeyEnvironment;
+  },
+) {
+  const params: unknown[] = [input.tenantId, input.periodStart, input.periodEnd];
+  const environmentFilter =
+    input.environment === undefined ? "" : `AND environment = $${params.push(input.environment)}`;
+  const { rows } = await client.query<UsageCompletenessRow>(
+    `SELECT status, meter_persistence_failures, created_at
+       FROM api_usage_reconciliation_runs
+      WHERE tenant_id = $1 AND period_start = $2 AND period_end = $3
+        ${environmentFilter}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    params,
+  );
+  const reconciliation = rows[0];
+  const closed = await client.query<{ id: string }>(
+    `SELECT id FROM api_billing_periods
+      WHERE tenant_id = $1 AND period_start = $2 AND period_end = $3
+        ${environmentFilter}
+      LIMIT 1`,
+    params,
+  );
+  return {
+    closed: closed.rows[0] !== undefined,
+    status:
+      closed.rows[0] !== undefined
+        ? "closed"
+        : reconciliation?.status === "matched"
+          ? "reconciled"
+          : (reconciliation?.status ?? "unreconciled"),
+    lastReconciledAt: reconciliation === undefined ? null : toIso(reconciliation.created_at),
+    meterPersistenceFailures: Number(reconciliation?.meter_persistence_failures ?? 0),
+  };
+}
+
+function usageBounds(window: string, now: Date): { periodStart: Date; periodEnd: Date } {
+  if (window === "current_month") {
+    return {
+      periodStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+      periodEnd: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
+    };
+  }
   const amount = Number(window.slice(0, -1));
-  return window.endsWith("d") ? `${amount} days` : `${amount} hours`;
+  const milliseconds = amount * (window.endsWith("d") ? 86_400_000 : 3_600_000);
+  return { periodStart: new Date(now.getTime() - milliseconds), periodEnd: now };
+}
+
+function summarizeUsage(rows: UsageRow[]) {
+  const methods = new Map<string, { count: number; daily: Map<string, number> }>();
+  const scopes = new Map<string, number>();
+  const routes = new Map<string, number>();
+  const outcomes = new Map<string, number>();
+  const daily = new Map<string, number>();
+  for (const row of rows) {
+    const count = Number(row.request_count);
+    const date = toDateKey(row.usage_date);
+    const method = methods.get(row.method) ?? { count: 0, daily: new Map<string, number>() };
+    method.count += count;
+    add(method.daily, date, count);
+    methods.set(row.method, method);
+    add(scopes, row.required_scope ?? "unclassified", count);
+    add(routes, row.operation_id, count);
+    add(outcomes, row.outcome, count);
+    add(daily, date, count);
+  }
+  return {
+    methods: [...methods.entries()]
+      .sort(([leftKey, left], [rightKey, right]) =>
+        right.count === left.count ? leftKey.localeCompare(rightKey) : right.count - left.count,
+      )
+      .map(([method, value]) => ({
+        method,
+        request_count: value.count,
+        daily: serializeDaily(value.daily),
+      })),
+    scopes: serializeBreakdown(scopes, "scope"),
+    routes: serializeBreakdown(routes, "operation_id"),
+    outcomes: serializeBreakdown(outcomes, "outcome"),
+    daily: serializeDaily(daily),
+  };
+}
+
+function serializeDaily(target: Map<string, number>) {
+  return [...target.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, requestCount]) => ({ date, request_count: requestCount }));
+}
+
+function toDateKey(value: Date | string): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function summarizeKeys(rows: UsageRow[]) {
+  const keys = new Map<
+    string,
+    {
+      key_id: string;
+      environment: ApiKeyEnvironment | null;
+      request_count: number;
+      first_request_at: string | null;
+      last_request_at: string | null;
+    }
+  >();
+  for (const row of rows) {
+    const existing = keys.get(row.key_id);
+    const first = toIso(row.first_request_at);
+    const last = toIso(row.last_request_at);
+    if (existing === undefined) {
+      keys.set(row.key_id, {
+        key_id: row.key_id,
+        environment: row.environment,
+        request_count: Number(row.request_count),
+        first_request_at: first,
+        last_request_at: last,
+      });
+      continue;
+    }
+    existing.request_count += Number(row.request_count);
+    if (
+      first !== null &&
+      (existing.first_request_at === null || first < existing.first_request_at)
+    ) {
+      existing.first_request_at = first;
+    }
+    if (last !== null && (existing.last_request_at === null || last > existing.last_request_at)) {
+      existing.last_request_at = last;
+    }
+  }
+  return [...keys.values()]
+    .sort((left, right) =>
+      right.request_count === left.request_count
+        ? left.key_id.localeCompare(right.key_id)
+        : right.request_count - left.request_count,
+    )
+    .map((key) => ({
+      ...key,
+      event_count: key.request_count,
+      first_event_at: key.first_request_at,
+      last_event_at: key.last_request_at,
+    }));
+}
+
+function add(target: Map<string, number>, key: string, count: number): void {
+  target.set(key, (target.get(key) ?? 0) + count);
+}
+
+function serializeBreakdown(target: Map<string, number>, keyName: string) {
+  return [...target.entries()]
+    .sort(([leftKey, leftCount], [rightKey, rightCount]) =>
+      rightCount === leftCount ? leftKey.localeCompare(rightKey) : rightCount - leftCount,
+    )
+    .map(([key, requestCount]) => ({ [keyName]: key, request_count: requestCount }));
 }
 
 function serializeKey(row: ApiKeyRow, secret?: string) {

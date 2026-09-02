@@ -287,7 +287,8 @@ GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receip
 -- through an already-tenant-scoped code or refresh token, never a pre-tenant
 -- lookup.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
-  member_invites, session_refresh_tokens, api_keys, agents, oauth_clients,
+  member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,
+  tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,
   oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
 -- API-key authentication resolves the key before a tenant scope exists. Raw
 -- keys additionally need only the server-owned demo eligibility columns, not
@@ -402,6 +403,50 @@ REVOKE UPDATE, DELETE, TRUNCATE ON api_request_meter_events
        brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
        brain_resolver, brain_surface_gateway,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
+-- RFC 0008's independent gateway observations and explicit meter-failure
+-- events are reconciliation evidence. The request path may append them but
+-- no runtime role may rewrite or erase them.
+REVOKE UPDATE, DELETE, TRUNCATE ON api_gateway_request_observations,
+  api_meter_persistence_failure_events
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
+-- Commercial API entitlements are server-owned. Member request paths may
+-- read the effective policy but cannot assign a tier or key override.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_rate_limit_tiers,
+  tenant_api_entitlements, api_key_rate_limit_overrides
+  FROM brain_app, brain_wiki_reader, brain_mcp_reader, brain_raw_worker,
+       brain_canonical_projector, brain_ledger_projector, brain_execution_worker,
+       brain_audit_verifier, brain_audit_publisher, brain_resolver,
+       brain_surface_gateway, brain_surface_audit_writer, brain_auth,
+       brain_auth_audit_writer;
+GRANT SELECT, INSERT, UPDATE ON tenant_api_entitlements TO brain_privileged;
+GRANT SELECT, INSERT, UPDATE, DELETE ON api_key_rate_limit_overrides TO brain_privileged;
+
+-- RFC 0008 billing-readiness tables. Runtime callers can read their own
+-- tenant's summaries, while only the protected operator role can rebuild
+-- derived rollups or append reconciliation, close, adjustment, and change
+-- evidence. Raw request facts remain immutable to that operator.
+GRANT SELECT ON api_metering_policies, api_usage_daily_rollups,
+  api_usage_reconciliation_runs, api_billing_periods, api_billing_adjustments,
+  api_entitlement_change_log TO brain_app;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_metering_policies,
+  api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,
+  api_billing_adjustments, api_entitlement_change_log FROM brain_app;
+GRANT SELECT ON api_metering_policies, api_request_meter_events, api_keys,
+  api_rate_limit_tiers, tenant_api_entitlements, api_key_rate_limit_overrides,
+  api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,
+  api_billing_adjustments, api_entitlement_change_log,
+  api_gateway_request_observations, api_meter_persistence_failure_events
+  TO brain_privileged;
+GRANT INSERT, UPDATE, DELETE ON api_usage_daily_rollups TO brain_privileged;
+GRANT INSERT ON api_usage_reconciliation_runs, api_billing_periods,
+  api_billing_adjustments, api_entitlement_change_log TO brain_privileged;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

@@ -103,6 +103,10 @@ export const ID_PREFIX = {
   // api_keys; distinct from the token/agent ids minted alongside it.
   apiKey: "akey",
   apiRequestMeterEvent: "mtr",
+  apiUsageReconciliationRun: "urr",
+  apiBillingPeriod: "ubp",
+  apiBillingAdjustment: "uadj",
+  apiEntitlementChange: "echg",
   // OAuth 2.1 authorization server (Phase 2a increment 3, OAUTH-AS-PLAN.md
   // section 4). oauth_clients.client_id is minted by scripts/ops/
   // register-oauth-client.ts, not this file's generic prefix; the constant
@@ -171,6 +175,11 @@ export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerRese
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
 export const newApiRequestMeterEventId = (): string => brainId(ID_PREFIX.apiRequestMeterEvent);
+export const newApiUsageReconciliationRunId = (): string =>
+  brainId(ID_PREFIX.apiUsageReconciliationRun);
+export const newApiBillingPeriodId = (): string => brainId(ID_PREFIX.apiBillingPeriod);
+export const newApiBillingAdjustmentId = (): string => brainId(ID_PREFIX.apiBillingAdjustment);
+export const newApiEntitlementChangeId = (): string => brainId(ID_PREFIX.apiEntitlementChange);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 export const newGovernanceReportSnapshotId = (): string =>
   brainId(ID_PREFIX.governanceReportSnapshot);

@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import {
   CorrelatingAuditEmitter,
-  InMemorySlidingWindowRateLimiter,
+  InMemoryApiSlidingWindowRateLimiter,
   authPlugin,
   errorHandlerPlugin,
   requestIdPlugin,
@@ -213,11 +213,45 @@ function makeAppPool(
         const rows = [...counts].map(([key_id, request_count]) => ({
           key_id,
           environment: store.apiKeys.get(key_id)?.environment ?? null,
+          usage_date: new Date().toISOString().slice(0, 10),
+          method: "GET",
+          operation_id: "unclassified",
+          route_template: "/read-only",
+          required_scope: null,
+          product_family: null,
+          outcome: "success",
+          metering_policy_version: "requests_v1_shadow",
           request_count,
+          billable_units: 0,
           first_request_at: new Date().toISOString(),
           last_request_at: new Date().toISOString(),
         }));
         return { rows, rowCount: rows.length };
+      }
+      if (sql.includes("FROM api_usage_reconciliation_runs")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM api_billing_periods")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM tenant_api_entitlements ent")) {
+        return {
+          rows: [
+            {
+              tier_id: "sandbox_demo_v1",
+              display_name: "Demo",
+              entitlement_version: 1,
+              status: "active",
+              window_seconds: 60,
+              key_limit: 600,
+              tenant_limit: 6000,
+              override_key_limit: null,
+              override_version: null,
+              override_expires_at: null,
+            },
+          ],
+          rowCount: 1,
+        };
       }
       throw new Error(`unhandled query in fake pool: ${sql}`);
     },
@@ -233,7 +267,19 @@ function makeResolverPool(store: FakeStore) {
         const [keyPrefix, keyLast4] = values as [string, string];
         const rows = [...store.apiKeys.values()]
           .filter((row) => row.key_prefix === keyPrefix && row.key_last4 === keyLast4)
-          .map((row) => ({ ...row, ...store.tenantStates.get(row.tenant_id) }));
+          .map((row) => ({
+            ...row,
+            ...store.tenantStates.get(row.tenant_id),
+            tier_id: row.environment === "sandbox" ? "sandbox_demo_v1" : "starter_v1",
+            tier_display_name: row.environment === "sandbox" ? "Demo" : "Starter",
+            entitlement_version: 1,
+            entitlement_status: "active",
+            rate_window_seconds: 60,
+            tier_key_limit: 100,
+            tenant_limit: 1000,
+            override_key_limit: null,
+            override_expires_at: null,
+          }));
         return { rows, rowCount: rows.length };
       }
       if (sql.includes("SELECT tenant_id FROM api_keys WHERE id = $1")) {
@@ -311,7 +357,7 @@ async function buildApp(
       pool,
       resolverPool,
       pepper: PEPPER,
-      rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 100 }),
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
     }),
     apiKeyRequestMeter: new StoreRequestMeter(store),
   });
@@ -385,7 +431,7 @@ describe("per-customer API keys", () => {
 
       const usage = await app.inject({
         method: "GET",
-        url: `/tenants/${tenantId}/usage?window=30d&environment=sandbox&key_id=${issued.id}`,
+        url: `/tenants/${tenantId}/usage?window=current_month&environment=sandbox&key_id=${issued.id}`,
         headers: { authorization: `Bearer ${token}` },
       });
       expect(usage.statusCode).toBe(200);
@@ -393,6 +439,26 @@ describe("per-customer API keys", () => {
         total_requests: 1,
         total_events: 1,
         key_id: issued.id,
+        window: "current_month",
+        authenticated_requests: 1,
+        rejected_requests: 0,
+        billable_units: 0,
+        source: "raw_meter",
+        completeness: { status: "unreconciled", meter_persistence_failures: 0 },
+        breakdowns: {
+          methods: [{ method: "GET", request_count: 1 }],
+          outcomes: [{ outcome: "success", request_count: 1 }],
+        },
+        entitlement: {
+          tier_id: "sandbox_demo_v1",
+          display_name: "Demo",
+          entitlement_version: 1,
+          window_seconds: 60,
+          key_limit: 600,
+          tenant_limit: 6000,
+          effective_key_limit: 600,
+          key_override: null,
+        },
       });
 
       const rotate = await app.inject({
@@ -736,6 +802,7 @@ describe("per-customer API keys", () => {
       pool: makeAppPool(store) as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
     });
 
     await expect(authenticate(secret)).resolves.toMatchObject({
@@ -950,6 +1017,7 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
       lastUsedAtCooldownMs: 60_000,
       now: () => clock,
     });
@@ -978,6 +1046,7 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
       lastUsedAtCooldownMs: 60_000,
       now: () => clock,
     });
@@ -1010,6 +1079,7 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
       lastUsedAtCooldownMs: 60_000,
       now: () => clock,
     });
@@ -1038,6 +1108,7 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
       now: () => clock,
     });
 
@@ -1067,6 +1138,7 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
     });
 
     await expect(authenticate(validSecret)).resolves.toMatchObject({
@@ -1092,14 +1164,103 @@ describe("buildApiKeyAuthenticator - last_used_at cooldown", () => {
       pool: pool as never,
       resolverPool: makeResolverPool(store) as never,
       pepper: PEPPER,
-      rateLimiter: new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 1 }),
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
     });
 
-    await expect(authenticate(secret)).resolves.toBeTruthy();
-    await expect(authenticate(secret)).resolves.toMatchObject({
+    await expect(authenticate(secret, { requestId: "req_1" })).resolves.toBeTruthy();
+    const key = [...store.apiKeys.values()][0]!;
+    const originalResolver = makeResolverPool(store);
+    const restrictedAuthenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: {
+        query: async (sql: string, values: unknown[] = []) => {
+          const result = await originalResolver.query(sql, values);
+          return {
+            ...result,
+            rows: result.rows.map((row) =>
+              "id" in row && row.id === key.id ? { ...row, tier_key_limit: 1 } : row,
+            ),
+          };
+        },
+      } as never,
+      pepper: PEPPER,
+      rateLimiter: new InMemoryApiSlidingWindowRateLimiter(),
+    });
+    await expect(restrictedAuthenticate(secret, { requestId: "req_2" })).resolves.toBeTruthy();
+    await expect(restrictedAuthenticate(secret, { requestId: "req_3" })).resolves.toMatchObject({
       kind: "known_rejected",
       reason: "rate_limited",
-      rateLimit: { allowed: false, limit: 1, count: 2 },
+      rateLimit: { allowed: false, limit: 1, count: 2, rejectedBy: "key" },
     });
+  });
+
+  it("fails closed after a known key match when Redis is unavailable", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_redis_failure";
+    seedKey(store, tenantId, secret);
+    const { pool } = countingPool(store);
+    const authenticate = buildApiKeyAuthenticator({
+      pool: pool as never,
+      resolverPool: makeResolverPool(store) as never,
+      pepper: PEPPER,
+      rateLimiter: {
+        hit: async () => {
+          throw new Error("redis unavailable");
+        },
+      },
+    });
+
+    await expect(authenticate(secret, { requestId: "req_redis_down" })).resolves.toMatchObject({
+      kind: "known_rejected",
+      attribution: { tenantId },
+      reason: "rate_limiter_unavailable",
+    });
+  });
+
+  it("caps a key override at the tenant tier key limit", async () => {
+    const tenantId = newTenantId();
+    const store = makeStore(tenantId);
+    const secret = "brain_sk_test_restrictive_override";
+    seedKey(store, tenantId, secret);
+    const { pool } = countingPool(store);
+    const resolver = makeResolverPool(store);
+    const seenLimits: number[] = [];
+    const authenticateWithOverride = (overrideKeyLimit: number) =>
+      buildApiKeyAuthenticator({
+        pool: pool as never,
+        resolverPool: {
+          query: async (sql: string, values: unknown[] = []) => {
+            const result = await resolver.query(sql, values);
+            return {
+              ...result,
+              rows: result.rows.map((row) => ({ ...row, override_key_limit: overrideKeyLimit })),
+            };
+          },
+        } as never,
+        pepper: PEPPER,
+        rateLimiter: {
+          hit: async (input) => {
+            seenLimits.push(input.policy.keyLimit);
+            return {
+              allowed: true,
+              count: 1,
+              limit: input.policy.keyLimit,
+              tenantCount: 1,
+              tenantLimit: input.policy.tenantLimit,
+              rejectedBy: null,
+              policy: input.policy,
+            };
+          },
+        },
+      });
+
+    await expect(
+      authenticateWithOverride(10)(secret, { requestId: "req_restricted" }),
+    ).resolves.toMatchObject({ kind: "authenticated" });
+    await expect(
+      authenticateWithOverride(1000)(secret, { requestId: "req_elevated" }),
+    ).resolves.toMatchObject({ kind: "authenticated" });
+    expect(seenLimits).toEqual([10, 100]);
   });
 });

@@ -12,13 +12,16 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { brainError, isBrainError } from "../errors.js";
 import { enterApiKeyId } from "../correlation.js";
+import { newRequestId } from "../ids.js";
 import type {
   ApiKeyAuthenticationResult,
   ApiKeyAttribution,
+  ApiKeyGatewayTelemetry,
   ApiKeyKnownRejectionReason,
   ApiKeyRouteContract,
   ApiKeyRouteMeteringContract,
   ApiKeySecurityTelemetry,
+  ApiKeyMeterFailureTelemetry,
   ApiRequestMeter,
   ApiRequestMeterOutcome,
 } from "./api-key-metering.js";
@@ -27,11 +30,28 @@ import type { JwtVerifier } from "./jwt.js";
 import type { Principal } from "./principal.js";
 
 interface ApiKeyMeterRequestContext {
+  /** Server-minted id. Client correlation ids are not billing idempotency keys. */
+  readonly meterRequestId: string;
   readonly attribution: ApiKeyAttribution;
   readonly occurredAt: Date;
   readonly knownRejection: ApiKeyKnownRejectionReason | null;
-  readonly rateLimit: { count: number; limit: number } | null;
+  readonly rateLimit: {
+    count: number;
+    limit: number;
+    tenantCount: number;
+    tenantLimit: number;
+    rejectedBy: "key" | "tenant" | "key_and_tenant" | null;
+    tierId: string;
+    entitlementVersion: number;
+    windowSeconds: number;
+  } | null;
+  readonly rateLimitPolicy: {
+    tierId: string;
+    entitlementVersion: number;
+    windowSeconds: number;
+  } | null;
   errorCode: string | null;
+  finalized: boolean;
 }
 
 declare module "fastify" {
@@ -59,9 +79,13 @@ export interface AuthPluginOptions {
   verifier: JwtVerifier;
   apiKeyAuthenticator?: (
     secret: string,
+    context?: { requestId: string },
   ) => Promise<ApiKeyAuthenticationResult | LegacyApiKeyAuthenticationResult>;
   apiKeyRequestMeter?: ApiRequestMeter;
   apiKeySecurityTelemetry?: ApiKeySecurityTelemetry;
+  apiKeyMeterFailureTelemetry?: ApiKeyMeterFailureTelemetry;
+  apiKeyGatewayTelemetry?: ApiKeyGatewayTelemetry;
+  apiKeyMeterFailureMode?: "shadow_fail_open" | "billable_fail_closed";
   apiKeyRouteContracts?: readonly ApiKeyRouteContract[];
   apiKeyRateLimitWindowSeconds?: number;
 }
@@ -85,6 +109,9 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     apiKeyAuthenticator,
     apiKeyRequestMeter,
     apiKeySecurityTelemetry,
+    apiKeyMeterFailureTelemetry,
+    apiKeyGatewayTelemetry,
+    apiKeyMeterFailureMode = "shadow_fail_open",
     apiKeyRateLimitWindowSeconds,
   } = opts;
   const routeContracts = validateApiKeyRouteContracts(opts.apiKeyRouteContracts ?? []);
@@ -106,24 +133,28 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     routeOptions.config = { ...routeOptions.config, apiKeyMetering: first };
   });
 
-  fastify.addHook("onRequest", async (request: FastifyRequest) => {
+  fastify.addHook("onRequest", async (request: FastifyRequest, reply) => {
     const skipAuth = request.routeOptions.config?.skipAuth === true;
     const optionalAuth = request.routeOptions.config?.optionalAuth === true;
-    const token = extractBearer(request.headers.authorization);
-    if (skipAuth && (!optionalAuth || token === null)) {
+    const authorization = request.headers.authorization;
+    if (skipAuth && (!optionalAuth || authorization === undefined)) {
       return;
     }
-    if (token === null) {
+    let token: string;
+    try {
+      token = requireBearer(authorization);
+    } catch (error) {
       apiKeySecurityTelemetry?.record({
         requestId: request.id,
         method: request.method,
         routeTemplate: routePattern(request),
         reason: "missing_bearer",
       });
-      throw brainError("auth_token_missing", "missing bearer token");
+      throw error;
     }
     if (token.startsWith("brain_sk_")) {
-      const rawResult = await apiKeyAuthenticator?.(token);
+      const meterRequestId = newRequestId();
+      const rawResult = await apiKeyAuthenticator?.(token, { requestId: meterRequestId });
       const result = normalizeApiKeyAuthenticationResult(rawResult, token);
       if (result.kind === "unknown_rejected") {
         apiKeySecurityTelemetry?.record({
@@ -136,15 +167,58 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
       }
 
       request.apiKeyMeterContext = {
+        meterRequestId,
         attribution: result.attribution,
         occurredAt: new Date(),
         knownRejection: result.kind === "known_rejected" ? result.reason : null,
         rateLimit:
           result.rateLimit === undefined
             ? null
-            : { count: result.rateLimit.count, limit: result.rateLimit.limit },
+            : {
+                count: result.rateLimit.count,
+                limit: result.rateLimit.limit,
+                tenantCount: result.rateLimit.tenantCount,
+                tenantLimit: result.rateLimit.tenantLimit,
+                rejectedBy: result.rateLimit.rejectedBy,
+                tierId: result.rateLimit.policy.tierId,
+                entitlementVersion: result.rateLimit.policy.entitlementVersion,
+                windowSeconds: result.rateLimit.policy.windowSeconds,
+              },
+        rateLimitPolicy: result.rateLimit?.policy ?? result.rateLimitPolicy ?? null,
         errorCode: null,
+        finalized: false,
       };
+      try {
+        await apiKeyGatewayTelemetry?.record({
+          requestId: meterRequestId,
+          tenantId: result.attribution.tenantId,
+          keyId: result.attribution.keyId,
+          environment: result.attribution.environment,
+          occurredAt: request.apiKeyMeterContext.occurredAt,
+          limiterDecision: result.rateLimit !== undefined,
+        });
+      } catch (err) {
+        request.log.error(
+          { err, request_id: request.id },
+          "durable API key gateway observation failed",
+        );
+        throw brainError("dependency_unavailable", "API usage observation is unavailable");
+      }
+
+      if (result.rateLimit !== undefined) {
+        const remaining = Math.max(
+          0,
+          Math.min(
+            result.rateLimit.limit - result.rateLimit.count,
+            result.rateLimit.tenantLimit - result.rateLimit.tenantCount,
+          ),
+        );
+        reply.header("RateLimit-Limit", result.rateLimit.limit);
+        reply.header("RateLimit-Remaining", remaining);
+        reply.header("RateLimit-Reset", result.rateLimit.policy.windowSeconds);
+        reply.header("X-RateLimit-Tier", result.rateLimit.policy.tierId);
+        reply.header("X-RateLimit-Tenant-Limit", result.rateLimit.tenantLimit);
+      }
 
       if (result.kind === "known_rejected") {
         if (result.reason === "rate_limited") {
@@ -153,7 +227,15 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
               key_id: result.attribution.keyId,
               limit: result.rateLimit?.limit,
               count: result.rateLimit?.count,
+              tenant_limit: result.rateLimit?.tenantLimit,
+              tenant_count: result.rateLimit?.tenantCount,
+              rejected_by: result.rateLimit?.rejectedBy,
             },
+          });
+        }
+        if (result.reason === "rate_limiter_unavailable") {
+          throw brainError("dependency_unavailable", "api key rate limiter unavailable", {
+            details: { key_id: result.attribution.keyId },
           });
         }
         throw brainError("auth_invalid_key", "api key invalid");
@@ -176,15 +258,17 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     }
   });
 
-  fastify.addHook("onResponse", async (request, reply) => {
+  fastify.addHook("onSend", async (request, reply, payload) => {
     const context = request.apiKeyMeterContext;
-    if (apiKeyRequestMeter === undefined || context === undefined) return;
+    if (apiKeyRequestMeter === undefined || context === undefined || context.finalized)
+      return payload;
+    context.finalized = true;
 
     const contract = request.routeOptions.config?.apiKeyMetering;
     const outcome = classifyOutcome(reply.statusCode, context.knownRejection, context.errorCode);
     try {
       await apiKeyRequestMeter.record({
-        requestId: request.id,
+        requestId: context.meterRequestId,
         tenantId: context.attribution.tenantId,
         keyId: context.attribution.keyId,
         occurredAt: context.occurredAt,
@@ -201,13 +285,46 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
         rateLimitCount: context.rateLimit?.count ?? null,
         rateLimitValue: context.rateLimit?.limit ?? null,
         rateLimitWindowSeconds:
-          context.rateLimit === null ? null : (apiKeyRateLimitWindowSeconds ?? null),
+          context.rateLimitPolicy?.windowSeconds ?? apiKeyRateLimitWindowSeconds ?? null,
+        effectiveTierId: context.rateLimitPolicy?.tierId ?? null,
+        entitlementVersion: context.rateLimitPolicy?.entitlementVersion ?? null,
+        rateLimitTenantCount: context.rateLimit?.tenantCount ?? null,
+        rateLimitTenantValue: context.rateLimit?.tenantLimit ?? null,
+        rateLimitRejectedBy: context.rateLimit?.rejectedBy ?? null,
       });
     } catch (err) {
+      try {
+        await apiKeyMeterFailureTelemetry?.record({
+          requestId: context.meterRequestId,
+          tenantId: context.attribution.tenantId,
+          keyId: context.attribution.keyId,
+          environment: context.attribution.environment,
+          occurredAt: context.occurredAt,
+        });
+      } catch (telemetryError) {
+        request.log.error(
+          { err: telemetryError, request_id: request.id },
+          "durable API request meter failure observation failed",
+        );
+      }
       request.log.error({ err, request_id: request.id }, "api key request meter append failed");
+      if (
+        apiKeyMeterFailureMode === "billable_fail_closed" &&
+        context.attribution.environment === "live" &&
+        context.attribution.accessStage === "production"
+      ) {
+        throw brainError("dependency_unavailable", "API request meter is unavailable");
+      }
     }
+    return payload;
   });
 };
+
+function requireBearer(header: string | undefined): string {
+  const token = extractBearer(header);
+  if (token === null) throw brainError("auth_token_missing", "missing bearer token");
+  return token;
+}
 
 function normalizeApiKeyAuthenticationResult(
   result: ApiKeyAuthenticationResult | LegacyApiKeyAuthenticationResult | undefined,
@@ -250,6 +367,7 @@ function classifyOutcome(
   errorCode: string | null,
 ): ApiRequestMeterOutcome {
   if (knownRejection === "rate_limited" || errorCode === "rate_limited") return "rate_limited";
+  if (knownRejection === "rate_limiter_unavailable") return "server_error";
   if (knownRejection !== null) return "auth_rejected";
   if (errorCode === "auth_scope_insufficient" || errorCode === "scope_insufficient") {
     return "scope_rejected";

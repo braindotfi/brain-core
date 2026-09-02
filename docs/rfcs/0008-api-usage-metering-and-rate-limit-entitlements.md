@@ -1,7 +1,8 @@
 # RFC 0008. API usage metering and rate-limit entitlements
 
-- **Status:** Implementation in progress. Phase 1 complete on a feature branch;
-  rate tiers and billing foundation pending.
+- **Status:** Implementation complete on feature branches. Production deployment,
+  a measured zero-charge shadow period, and its acceptance decision remain
+  operational gates.
 - **Date:** 2026-09-01
 - **Affects:** API gateway authentication, API-key rate limiting, usage storage,
   production tenancy, OpenAPI, SDK types, BrainMVB Developers and Billing
@@ -33,8 +34,9 @@ billing or operator path assigns a tenant tier, with an optional key-specific
 override that can only make a key more restrictive unless a separately
 authorized commercial exception permits otherwise.
 
-Billing remains out of scope for this RFC. This RFC defines the minimum meter
-that billing can safely consume later.
+Payment collection, invoice issuance, and pricing remain out of scope. This RFC
+implements the data foundation that a separately approved billing system can
+consume later.
 
 ## 2. Current state and confirmed accuracy gaps
 
@@ -95,10 +97,10 @@ Core currently has two relevant controls:
   `BRAIN_API_KEY_RATE_LIMIT` and `BRAIN_API_KEY_RATE_WINDOW_SECONDS`, with
   defaults of 600 requests per 60 seconds.
 
-The key limiter has no tenant or key tier. Its Redis member identifier uses a
-process-local sequence, which should be made globally unique before relying on
-the count across multiple replicas. It also deliberately allows a request when
-the Redis count cannot be read.
+Before Phase 2, the key limiter had no tenant or key tier. Its Redis member
+identifier used a process-local sequence and it deliberately allowed a request
+when the Redis count could not be read. Phase 2 replaces that path with one
+atomic, request-id-based key and tenant decision that fails closed.
 
 BrainMVB's selected billing plan is stored only in
 `client/src/lib/planStore.ts`. The displayed Starter, Standard, Scale, and
@@ -201,7 +203,15 @@ body, query values, or raw path parameters.
 Audit emission currently warns and continues when usage audit persistence
 fails. That is acceptable for a convenience dashboard, but not for billing.
 
-Before billing starts, the meter needs one of these reviewed durability modes:
+The implementation awaits the idempotent Postgres append in `onSend`, before
+the response leaves the gateway. During the explicitly zero-charge shadow
+period, an append failure emits a critical tenant-attributed completeness
+metric and fails open so shadow instrumentation cannot interrupt customers.
+The separately configured billable mode fails closed with 503 for live
+production traffic. Moving out of shadow therefore requires a reviewed code
+and policy change, not a silent environment toggle.
+
+The reviewed durability choices were:
 
 1. Await an idempotent Postgres append before sending the response.
 2. Commit to a durable local or external outbox before sending, then write the
@@ -361,11 +371,10 @@ Return standard rate-limit headers using the effective policy. The usage API
 and BrainMVB must read the same tier revision rather than copying numeric plan
 constants.
 
-The current fail-open Redis behavior needs an explicit launch decision. A
-contractual tier cannot silently disappear during a Redis fault. The preferred
-production posture is a bounded local emergency limiter plus a prominent
-degraded signal, or fail closed if the commercial availability policy accepts
-that tradeoff. This choice is a go/no-go item for tier launch.
+The approved production posture is fail closed for commercial API-key traffic
+when Redis cannot return a valid decision. The separate IP limiter remains an
+abuse control with a default ceiling above the largest catalog tenant tier, so
+it does not silently replace a sold entitlement.
 
 ### 7.3 BrainMVB changes
 
@@ -380,6 +389,26 @@ Remove `planStore` as the source for effective limits. BrainMVB should:
 
 Until a billing backend exists, the plan control should be read-only or clearly
 labeled as a request. A local-storage selection must not look enforceable.
+
+### 7.4 Operator-only entitlement control plane
+
+An entitlement operator is not a tenant member or an API key. It is a GitHub
+actor admitted through the protected `staging` or `production` environment and
+the reviewed `ops-api-entitlements` workflow. The one-shot command uses
+`brain_privileged` for the bounded mutation and a separate tenant-scoped
+`brain_app` connection for the customer-visible audit event.
+
+The workflow supports read-only inspection, tier assignment, a restrictive key
+override, and override removal. Apply mode requires the exact tenant id twice, a
+reason, a protected-environment approval, a true-production preflight in
+production, and a run-scoped idempotency key. There is no member or public HTTP
+mutation route.
+
+Every mutation writes `api_entitlement_change_log` in the same database
+transaction as the entitlement change. It records actor, reason, before state,
+after state, and the GitHub-run idempotency key. After commit, the CLI emits an
+idempotent tenant audit event. A retry never repeats the mutation and can repair
+a missing audit delivery.
 
 ## 8. Usage API and BrainMVB contract
 
@@ -403,9 +432,12 @@ BrainMVB should retire `/api/developers/usage` aggregation over `listAuditEvents
 and make both summary and per-key panels consume the core meter endpoint. The
 general audit feed remains available under Audit Log only.
 
-For scale, begin with indexed raw queries at current volume, then add hourly or
-daily rollups with a reconciliation job. Rollups must be reproducible from the
-immutable meter rows and identify their covered high-water mark.
+The implementation uses indexed raw queries for the live current-month view and
+reproducible UTC daily rollups for reconciliation and close. Each reconciliation
+records its source high-water mark and compares raw rows, rollups, known-key
+gateway observations, limiter decisions, and meter-persistence failures. The
+gateway evidence is an independent append-only stream, not an operator-entered
+count derived from request-meter rows.
 
 ## 9. Minimum billing foundation versus deferrable analytics
 
@@ -494,8 +526,8 @@ charts are deferrable.
 
 - Add rollup reconciliation, period close, completeness alarms, adjustments,
   and export.
-- Run a zero-charge shadow period and compare gateway, Redis, raw meter, and
-  rollup totals.
+- Run a zero-charge shadow period and compare durable gateway observations,
+  limiter decisions, raw meter, and rollup totals.
 - Approve a production billing start timestamp. Do not back-bill earlier
   traffic.
 
@@ -552,10 +584,22 @@ metering foundation and route contract should land first.
 
 ### Pending implementation or decision
 
-- [ ] Approve Phase 0 billing and limiter decisions.
+- [x] Approve sliding-window semantics, restrictive overrides, fail-closed
+      Redis behavior, and a separate high-headroom IP abuse limit.
 - [x] Implement the dedicated request meter and security telemetry.
 - [x] Add route metering metadata and drift guards.
-- [ ] Add server-owned entitlements and dynamic Redis enforcement.
-- [ ] Replace BrainMVB audit aggregation and local tier claims.
-- [ ] Complete a zero-charge shadow and reconciliation period.
+- [x] Add immutable rate-tier revisions, tenant entitlements, restrictive key
+      overrides, and atomic Redis enforcement at both key and tenant level.
+- [x] Replace BrainMVB local-storage tier claims with the effective core
+      entitlement.
+- [x] Replace BrainMVB general-audit usage aggregation with request-meter
+      summaries using UTC calendar-month and real HTTP-method dimensions.
+- [x] Add policy-versioned shadow request units, reproducible daily rollups,
+      reconciliation evidence, immutable period close, and adjustment records.
+- [x] Add protected, audited operator workflows for entitlement changes and
+      zero-charge shadow reconciliation and close.
+- [x] Persist independent, tenant-filterable gateway observations, limiter
+      decisions, and meter-persistence failures for restart-safe reconciliation.
+- [ ] Deploy the final phase and complete a measured zero-charge production
+      shadow period with zero persistence failures and matched independent counts.
 - [ ] Approve a future billing-system implementation separately.

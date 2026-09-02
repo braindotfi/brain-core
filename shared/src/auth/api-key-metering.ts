@@ -1,6 +1,6 @@
 import type { Principal } from "./principal.js";
 import type { Scope } from "./scopes.js";
-import type { RateLimitDecision } from "../ratelimit/sliding-window.js";
+import type { ApiRateLimitDecision, ApiRateLimitPolicy } from "../ratelimit/sliding-window.js";
 
 export type ApiKeyEnvironment = "sandbox" | "live";
 export type ApiKeyAccessStage = "demo" | "production_review" | "production" | null;
@@ -29,7 +29,8 @@ export type ApiKeyKnownRejectionReason =
   | "revoked"
   | "expired"
   | "tenant_ineligible"
-  | "rate_limited";
+  | "rate_limited"
+  | "rate_limiter_unavailable";
 
 export type ApiKeyUnknownRejectionReason = "malformed" | "unknown" | "authenticator_disabled";
 
@@ -40,13 +41,15 @@ export type ApiKeyAuthenticationResult =
       readonly attribution: ApiKeyAttribution;
       /** Compatibility alias for callers that previously consumed keyId directly. */
       readonly keyId: string;
-      readonly rateLimit?: RateLimitDecision;
+      readonly rateLimit?: ApiRateLimitDecision;
+      readonly rateLimitPolicy?: ApiRateLimitPolicy;
     }
   | {
       readonly kind: "known_rejected";
       readonly attribution: ApiKeyAttribution;
       readonly reason: ApiKeyKnownRejectionReason;
-      readonly rateLimit?: RateLimitDecision;
+      readonly rateLimit?: ApiRateLimitDecision;
+      readonly rateLimitPolicy?: ApiRateLimitPolicy;
     }
   | {
       readonly kind: "unknown_rejected";
@@ -79,6 +82,13 @@ export interface ApiRequestMeterEvent {
   readonly rateLimitCount: number | null;
   readonly rateLimitValue: number | null;
   readonly rateLimitWindowSeconds: number | null;
+  readonly effectiveTierId: string | null;
+  readonly entitlementVersion: number | null;
+  readonly rateLimitTenantCount: number | null;
+  readonly rateLimitTenantValue: number | null;
+  readonly rateLimitRejectedBy: "key" | "tenant" | "key_and_tenant" | null;
+  readonly meteringPolicyVersion?: string;
+  readonly billableUnits?: number;
 }
 
 export interface ApiRequestMeter {
@@ -94,6 +104,31 @@ export interface ApiKeySecurityTelemetryEvent {
 
 export interface ApiKeySecurityTelemetry {
   record(event: ApiKeySecurityTelemetryEvent): void;
+}
+
+export interface ApiKeyMeterFailureTelemetryEvent {
+  readonly requestId: string;
+  readonly tenantId: string;
+  readonly keyId: string;
+  readonly environment: ApiKeyEnvironment;
+  readonly occurredAt: Date;
+}
+
+export interface ApiKeyMeterFailureTelemetry {
+  record(event: ApiKeyMeterFailureTelemetryEvent): void;
+}
+
+export interface ApiKeyGatewayTelemetryEvent {
+  readonly requestId: string;
+  readonly tenantId: string;
+  readonly keyId: string;
+  readonly environment: ApiKeyEnvironment;
+  readonly occurredAt: Date;
+  readonly limiterDecision: boolean;
+}
+
+export interface ApiKeyGatewayTelemetry {
+  record(event: ApiKeyGatewayTelemetryEvent): void;
 }
 
 export function routeContractKey(method: string, route: string): string {

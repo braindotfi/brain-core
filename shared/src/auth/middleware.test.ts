@@ -4,6 +4,8 @@ import { extractBearer } from "./middleware.js";
 import authPlugin from "./middleware.js";
 import requestIdPlugin from "../http/request-id.js";
 import type {
+  ApiKeyGatewayTelemetryEvent,
+  ApiKeyMeterFailureTelemetryEvent,
   ApiKeySecurityTelemetryEvent,
   ApiRequestMeter,
   ApiRequestMeterEvent,
@@ -101,6 +103,29 @@ describe("API key request metering", () => {
         statusCode: 200,
         outcome: "success",
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not trust a repeated client correlation id as meter idempotency", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = await buildApp(meter, "akey_direct_test");
+    try {
+      const request = () =>
+        app.inject({
+          method: "GET",
+          url: "/probe",
+          headers: {
+            authorization: "Bearer brain_sk_test_valid",
+            "x-request-id": "client_reused_id",
+          },
+        });
+      expect((await request()).statusCode).toBe(200);
+      expect((await request()).statusCode).toBe(200);
+      expect(meter.events).toHaveLength(2);
+      expect(new Set(meter.events.map((event) => event.requestId)).size).toBe(2);
+      expect(meter.events.map((event) => event.requestId)).not.toContain("client_reused_id");
     } finally {
       await app.close();
     }
@@ -268,7 +293,21 @@ describe("API key rejection separation", () => {
           accessStage: "demo",
         },
         reason: "rate_limited",
-        rateLimit: { allowed: false, count: 601, limit: 600 },
+        rateLimit: {
+          allowed: false,
+          count: 601,
+          limit: 600,
+          tenantCount: 610,
+          tenantLimit: 6000,
+          rejectedBy: "key",
+          policy: {
+            tierId: "sandbox_demo_v1",
+            entitlementVersion: 1,
+            windowSeconds: 60,
+            keyLimit: 600,
+            tenantLimit: 6000,
+          },
+        },
       }),
     });
     app.get("/limited", async () => ({ ok: true }));
@@ -289,6 +328,18 @@ describe("API key rejection separation", () => {
         rateLimitCount: 601,
         rateLimitValue: 600,
         rateLimitWindowSeconds: 60,
+        effectiveTierId: "sandbox_demo_v1",
+        entitlementVersion: 1,
+        rateLimitTenantCount: 610,
+        rateLimitTenantValue: 6000,
+        rateLimitRejectedBy: "key",
+      });
+      expect(response.headers).toMatchObject({
+        "ratelimit-limit": "600",
+        "ratelimit-remaining": "0",
+        "ratelimit-reset": "60",
+        "x-ratelimit-tier": "sandbox_demo_v1",
+        "x-ratelimit-tenant-limit": "6000",
       });
     } finally {
       await app.close();
@@ -319,6 +370,226 @@ describe("API key rejection separation", () => {
         expect.objectContaining({ reason: "unknown", routeTemplate: "/probe" }),
       ]);
       expect(JSON.stringify(securityEvents)).not.toContain("brain_sk_test_not_a_match");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails closed and meters a known key when the entitlement limiter is unavailable", async () => {
+    const meter = new InMemoryRequestMeter();
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyAuthenticator: async () => ({
+        kind: "known_rejected",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+        reason: "rate_limiter_unavailable",
+        rateLimitPolicy: {
+          tierId: "sandbox_demo_v1",
+          entitlementVersion: 1,
+          windowSeconds: 60,
+          keyLimit: 600,
+          tenantLimit: 6000,
+        },
+      }),
+    });
+    app.get("/redis-down", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/redis-down",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(meter.events).toEqual([
+        expect.objectContaining({
+          tenantId: principal.tenantId,
+          keyId: "akey_known",
+          outcome: "server_error",
+          rejectionReason: "rate_limiter_unavailable",
+          effectiveTierId: "sandbox_demo_v1",
+          entitlementVersion: 1,
+        }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("emits reconcilable gateway and limiter decision telemetry for known keys", async () => {
+    const meter = new InMemoryRequestMeter();
+    const gatewayEvents: ApiKeyGatewayTelemetryEvent[] = [];
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyRequestMeter: meter,
+      apiKeyGatewayTelemetry: { record: (event) => gatewayEvents.push(event) },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "live",
+          accessStage: "production",
+        },
+        rateLimit: {
+          allowed: true,
+          count: 1,
+          limit: 60,
+          tenantCount: 1,
+          tenantLimit: 600,
+          rejectedBy: null,
+          policy: {
+            tierId: "starter_v1",
+            entitlementVersion: 1,
+            windowSeconds: 60,
+            keyLimit: 60,
+            tenantLimit: 600,
+          },
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_live_known" },
+      });
+      expect(gatewayEvents).toEqual([
+        expect.objectContaining({
+          tenantId: principal.tenantId,
+          keyId: "akey_known",
+          environment: "live",
+          limiterDecision: true,
+        }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("awaits durable gateway evidence and fails closed when it cannot be written", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyGatewayTelemetry: {
+        record: async () => {
+          throw new Error("gateway observation unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({
+        statusCode: 503,
+        message: "API usage observation is unavailable",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("emits a completeness signal when the durable meter append fails", async () => {
+    const failures: ApiKeyMeterFailureTelemetryEvent[] = [];
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyMeterFailureTelemetry: { record: (event) => failures.push(event) },
+      apiKeyRequestMeter: {
+        record: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_known",
+        attribution: {
+          keyId: "akey_known",
+          tenantId: principal.tenantId,
+          environment: "sandbox",
+          accessStage: "demo",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_test_known" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(failures).toEqual([
+        expect.objectContaining({ tenantId: principal.tenantId, keyId: "akey_known" }),
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("fails closed before sending a billable response when configured after shadow", async () => {
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {} as JwtVerifier,
+      apiKeyMeterFailureMode: "billable_fail_closed",
+      apiKeyRequestMeter: {
+        record: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+      apiKeyAuthenticator: async () => ({
+        kind: "authenticated",
+        principal,
+        keyId: "akey_live",
+        attribution: {
+          keyId: "akey_live",
+          tenantId: principal.tenantId,
+          environment: "live",
+          accessStage: "production",
+        },
+      }),
+    });
+    app.get("/probe", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/probe",
+        headers: { authorization: "Bearer brain_sk_live_known" },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json().message).toBe("API request meter is unavailable");
     } finally {
       await app.close();
     }
@@ -404,6 +675,14 @@ describe("optional auth on skipAuth routes", () => {
       const anonymous = await app.inject({ method: "GET", url: "/optional" });
       expect(anonymous.statusCode).toBe(200);
       expect(anonymous.json()).toEqual({ principal_id: null, key_id: null });
+
+      const malformed = await app.inject({
+        method: "GET",
+        url: "/optional",
+        headers: { authorization: "Basic untrusted" },
+      });
+      expect(malformed.statusCode).toBe(401);
+      expect(malformed.json()).toMatchObject({ code: "auth_token_missing" });
 
       const authenticated = await app.inject({
         method: "GET",

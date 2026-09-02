@@ -30,10 +30,11 @@ import {
   RedisIdempotencyStore,
   RedisRevocationStore,
   RedisSlidingWindowRateLimiter,
+  RedisApiSlidingWindowRateLimiter,
   createLogger,
   createPool,
   createBlobAdapter,
-  MockMetrics,
+  createMetrics,
   DeterministicEmbeddingAdapter,
   OpenAICompletionAdapter,
   OpenAIEmbeddingAdapter,
@@ -71,6 +72,7 @@ import {
   PostgresWalletIdentityReader,
 } from "./onboarding/wallet-identities.js";
 import { registerOnchainSignerRoutes } from "./onboarding/onchain-signer.js";
+import { PostgresApiUsageTelemetry } from "./usage/api-usage-telemetry.js";
 import {
   ensureBffServiceAgent,
   ensureTenantBootstrapped,
@@ -473,7 +475,15 @@ async function main(): Promise<void> {
   // invariant (not env-gated); a no-op while every connector is first-party.
   assertRegistryPartnerIsolation();
 
-  const metrics = new MockMetrics();
+  const metrics = createMetrics({
+    host: cfg.DOGSTATSD_HOST,
+    port: cfg.DOGSTATSD_PORT,
+    prefix: cfg.DOGSTATSD_PREFIX,
+    globalTags: {
+      service: cfg.SERVICE_NAME,
+      environment: cfg.NODE_ENV,
+    },
+  });
   const primaryOnchainRpcUrl = cfg.BASE_RPC_URL ?? cfg.RPC_URL;
   const onchainRpcEndpoints = [primaryOnchainRpcUrl, ...cfg.BASE_RPC_FALLBACK_URLS];
   const onchainRpcReadiness = new OnchainRpcReadiness({
@@ -2031,15 +2041,19 @@ async function main(): Promise<void> {
   await app.register(fastifyCors, { origin: corsOrigins, credentials: true });
   // P1.4: strict CSP + security headers (was contentSecurityPolicy:false).
   await registerSecurityHeaders(app, { connectSrc: corsOrigins });
-  await app.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
+  await app.register(fastifyRateLimit, {
+    max: cfg.BRAIN_EDGE_RATE_LIMIT,
+    timeWindow: "1 minute",
+  });
 
   // Shared plugins registered ONCE.
   await app.register(requestIdPlugin);
   await app.register(errorHandlerPlugin);
-  const apiKeyRateLimiter = new RedisSlidingWindowRateLimiter(redis, {
-    windowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
-    limit: cfg.BRAIN_API_KEY_RATE_LIMIT,
-  });
+  const apiKeyRateLimiter = new RedisApiSlidingWindowRateLimiter(
+    redis,
+    Date.now,
+    cfg.BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS,
+  );
   const apiKeyAuthenticator =
     cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER !== undefined
       ? buildApiKeyAuthenticator({
@@ -2053,15 +2067,50 @@ async function main(): Promise<void> {
     throw new Error("BRAIN_API_KEY_PEPPER is required when BRAIN_API_KEY_AUTH_ENABLED=true");
   }
   const apiKeyRequestMeter = new PostgresApiRequestMeter(pool);
+  const apiUsageTelemetry = new PostgresApiUsageTelemetry(pool);
   await app.register(authPlugin, {
     verifier: jwtVerifier,
     ...(apiKeyAuthenticator !== undefined ? { apiKeyAuthenticator } : {}),
     apiKeyRequestMeter,
+    apiKeyMeterFailureMode: "shadow_fail_open",
     apiKeyRouteContracts: API_KEY_ROUTE_CONTRACTS,
-    apiKeyRateLimitWindowSeconds: cfg.BRAIN_API_KEY_RATE_WINDOW_SECONDS,
+    apiKeyGatewayTelemetry: {
+      record: async (event) => {
+        metrics.increment("api_key.gateway_attributed_request.count", {
+          tenant_id: event.tenantId,
+          environment: event.environment,
+        });
+        if (event.limiterDecision) {
+          metrics.increment("api_key.rate_limit_decision.count", {
+            tenant_id: event.tenantId,
+            environment: event.environment,
+          });
+        }
+        await apiUsageTelemetry.recordGateway(event);
+      },
+    },
+    apiKeyMeterFailureTelemetry: {
+      record: async (event) => {
+        metrics.increment("api_key.request_meter.append_failure.count", {
+          tenant_id: event.tenantId,
+          environment: event.environment,
+        });
+        log.error(
+          {
+            event: "api_request_meter_append_failure",
+            request_id: event.requestId,
+            tenant_id: event.tenantId,
+            key_id: event.keyId,
+            environment: event.environment,
+          },
+          "API request meter persistence failed; shadow period is incomplete",
+        );
+        await apiUsageTelemetry.recordMeterFailure(event);
+      },
+    },
     apiKeySecurityTelemetry: {
       record: (event) => {
-        metrics.increment("brain.api_key.security_auth_rejection.count", {
+        metrics.increment("api_key.security_auth_rejection.count", {
           method: event.method,
           route: event.routeTemplate,
           reason: event.reason,

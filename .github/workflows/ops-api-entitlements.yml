@@ -1,0 +1,194 @@
+name: ops-api-entitlements
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Protected VM environment."
+        required: true
+        type: choice
+        options: [staging, production]
+      mode:
+        description: "Inspect is read-only. Apply changes and audits one entitlement."
+        required: true
+        type: choice
+        options: [inspect, apply]
+      action:
+        description: "Mutation used only in apply mode."
+        required: true
+        type: choice
+        options: [assign-tier, set-key-override, clear-key-override]
+      tenant_id:
+        description: "Exact tenant id."
+        required: true
+        type: string
+      key_environment:
+        description: "API key environment."
+        required: true
+        type: choice
+        options: [sandbox, live]
+      tier_id:
+        description: "Catalog tier for assign-tier."
+        required: false
+        type: string
+      key_id:
+        description: "API key for an override action or optional inspection."
+        required: false
+        type: string
+      key_limit:
+        description: "Restrictive per-window key limit for set-key-override."
+        required: false
+        type: string
+      expires_at:
+        description: "Optional future ISO timestamp, or none."
+        required: false
+        default: "none"
+        type: string
+      reason:
+        description: "Required 10 to 240 character audit reason for apply."
+        required: false
+        type: string
+      confirm_tenant_id:
+        description: "For apply, repeat the exact tenant id."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  entitlement:
+    name: ${{ inputs.mode }} API entitlement on ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.target == 'production' && 'production' || 'staging' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'promote-prod' || 'deploy-staging-refs/heads/main' }}
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ inputs.target == 'production' && secrets.VM_HOST || secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ inputs.target == 'production' && secrets.VM_SSH_KEY || secrets.VM_SSH_KEY_STAGING }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Validate and build non-secret command envelope
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_TENANT_ID: ${{ inputs.tenant_id }}
+          INPUT_KEY_ENVIRONMENT: ${{ inputs.key_environment }}
+          INPUT_TIER_ID: ${{ inputs.tier_id }}
+          INPUT_KEY_ID: ${{ inputs.key_id }}
+          INPUT_KEY_LIMIT: ${{ inputs.key_limit }}
+          INPUT_EXPIRES_AT: ${{ inputs.expires_at }}
+          INPUT_REASON: ${{ inputs.reason }}
+          INPUT_CONFIRM_TENANT_ID: ${{ inputs.confirm_tenant_id }}
+          INPUT_ACTOR: github:${{ github.actor }}
+          INPUT_IDEMPOTENCY_KEY: github-run-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          data = {
+              "target": os.environ["INPUT_TARGET"],
+              "mode": os.environ["INPUT_MODE"],
+              "action": os.environ["INPUT_ACTION"],
+              "tenant_id": os.environ["INPUT_TENANT_ID"],
+              "environment": os.environ["INPUT_KEY_ENVIRONMENT"],
+              "tier_id": os.environ.get("INPUT_TIER_ID", ""),
+              "key_id": os.environ.get("INPUT_KEY_ID", ""),
+              "key_limit": os.environ.get("INPUT_KEY_LIMIT", ""),
+              "expires_at": os.environ.get("INPUT_EXPIRES_AT", "none"),
+              "reason": os.environ.get("INPUT_REASON", ""),
+              "actor": os.environ["INPUT_ACTOR"],
+              "idempotency_key": os.environ["INPUT_IDEMPOTENCY_KEY"],
+          }
+          if not re.fullmatch(r"tnt_[0-9A-HJKMNP-TV-Z]{26}", data["tenant_id"]):
+              raise SystemExit("invalid tenant_id")
+          if data["key_id"] and not re.fullmatch(r"akey_[0-9A-HJKMNP-TV-Z]{26}", data["key_id"]):
+              raise SystemExit("invalid key_id")
+          if data["mode"] == "apply":
+              if os.environ.get("INPUT_CONFIRM_TENANT_ID") != data["tenant_id"]:
+                  raise SystemExit("confirm_tenant_id must exactly match tenant_id")
+              if not 10 <= len(data["reason"]) <= 240 or "\n" in data["reason"]:
+                  raise SystemExit("apply requires a one-line reason of 10 to 240 characters")
+              if data["action"] == "assign-tier" and not re.fullmatch(r"[a-z0-9_]{3,64}", data["tier_id"]):
+                  raise SystemExit("assign-tier requires a valid tier_id")
+              if data["action"] in ("set-key-override", "clear-key-override") and not data["key_id"]:
+                  raise SystemExit("override actions require key_id")
+              if data["action"] == "set-key-override" and not re.fullmatch(r"[1-9][0-9]*", data["key_limit"]):
+                  raise SystemExit("set-key-override requires a positive key_limit")
+          with open("entitlement-command.json", "w", encoding="utf-8") as handle:
+              json.dump(data, handle)
+          os.chmod("entitlement-command.json", 0o600)
+          PY
+
+      - name: Run protected operator command
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_json="/tmp/api-entitlement-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          remote_runner="/tmp/api-entitlement-${{ github.run_id }}-${{ github.run_attempt }}.py"
+          scp -i ~/.ssh/id_deploy entitlement-command.json "azureuser@$VM_HOST:$remote_json"
+          cat > entitlement-runner.py <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as handle:
+              data = json.load(handle)
+          production = data["target"] == "production"
+          env_file = ".env.prod" if production else ".env.staging"
+          project = "brain-prod" if production else "brain-staging"
+          if production:
+              subprocess.run(
+                  ["bash", "scripts/ops/assert-true-production.sh"],
+                  check=True,
+                  env={**os.environ, "API_BASE": "https://api.brain.fi", "VM_ENV_FILE": env_file},
+              )
+          command = [
+              "docker", "compose", "-p", project, "--env-file", env_file,
+              "-f", "docker-compose.prod.yml", "--profile", "ops", "run", "--rm",
+              "--no-deps", "entitlement-operator", "node",
+              "services/api/dist/usage/entitlement-operator-cli.js", data["mode"],
+              "--tenant-id", data["tenant_id"], "--environment", data["environment"],
+          ]
+          if data["key_id"]:
+              command.extend(["--key-id", data["key_id"]])
+          if data["mode"] == "apply":
+              command.extend([
+                  "--action", data["action"], "--actor", data["actor"],
+                  "--reason", data["reason"], "--idempotency-key", data["idempotency_key"],
+              ])
+              if data["tier_id"]:
+                  command.extend(["--tier-id", data["tier_id"]])
+              if data["key_limit"]:
+                  command.extend(["--key-limit", data["key_limit"]])
+              if data["expires_at"]:
+                  command.extend(["--expires-at", data["expires_at"]])
+          subprocess.run(command, check=True)
+          PY
+          chmod 600 entitlement-runner.py
+          scp -i ~/.ssh/id_deploy entitlement-runner.py "azureuser@$VM_HOST:$remote_runner"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 '$remote_runner' '$remote_json'; rc=\$?; rm -f '$remote_runner' '$remote_json'; exit \$rc"
+
+      - name: Remove local command material
+        if: always()
+        shell: bash
+        run: rm -f entitlement-command.json entitlement-runner.py ~/.ssh/id_deploy
