@@ -676,6 +676,14 @@ describe("optional auth on skipAuth routes", () => {
       expect(anonymous.statusCode).toBe(200);
       expect(anonymous.json()).toEqual({ principal_id: null, key_id: null });
 
+      const malformed = await app.inject({
+        method: "GET",
+        url: "/optional",
+        headers: { authorization: "Basic untrusted" },
+      });
+      expect(malformed.statusCode).toBe(401);
+      expect(malformed.json()).toMatchObject({ code: "auth_token_missing" });
+
       const authenticated = await app.inject({
         method: "GET",
         url: "/optional",

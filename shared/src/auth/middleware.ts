@@ -136,18 +136,21 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
   fastify.addHook("onRequest", async (request: FastifyRequest, reply) => {
     const skipAuth = request.routeOptions.config?.skipAuth === true;
     const optionalAuth = request.routeOptions.config?.optionalAuth === true;
-    const token = extractBearer(request.headers.authorization);
-    if (skipAuth && (!optionalAuth || token === null)) {
+    const authorization = request.headers.authorization;
+    if (skipAuth && (!optionalAuth || authorization === undefined)) {
       return;
     }
-    if (token === null) {
+    let token: string;
+    try {
+      token = requireBearer(authorization);
+    } catch (error) {
       apiKeySecurityTelemetry?.record({
         requestId: request.id,
         method: request.method,
         routeTemplate: routePattern(request),
         reason: "missing_bearer",
       });
-      throw brainError("auth_token_missing", "missing bearer token");
+      throw error;
     }
     if (token.startsWith("brain_sk_")) {
       const meterRequestId = newRequestId();
@@ -316,6 +319,12 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     return payload;
   });
 };
+
+function requireBearer(header: string | undefined): string {
+  const token = extractBearer(header);
+  if (token === null) throw brainError("auth_token_missing", "missing bearer token");
+  return token;
+}
 
 function normalizeApiKeyAuthenticationResult(
   result: ApiKeyAuthenticationResult | LegacyApiKeyAuthenticationResult | undefined,
