@@ -21,7 +21,14 @@ describe("API rate entitlement schema", () => {
     expect(migration).toContain("CREATE TRIGGER tenants_create_default_api_entitlements");
     expect(migration).toContain("AFTER INSERT ON tenants");
     expect(migration).toContain("'live', 'scale_v1', 'migration_preserve_legacy_600'");
-    expect(migration).toContain("(NEW.id, 'live', 'starter_v1', 'tenant_provisioning')");
+    expect(migration).toContain("''live'', ''starter_v1'', ''tenant_provisioning''");
+  });
+
+  it("creates defaults in the trigger table's schema without trusting caller search path", () => {
+    expect(migration).toContain("SET search_path = pg_catalog, pg_temp");
+    expect(migration).toContain("'INSERT INTO %I.tenant_api_entitlements '");
+    expect(migration).toContain("TG_TABLE_SCHEMA");
+    expect(migration).not.toContain("SET search_path = public, pg_temp");
   });
 
   it("forces tenant RLS and binds overrides to a key in the same tenant", () => {
