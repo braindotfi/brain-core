@@ -79,6 +79,26 @@ multiple production tenants or subscriptions.
 
 ## 4. Verification and risk model
 
+### 4.0 Phase 1 implementation boundary
+
+Phase 1 adds the tenant-scoped request, evidence, assessment, and manual-review
+decision records plus member-session submit and status endpoints. Verification
+is a versioned adapter contract. The initial composition proves control of the
+authenticated member email and checks structural website-domain alignment.
+
+The initial composition deliberately includes
+`approved_compliance_policy_v1=compliance_policy_not_configured`, which routes
+every otherwise-clear request to `manual_review`. It cannot approve production
+access. Legal and compliance must supply the jurisdiction-specific check set,
+provider adapters, reason codes, retention policy, and reviewer authorization
+before any request can reach `clear` in a deployed environment.
+Requests stopped by the pending policy can be reassessed under a later policy
+version without replacing or mutating their earlier assessment evidence.
+
+Phase 1 does not create a destination tenant, change the source tenant
+classification, copy data, grant production Raw access, select a commercial
+tier, or initiate payment. Those transitions remain in later phases.
+
 ### 4.1 Required evidence
 
 Recommended minimum application fields are:
