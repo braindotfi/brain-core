@@ -35,6 +35,10 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(execution, /tenant_blob_purge_jobs/);
   assert.match(execution, /tenant_blob_purge_audit_outbox/);
   assert.match(execution, /assertPostDelete/);
+  assert.match(execution, /EXPECTED_DEMO_SECOND_APPROVERS = 788/);
+  assert.match(execution, /viewer@example\.com/);
+  assert.match(execution, /damon@brain\.fi/);
+  assert.match(execution, /approved non-bootstrap member preflight failed/);
   assert.match(runner, /restore_agent_states_after_abort/);
   assert.match(runner, /brain-prod-worker/);
   assert.match(runner, /brain-prod-agents/);
