@@ -428,6 +428,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{tenantId}/graduation/verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit a demo tenant for production verification
+         * @description Requires an authenticated same-tenant admin session and an
+         *     Idempotency-Key. Runs the versioned verification adapter. The safe
+         *     default policy routes every otherwise-clear request to manual review
+         *     until jurisdiction-specific compliance criteria are configured.
+         */
+        post: operations["submitGraduationVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/graduation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the current production-graduation status */
+        get: operations["getGraduationStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/graduation/complete-unpaid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete an approved unpaid production graduation
+         * @description Creates a fresh production tenant and bootstrap member, records
+         *     immutable demo-to-production lineage, and returns new member and agent
+         *     sessions. It never relabels the demo tenant or copies synthetic data.
+         *     Only a clear verification assessment can enter this unpaid path.
+         */
+        post: operations["completeUnpaidGraduation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/billing/tiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current entitlement and available public tiers
+         * @description Requires an authenticated same-tenant admin session. Returns accepted,
+         *     immutable RobotMoney tier revisions and their independent agent,
+         *     entity, execution, API, MCP, and request-rate dimensions. The route is
+         *     not registered while BRAIN_COMMERCIAL_CATALOG_ENABLED is false, which
+         *     is the required Phase 1 state.
+         */
+        get: operations["listCommercialTiers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants/{tenantId}/billing/tier-upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply an eligible self-serve public-tier upgrade
+         * @description Requires an authenticated same-tenant admin session, an idempotency
+         *     key, and the expected entitlement version. Only strict upgrades to an
+         *     enabled catalog revision may apply. Stripe-backed revisions remain
+         *     blocked until a later phase supplies verified paid state. Every
+         *     catalog revision has self-serve disabled in Phase 1, and the route is
+         *     not registered while BRAIN_COMMERCIAL_CATALOG_ENABLED is false.
+         */
+        post: operations["upgradeCommercialTier"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants/{tenantId}/keys": {
         parameters: {
             query?: never;
@@ -6227,6 +6339,166 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    submitGraduationVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    business_profile: {
+                        legal_business_name: string;
+                        /** Format: email */
+                        business_email: string;
+                        /** Format: uri */
+                        website: string;
+                        registration_country: string;
+                        company_registration_number?: string | null;
+                        intended_use: string;
+                        expected_monthly_requests?: number | null;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Verification request and current assessment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getGraduationStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current graduation request, or null when none exists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    completeUnpaidGraduation: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh production tenant, lineage, and one-time credentials */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listCommercialTiers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current tier and eligible catalog revisions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    upgradeCommercialTier: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    catalog_revision_id: string;
+                    expected_entitlement_version: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Catalog-backed entitlement upgrade applied once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     listApiKeys: {

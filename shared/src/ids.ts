@@ -113,6 +113,21 @@ export const ID_PREFIX = {
   tenantGraduationEvidence: "gve",
   tenantGraduationAssessment: "gva",
   tenantGraduationReview: "gvr",
+  tenantGraduationLineage: "gvl",
+  commercialTierChange: "ctchg",
+  robotMoneyEntity: "rme",
+  commercialAgentInstance: "cmai",
+  commercialBillingAccount: "bill",
+  commercialStripeSubscription: "strsub",
+  commercialStripeEvent: "stevt",
+  usageAllowanceReservation: "uar",
+  commercialExecutionPeriod: "xper",
+  commercialExecutionReservation: "xrsv",
+  commercialExecutionAdjustment: "xadj",
+  commercialChargeFact: "chg",
+  x402PaymentOperation: "xpay",
+  commercialProviderCommand: "pcmd",
+  commercialShadowObservation: "cso",
   // OAuth 2.1 authorization server (Phase 2a increment 3, OAUTH-AS-PLAN.md
   // section 4). oauth_clients.client_id is minted by scripts/ops/
   // register-oauth-client.ts, not this file's generic prefix; the constant
@@ -193,6 +208,31 @@ export const newTenantGraduationEvidenceId = (): string =>
 export const newTenantGraduationAssessmentId = (): string =>
   brainId(ID_PREFIX.tenantGraduationAssessment);
 export const newTenantGraduationReviewId = (): string => brainId(ID_PREFIX.tenantGraduationReview);
+export const newTenantGraduationLineageId = (): string =>
+  brainId(ID_PREFIX.tenantGraduationLineage);
+export const newCommercialTierChangeId = (): string => brainId(ID_PREFIX.commercialTierChange);
+export const newRobotMoneyEntityId = (): string => brainId(ID_PREFIX.robotMoneyEntity);
+export const newCommercialAgentInstanceId = (): string =>
+  brainId(ID_PREFIX.commercialAgentInstance);
+export const newCommercialBillingAccountId = (): string =>
+  brainId(ID_PREFIX.commercialBillingAccount);
+export const newCommercialStripeSubscriptionId = (): string =>
+  brainId(ID_PREFIX.commercialStripeSubscription);
+export const newCommercialStripeEventId = (): string => brainId(ID_PREFIX.commercialStripeEvent);
+export const newUsageAllowanceReservationId = (): string =>
+  brainId(ID_PREFIX.usageAllowanceReservation);
+export const newCommercialExecutionPeriodId = (): string =>
+  brainId(ID_PREFIX.commercialExecutionPeriod);
+export const newCommercialExecutionReservationId = (): string =>
+  brainId(ID_PREFIX.commercialExecutionReservation);
+export const newCommercialExecutionAdjustmentId = (): string =>
+  brainId(ID_PREFIX.commercialExecutionAdjustment);
+export const newCommercialChargeFactId = (): string => brainId(ID_PREFIX.commercialChargeFact);
+export const newX402PaymentOperationId = (): string => brainId(ID_PREFIX.x402PaymentOperation);
+export const newCommercialProviderCommandId = (): string =>
+  brainId(ID_PREFIX.commercialProviderCommand);
+export const newCommercialShadowObservationId = (): string =>
+  brainId(ID_PREFIX.commercialShadowObservation);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 export const newGovernanceReportSnapshotId = (): string =>
   brainId(ID_PREFIX.governanceReportSnapshot);

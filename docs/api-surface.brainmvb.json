@@ -2586,6 +2586,71 @@
           "openapi": "documented:/governance/reports/{report_id}"
         }
       ]
+    },
+    {
+      "group": "graduation_and_commercial_tiers",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/tenants/{tenantId}/graduation/verification",
+          "auth": "bearer user",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "header Idempotency-Key; body { business_profile }",
+          "response_shape": "200 versioned graduation request and assessment",
+          "example_request": { "path": "/v1/tenants/tnt_example/graduation/verification" },
+          "example_response": { "id": "grad_example", "status": "manual_review" },
+          "openapi": "documented:/tenants/{tenantId}/graduation/verification"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/tenants/{tenantId}/graduation",
+          "auth": "bearer user",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "path { tenantId }",
+          "response_shape": "200 { graduation }",
+          "example_request": "GET /v1/tenants/tnt_example/graduation",
+          "example_response": { "graduation": null },
+          "openapi": "documented:/tenants/{tenantId}/graduation"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/tenants/{tenantId}/graduation/complete-unpaid",
+          "auth": "bearer user",
+          "required_scope": "execution:admin",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "header Idempotency-Key; approved verification required",
+          "response_shape": "201 { lineage, session, agent }",
+          "example_request": { "path": "/v1/tenants/tnt_example/graduation/complete-unpaid" },
+          "example_response": { "lineage": { "financial_data_copied": false } },
+          "openapi": "documented:/tenants/{tenantId}/graduation/complete-unpaid"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/tenants/{tenantId}/billing/tiers",
+          "auth": "bearer user",
+          "required_scope": "execution:admin",
+          "enforcement": "route_feature_gate_default_off_then_scope_check",
+          "request_shape": "path { tenantId }",
+          "response_shape": "200 accepted catalog dimensions; Phase 1 route disabled",
+          "example_request": "GET /v1/tenants/tnt_example/billing/tiers",
+          "example_response": { "current": {}, "available_tiers": [] },
+          "openapi": "documented:/tenants/{tenantId}/billing/tiers"
+        },
+        {
+          "method": "POST",
+          "path": "/v1/tenants/{tenantId}/billing/tier-upgrade",
+          "auth": "bearer user",
+          "required_scope": "execution:admin",
+          "enforcement": "route_feature_gate_default_off_then_scope_check",
+          "request_shape": "header Idempotency-Key; body { catalog_revision_id, expected_entitlement_version }",
+          "response_shape": "201 catalog-backed entitlement change; no Phase 1 revision is enabled",
+          "example_request": { "path": "/v1/tenants/tnt_example/billing/tier-upgrade" },
+          "example_response": { "rate_tier_id": "standard_v1", "payment_required": false },
+          "openapi": "documented:/tenants/{tenantId}/billing/tier-upgrade"
+        }
+      ]
     }
   ],
   "feature_gated_or_not_stable": [
@@ -2633,6 +2698,15 @@
       ],
       "openapi_status": "documented",
       "runtime_status": "not registered unless flag true; staging enables this today"
+    },
+    {
+      "flag": "BRAIN_COMMERCIAL_CATALOG_ENABLED",
+      "paths": [
+        "GET /v1/tenants/{tenantId}/billing/tiers",
+        "POST /v1/tenants/{tenantId}/billing/tier-upgrade"
+      ],
+      "openapi_status": "documented",
+      "runtime_status": "not registered unless flag true; every catalog revision also has self-serve disabled in Phase 1"
     },
     {
       "flag": "governance_staging_only",

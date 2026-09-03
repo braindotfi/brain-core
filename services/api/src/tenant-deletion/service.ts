@@ -188,6 +188,24 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "oauth_refresh_tokens", column: "tenant_id" },
   { table: "oauth_consent_grants", column: "tenant_id" },
 
+  // ---- Commercial foundation (RFCs 0009, 0011, and 0012) ----
+  // Reservation and adjustment rows reference their period or counter row.
+  // Rows referencing RobotMoney entities must be deleted before the entity.
+  { table: "api_usage_allowance_reservations", column: "tenant_id" },
+  { table: "api_usage_allowance_counters", column: "tenant_id" },
+  { table: "commercial_execution_reservations", column: "tenant_id" },
+  { table: "commercial_execution_adjustments", column: "tenant_id" },
+  { table: "commercial_execution_periods", column: "tenant_id" },
+  { table: "x402_payment_operations", column: "tenant_id" },
+  { table: "robotmoney_agent_instances", column: "tenant_id" },
+  { table: "robotmoney_entities", column: "tenant_id" },
+  { table: "commercial_provider_commands", column: "tenant_id" },
+  { table: "commercial_charge_facts", column: "tenant_id" },
+  { table: "commercial_stripe_events", column: "tenant_id" },
+  { table: "commercial_stripe_subscriptions", column: "tenant_id" },
+  { table: "tenant_commercial_entitlements", column: "tenant_id" },
+  { table: "commercial_billing_account_tenants", column: "tenant_id" },
+
   // ---- Onboarding / identity (tenants registry last) ----
   { table: "governance_report_snapshots", column: "tenant_id" },
   { table: "assistant_questions", column: "tenant_id" },
@@ -196,6 +214,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "wallet_identities", column: "tenant_id" },
   { table: "session_refresh_tokens", column: "tenant_id" },
   { table: "member_invites", column: "tenant_id" },
+  { table: "tenant_graduation_lineage", column: "tenant_id" },
   { table: "tenant_graduation_review_decisions", column: "tenant_id" },
   { table: "tenant_graduation_assessments", column: "tenant_id" },
   { table: "tenant_graduation_evidence", column: "tenant_id" },

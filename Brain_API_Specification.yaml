@@ -1571,6 +1571,173 @@ paths:
                       reason: { type: string, enum: [invite_invalid] }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /tenants/{tenantId}/graduation/verification:
+    post:
+      tags: [Tenancy]
+      summary: Submit a demo tenant for production verification
+      description: |
+        Requires an authenticated same-tenant admin session and an
+        Idempotency-Key. Runs the versioned verification adapter. The safe
+        default policy routes every otherwise-clear request to manual review
+        until jurisdiction-specific compliance criteria are configured.
+      operationId: submitGraduationVerification
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 256 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [business_profile]
+              properties:
+                business_profile:
+                  type: object
+                  required:
+                    - legal_business_name
+                    - business_email
+                    - website
+                    - registration_country
+                    - intended_use
+                  properties:
+                    legal_business_name: { type: string }
+                    business_email: { type: string, format: email }
+                    website: { type: string, format: uri }
+                    registration_country: { type: string, minLength: 2, maxLength: 2 }
+                    company_registration_number: { type: [string, "null"] }
+                    intended_use: { type: string }
+                    expected_monthly_requests: { type: [integer, "null"], minimum: 1 }
+      responses:
+        '200':
+          description: Verification request and current assessment
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /tenants/{tenantId}/graduation:
+    get:
+      tags: [Tenancy]
+      summary: Read the current production-graduation status
+      operationId: getGraduationStatus
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Current graduation request, or null when none exists
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /tenants/{tenantId}/graduation/complete-unpaid:
+    post:
+      tags: [Tenancy]
+      summary: Complete an approved unpaid production graduation
+      description: |
+        Creates a fresh production tenant and bootstrap member, records
+        immutable demo-to-production lineage, and returns new member and agent
+        sessions. It never relabels the demo tenant or copies synthetic data.
+        Only a clear verification assessment can enter this unpaid path.
+      operationId: completeUnpaidGraduation
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '201':
+          description: Fresh production tenant, lineage, and one-time credentials
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /tenants/{tenantId}/billing/tiers:
+    get:
+      tags: [Tenancy]
+      summary: List the current entitlement and available public tiers
+      x-feature-gate: BRAIN_COMMERCIAL_CATALOG_ENABLED
+      description: |
+        Requires an authenticated same-tenant admin session. Returns accepted,
+        immutable RobotMoney tier revisions and their independent agent,
+        entity, execution, API, MCP, and request-rate dimensions. The route is
+        not registered while BRAIN_COMMERCIAL_CATALOG_ENABLED is false, which
+        is the required Phase 1 state.
+      operationId: listCommercialTiers
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Current tier and eligible catalog revisions
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /tenants/{tenantId}/billing/tier-upgrade:
+    post:
+      tags: [Tenancy]
+      summary: Apply an eligible self-serve public-tier upgrade
+      x-feature-gate: BRAIN_COMMERCIAL_CATALOG_ENABLED
+      description: |
+        Requires an authenticated same-tenant admin session, an idempotency
+        key, and the expected entitlement version. Only strict upgrades to an
+        enabled catalog revision may apply. Stripe-backed revisions remain
+        blocked until a later phase supplies verified paid state. Every
+        catalog revision has self-serve disabled in Phase 1, and the route is
+        not registered while BRAIN_COMMERCIAL_CATALOG_ENABLED is false.
+      operationId: upgradeCommercialTier
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 256 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalog_revision_id, expected_entitlement_version]
+              properties:
+                catalog_revision_id: { type: string }
+                expected_entitlement_version: { type: integer, minimum: 1 }
+      responses:
+        '201':
+          description: Catalog-backed entitlement upgrade applied once
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /tenants/{tenantId}/keys:
     post:
       tags: [Tenancy]

@@ -4,12 +4,19 @@ import { brainError, requireAdminMember, requireScope } from "@brain/shared";
 import { requireIdempotencyKey, type SubmitGraduationVerificationInput } from "./service.js";
 import type { GraduationRequestRecord } from "./repository.js";
 import type { GraduationBusinessProfile } from "./verifier.js";
+import type {
+  CompleteUnpaidGraduationInput,
+  CompleteUnpaidGraduationResult,
+} from "./provisioning.js";
 
 export interface GraduationRoutesDeps {
   pool: Pool;
   service: {
     submit(input: SubmitGraduationVerificationInput): Promise<GraduationRequestRecord>;
     getCurrent(tenantId: string): Promise<GraduationRequestRecord | null>;
+  };
+  provisioning: {
+    complete(input: CompleteUnpaidGraduationInput): Promise<CompleteUnpaidGraduationResult>;
   };
 }
 
@@ -38,6 +45,20 @@ export async function registerGraduationRoutes(
     const result = await deps.service.getCurrent(request.params.tenantId);
     return { graduation: result === null ? null : serialize(result) };
   });
+
+  app.post<{ Params: { tenantId: string } }>(
+    "/tenants/:tenantId/graduation/complete-unpaid",
+    async (request, reply) => {
+      const principal = await requireGraduationAdmin(request, deps.pool, request.params.tenantId);
+      const result = await deps.provisioning.complete({
+        sourceTenantId: request.params.tenantId,
+        actorMemberId: principal.id,
+        idempotencyKey: requireIdempotencyKey(request.headers["idempotency-key"]),
+      });
+      reply.status(201);
+      return serializeProvisioning(result);
+    },
+  );
 }
 
 async function requireGraduationAdmin(request: FastifyRequest, pool: Pool, tenantId: string) {
@@ -165,5 +186,35 @@ function nextAction(status: string): string {
   if (status === "needs_information") return "provide_information";
   if (status === "blocked") return "contact_support";
   if (status === "verification_error") return "retry_verification";
+  if (status === "graduating") return "retry_unpaid_completion";
+  if (status === "graduated") return "open_production_tenant";
   return "await_verification";
+}
+
+function serializeProvisioning(result: CompleteUnpaidGraduationResult) {
+  return {
+    lineage: {
+      id: result.lineage.id,
+      graduation_request_id: result.lineage.requestId,
+      source_tenant_id: result.lineage.sourceTenantId,
+      destination_tenant_id: result.lineage.destinationTenantId,
+      destination_member_id: result.lineage.destinationMemberId,
+      graduation_mode: result.lineage.graduationMode,
+      copied_fields: result.lineage.copiedFields,
+      excluded_data_classes: result.lineage.excludedDataClasses,
+      financial_data_copied: result.lineage.financialDataCopied,
+      created_at: result.lineage.createdAt,
+    },
+    session: {
+      token: result.session.token,
+      refresh_token: result.session.refreshToken,
+      expires_in: result.session.expiresIn,
+    },
+    agent: {
+      id: result.agent.id,
+      token: result.agent.token,
+      token_id: result.agent.tokenId,
+      expires_at: result.agent.expiresAt,
+    },
+  };
 }
