@@ -113,7 +113,7 @@ jobs:
             exit 1
           fi
           if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true") && -n "$TENANT_ID" ]]; then
-            echo "cross-tenant reports require tenant_id to be empty"
+            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty; commercial cross-tenant reports have the same requirement"
             exit 1
           fi
           selected_cross_tenant_reports=0
@@ -208,7 +208,7 @@ jobs:
             exit 1
           fi
           if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true") && -n "$TENANT_ID" ]]; then
-            echo "cross-tenant report requires an empty tenant_id"
+            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty; commercial cross-tenant reports have the same requirement"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
