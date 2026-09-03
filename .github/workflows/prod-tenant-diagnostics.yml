@@ -231,7 +231,7 @@ jobs:
           if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
             docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
               -v ON_ERROR_STOP=1 -c "
-                SET statement_timeout = '30s';
+                SET statement_timeout = '45s';
                 SET lock_timeout = '1s';
                 SELECT json_build_object(
                   'event', 'commercial_owner_actor_candidate',
@@ -252,7 +252,7 @@ jobs:
                       FROM audit_events event
                      WHERE event.tenant_id = member.tenant_id
                        AND event.action = 'tenant.created'
-                     ORDER BY event.created_at DESC, event.id DESC
+                     ORDER BY event.created_at ASC, event.id ASC
                      LIMIT 1
                   )
                 )::text
@@ -278,7 +278,7 @@ jobs:
                       FROM audit_events event
                      WHERE event.tenant_id = tenant.id
                        AND event.action = 'tenant.created'
-                     ORDER BY event.created_at DESC, event.id DESC
+                     ORDER BY event.created_at ASC, event.id ASC
                      LIMIT 1
                   ) creation ON TRUE;"
             exit 0
