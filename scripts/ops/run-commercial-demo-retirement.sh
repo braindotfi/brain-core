@@ -106,8 +106,20 @@ restart_fenced_containers() {
   return "$status"
 }
 
+clear_rehearsal_outputs() {
+  docker exec -u 0 brain-prod-postgres rm -f \
+    /tmp/commercial-demo-retirement-targets.csv \
+    /tmp/commercial-demo-retirement-exclusions.csv \
+    /tmp/commercial-demo-retirement-self-serve-evidence.csv \
+    /tmp/commercial-demo-retirement-per-tenant-effects.csv \
+    /tmp/commercial-demo-retirement-per-table-effects.csv \
+    /tmp/commercial-demo-retirement-blob-manifest.csv \
+    /tmp/commercial-demo-retirement-september-safety.csv
+}
+
 run_complete_rehearsal() {
   local log_file="$1"
+  clear_rehearsal_outputs
   docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
     brain-prod-postgres:/tmp/commercial-name-exceptions.csv
   docker exec -i brain-prod-postgres psql -U brain -d brain \
