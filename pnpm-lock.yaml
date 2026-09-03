@@ -294,7 +294,7 @@ importers:
         version: 6.2.8
       openai:
         specifier: ^4.68.0
-        version: 4.104.0(ws@8.21.3)(zod@4.4.3)
+        version: 4.104.0(ws@8.21.2)(zod@4.4.3)
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -631,8 +631,8 @@ importers:
         specifier: workspace:*
         version: link:../../shared
       '@noble/hashes':
-        specifier: ^1.5.0
-        version: 1.8.0
+        specifier: ^2.3.0
+        version: 2.3.0
       fastify:
         specifier: ^5.11.0
         version: 5.11.2
@@ -830,8 +830,8 @@ importers:
         specifier: ^12.25.0
         version: 12.31.0
       '@noble/hashes':
-        specifier: ^1.5.0
-        version: 1.8.0
+        specifier: ^2.3.0
+        version: 2.3.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
@@ -1816,6 +1816,10 @@ packages:
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@noble/hashes@2.3.0':
+    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
+    engines: {node: '>= 20.19.0'}
 
   '@nodable/entities@2.1.0':
     resolution: {integrity: sha512-nyT7T3nbMyBI/lvr6L5TyWbFJAI9FTgVRakNoBqCD+PmID8DzFrrNdLLtHMwMszOtqZa8PAOV24ZqDnQrhQINA==}
@@ -5506,6 +5510,8 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
+  '@noble/hashes@2.3.0': {}
+
   '@nodable/entities@2.1.0': {}
 
   '@opentelemetry/api-logs@0.221.0':
@@ -8018,6 +8024,21 @@ snapshots:
       define-lazy-prop: 3.0.0
       is-inside-container: 1.0.0
       wsl-utils: 0.1.0
+
+  openai@4.104.0(ws@8.21.2)(zod@4.4.3):
+    dependencies:
+      '@types/node': 18.19.130
+      '@types/node-fetch': 2.6.13
+      abort-controller: 3.0.0
+      agentkeepalive: 4.6.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    optionalDependencies:
+      ws: 8.21.2
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - encoding
 
   openai@4.104.0(ws@8.21.3)(zod@3.25.76):
     dependencies:
