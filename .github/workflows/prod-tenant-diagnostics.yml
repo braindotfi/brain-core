@@ -297,7 +297,7 @@ jobs:
                        AND event.action = 'tenant.created'
                        AND event.created_at >= '$tenant_created_at'::timestamptz - interval '5 minutes'
                        AND event.created_at <= '$tenant_created_at'::timestamptz + interval '7 days'
-                     ORDER BY event.created_at DESC, event.id DESC
+                     ORDER BY event.created_at ASC, event.id ASC
                      LIMIT 1
                   ), '');")" || {
                     audit_errors=$((audit_errors + 1))
