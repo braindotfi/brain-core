@@ -104,8 +104,8 @@ CROSS JOIN LATERAL (
       LIMIT 1
     ) AS non_demo_source_present,
     EXISTS (
-      SELECT 1 FROM ledger_transactions transaction
-      WHERE transaction.owner_id = tenant.id
+      SELECT 1 FROM ledger_transactions ledger_row
+      WHERE ledger_row.owner_id = tenant.id
       LIMIT 1
     ) AS ledger_transaction_present,
     EXISTS (

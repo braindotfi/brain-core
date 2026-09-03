@@ -48,6 +48,11 @@ on:
         required: false
         type: boolean
         default: false
+      commercial_name_exception_characterization:
+        description: "When true, characterize the fixed 2026-09-03 business-name exception set"
+        required: false
+        type: boolean
+        default: false
       compliance_proposal_duplicate_report:
         description: "When true, report one tenant's pending Compliance proposal subject groups."
         required: false
@@ -83,6 +88,7 @@ jobs:
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
       TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
       COMMERCIAL_OWNER_ACTOR_REPORT: ${{ inputs.commercial_owner_actor_report }}
+      COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION: ${{ inputs.commercial_name_exception_characterization }}
       COMPLIANCE_PROPOSAL_DUPLICATE_REPORT: ${{ inputs.compliance_proposal_duplicate_report }}
       COMPLIANCE_SOURCE_REFS_REPORT: ${{ inputs.compliance_source_refs_report }}
     steps:
@@ -94,7 +100,7 @@ jobs:
             echo "trust_gate_impact must be true or false"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
             exit 1
           fi
@@ -102,11 +108,21 @@ jobs:
             echo "commercial_owner_actor_report must be true or false"
             exit 1
           fi
-          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true") && -n "$TENANT_ID" ]]; then
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "true" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "false" ]]; then
+            echo "commercial_name_exception_characterization must be true or false"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true") && -n "$TENANT_ID" ]]; then
             echo "cross-tenant reports require tenant_id to be empty"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
+          selected_cross_tenant_reports=0
+          for report in "$TRUST_GATE_IMPACT" "$COMMERCIAL_OWNER_ACTOR_REPORT" "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION"; do
+            if [[ "$report" == "true" ]]; then
+              selected_cross_tenant_reports=$((selected_cross_tenant_reports + 1))
+            fi
+          done
+          if (( selected_cross_tenant_reports > 1 )); then
             echo "select exactly one cross-tenant report"
             exit 1
           fi
@@ -160,8 +176,14 @@ jobs:
             scp -i ~/.ssh/id_deploy scripts/ops/report-compliance-proposal-source-refs.sql \
               "azureuser@$VM_HOST:~/brain-core/scripts/ops/report-compliance-proposal-source-refs.sql"
           fi
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy \
+              scripts/ops/report-commercial-name-exception-characterization.sql \
+              scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+              "azureuser@$VM_HOST:/tmp/"
+          fi
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMMERCIAL_OWNER_ACTOR_REPORT='$COMMERCIAL_OWNER_ACTOR_REPORT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMMERCIAL_OWNER_ACTOR_REPORT='$COMMERCIAL_OWNER_ACTOR_REPORT' COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION='$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -173,7 +195,7 @@ jobs:
             echo "trust_gate_impact failed remote validation"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id failed remote validation"
             exit 1
           fi
@@ -181,7 +203,11 @@ jobs:
             echo "commercial_owner_actor_report failed remote validation"
             exit 1
           fi
-          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true") && -n "$TENANT_ID" ]]; then
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "true" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "false" ]]; then
+            echo "commercial_name_exception_characterization failed remote validation"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true") && -n "$TENANT_ID" ]]; then
             echo "cross-tenant report requires an empty tenant_id"
             exit 1
           fi
@@ -225,6 +251,17 @@ jobs:
             docker exec -i brain-prod-postgres psql -U brain -d brain \
               -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
               < scripts/ops/report-compliance-proposal-source-refs.sql
+            exit 0
+          fi
+
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
+              brain-prod-postgres:/tmp/commercial-name-exceptions.csv
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -f /dev/stdin \
+              < /tmp/report-commercial-name-exception-characterization.sql
+            docker cp brain-prod-postgres:/tmp/commercial-name-exception-characterization.csv \
+              /tmp/commercial-name-exception-characterization.csv
             exit 0
           fi
 
@@ -1257,3 +1294,17 @@ jobs:
             echo "::endgroup::"
           fi
           REMOTE
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy \
+              "azureuser@$VM_HOST:/tmp/commercial-name-exception-characterization.csv" \
+              commercial-name-exception-characterization.csv
+          fi
+
+      - name: Upload commercial name exception characterization
+        if: ${{ inputs.commercial_name_exception_characterization }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: commercial-name-exception-characterization
+          path: commercial-name-exception-characterization.csv
+          if-no-files-found: error
+          retention-days: 7
