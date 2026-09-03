@@ -1,17 +1,43 @@
 \set ON_ERROR_STOP on
 \pset pager off
 
-SET default_transaction_read_only = on;
-SET statement_timeout = '90s';
-SET lock_timeout = '1s';
-
 CREATE TEMP TABLE exception_tenants (
   tenant_id TEXT PRIMARY KEY
 ) ON COMMIT PRESERVE ROWS;
 
+CREATE TEMP TABLE exception_characterization (
+  tenant_id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  kind TEXT NOT NULL,
+  sandbox BOOLEAN NOT NULL,
+  created_via TEXT NOT NULL,
+  provisioning_state TEXT,
+  data_profile TEXT,
+  access_stage TEXT,
+  disposable_marker BOOLEAN NOT NULL,
+  demo_audit_marker BOOLEAN NOT NULL,
+  demo_source_marker BOOLEAN NOT NULL,
+  invalid_bootstrap_email BOOLEAN NOT NULL,
+  explicit_test_email BOOLEAN NOT NULL,
+  member_count INTEGER NOT NULL,
+  raw_artifact_present BOOLEAN NOT NULL,
+  non_demo_source_present BOOLEAN NOT NULL,
+  ledger_transaction_present BOOLEAN NOT NULL,
+  ledger_invoice_present BOOLEAN NOT NULL,
+  payment_intent_present BOOLEAN NOT NULL,
+  proposal_present BOOLEAN NOT NULL,
+  api_key_present BOOLEAN NOT NULL,
+  post_creation_audit_present BOOLEAN NOT NULL,
+  activity_present BOOLEAN NOT NULL
+) ON COMMIT PRESERVE ROWS;
+
+SET default_transaction_read_only = on;
+SET statement_timeout = '90s';
+SET lock_timeout = '1s';
+
 \copy exception_tenants (tenant_id) FROM '/tmp/commercial-name-exceptions.csv' WITH (FORMAT csv, HEADER true)
 
-CREATE TEMP TABLE exception_characterization ON COMMIT PRESERVE ROWS AS
+INSERT INTO exception_characterization
 SELECT
   tenant.id AS tenant_id,
   tenant.created_at,
