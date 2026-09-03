@@ -254,11 +254,11 @@ BEGIN
 END $$;
 
 INSERT INTO tenant_column_registry (table_name, column_name, disposition)
-SELECT DISTINCT ON (column.table_name)
-       column.table_name,
-       column.column_name,
+SELECT DISTINCT ON (catalog_column.table_name)
+       catalog_column.table_name,
+       catalog_column.column_name,
        CASE
-         WHEN column.table_name IN (
+         WHEN catalog_column.table_name IN (
            'audit_events',
            'audit_anchors',
            'tenant_blob_purge_jobs',
@@ -267,15 +267,15 @@ SELECT DISTINCT ON (column.table_name)
          ) THEN 'preserve'
          ELSE 'delete'
        END
-  FROM information_schema.columns column
+  FROM information_schema.columns catalog_column
   JOIN information_schema.tables relation
-    ON relation.table_schema = column.table_schema
-   AND relation.table_name = column.table_name
- WHERE column.table_schema = 'public'
+    ON relation.table_schema = catalog_column.table_schema
+   AND relation.table_name = catalog_column.table_name
+ WHERE catalog_column.table_schema = 'public'
    AND relation.table_type = 'BASE TABLE'
-   AND column.column_name IN ('tenant_id', 'owner_id', 'brain_tenant_id')
- ORDER BY column.table_name,
-          CASE column.column_name
+   AND catalog_column.column_name IN ('tenant_id', 'owner_id', 'brain_tenant_id')
+ ORDER BY catalog_column.table_name,
+          CASE catalog_column.column_name
             WHEN 'tenant_id' THEN 1
             WHEN 'owner_id' THEN 2
             ELSE 3
