@@ -287,7 +287,7 @@ jobs:
                 exit 1
               fi
 
-              business_name="$(docker exec -i \
+              business_name="$(docker exec \
                 -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
                 brain-prod-postgres psql -U brain -d brain -AtX \
                 -v ON_ERROR_STOP=1 -c "SELECT COALESCE((
