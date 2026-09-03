@@ -264,5 +264,53 @@ SELECT json_build_object(
   'distinct_domains', COUNT(DISTINCT split_part(lower(email), '@', 2))
 )::text
   FROM non_bootstrap;
+
+WITH anomalies AS (
+  SELECT member.*,
+         split_part(lower(member.email), '@', 1) AS local_part,
+         split_part(lower(member.email), '@', 2) AS email_domain
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+     AND NOT (
+       lower(member.email) = 'approver2+' || lower(member.tenant_id) || '@brain.invalid'
+       AND member.display_name = 'Second Approver'
+     )
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_anomaly',
+  'tenant_id', anomaly.tenant_id,
+  'member_id', anomaly.id,
+  'masked_email', left(anomaly.local_part, 2) || repeat('*', greatest(length(anomaly.local_part) - 4, 1)) || right(anomaly.local_part, 2) || '@' || anomaly.email_domain,
+  'email_domain', anomaly.email_domain,
+  'local_part_length', length(anomaly.local_part),
+  'local_part_synthetic_marker', anomaly.local_part ~ '(acceptance|rfc[0-9]+|test|qa|demo|seed|sandbox|probe|fixture|automation|approver|cfo)',
+  'display_name_synthetic_marker', lower(anomaly.display_name) ~ '(acceptance|rfc[0-9]+|test|qa|demo|seed|sandbox|probe|fixture|automation|approver|cfo)',
+  'role', anomaly.role,
+  'active', anomaly.active,
+  'created_at', anomaly.created_at,
+  'matching_user', EXISTS (
+    SELECT 1 FROM users user_row WHERE user_row.tenant_id = anomaly.tenant_id AND user_row.id = anomaly.id
+  ),
+  'member_invite_rows', (
+    SELECT COUNT(*) FROM member_invites invite WHERE invite.tenant_id = anomaly.tenant_id AND invite.member_id = anomaly.id
+  ),
+  'member_changed_audit_rows', (
+    SELECT COUNT(*)
+      FROM audit_events event
+     WHERE event.tenant_id = anomaly.tenant_id
+       AND event.action = 'member.changed'
+       AND event.outputs #>> '{after,id}' = anomaly.id
+  ),
+  'member_invited_audit_rows', (
+    SELECT COUNT(*)
+      FROM audit_events event
+     WHERE event.tenant_id = anomaly.tenant_id
+       AND event.action = 'member.invited'
+       AND event.inputs ->> 'member_id' = anomaly.id
+  )
+)::text
+  FROM anomalies anomaly
+ ORDER BY anomaly.tenant_id, anomaly.id;
 SQL
 REMOTE
