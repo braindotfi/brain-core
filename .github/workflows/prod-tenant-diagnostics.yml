@@ -237,6 +237,10 @@ jobs:
                   'event', 'commercial_owner_actor_candidate',
                   'tenant_id', member.tenant_id,
                   'actor_id', member.id,
+                  'tenant_kind', tenant.kind,
+                  'tenant_sandbox', tenant.sandbox,
+                  'tenant_data_profile', tenant.data_profile,
+                  'tenant_access_stage', tenant.access_stage,
                   'last_actor_event_at', (
                     SELECT max(event.created_at)
                       FROM audit_events event
@@ -253,6 +257,7 @@ jobs:
                   )
                 )::text
                   FROM members member
+                  JOIN tenants tenant ON tenant.id = member.tenant_id
                  WHERE member.role = 'admin'
                    AND member.active = TRUE
                    AND member.status = 'active'
