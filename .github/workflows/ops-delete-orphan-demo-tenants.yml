@@ -1,10 +1,10 @@
-name: ops-verify-commercial-demo-retirement-abort
+name: ops-delete-orphan-demo-tenants
 
 on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: "Type VERIFY_1519_COMMERCIAL_DEMO_TENANTS_PRESERVED to run the fixed read-only check."
+        description: "Type DELETE_1519_COMMERCIAL_DEMO_TENANTS to run the approved commercial demo retirement."
         required: true
         type: string
 
@@ -12,10 +12,10 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: verify the fixed commercial demo tenant set was preserved
+  delete:
+    name: retire the fixed commercial demo tenant set
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 90
     environment: production
     concurrency:
       group: production-tenant-deletion
@@ -25,14 +25,14 @@ jobs:
       VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
       CONFIRMATION: ${{ inputs.confirmation }}
     steps:
-      - name: Check out the fixed verification script
+      - name: Check out the fixed cleanup script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate explicit confirmation
         shell: bash
         run: |
-          if [[ "$CONFIRMATION" != "VERIFY_1519_COMMERCIAL_DEMO_TENANTS_PRESERVED" ]]; then
-            echo "confirmation must equal VERIFY_1519_COMMERCIAL_DEMO_TENANTS_PRESERVED"
+          if [[ "$CONFIRMATION" != "DELETE_1519_COMMERCIAL_DEMO_TENANTS" ]]; then
+            echo "confirmation must equal DELETE_1519_COMMERCIAL_DEMO_TENANTS"
             exit 1
           fi
 
@@ -44,6 +44,15 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
-      - name: Verify abort preservation and worker recovery
+      - name: Fence, preflight, retire, purge, and reconcile
         shell: bash
-        run: scripts/ops/verify-commercial-demo-retirement-abort.sh
+        run: scripts/ops/run-commercial-demo-retirement.sh
+
+      - name: Upload retirement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-demo-retirement-execution
+          path: commercial-demo-retirement-execution/
+          if-no-files-found: warn
+          retention-days: 30
