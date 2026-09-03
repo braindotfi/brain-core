@@ -267,20 +267,63 @@ jobs:
                    )
                  ORDER BY member.tenant_id, member.id;
                 SELECT json_build_object(
-                  'event', 'commercial_business_name_coverage',
-                  'tenant_count', count(*),
-                  'with_business_name', count(*) FILTER (WHERE creation.business_name IS NOT NULL),
-                  'without_business_name', count(*) FILTER (WHERE creation.business_name IS NULL)
-                )::text
-                  FROM tenants tenant
-                  LEFT JOIN LATERAL (
-                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '') AS business_name
+                  'event', 'commercial_business_name_audit_started',
+                  'method', 'per_tenant_bounded_windows'
+                )::text;"
+
+            tenant_count=0
+            with_business_name=0
+            without_business_name=0
+            audit_errors=0
+            while IFS='|' read -r tenant_id tenant_created_at; do
+              [[ -n "$tenant_id" ]] || continue
+              tenant_count=$((tenant_count + 1))
+              if [[ ! "$tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+                echo "unexpected tenant id returned by production database"
+                exit 1
+              fi
+              if [[ ! "$tenant_created_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2} ]]; then
+                echo "unexpected tenant timestamp returned by production database"
+                exit 1
+              fi
+
+              business_name="$(docker exec -i \
+                -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
+                brain-prod-postgres psql -U brain -d brain -AtX \
+                -v ON_ERROR_STOP=1 -c "SELECT COALESCE((
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
                       FROM audit_events event
-                     WHERE event.tenant_id = tenant.id
+                     WHERE event.tenant_id = '$tenant_id'
                        AND event.action = 'tenant.created'
-                     ORDER BY event.created_at ASC, event.id ASC
+                       AND event.created_at >= '$tenant_created_at'::timestamptz - interval '5 minutes'
+                       AND event.created_at <= '$tenant_created_at'::timestamptz + interval '7 days'
+                     ORDER BY event.created_at DESC, event.id DESC
                      LIMIT 1
-                  ) creation ON TRUE;"
+                  ), '');")" || {
+                    audit_errors=$((audit_errors + 1))
+                    echo "{\"event\":\"commercial_business_name_audit_error\",\"tenant_id\":\"$tenant_id\"}"
+                    continue
+                  }
+
+              if [[ -n "$business_name" ]]; then
+                with_business_name=$((with_business_name + 1))
+              else
+                without_business_name=$((without_business_name + 1))
+                echo "{\"event\":\"commercial_business_name_missing\",\"tenant_id\":\"$tenant_id\"}"
+              fi
+            done < <(
+              docker exec -i \
+                -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
+                brain-prod-postgres psql -U brain -d brain -AtX \
+                -v ON_ERROR_STOP=1 -F '|' -c "SELECT id, created_at
+                    FROM tenants
+                   ORDER BY id;"
+            )
+
+            echo "{\"event\":\"commercial_business_name_coverage\",\"tenant_count\":$tenant_count,\"with_business_name\":$with_business_name,\"without_business_name\":$without_business_name,\"audit_errors\":$audit_errors}"
+            if (( audit_errors > 0 )); then
+              exit 1
+            fi
             exit 0
           fi
 
