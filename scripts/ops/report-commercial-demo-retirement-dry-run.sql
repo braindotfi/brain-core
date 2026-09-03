@@ -357,7 +357,7 @@ ORDER BY disposition, table_name;
 \copy (SELECT tenant_id FROM retirement_targets ORDER BY tenant_id) TO '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
 \copy (SELECT * FROM retirement_exclusions ORDER BY tenant_id) TO '/tmp/commercial-demo-retirement-exclusions.csv' WITH (FORMAT csv, HEADER true)
 \copy (SELECT * FROM self_serve_evidence ORDER BY tenant_id) TO '/tmp/commercial-demo-retirement-self-serve-evidence.csv' WITH (FORMAT csv, HEADER true)
-\copy (
+COPY (
   SELECT target.tenant_id,
          tenant.created_at,
          tenant.kind,
@@ -386,8 +386,8 @@ ORDER BY disposition, table_name;
     LEFT JOIN cascade_counts count ON count.tenant_id = target.tenant_id
    GROUP BY target.tenant_id, tenant.created_at, tenant.kind, tenant.sandbox, tenant.created_via
    ORDER BY target.tenant_id
-) TO '/tmp/commercial-demo-retirement-per-tenant-effects.csv' WITH (FORMAT csv, HEADER true)
-\copy (
+) TO '/tmp/commercial-demo-retirement-per-tenant-effects.csv' WITH (FORMAT csv, HEADER true);
+COPY (
   SELECT table_name,
          disposition,
          SUM(row_count) AS row_count,
@@ -395,8 +395,8 @@ ORDER BY disposition, table_name;
     FROM cascade_counts
    GROUP BY table_name, disposition
    ORDER BY disposition, table_name
-) TO '/tmp/commercial-demo-retirement-per-table-effects.csv' WITH (FORMAT csv, HEADER true)
-\copy (
+) TO '/tmp/commercial-demo-retirement-per-table-effects.csv' WITH (FORMAT csv, HEADER true);
+COPY (
   SELECT artifact.tenant_id,
          artifact.id AS artifact_id,
          artifact.blob_uri,
@@ -405,8 +405,8 @@ ORDER BY disposition, table_name;
     FROM raw_artifacts artifact
     JOIN retirement_targets target ON target.tenant_id = artifact.tenant_id
    ORDER BY artifact.tenant_id, artifact.id
-) TO '/tmp/commercial-demo-retirement-blob-manifest.csv' WITH (FORMAT csv, HEADER true)
-\copy (
+) TO '/tmp/commercial-demo-retirement-blob-manifest.csv' WITH (FORMAT csv, HEADER true);
+COPY (
   SELECT tenant.id AS tenant_id,
          tenant.created_at,
          tenant.kind,
@@ -421,4 +421,4 @@ ORDER BY disposition, table_name;
     FROM tenants tenant
    WHERE tenant.created_at >= '2026-09-01 00:00:00+00'::timestamptz
    ORDER BY tenant.created_at, tenant.id
-) TO '/tmp/commercial-demo-retirement-september-safety.csv' WITH (FORMAT csv, HEADER true)
+) TO '/tmp/commercial-demo-retirement-september-safety.csv' WITH (FORMAT csv, HEADER true);
