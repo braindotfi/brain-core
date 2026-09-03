@@ -224,7 +224,11 @@ BEGIN
     SELECT 1 FROM retirement_targets
      WHERE tenant_id IN (
        'tnt_00000000010000000000000000',
-       'tnt_01KYAT7A1QRKHTYW9H4RAR2SEX'
+       'tnt_01KYAT7A1QRKHTYW9H4RAR2SEX',
+       'tnt_01KYAT31JH0G043K77H8SKYG4N',
+       'tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ',
+       'tnt_01M1GTBQN8R8PB6X6PN73YB6NP',
+       'tnt_01M1M64ZE1R8J9TB6C3DCRKA61'
      )
   ) THEN
     RAISE EXCEPTION 'protected demo tenant reached retirement targets';
