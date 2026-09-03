@@ -28,9 +28,9 @@ set -euo pipefail
 
 readonly TARGET_FILE="/tmp/commercial-demo-retirement-targets.csv"
 readonly SNAPSHOT_FILE="/tmp/commercial-demo-retirement-agent-states.csv"
+readonly FENCE_FILE="/tmp/commercial-demo-retirement-execution/fence-started-at.txt"
 readonly EXPECTED_TARGET_SHA256="bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8"
 readonly EXPECTED_TARGET_COUNT=1519
-readonly FENCE_STARTED_AT="2026-09-03T22:00:51Z"
 readonly PROTECTED_TENANTS=(
   tnt_00000000010000000000000000
   tnt_01KYAT7A1QRKHTYW9H4RAR2SEX
@@ -42,6 +42,12 @@ readonly PROTECTED_TENANTS=(
 
 [[ -f "$TARGET_FILE" ]]
 [[ -s "$SNAPSHOT_FILE" ]]
+[[ -s "$FENCE_FILE" ]]
+fence_started_at="$(tr -d '\r\n' < "$FENCE_FILE")"
+if [[ ! "$fence_started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+  echo "invalid recorded fence timestamp"
+  exit 1
+fi
 
 actual_target_sha256="$(sha256sum "$TARGET_FILE" | cut -d ' ' -f 1)"
 [[ "$actual_target_sha256" == "$EXPECTED_TARGET_SHA256" ]]
@@ -66,7 +72,7 @@ done
 docker cp "$TARGET_FILE" brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv
 docker cp "$SNAPSHOT_FILE" brain-prod-postgres:/tmp/commercial-demo-retirement-agent-states.csv
 docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 \
-  -v fence_started_at="$FENCE_STARTED_AT" <<'SQL'
+  -v fence_started_at="$fence_started_at" <<'SQL'
 CREATE TEMP TABLE retirement_targets (tenant_id TEXT PRIMARY KEY);
 \copy retirement_targets FROM '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
 CREATE TEMP TABLE expected_agent_states (
@@ -121,6 +127,7 @@ WITH verification AS (
 SELECT json_build_object(
   'event', 'commercial_demo_retirement_abort_verified',
   'candidate_list_sha256', 'bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8',
+  'fence_started_at', :'fence_started_at',
   'target_count', target_count,
   'remaining_tenants', remaining_tenants,
   'agent_state_mismatches', agent_state_mismatches,
