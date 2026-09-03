@@ -265,7 +265,22 @@ jobs:
                      lower(member.email) LIKE '%damon%'
                      OR lower(member.display_name) LIKE '%damon%'
                    )
-                 ORDER BY member.tenant_id, member.id;"
+                 ORDER BY member.tenant_id, member.id;
+                SELECT json_build_object(
+                  'event', 'commercial_business_name_coverage',
+                  'tenant_count', count(*),
+                  'with_business_name', count(*) FILTER (WHERE creation.business_name IS NOT NULL),
+                  'without_business_name', count(*) FILTER (WHERE creation.business_name IS NULL)
+                )::text
+                  FROM tenants tenant
+                  LEFT JOIN LATERAL (
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '') AS business_name
+                      FROM audit_events event
+                     WHERE event.tenant_id = tenant.id
+                       AND event.action = 'tenant.created'
+                     ORDER BY event.created_at DESC, event.id DESC
+                     LIMIT 1
+                  ) creation ON TRUE;"
             exit 0
           fi
 
