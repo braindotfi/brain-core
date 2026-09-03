@@ -174,5 +174,95 @@ SELECT json_build_object(
   JOIN retirement_targets target ON target.tenant_id = proposal.tenant_id
  WHERE proposal.created_at >= :'fence_started_at'::timestamptz
  ORDER BY proposal.created_at, proposal.id;
+
+WITH non_bootstrap AS (
+  SELECT member.*, tenant.created_at AS tenant_created_at
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+    JOIN tenants tenant ON tenant.id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+), classified AS (
+  SELECT *,
+         CASE
+           WHEN lower(email) = 'approver2+' || lower(tenant_id) || '@brain.invalid'
+             AND display_name = 'Second Approver'
+             THEN 'demo_provision_second_approver'
+           WHEN lower(email) LIKE '%@brain.invalid'
+             THEN 'other_brain_invalid'
+           WHEN lower(email) LIKE '%@brain.fi'
+             THEN 'brain_internal'
+           WHEN lower(split_part(email, '@', 1)) ~ '(acceptance|rfc[0-9]+|test|qa|demo|seed|sandbox|probe|fixture|automation)'
+             THEN 'synthetic_local_part'
+           ELSE 'individual_review'
+         END AS classification
+    FROM non_bootstrap
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_classification',
+  'classification', classification,
+  'member_count', COUNT(*),
+  'tenant_count', COUNT(DISTINCT tenant_id),
+  'active_count', COUNT(*) FILTER (WHERE active),
+  'matching_user_count', COUNT(*) FILTER (
+    WHERE EXISTS (
+      SELECT 1
+        FROM users user_row
+       WHERE user_row.tenant_id = classified.tenant_id
+         AND user_row.id = classified.id
+    )
+  ),
+  'created_within_five_seconds_of_tenant', COUNT(*) FILTER (
+    WHERE abs(extract(epoch FROM (created_at - tenant_created_at))) <= 5
+  )
+)::text
+  FROM classified
+ GROUP BY classification
+ ORDER BY classification;
+
+WITH non_bootstrap AS (
+  SELECT member.*
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_month',
+  'month', to_char(date_trunc('month', created_at), 'YYYY-MM'),
+  'member_count', COUNT(*),
+  'exact_second_approver_count', COUNT(*) FILTER (
+    WHERE lower(email) = 'approver2+' || lower(tenant_id) || '@brain.invalid'
+      AND display_name = 'Second Approver'
+  )
+)::text
+  FROM non_bootstrap
+ GROUP BY date_trunc('month', created_at)
+ ORDER BY date_trunc('month', created_at);
+
+WITH non_bootstrap AS (
+  SELECT member.*
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_provenance',
+  'total', COUNT(*),
+  'exact_second_approver_email', COUNT(*) FILTER (
+    WHERE lower(email) = 'approver2+' || lower(tenant_id) || '@brain.invalid'
+  ),
+  'second_approver_display_name', COUNT(*) FILTER (WHERE display_name = 'Second Approver'),
+  'admin_role', COUNT(*) FILTER (WHERE role = 'admin'),
+  'active', COUNT(*) FILTER (WHERE active),
+  'public_email_domain', COUNT(*) FILTER (
+    WHERE split_part(lower(email), '@', 2) IN (
+      'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
+      'icloud.com', 'me.com', 'yahoo.com', 'proton.me', 'protonmail.com'
+    )
+  ),
+  'brain_internal_domain', COUNT(*) FILTER (WHERE lower(email) LIKE '%@brain.fi'),
+  'brain_invalid_domain', COUNT(*) FILTER (WHERE lower(email) LIKE '%@brain.invalid'),
+  'distinct_domains', COUNT(DISTINCT split_part(lower(email), '@', 2))
+)::text
+  FROM non_bootstrap;
 SQL
 REMOTE

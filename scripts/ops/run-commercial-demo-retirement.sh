@@ -6,6 +6,9 @@ readonly EXPECTED_CONFIRMATION="DELETE_1519_COMMERCIAL_DEMO_TENANTS"
 readonly EXPECTED_SOURCE_SHA256="318e3d485df905a326256e70de360bd1cf769437e1cce084719f12ef66b521e7"
 readonly EXPECTED_TARGET_SHA256="bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8"
 readonly EXPECTED_TARGET_COUNT=1519
+readonly QUIET_WINDOW_SECONDS=120
+readonly QUIET_POLL_SECONDS=15
+readonly QUIET_TIMEOUT_SECONDS=900
 readonly REMOTE_REPORT_DIR="/tmp/commercial-demo-retirement-execution"
 
 if [[ "${CONFIRMATION:-}" != "$EXPECTED_CONFIRMATION" ]]; then
@@ -36,6 +39,9 @@ set -euo pipefail
 readonly EXPECTED_CONFIRMATION="DELETE_1519_COMMERCIAL_DEMO_TENANTS"
 readonly EXPECTED_TARGET_SHA256="bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8"
 readonly EXPECTED_TARGET_COUNT=1519
+readonly QUIET_WINDOW_SECONDS=120
+readonly QUIET_POLL_SECONDS=15
+readonly QUIET_TIMEOUT_SECONDS=900
 readonly REPORT_DIR="/tmp/commercial-demo-retirement-execution"
 readonly PROTECTED_TENANTS=(
   tnt_00000000010000000000000000
@@ -59,6 +65,7 @@ worker_was_running=false
 agents_were_running=false
 deletion_committed=false
 agent_state_snapshot="/tmp/commercial-demo-retirement-agent-states.csv"
+rm -f "$agent_state_snapshot"
 
 container_is_running() {
   [[ "$(docker inspect --format='{{.State.Running}}' "$1" 2>/dev/null || true)" == "true" ]]
@@ -97,6 +104,93 @@ restart_fenced_containers() {
     wait_for_healthy brain-prod-agents || status=1
   fi
   return "$status"
+}
+
+run_complete_rehearsal() {
+  local log_file="$1"
+  docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
+    brain-prod-postgres:/tmp/commercial-name-exceptions.csv
+  docker exec -i brain-prod-postgres psql -U brain -d brain \
+    -f /dev/stdin \
+    < /tmp/report-commercial-demo-retirement-dry-run.sql \
+    | tee "$log_file"
+  docker cp brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv \
+    /tmp/commercial-demo-retirement-targets.csv
+}
+
+validate_target_file() {
+  local actual_target_sha256 target_count tenant_id
+  actual_target_sha256="$(sha256sum /tmp/commercial-demo-retirement-targets.csv | cut -d ' ' -f 1)"
+  if [[ "$actual_target_sha256" != "$EXPECTED_TARGET_SHA256" ]]; then
+    echo "candidate-list hash mismatch: $actual_target_sha256"
+    return 1
+  fi
+  target_count="$(tail -n +2 /tmp/commercial-demo-retirement-targets.csv | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [[ "$target_count" != "$EXPECTED_TARGET_COUNT" ]]; then
+    echo "candidate-list count mismatch: $target_count"
+    return 1
+  fi
+  for tenant_id in "${PROTECTED_TENANTS[@]}"; do
+    if grep -Fqx "$tenant_id" /tmp/commercial-demo-retirement-targets.csv; then
+      echo "protected tenant reached target list: $tenant_id"
+      return 1
+    fi
+  done
+}
+
+candidate_activity_count_since() {
+  local activity_since="$1"
+  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 \
+    -v activity_since="$activity_since" <<'SQL' | tail -n 1
+CREATE TEMP TABLE activity_targets (tenant_id TEXT PRIMARY KEY);
+\copy activity_targets FROM '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
+SELECT (
+  (SELECT COUNT(*) FROM audit_events event JOIN activity_targets target ON target.tenant_id = event.tenant_id WHERE event.created_at >= :'activity_since'::timestamptz) +
+  (SELECT COUNT(*) FROM agent_runs run JOIN activity_targets target ON target.tenant_id = run.tenant_id WHERE run.created_at >= :'activity_since'::timestamptz) +
+  (SELECT COUNT(*) FROM proposals proposal JOIN activity_targets target ON target.tenant_id = proposal.tenant_id WHERE proposal.created_at >= :'activity_since'::timestamptz) +
+  (SELECT COUNT(*) FROM raw_artifacts artifact JOIN activity_targets target ON target.tenant_id = artifact.tenant_id WHERE artifact.ingested_at >= :'activity_since'::timestamptz) +
+  (SELECT COUNT(*) FROM raw_sources source JOIN activity_targets target ON target.tenant_id = source.tenant_id WHERE source.created_at >= :'activity_since'::timestamptz) +
+  (SELECT COUNT(*) FROM execution_outbox outbox JOIN activity_targets target ON target.tenant_id = outbox.tenant_id WHERE outbox.created_at >= :'activity_since'::timestamptz OR outbox.status IN ('dispatching', 'reconciling'))
+)::bigint;
+SQL
+}
+
+wait_for_candidate_quiescence() {
+  local started_epoch deadline_epoch quiet_since quiet_since_epoch now_epoch quiet_seconds activity_count
+  started_epoch="$(date -u +%s)"
+  deadline_epoch=$((started_epoch + QUIET_TIMEOUT_SECONDS))
+  quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  quiet_since_epoch="$started_epoch"
+
+  while true; do
+    sleep "$QUIET_POLL_SECONDS"
+    activity_count="$(candidate_activity_count_since "$quiet_since")"
+    if [[ ! "$activity_count" =~ ^[0-9]+$ ]]; then
+      echo "candidate quiescence query returned an invalid count" >&2
+      return 1
+    fi
+
+    now_epoch="$(date -u +%s)"
+    if (( activity_count > 0 )); then
+      printf '{"event":"commercial_demo_retirement_quiet_window_reset","activity_count":%s,"observed_at":"%s"}\n' \
+        "$activity_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+      quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      quiet_since_epoch="$now_epoch"
+    else
+      quiet_seconds=$((now_epoch - quiet_since_epoch))
+      printf '{"event":"commercial_demo_retirement_quiet_window_observation","quiet_seconds":%s,"required_seconds":%s}\n' \
+        "$quiet_seconds" "$QUIET_WINDOW_SECONDS" >&2
+      if (( quiet_seconds >= QUIET_WINDOW_SECONDS )); then
+        printf '%s\n' "$quiet_since"
+        return 0
+      fi
+    fi
+
+    if (( now_epoch >= deadline_epoch )); then
+      echo "candidate activity did not quiesce within $QUIET_TIMEOUT_SECONDS seconds" >&2
+      return 1
+    fi
+  done
 }
 
 restore_agent_states_after_abort() {
@@ -148,36 +242,15 @@ if container_is_running brain-prod-agents || container_is_running brain-prod-wor
   echo "activity fence failed to stop a worker container"
   exit 1
 fi
-fence_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_complete_rehearsal "$REPORT_DIR/pre-fence-cohort.log"
+validate_target_file
+
+fence_started_at="$(wait_for_candidate_quiescence)"
 printf '%s\n' "$fence_started_at" > "$REPORT_DIR/fence-started-at.txt"
-sleep 10
+run_complete_rehearsal "$REPORT_DIR/final-preflight.log"
+validate_target_file
 
-docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
-  brain-prod-postgres:/tmp/commercial-name-exceptions.csv
-docker exec -i brain-prod-postgres psql -U brain -d brain \
-  -f /dev/stdin \
-  < /tmp/report-commercial-demo-retirement-dry-run.sql \
-  | tee "$REPORT_DIR/final-preflight.log"
-docker cp brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv \
-  /tmp/commercial-demo-retirement-targets.csv
-
-actual_target_sha256="$(sha256sum /tmp/commercial-demo-retirement-targets.csv | cut -d ' ' -f 1)"
-if [[ "$actual_target_sha256" != "$EXPECTED_TARGET_SHA256" ]]; then
-  echo "candidate-list hash mismatch: $actual_target_sha256"
-  exit 1
-fi
-target_count="$(tail -n +2 /tmp/commercial-demo-retirement-targets.csv | sed '/^$/d' | wc -l | tr -d ' ')"
-if [[ "$target_count" != "$EXPECTED_TARGET_COUNT" ]]; then
-  echo "candidate-list count mismatch: $target_count"
-  exit 1
-fi
-for tenant_id in "${PROTECTED_TENANTS[@]}"; do
-  if grep -Fqx "$tenant_id" /tmp/commercial-demo-retirement-targets.csv; then
-    echo "protected tenant reached target list: $tenant_id"
-    exit 1
-  fi
-done
-printf '%s  %s\n' "$actual_target_sha256" commercial-demo-retirement-targets.csv \
+printf '%s  %s\n' "$EXPECTED_TARGET_SHA256" commercial-demo-retirement-targets.csv \
   > "$REPORT_DIR/candidate-list-SHA256SUMS"
 cp /tmp/commercial-demo-retirement-targets.csv "$REPORT_DIR/"
 

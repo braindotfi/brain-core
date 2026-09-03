@@ -38,6 +38,13 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(runner, /restore_agent_states_after_abort/);
   assert.match(runner, /brain-prod-worker/);
   assert.match(runner, /brain-prod-agents/);
+  assert.match(runner, /QUIET_WINDOW_SECONDS=120/);
+  assert.match(runner, /QUIET_POLL_SECONDS=15/);
+  assert.match(runner, /QUIET_TIMEOUT_SECONDS=900/);
+  assert.match(runner, /wait_for_candidate_quiescence/);
+  assert.match(runner, /commercial_demo_retirement_quiet_window_reset/);
+  assert.match(runner, /pre-fence-cohort\.log/);
+  assert.match(runner, /final-preflight\.log/);
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /production-tenant-deletion/);
 });
