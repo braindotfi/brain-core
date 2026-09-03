@@ -16,7 +16,7 @@
       "minimatch@10.2.5>brace-expansion": "5.0.9",
       "@scalar/api-reference>nanoid": "5.1.16",
       "axios": "1.18.0",
-      "fast-uri": "3.1.5",
+      "fast-uri": "3.1.6",
       "find-my-way": "9.7.0",
       "form-data": ">=4.0.6",
       "js-yaml": "4.3.1",
