@@ -43,6 +43,21 @@ on:
         required: false
         type: boolean
         default: false
+      commercial_owner_actor_report:
+        description: "When true, resolve the current Damon admin actor and business-name backfill coverage"
+        required: false
+        type: boolean
+        default: false
+      commercial_name_exception_characterization:
+        description: "When true, characterize the fixed 2026-09-03 business-name exception set"
+        required: false
+        type: boolean
+        default: false
+      commercial_demo_retirement_dry_run:
+        description: "When true, rehearse the fixed demo retirement set without deleting anything"
+        required: false
+        type: boolean
+        default: false
       compliance_proposal_duplicate_report:
         description: "When true, report one tenant's pending Compliance proposal subject groups."
         required: false
@@ -77,6 +92,9 @@ jobs:
       PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
       TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
+      COMMERCIAL_OWNER_ACTOR_REPORT: ${{ inputs.commercial_owner_actor_report }}
+      COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION: ${{ inputs.commercial_name_exception_characterization }}
+      COMMERCIAL_DEMO_RETIREMENT_DRY_RUN: ${{ inputs.commercial_demo_retirement_dry_run }}
       COMPLIANCE_PROPOSAL_DUPLICATE_REPORT: ${{ inputs.compliance_proposal_duplicate_report }}
       COMPLIANCE_SOURCE_REFS_REPORT: ${{ inputs.compliance_source_refs_report }}
     steps:
@@ -88,12 +106,34 @@ jobs:
             echo "trust_gate_impact must be true or false"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "false" && "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
-            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty"
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" != "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" != "false" ]]; then
+            echo "commercial_owner_actor_report must be true or false"
+            exit 1
+          fi
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "true" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "false" ]]; then
+            echo "commercial_name_exception_characterization must be true or false"
+            exit 1
+          fi
+          if [[ "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" != "true" && "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" != "false" ]]; then
+            echo "commercial_demo_retirement_dry_run must be true or false"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" || "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "true") && -n "$TENANT_ID" ]]; then
+            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty; commercial cross-tenant reports have the same requirement"
+            exit 1
+          fi
+          selected_cross_tenant_reports=0
+          for report in "$TRUST_GATE_IMPACT" "$COMMERCIAL_OWNER_ACTOR_REPORT" "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN"; do
+            if [[ "$report" == "true" ]]; then
+              selected_cross_tenant_reports=$((selected_cross_tenant_reports + 1))
+            fi
+          done
+          if (( selected_cross_tenant_reports > 1 )); then
+            echo "select exactly one cross-tenant report"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -146,8 +186,20 @@ jobs:
             scp -i ~/.ssh/id_deploy scripts/ops/report-compliance-proposal-source-refs.sql \
               "azureuser@$VM_HOST:~/brain-core/scripts/ops/report-compliance-proposal-source-refs.sql"
           fi
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy \
+              scripts/ops/report-commercial-name-exception-characterization.sql \
+              scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+              "azureuser@$VM_HOST:/tmp/"
+          fi
+          if [[ "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy \
+              scripts/ops/report-commercial-demo-retirement-dry-run.sql \
+              scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+              "azureuser@$VM_HOST:/tmp/"
+          fi
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMMERCIAL_OWNER_ACTOR_REPORT='$COMMERCIAL_OWNER_ACTOR_REPORT' COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION='$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION' COMMERCIAL_DEMO_RETIREMENT_DRY_RUN='$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -159,12 +211,24 @@ jobs:
             echo "trust_gate_impact failed remote validation"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "false" && "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id failed remote validation"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
-            echo "trust_gate_impact requires an empty tenant_id"
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" != "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" != "false" ]]; then
+            echo "commercial_owner_actor_report failed remote validation"
+            exit 1
+          fi
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "true" && "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" != "false" ]]; then
+            echo "commercial_name_exception_characterization failed remote validation"
+            exit 1
+          fi
+          if [[ "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" != "true" && "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" != "false" ]]; then
+            echo "commercial_demo_retirement_dry_run failed remote validation"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" || "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" || "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "true") && -n "$TENANT_ID" ]]; then
+            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty; commercial cross-tenant reports have the same requirement"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -207,6 +271,147 @@ jobs:
             docker exec -i brain-prod-postgres psql -U brain -d brain \
               -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
               < scripts/ops/report-compliance-proposal-source-refs.sql
+            exit 0
+          fi
+
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
+              brain-prod-postgres:/tmp/commercial-name-exceptions.csv
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -f /dev/stdin \
+              < /tmp/report-commercial-name-exception-characterization.sql
+            docker cp brain-prod-postgres:/tmp/commercial-name-exception-characterization.csv \
+              /tmp/commercial-name-exception-characterization.csv
+            exit 0
+          fi
+
+          if [[ "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "true" ]]; then
+            docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
+              brain-prod-postgres:/tmp/commercial-name-exceptions.csv
+            docker exec -i brain-prod-postgres psql -U brain -d brain \
+              -f /dev/stdin \
+              < /tmp/report-commercial-demo-retirement-dry-run.sql
+            readonly outputs=(
+              commercial-demo-retirement-targets.csv
+              commercial-demo-retirement-exclusions.csv
+              commercial-demo-retirement-self-serve-evidence.csv
+              commercial-demo-retirement-per-tenant-effects.csv
+              commercial-demo-retirement-per-table-effects.csv
+              commercial-demo-retirement-blob-manifest.csv
+              commercial-demo-retirement-september-safety.csv
+            )
+            for output in "${outputs[@]}"; do
+              docker cp "brain-prod-postgres:/tmp/$output" "/tmp/$output"
+            done
+            (
+              cd /tmp
+              sha256sum "${outputs[@]}" > commercial-demo-retirement-SHA256SUMS
+            )
+            exit 0
+          fi
+
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
+            docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
+              -v ON_ERROR_STOP=1 -c "
+                SET statement_timeout = '45s';
+                SET lock_timeout = '1s';
+                SELECT json_build_object(
+                  'event', 'commercial_owner_actor_candidate',
+                  'tenant_id', member.tenant_id,
+                  'actor_id', member.id,
+                  'tenant_kind', tenant.kind,
+                  'tenant_sandbox', tenant.sandbox,
+                  'tenant_data_profile', tenant.data_profile,
+                  'tenant_access_stage', tenant.access_stage,
+                  'last_actor_event_at', (
+                    SELECT max(event.created_at)
+                      FROM audit_events event
+                     WHERE event.tenant_id = member.tenant_id
+                       AND event.actor = member.id
+                  ),
+                  'business_name', (
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
+                      FROM audit_events event
+                     WHERE event.tenant_id = member.tenant_id
+                       AND event.action = 'tenant.created'
+                     ORDER BY event.created_at ASC, event.id ASC
+                     LIMIT 1
+                  )
+                )::text
+                  FROM members member
+                  JOIN tenants tenant ON tenant.id = member.tenant_id
+                 WHERE member.role = 'admin'
+                   AND member.active = TRUE
+                   AND member.status = 'active'
+                   AND (
+                     lower(member.email) LIKE '%damon%'
+                     OR lower(member.display_name) LIKE '%damon%'
+                   )
+                 ORDER BY member.tenant_id, member.id;
+                SELECT json_build_object(
+                  'event', 'commercial_business_name_audit_started',
+                  'method', 'per_tenant_bounded_windows'
+                )::text;"
+
+            tenant_count=0
+            with_business_name=0
+            without_business_name=0
+            audit_errors=0
+            while IFS='|' read -r tenant_id tenant_created_at; do
+              [[ -n "$tenant_id" ]] || continue
+              tenant_count=$((tenant_count + 1))
+              if [[ ! "$tenant_id" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+                echo "unexpected tenant id returned by production database"
+                exit 1
+              fi
+              if [[ ! "$tenant_created_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2} ]]; then
+                echo "unexpected tenant timestamp returned by production database"
+                exit 1
+              fi
+
+              business_name="$(docker exec \
+                -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
+                brain-prod-postgres psql -U brain -d brain -AtX \
+                -v ON_ERROR_STOP=1 -c "WITH early_events AS MATERIALIZED (
+                    SELECT event.action, event.inputs, event.created_at, event.id
+                      FROM audit_events event
+                     WHERE event.tenant_id = '$tenant_id'
+                       AND event.created_at >= '$tenant_created_at'::timestamptz - interval '5 minutes'
+                       AND event.created_at <= '$tenant_created_at'::timestamptz + interval '7 days'
+                     ORDER BY event.created_at ASC, event.id ASC
+                     LIMIT 500
+                  )
+                  SELECT COALESCE((
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
+                      FROM early_events event
+                     WHERE event.action = 'tenant.created'
+                     ORDER BY event.created_at ASC, event.id ASC
+                     LIMIT 1
+                  ), '');")" || {
+                    audit_errors=$((audit_errors + 1))
+                    echo "{\"event\":\"commercial_business_name_audit_error\",\"tenant_id\":\"$tenant_id\"}"
+                    continue
+                  }
+
+              if [[ -n "$business_name" ]]; then
+                with_business_name=$((with_business_name + 1))
+              else
+                without_business_name=$((without_business_name + 1))
+                echo "{\"event\":\"commercial_business_name_missing\",\"tenant_id\":\"$tenant_id\"}"
+              fi
+            done < <(
+              docker exec -i \
+                -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
+                brain-prod-postgres psql -U brain -d brain -AtX \
+                -v ON_ERROR_STOP=1 -F '|' -c "SELECT id, created_at
+                    FROM tenants
+                   ORDER BY id;"
+            )
+
+            echo "{\"event\":\"commercial_business_name_coverage\",\"tenant_count\":$tenant_count,\"with_business_name\":$with_business_name,\"without_business_name\":$without_business_name,\"audit_errors\":$audit_errors}"
+            if (( audit_errors > 0 )); then
+              exit 1
+            fi
             exit 0
           fi
 
@@ -1134,3 +1339,37 @@ jobs:
             echo "::endgroup::"
           fi
           REMOTE
+          if [[ "$COMMERCIAL_NAME_EXCEPTION_CHARACTERIZATION" == "true" ]]; then
+            scp -i ~/.ssh/id_deploy \
+              "azureuser@$VM_HOST:/tmp/commercial-name-exception-characterization.csv" \
+              commercial-name-exception-characterization.csv
+          fi
+          if [[ "$COMMERCIAL_DEMO_RETIREMENT_DRY_RUN" == "true" ]]; then
+            mkdir -p commercial-demo-retirement-dry-run
+            scp -i ~/.ssh/id_deploy \
+              "azureuser@$VM_HOST:/tmp/commercial-demo-retirement-*.csv" \
+              "azureuser@$VM_HOST:/tmp/commercial-demo-retirement-SHA256SUMS" \
+              commercial-demo-retirement-dry-run/
+            (
+              cd commercial-demo-retirement-dry-run
+              sha256sum --check commercial-demo-retirement-SHA256SUMS
+            )
+          fi
+
+      - name: Upload commercial name exception characterization
+        if: ${{ inputs.commercial_name_exception_characterization }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: commercial-name-exception-characterization
+          path: commercial-name-exception-characterization.csv
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload commercial demo retirement dry run
+        if: ${{ inputs.commercial_demo_retirement_dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: commercial-demo-retirement-dry-run
+          path: commercial-demo-retirement-dry-run/
+          if-no-files-found: error
+          retention-days: 30

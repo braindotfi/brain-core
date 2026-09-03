@@ -1,0 +1,117 @@
+name: ops-commercial-demo-retirement-dry-run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: fixed commercial demo retirement dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: production-tenant-deletion
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Check out fixed dry-run inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate fixed cohort
+        shell: bash
+        run: |
+          expected_sha="318e3d485df905a326256e70de360bd1cf769437e1cce084719f12ef66b521e7"
+          actual_sha="$(sha256sum scripts/ops/commercial-name-exceptions-2026-09-03.csv | cut -d ' ' -f 1)"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "fixed retirement cohort checksum mismatch"
+            exit 1
+          fi
+          if [[ "$(wc -l < scripts/ops/commercial-name-exceptions-2026-09-03.csv | tr -d ' ')" != "1521" ]]; then
+            echo "fixed retirement cohort must contain a header and 1520 tenant ids"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run read-only production rehearsal
+        shell: bash
+        run: |
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/report-commercial-demo-retirement-dry-run.sql \
+            scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+            "azureuser@$VM_HOST:/tmp/"
+
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker cp /tmp/commercial-name-exceptions-2026-09-03.csv \
+            brain-prod-postgres:/tmp/commercial-name-exceptions.csv
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -f /dev/stdin \
+            < /tmp/report-commercial-demo-retirement-dry-run.sql
+
+          readonly outputs=(
+            commercial-demo-retirement-targets.csv
+            commercial-demo-retirement-exclusions.csv
+            commercial-demo-retirement-self-serve-evidence.csv
+            commercial-demo-retirement-per-tenant-effects.csv
+            commercial-demo-retirement-per-table-effects.csv
+            commercial-demo-retirement-blob-manifest.csv
+            commercial-demo-retirement-september-safety.csv
+          )
+          for output in "${outputs[@]}"; do
+            docker cp "brain-prod-postgres:/tmp/$output" "/tmp/$output"
+          done
+          (
+            cd /tmp
+            sha256sum "${outputs[@]}" > commercial-demo-retirement-SHA256SUMS
+          )
+          REMOTE
+
+          mkdir -p commercial-demo-retirement-dry-run
+          scp -i ~/.ssh/id_deploy \
+            "azureuser@$VM_HOST:/tmp/commercial-demo-retirement-*.csv" \
+            "azureuser@$VM_HOST:/tmp/commercial-demo-retirement-SHA256SUMS" \
+            commercial-demo-retirement-dry-run/
+          (
+            cd commercial-demo-retirement-dry-run
+            sha256sum --check commercial-demo-retirement-SHA256SUMS
+          )
+
+      - name: Validate dry-run outputs
+        shell: bash
+        run: |
+          target_file="commercial-demo-retirement-dry-run/commercial-demo-retirement-targets.csv"
+          exclusion_file="commercial-demo-retirement-dry-run/commercial-demo-retirement-exclusions.csv"
+          september_file="commercial-demo-retirement-dry-run/commercial-demo-retirement-september-safety.csv"
+          if grep -q 'tnt_00000000010000000000000000' "$target_file"; then
+            echo "production golden demo tenant reached target artifact"
+            exit 1
+          fi
+          if grep -q 'tnt_01KYAT7A1QRKHTYW9H4RAR2SEX' "$target_file"; then
+            echo "shared Continue with Demo tenant reached target artifact"
+            exit 1
+          fi
+          if grep -q ',t$' "$september_file"; then
+            echo "September tenant overlaps retirement target artifact"
+            exit 1
+          fi
+          grep -q 'tnt_00000000010000000000000000,production_golden_demo_tenant' "$exclusion_file"
+
+      - name: Upload exact dry-run evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-demo-retirement-dry-run
+          path: commercial-demo-retirement-dry-run/
+          if-no-files-found: error
+          retention-days: 30
