@@ -1,0 +1,23 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = """
+set -eu
+
+if [ "${CONDUCTOR_IS_LOCAL:-0}" = "1" ]; then
+  node24_prefix="$(brew --prefix node@24)"
+  if [ ! -x "$node24_prefix/bin/node" ]; then
+    echo "Node 24 is required. Install it with: brew install node@24" >&2
+    exit 1
+  fi
+  export PATH="$node24_prefix/bin:$PATH"
+fi
+
+node_major="$(node -p 'process.versions.node.split(`.`)[0]')"
+if [ "$node_major" != "24" ]; then
+  echo "Node 24 is required by .nvmrc and package.json; found $(node --version)." >&2
+  exit 1
+fi
+
+pnpm install --frozen-lockfile
+"""
