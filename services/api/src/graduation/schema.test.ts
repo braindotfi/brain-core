@@ -7,6 +7,18 @@ const migration = readFileSync(
   "utf8",
 );
 const repository = readFileSync(resolve(process.cwd(), "src/graduation/repository.ts"), "utf8");
+const phase2Migration = readFileSync(
+  resolve(process.cwd(), "migrations/0028_tenant_graduation_provisioning.sql"),
+  "utf8",
+);
+const provisioningRepository = readFileSync(
+  resolve(process.cwd(), "src/graduation/provisioning-repository.ts"),
+  "utf8",
+);
+const memberForeignKeys = readFileSync(
+  resolve(process.cwd(), "../execution/migrations/0035_tenant_graduation_member_foreign_keys.sql"),
+  "utf8",
+);
 
 describe("RFC 0010 Phase 1 graduation schema", () => {
   it.each([
@@ -36,5 +48,51 @@ describe("RFC 0010 Phase 1 graduation schema", () => {
   it("requires durable email verification before treating a member email as controlled", () => {
     expect(repository).toContain("u.email_verified_at IS NOT NULL");
     expect(repository).toContain("u.status = 'active'");
+  });
+
+  it("defers member references until the execution service has created members", () => {
+    expect(migration).not.toContain("REFERENCES members");
+    expect(memberForeignKeys).toContain(
+      "tenant_graduation_requests_initiated_by_member_fk",
+    );
+    expect(memberForeignKeys).toContain("tenant_graduation_evidence_submitted_by_member_fk");
+    expect(memberForeignKeys).toContain("REFERENCES members(tenant_id, id)");
+  });
+});
+
+describe("RFC 0010 Phase 2 unpaid graduation schema", () => {
+  it("stores immutable tenant-scoped lineage with a hard no-financial-copy assertion", () => {
+    expect(phase2Migration).toContain("CREATE TABLE IF NOT EXISTS tenant_graduation_lineage");
+    expect(phase2Migration).toContain("CHECK (financial_data_copied = FALSE)");
+    expect(phase2Migration).toContain(
+      "ALTER TABLE tenant_graduation_lineage FORCE ROW LEVEL SECURITY",
+    );
+    expect(phase2Migration).toContain(
+      "REVOKE UPDATE, DELETE, TRUNCATE ON tenant_graduation_lineage FROM brain_app",
+    );
+  });
+
+  it("creates a new customer tenant without updating the source tenant", () => {
+    expect(provisioningRepository).toContain("INSERT INTO tenants");
+    expect(provisioningRepository).toContain("'customer', 'production'");
+    expect(provisioningRepository).not.toMatch(/UPDATE\s+tenants/i);
+  });
+
+  it("accepts either an automated clear assessment or the latest manual clear decision", () => {
+    expect(provisioningRepository).toContain("tenant_graduation_review_decisions");
+    expect(provisioningRepository).toContain('row.review_decision !== "clear"');
+  });
+
+  it("never copies synthetic financial or credential tables", () => {
+    for (const table of [
+      "ledger_accounts",
+      "ledger_transactions",
+      "raw_artifacts",
+      "sources",
+      "api_keys",
+      "proposals",
+    ]) {
+      expect(provisioningRepository).not.toContain(`INSERT INTO ${table}`);
+    }
   });
 });

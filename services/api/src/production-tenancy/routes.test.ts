@@ -435,7 +435,7 @@ describe("production tenancy routes", () => {
         (c) => c.sql.includes("INSERT INTO tenants (") && c.sql.includes("provisioning_state"),
       );
       expect(tenantInsert?.values?.[1]).toBe("onchain");
-      expect(tenantInsert?.values?.slice(2)).toEqual([null, "customer", "production"]);
+      expect(tenantInsert?.values?.slice(2)).toEqual([null, "customer", "production", "Acme"]);
       expect(
         appDb.calls.some(
           (c) =>
@@ -566,6 +566,7 @@ describe("production tenancy routes", () => {
         "provisioning",
         "synthetic_brightline_v1",
         "demo",
+        "Brightline Systems Inc.",
       ]);
       expect(appDb.tenantStates.get(body.tenant_id)).toEqual({
         provisioning_state: "ready_demo",

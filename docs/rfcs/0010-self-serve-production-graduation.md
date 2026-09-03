@@ -1,6 +1,8 @@
 # RFC 0010. Self-serve production graduation
 
-- **Status:** Proposed. Specification only, no implementation.
+- **Status:** In progress. Phase 1 verification is implemented; unpaid Phase 2
+  graduation is implemented behind the verification approval gate. Paid
+  graduation remains blocked on RFC 0009.
 - **Date:** 2026-09-02
 - **Affects:** Signup, tenant provisioning, production tenancy, business
   verification, risk review, Stripe subscription setup, Raw ingestion, API
@@ -23,9 +25,15 @@ identity and role invitation across the relationship, but synthetic Ledger,
 Raw, source, audit, proposal, and agent records do not move. Production API
 keys are newly issued and scoped to the fresh tenant.
 
-Graduation requires an approved business verification result, an accepted
-commercial tier, a Stripe payment method, and confirmed initial subscription
-payment. A browser success page alone cannot activate production access.
+The approved legal business name is persisted as the destination tenant's
+canonical business name. Commercial entity provisioning may use that approved
+field, but it may not copy synthetic entity, financial, agent, or usage rows.
+
+Every graduation requires an approved business verification result. An unpaid
+graduation can then create the fresh production tenant without a subscription.
+A paid graduation additionally requires an accepted paid catalog revision, a
+Stripe payment method, and confirmed initial subscription payment. A browser
+success page alone cannot activate a payment-gated production path.
 
 The term KYB-lite in this RFC means a product risk screen, not a claim that
 Brain has completed every legally required know-your-business, sanctions,
@@ -62,12 +70,13 @@ is:
 4. Brain runs deterministic eligibility checks and a versioned risk screen.
 5. Clear applications continue automatically. Flagged or ambiguous
    applications enter manual review with reason codes.
-6. The admin selects an eligible public tier under RFC 0011.
-7. Brain creates a Stripe-hosted Checkout Session for the approved catalog
-   version.
-8. Verified Stripe webhooks confirm the Customer, payment method,
-   subscription, and paid initial invoice.
-9. Core creates or activates the fresh production tenant and one active
+6. For an unpaid graduation, Core proceeds directly to fresh-tenant
+   provisioning.
+7. For a paid graduation, the admin selects an eligible public tier under RFC
+   0011 and Brain creates a Stripe-hosted Checkout Session.
+8. The paid branch waits for verified Stripe webhooks to confirm the Customer,
+   payment method, subscription, and paid initial invoice.
+9. Core creates the fresh production tenant and one active
    bootstrap admin in the same transaction.
 10. The admin explicitly accepts or invites additional members. Core issues
     fresh live keys only after production activation.
@@ -98,6 +107,21 @@ version without replacing or mutating their earlier assessment evidence.
 Phase 1 does not create a destination tenant, change the source tenant
 classification, copy data, grant production Raw access, select a commercial
 tier, or initiate payment. Those transitions remain in later phases.
+
+### 4.0.1 Phase 2 payment boundary
+
+Creating a fresh production tenant does not itself require Stripe. The unpaid
+Phase 2 path may run after an approved verification result and creates a new
+`data_profile=customer`, `access_stage=production` tenant with immutable
+demo-to-production lineage. It copies only the reviewed business identity and
+bootstrap-member fields named by the server allowlist. Synthetic Ledger, Raw,
+source, audit, proposal, policy, agent, credential, and session rows never move.
+
+The payment-gated variant remains separate. It may call the same fresh-tenant
+provisioner only after RFC 0009 supplies verified subscription and initial
+payment state for a catalog revision that requires payment. Browser success,
+placeholder pricing, or the absence of a subscription can never satisfy that
+paid gate.
 
 ### 4.1 Required evidence
 
@@ -180,7 +204,7 @@ link containing:
 - graduation request id,
 - source demo tenant id,
 - destination production tenant id,
-- billing account id,
+- billing account id when the graduation is payment-gated,
 - initiating member and approved admin,
 - effective timestamp,
 - classification snapshots, and
@@ -219,8 +243,9 @@ demo tenant.
 Recommended sequence:
 
 1. Create the graduation request and lock its idempotency key.
-2. Complete verification and tier selection.
-3. Complete Stripe Checkout and receive verified paid state.
+2. Complete verification and, when required, tier selection.
+3. For a payment-gated graduation only, complete Stripe Checkout and receive
+   verified paid state.
 4. In one database transaction, create the new `data_profile=customer`,
    `access_stage=production_review` tenant and bootstrap admin member.
 5. Create production sessions and service principals through the existing

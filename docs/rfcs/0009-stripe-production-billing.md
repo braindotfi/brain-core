@@ -1,474 +1,572 @@
-# RFC 0009. Stripe production billing
+# RFC 0009. Stripe subscriptions and commercial invoicing
 
-- **Status:** Proposed. Specification only, no implementation.
-- **Date:** 2026-09-02
-- **Affects:** API usage billing, Stripe Billing, tenant entitlements, billing
-  periods, commercial outcomes, invoicing, payment recovery, BrainMVB billing
-  surfaces, security operations, finance operations, and customer contracts.
-- **Related:** RFC 0007, RFC 0008, RFC 0010, RFC 0011,
+- **Status:** Implementation in progress. Phase 1 disabled contract foundation
+  closed on 2026-09-03. Phase 2 observe-only work has begun.
+  No Stripe credential, provider call, payment, or activation exists.
+- **Date:** 2026-09-03
+- **Affects:** RobotMoney base-tier subscriptions, outcome-fee invoicing,
+  money-movement fee invoicing, billing accounts, Stripe customer and
+  subscription state, tenant entitlements, invoicing, payment recovery,
+  RobotMoney billing surfaces, finance operations, and customer contracts.
+- **Related:** RFC 0007, RFC 0008, RFC 0010, RFC 0011, RFC 0012,
   `docs/contracts/production-tenancy.md`, and migration
   `services/api/migrations/0025_api_billing_foundation.sql`.
 
-## 1. Decision summary
+## 1. Scope revision and decision summary
 
-Stripe is the payment processor and invoice system. Brain remains the
-authoritative source for request facts, commercial outcome facts,
-reconciliation, and the calculation of chargeable units.
+Stripe covers recurring base prices, Enterprise invoices, and the approved
+invoice collection path for approved outcome and money-movement fees. It does
+not collect API or MCP overage, which remains an x402 payment.
 
-The commercial model is hybrid:
+The commercial payment split is:
 
-1. A fixed recurring base price selects a public service tier.
-2. Reconciled request units above that tier's included allowance are exported
-   to a Stripe Billing Meter and charged as overage.
-3. Explicitly defined successful business outcomes are exported to separate
-   Stripe meters and priced independently from API request volume.
+| Charge                                                  | Rail                                        | Status in this RFC                          |
+| ------------------------------------------------------- | ------------------------------------------- | ------------------------------------------- |
+| Free tier base price                                    | No payment                                  | Approved zero-price entitlement             |
+| Starter, Growth, and Scale base price                   | Stripe subscription paid by card            | Approved for monthly and annual billing     |
+| Enterprise base price                                   | Stripe invoice                              | Approved, operator-only negotiated pricing  |
+| API and MCP use above or without allowance              | x402 exact USDC payment on Base mainnet     | Out of scope; RFC 0012                      |
+| Collections-resolved and fraud-stopped outcome fees     | Stripe invoice add-ons                      | Approved for launch; pricing in section 3.2 |
+| 0.3 percent on money moved plus foreign-exchange spread | RobotMoney revenue through Stripe invoicing | Approved mechanics in section 8             |
 
-Stripe never receives raw gateway events. It receives idempotent aggregate
-meter events only after Brain has durably recorded and reconciled the source
-facts. A Stripe invoice is not allowed to outrun Brain's completeness checks.
+This revision supersedes the earlier design in which Stripe Billing Meters
+received API overage. Stripe receives no raw gateway request events and no API
+or MCP usage meter events. Stripe may receive finalized outcome and
+money-movement invoice quantities from dedicated durable ledgers. Stripe
+remains authoritative for card payment, invoice, and recurring subscription
+state. Brain remains authoritative for the selected catalog revision,
+chargeable facts, and service entitlements that follow from verified payment
+state.
 
-Sandbox tenants and tenants with `access_stage=demo` remain zero-charge. A
-tenant becomes billable only through the graduation gate in RFC 0010 and an
-active Stripe subscription. There is no global switch that silently makes all
-existing tenants chargeable.
+The durable event, reconciliation, and period-close foundation from RFC 0008
+remains correct. Splitting payment rails changes what those records prove and
+which provider adapter consumes them. It does not justify deriving commercial
+state directly from Stripe, x402, or the audit feed.
 
-This RFC does not approve prices, taxes, outcome definitions, dunning periods,
-or a production billing start date. Those are explicit commercial, finance,
-legal, and compliance decisions listed in section 12.
+## 2. What remains valid from the original design
 
-## 2. Existing RFC 0008 foundation
+The following foundations remain required:
 
-RFC 0008 already provides the required internal evidence chain:
+- One stable billing account for the customer relationship, linked to one or
+  more production tenants as the entity model is resolved under RFC 0011.
+- Immutable, effective-dated RobotMoney catalog revisions.
+- A stable mapping to a Stripe Customer and Subscription. Email is never the
+  join key.
+- An append-only Stripe webhook inbox keyed by Stripe event id.
+- Idempotent subscription projections that tolerate duplicate and reordered
+  webhooks.
+- A durable command or outbox record for each Stripe mutation.
+- Verified payment state before a paid base entitlement activates.
+- Daily and monthly reconciliation between source facts, provider events, and
+  the effective entitlement.
+- Immutable billing-period close and compensating adjustments instead of
+  rewriting closed history.
+- Customer-visible subscription, usage, and payment state derived from the
+  same facts used by enforcement and finance operations.
 
-- `api_request_meter_events` is the append-only source for known-key traffic.
-- `api_usage_daily_rollups` provides reproducible daily aggregates.
-- `api_usage_reconciliation_runs` compares raw events, rollups, limiter
-  observations, gateway observations, and persistence failures.
-- `api_billing_periods` closes an immutable tenant and environment period.
-- `api_billing_adjustments` records reviewed corrections without rewriting
-  historical facts.
-- `api_metering_policies` versions the technical classification of billable
-  requests.
-- `tenant_api_entitlements` and immutable tier revisions define the rate-limit
-  policy that applied to each request.
+The reusable architecture is a shared commercial control plane with separate
+provider adapters:
 
-Today `requests_v1_shadow` can identify requests that would be billable, but
-the request writer stores zero `billable_units`, and a shadow period must close
-with zero `chargeable_units`. No existing table initiates a payment.
+1. The catalog defines the tier and the independent charge components.
+2. Stripe projects recurring base-subscription state.
+3. RFC 0008 records API and MCP request facts and allowance consumption.
+4. RFC 0012 records x402 quotes, authorizations, and settlements for overage.
+5. Dedicated outcome and money-movement ledgers establish chargeable facts and
+   export finalized invoice items to Stripe.
+6. The entitlement service computes access from the applicable verified
+   component states.
 
-Production billing extends this model. It does not replace it with Stripe
-event summaries or derive charges from the audit log.
+No provider's event stream is the canonical record for another provider's
+charge.
 
-## 3. Unit vocabulary and authority
+## 3. What changes because payment rails are split
 
-The implementation must keep these concepts distinct:
+### 3.1 Stripe no longer receives request overage
 
-| Term               | Definition                                                                            | Authority                                |
-| ------------------ | ------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Request fact       | One attributable gateway request and its outcome                                      | `api_request_meter_events`               |
-| Billable unit      | A request that a versioned technical policy permits billing                           | Brain metering policy                    |
-| Included unit      | A billable unit covered by the selected base tier                                     | Versioned commercial catalog             |
-| Chargeable unit    | A billable unit remaining after included allowance, credits, and approved adjustments | Closed Brain billing period              |
-| Stripe meter event | An idempotent aggregate exported from chargeable units                                | Stripe export outbox                     |
-| Commercial outcome | A separately evidenced business result, not an HTTP outcome string                    | Outcome ledger described in section 6    |
-| Invoice amount     | Base price, metered overage, outcome charges, tax, credits, and adjustments           | Stripe invoice, reconciled back to Brain |
+Remove these concepts from the Stripe implementation scope:
 
-`outcome=success` on an API request is not a commercial outcome. It only says
-that an HTTP operation succeeded.
+- Stripe Billing Meters for API or MCP requests,
+- Stripe metered Subscription Items,
+- Stripe export outboxes for request quantities,
+- invoice-line reconciliation for API or MCP overage, and
+- Stripe proration rules for included API or MCP usage.
 
-Add a billable request policy such as `requests_v2_billable`. It assigns
-`billable_units=1` only when all approved conditions hold, initially:
+The RFC 0008 request meter, rollups, reconciliation runs, billing periods, and
+adjustments are still needed. They now serve four purposes:
 
-- key environment is `live`,
-- tenant `access_stage=production`,
-- billing status permits service,
-- request outcome is successful, and
-- operation and scope are included in the published billing policy.
+- decide whether included allowance remains,
+- explain why a request was included, rejected, or required x402 payment,
+- reconcile paid x402 calls against fulfilled operations, and
+- support customer, finance, security, and dispute evidence.
 
-Client errors, core errors, dependency failures, scope rejections, rate-limit
-rejections, invalid credentials, sandbox traffic, and demo traffic remain
-recorded with zero billable units unless a future policy version explicitly
-changes that rule. Closed periods are never reinterpreted under a later policy.
+For real-time x402 gating, a closed daily or monthly period is too late.
+Allowance consumption needs an atomic request-path decision under RFC 0012.
+Period close validates completeness and produces accounting evidence; it does
+not trigger the x402 payment.
 
-## 4. Stripe customer, catalog, and subscription model
+### 3.2 Launch outcome fees
 
-### 4.1 Billing account
+Collections resolved and fraud caught or stopped both launch as optional
+add-ons. Their payment rail is Stripe invoicing, not x402. A dedicated outcome
+ledger distinguishes attempted work from a durable, customer-attributable
+terminal outcome and exports only finalized quantities to Stripe.
 
-Create one Brain billing account for the legal customer relationship. A
-billing account may be linked to the fresh production tenant and its retained
-demo tenant, but only production tenants can consume a paid entitlement.
+The approved pricing and evidence policy is:
 
-Store a stable mapping to one Stripe Customer. Do not use email as the join
-key. Customer billing email changes in Stripe must never alter Brain login or
-member identity.
+| Outcome              | Approved price                                                        | Chargeable definition                                                                                                                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Collection resolved  | 10 percent of net principal actually recovered                        | Cash attributable to RobotMoney collection activity has cleared into a customer-controlled account. Taxes, interest, partner fees, prior payments, refunds, and the separate 0.3 percent money-movement fee are excluded.                             |
+| Fraud caught/stopped | 2 percent of verified prevented principal, minimum $10 and no maximum | RobotMoney caused a block, pause, recall, or recovery before final loss, and independent evidence confirms the attempted movement was fraudulent. A risk score, manual review, customer suspicion, or payment-partner-only decline is not sufficient. |
 
-Minimum local records include:
+The 10 percent collection rate is intentionally below traditional
+third-party collection contingency rates while preserving a direct
+cash-recovery outcome. The fraud rate uses an uncapped proportional share of
+verified loss prevented rather than charging for every screened transaction.
+
+Approved evidence and timing:
+
+- A collection is attributable when RobotMoney made a recorded collection
+  action within 30 days before the payer committed to pay and the invoice was
+  overdue when that action began.
+- Collection principal becomes provisionally chargeable only after the receipt
+  clears. It finalizes after a 30-day reversal window.
+- A fraud incident requires the RobotMoney decision record plus independent
+  evidence such as a payment-partner fraud determination, bank return reason,
+  confirmed account-takeover report, or signed customer incident finding with
+  supporting artifacts.
+- Fraud evidence may arrive for 90 days after the prevented movement. The
+  outcome finalizes when the qualifying evidence arrives.
+- Finalized outcome fees are exported as itemized Stripe invoice lines in
+  arrears each month, including for customers on annual base plans.
+- Customers may dispute an outcome invoice line within 30 days. A reversal of
+  recovered cash within 90 days of receipt, or evidence within 120 days that a
+  fraud block was legitimate activity, creates a full compensating Stripe
+  credit note. Closed source facts are never rewritten.
+- The same workflow may incur API or MCP usage and an outcome fee because they
+  purchase different things, but the invoice and usage views disclose both.
+
+The percentage, definitions, attribution windows, minimum, uncapped fraud
+treatment, and reversal rules are final design inputs for implementation.
+
+### 3.3 Common evidence does not mean one settlement ledger
+
+Provider-specific facts remain separate because they have different finality,
+failure, and correction models:
+
+| Fact                                      | Authority                                    | Correction model                                       |
+| ----------------------------------------- | -------------------------------------------- | ------------------------------------------------------ |
+| Recurring card payment and invoice        | Stripe                                       | Stripe refund, credit note, or subscription correction |
+| API or MCP request and included allowance | Brain RFC 0008 records                       | Brain adjustment without rewriting request facts       |
+| x402 payment authorization and settlement | x402 facilitator plus Base receipt           | Refund transfer or compensating commercial record      |
+| Money-movement execution                  | Brain execution and payment-partner evidence | Rail-specific reversal or compensating settlement      |
+| Chargeable commercial outcome             | Brain outcome ledger plus source evidence    | Compensating reversal, credit note, and dispute record |
+| RobotMoney money-movement fee             | Brain fee ledger plus settled movement       | Compensating fee reversal and Stripe credit note       |
+
+A normalized commercial journal may reference all of these records for
+reporting. It must not erase their provider-specific evidence or claim that
+card and onchain settlement have the same finality.
+
+## 4. Stripe billing account and subscription model
+
+### 4.1 Tier mapping and billing currencies
+
+The approved USD monthly public base prices are:
+
+| Tier       |              Monthly base price | Stripe treatment                           |
+| ---------- | ------------------------------: | ------------------------------------------ |
+| Free       |                              $0 | No Stripe subscription required            |
+| Starter    |                             $99 | Fixed recurring subscription               |
+| Growth     |                            $499 | Fixed recurring subscription               |
+| Scale      |                          $2,500 | Fixed recurring subscription               |
+| Enterprise | $10,000 to $50,000 custom range | Contracted, operator-only Stripe invoicing |
+
+USD, EUR, and GBP are supported at launch. Monthly and discounted annual plans
+exist for Starter, Growth, and Scale. The approved localized-price mechanism
+is:
+
+- Create explicit Stripe Prices for each tier, USD/EUR/GBP currency, and
+  monthly/annual interval. Do not convert an invoice at payment time.
+- Set annual public prices to ten times the monthly price, equivalent to two
+  months free or a 16.67 percent discount.
+- Derive initial EUR and GBP list prices from the 2026-09-03 current spot
+  reference rate plus a 2 percent currency-risk buffer, rounded to two decimal
+  places. Store the rate, timestamp, source, buffer, and rounding rule with the
+  immutable price-book revision.
+- Review localized prices quarterly. A revision changes prices for new sales;
+  existing subscriptions remain pinned until an explicit migration or tier
+  change.
+- Lock billing currency for the subscription term. A self-serve currency
+  change requires ending the old subscription at its boundary and creating a
+  new subscription. It never rewrites paid invoices.
+
+This fixed price-book approach makes the amount predictable and auditable. It
+also avoids describing routine subscription pricing as a live FX spread. The
+2 percent buffer and annual 10-times multiplier are approved.
+
+Each paid public tier and billing interval maps to one immutable Stripe Price
+per supported currency. A price change creates a new catalog revision and new
+Stripe Prices. Enterprise terms are represented by operator-created Stripe
+Quotes and invoices rather than public Price ids.
+
+The Stripe catalog mapping does not contain API overage prices, outcome prices,
+agent counts, entity counts, or execution-limit counters. Those are
+RobotMoney catalog and entitlement dimensions under RFC 0011.
+
+### 4.2 Local projection
+
+Minimum local records planned for later schema review include:
 
 - billing account and tenant links,
+- selected RobotMoney catalog revision,
 - Stripe Customer id,
-- Stripe Subscription id and status projection,
-- fixed and metered Subscription Item ids,
-- selected catalog version and tier,
-- billing currency and tax treatment,
+- Stripe Subscription id and status,
+- recurring Subscription Item and Price ids,
+- monthly or annual billing interval and immutable localized price revision,
 - current period boundaries,
-- payment-method-present status without card details,
+- billing currency and tax treatment,
+- payment-method-present state without card details,
 - delinquency state and access consequence,
 - webhook high-water evidence, and
-- timestamps and actor for every customer-initiated or operator change.
+- outcome-fee and money-movement-fee export high-water evidence, and
+- actor, timestamps, idempotency, and before and after state for every change.
 
-### 4.2 Products and prices
+This RFC does not authorize schema changes yet.
 
-Each public tier maps to a versioned Brain catalog entry and an allowlisted set
-of immutable Stripe Price ids:
-
-- one recurring fixed Price for the base tier,
-- one metered Price for request overage, and
-- zero or more metered Prices for approved outcome types.
-
-Stripe Price ids, included units, overage rates, currency, interval, and tax
-behavior are immutable catalog data. A price change creates a new catalog
-version and new Stripe Prices. Existing subscriptions remain pinned until an
-explicit migration or customer plan change.
-
-Brain computes `chargeable_units` after applying the tier allowance and sends
-that quantity to the request-overage meter. Stripe must not independently
-subtract another included allowance. This keeps Brain's closed period,
-customer usage view, and Stripe quantity equal.
-
-For example, if a monthly tier includes 100,000 units and a reconciled period
-has 112,500 billable units, Brain closes 12,500 request chargeable units and
-exports 12,500 to Stripe. Exact included quantities and prices remain a
-commercial decision.
-
-### 4.3 Tier changes inside a period
-
-The entitlement timeline must be effective-dated. An upgrade cannot cause
-the same usage to consume both the old and new allowance.
-
-Recommended policy:
-
-- upgrades take effect after successful payment confirmation,
-- the fixed base price is prorated using a Stripe invoice preview and pending
-  update,
-- the old commercial segment closes at the effective timestamp,
-- the new segment starts without resetting already consumed monthly units,
-- the higher tier's total monthly allowance applies for the whole month, less
-  units already consumed, and
-- downgrades take effect at the next billing boundary.
-
-Stripe documents that usage-based subscription items are not prorated in the
-same way as fixed recurring items. Brain must therefore segment and reconcile
-metered usage itself. The final upgrade policy needs commercial approval before
-implementation.
-
-## 5. Usage export and invoice reconciliation
-
-### 5.1 Durable export outbox
-
-Add a durable Stripe export outbox. Each row references a closed or reconciled
-Brain source interval and contains:
-
-- tenant and billing account,
-- Stripe Customer and meter event name,
-- unit type and quantity,
-- UTC source interval,
-- metering and commercial policy versions,
-- source high-water marks,
-- deterministic idempotency identifier,
-- attempt count and last error,
-- Stripe acknowledgement, and
-- exported and reconciled timestamps.
-
-The worker retries the same identifier. It never creates a fresh identifier to
-work around an ambiguous timeout. Stripe processes meter events
-asynchronously, so an accepted request is not evidence that an invoice summary
-already reflects it.
-
-### 5.2 Export cadence
-
-Recommended cadence:
-
-1. Reconcile and freeze each UTC day after its late-arrival window.
-2. Export the day's newly chargeable request units in one aggregate event.
-3. Export separately by commercial outcome type.
-4. Reconcile Stripe meter summaries against the Brain export ledger.
-5. During Stripe's invoice finalization grace period, close the final day and
-   send any final delta.
-6. Permit invoice finalization only when the Brain period is matched and all
-   required export rows are acknowledged.
-
-Stripe supports an invoice finalization grace period of up to 72 hours for
-usage-based invoices. The selected grace period must be longer than Brain's
-measured reconciliation and export latency, with an alert before the deadline.
-
-Corrections discovered before invoice finalization use an idempotent delta or
-supported meter adjustment. Corrections after finalization use a Brain billing
-adjustment and a Stripe credit note or next-invoice adjustment. They do not
-rewrite the original closed period. Stripe's meter cancellation window is
-limited, so late corrections require an explicit finance workflow.
-
-### 5.3 Webhook inbox
-
-Stripe webhooks are asynchronous and may be retried. Add an append-only webhook
-inbox keyed by Stripe event id. Verify the signature over the raw request body,
-persist before processing, and make every projection update idempotent.
-
-Handlers must tolerate duplicates and ordering differences. For access-changing
-events, retrieve the current Stripe object when necessary instead of assuming
-delivery order. Record processed status and errors without storing payment
-instrument details.
-
-Relevant events include Checkout completion, subscription creation and
-updates, subscription deletion, invoice creation and finalization, invoice
-payment success or failure, payment action required, and payment-method
-changes. Browser success redirects never grant access.
-
-## 6. Commercial outcome charges
-
-### 6.1 Definition
-
-A chargeable outcome is a durable, customer-attributable business result with
-a terminal evidence condition. It is not an agent recommendation, an approval,
-an attempted action, or a successful HTTP response.
-
-Candidate outcome families are:
-
-| Candidate           | Earliest defensible terminal evidence                                      | Main unresolved risk                                                          |
-| ------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Collection resolved | Cleared settlement linked to the receivable                                | Attribution window, partial recovery, reversal, and percentage-fee regulation |
-| Invoice processed   | Validated invoice posted to the customer's production ledger               | Whether this duplicates request or document-processing pricing                |
-| Proposal executed   | UserOperation or rail execution reaches an approved terminal success state | Reorgs, reversals, failed settlement, and customer-caused cancellation        |
-
-No candidate is approved for charging by this RFC. Product, finance, legal,
-and customer-contract review must approve each outcome type and its evidence
-rule separately.
-
-### 6.2 Outcome ledger
-
-Add a separate append-only, tenant-RLS commercial outcome ledger containing:
-
-- stable outcome id and idempotency key,
-- tenant, billing account, and subject id,
-- outcome type and policy version,
-- source service and immutable evidence references,
-- occurred, confirmed, and reversed timestamps,
-- quantity, amount, and currency when relevant,
-- attribution window and responsible Brain action,
-- status such as pending, confirmed, reversed, or disputed,
-- price catalog version, and
-- source audit ids without using the audit feed as the billing counter.
-
-Only confirmed outcomes enter reconciled outcome rollups. A reversal creates a
-new compensating record. It never deletes the original outcome.
-
-Each outcome type uses a distinct Stripe meter and Price so invoices explain
-the charge separately from API overage. Launch should start with fixed per-unit
-outcomes. Percentage-of-recovered-value pricing is deferred until legal,
-currency, refund, tax, and dispute rules are approved.
-
-The commercial agreement and UI must state whether a customer can incur both
-request overage and an outcome charge for the same workflow. This must not be
-hidden as a technical implementation detail.
-
-## 7. Payment collection, invoicing, and dunning
-
-### 7.1 Payment method and invoices
+### 4.3 Subscription lifecycle
 
 Use Stripe-hosted Checkout to create the first paid subscription and collect
-the payment method. Use the Stripe Customer Portal for payment-method updates,
-invoice history, and cancellation where supported.
+card authentication. Use the Stripe Customer Portal for payment-method changes,
+invoice history, and supported cancellation operations.
 
-Brain must not collect or proxy card numbers, CVC, or bank credentials. Hosted
-Checkout reduces PCI scope, but does not remove Brain's PCI obligations. The
-final integration and annual PCI self-assessment scope require security and
-qualified compliance review.
+The transitioning BrainMVB or RobotMoney surface may own tier comparison,
+preview, and confirmation because RobotMoney entitlements span dimensions that
+Stripe does not model. Core sends only an allowlisted Price id to Stripe. A
+browser success page never activates access. Verified webhook state and
+reconciliation are required.
 
-Usage-based subscriptions with multiple products have Customer Portal plan
-change limitations. RFC 0011 therefore uses a Brain tier-selection UI backed
-by server-side Stripe APIs, while still using Stripe-hosted pages for payment
-entry and billing-document management.
+Approved lifecycle:
 
-### 7.2 Failed payments
+- Free to paid: activate the paid tier only after the initial invoice is paid.
+- Paid upgrade: apply immediately after successful same-day proration payment.
+  New limits activate only from verified Stripe state.
+- Paid downgrade: apply immediately with a same-day prorated
+  credit applied to the Stripe customer balance, not a cash refund. Capacity
+  remediation follows RFC 0011.
+- Cancellation: continue access through the already-paid period, issue no
+  unused-time refund, then automatically fall back to Free.
+- Payment failure: restrict paid subscription entitlements immediately with no
+  grace period. Preserve data and allow standalone x402 calls under RFC 0012.
+- Promo codes and published trials may be self-serve. Larger credits and
+  goodwill adjustments remain operator-only.
+- Enterprise subscription changes, negotiated pricing, and credits remain
+  operator-only even though invoices use Stripe.
 
-Use Stripe Billing recovery and verified webhook state. Do not suspend service
-on the first failed attempt.
+Immediate paid-downgrade timing and customer-balance credit treatment are
+approved.
 
-Recommended state policy, pending commercial and legal approval:
+An x402 balance or prior x402 payment does not prove that a Stripe subscription
+is active. A Stripe subscription does not prove that a particular overage call
+was paid.
 
-- `active` and paid: full purchased entitlement.
-- `past_due` within a configurable grace period: existing service continues,
-  but new keys, tier increases, and spend-expanding changes are blocked.
-- grace period expired, `unpaid`, or `canceled`: live write access and
-  money-moving actions are suspended. Member access, invoice access, usage
-  evidence, and data export remain available for a defined retention period.
-- payment recovered: restore the subscribed entitlement idempotently after
-  `invoice.paid` and active subscription confirmation.
+## 5. Entitlement activation and graduation boundary
 
-Non-payment never deletes tenant data. Exact grace duration, read-only access,
-notification schedule, collections process, and termination terms require
-contract and legal review.
+A production tenant may exist on Free without Stripe. A paid tier requires:
 
-## 8. Shadow-to-billable gate
+1. An eligible production tenant and billing account.
+2. An accepted immutable catalog revision and applicable terms.
+3. A verified Stripe Customer and active subscription mapping.
+4. Confirmed initial payment for the selected recurring Price.
+5. A successful compare-and-set entitlement transition.
 
-Billing activation is per production tenant and billing account. All of these
-must be true:
+RFC 0010's fresh-tenant graduation remains separable from payment. KYB trigger
+criteria remain on Damon's separate compliance track. This RFC provides an
+activation integration point for the approved result and does not change RFC
+0010 or infer that tier selection triggers KYB.
 
-1. Graduation under RFC 0010 is approved.
-2. A Stripe Customer and active subscription are durably mapped.
-3. The initial invoice is paid and a reusable payment method is present.
-4. Terms, pricing version, currency, tax treatment, and billing contact are
-   accepted and recorded.
-5. The selected billable policy and catalog version are active.
-6. At least the approved shadow observation period has matched gateway,
-   limiter, raw meter, rollup, and export-simulation counts with zero
-   persistence failures.
-7. Stripe test-mode invoice simulations match Brain's expected base, overage,
-   outcome, discount, tax, and adjustment quantities.
-8. Monitoring, alerting, support, refund, dispute, and rollback runbooks are
-   approved.
+## 6. Webhooks, reconciliation, and period close
 
-Activation writes an audited, effective-dated billing-mode transition. It does
-not back-bill any earlier event.
+Stripe webhooks are asynchronous and may be duplicated or reordered. Persist
+the verified raw event envelope before processing, keyed by Stripe event id.
+Handlers compare object versions or retrieve current Stripe state when delivery
+order is ambiguous.
 
-Permanent free sandbox and demo tenants remain in shadow indefinitely. Their
-`chargeable_units` and Stripe exports are always zero even if technical
-`billable_units` are calculated for product analytics.
+Relevant events include Checkout completion, subscription creation and update,
+subscription deletion, invoice creation and finalization, invoice payment
+success or failure, payment action required, refund, credit note, and
+payment-method change.
+
+Reconciliation is split by charge component:
+
+- Stripe reconciliation compares recurring catalog price, subscription state,
+  invoices, payments, refunds, and the base entitlement.
+- RFC 0008 reconciliation compares gateway facts, allowance consumption, and
+  fulfilled usage.
+- RFC 0012 reconciliation compares x402 settlement receipts with overage calls.
+- A consolidated monthly close confirms that the customer-visible statement is
+  complete across components.
+
+The consolidated close may lag real-time service decisions. It never grants
+access and never retrospectively turns an unpaid request into a paid one.
+
+## 7. Failed payments and access consequences
+
+Approved policy:
+
+- `active` and paid applies the purchased base-tier entitlement.
+- The first verified subscription payment failure immediately removes paid
+  incremental capacity. There is no grace period.
+- Existing data is preserved. Excess agents and entities become paused or
+  read-only under RFC 0011 rather than being deleted.
+- Existing included-access API and MCP credentials follow the lower-tier
+  revocation policy in RFC 0011.
+- A delinquent tenant may still use standalone x402 exact payment, including
+  while Stripe recovery is in progress. An x402 payment never restores the
+  failed subscription entitlement.
+- Stripe recovery retries and customer notifications continue even though the
+  access restriction is immediate.
+- Payment recovery restores the catalog-backed entitlement idempotently only
+  after verified current Stripe state.
+- A canceled subscription stays active through its paid period, then falls
+  back to Free.
+
+Approved notification policy: send an immediate failure notice, another after
+24 hours, and a final notice before each Stripe-configured retry. Notification
+delivery never delays the entitlement restriction.
+
+## 8. The 0.3 percent money-moved fee and foreign-exchange spread
+
+RobotMoney directly earns and collects the 0.3 percent fee on money moved
+through agent accounts. It is not a payment-partner fee or revenue share.
+Partner rail and foreign-exchange costs remain separate evidence.
+
+Approved calculation and collection mechanics:
+
+- Assess 0.3 percent against gross settled outgoing principal once per
+  external money movement. Do not charge proposals, approvals, failed
+  attempts, internal book transfers, refunds, taxes, partner fees, or the
+  RobotMoney fee itself.
+- Reserve the expected fee before execution so policy and available-balance
+  checks use the all-in cost. Finalize it only from terminal settlement facts.
+- Reverse the RobotMoney fee in full when the underlying movement is fully
+  reversed or refunded. Apply a proportional reversal for a partial reversal.
+- Record source amount, destination amount, gross principal, partner fees,
+  RobotMoney fee, reference rate, customer rate, spread, and net settlement as
+  separate values. Never infer RobotMoney revenue from a partner's net amount.
+- Aggregate finalized fees monthly and export them as itemized Stripe invoice
+  lines. For unusually large balances, Stripe invoicing may use an approved
+  non-card payment method rather than forcing the subscription card.
+
+Approved foreign-exchange economics:
+
+- Use the executable payment-partner mid-market quote at the moment the user
+  confirms the movement as the reference rate.
+- Add a 0.50 percent RobotMoney FX spread for cross-currency execution. No FX
+  spread applies when source and destination currencies match.
+- Lock the quote for 60 seconds. After expiry, requote and require confirmation
+  when the customer-facing destination amount worsens by more than 0.10
+  percent.
+- Apply the 0.3 percent money-movement fee to source-currency principal
+  separately from the FX spread. Show both before approval and on the receipt.
+- Use the actual settled partner rate for reconciliation. A favorable or
+  unfavorable difference from the customer quote is recorded as FX economics,
+  not silently added to the 0.3 percent fee.
+
+The 0.50 percent spread, 60-second quote lock, 0.10 percent reconfirmation
+threshold, and monthly Stripe collection path are approved. Damon's separate
+compliance track supplies any jurisdiction, disclosure, or tax constraints
+through the activation gates described in section 9.
 
 ## 9. Security and compliance boundaries
 
-- Stripe secret keys and webhook secrets use environment-scoped secret
-  storage and gated rotation. They never enter repositories or client code.
-- Hosted Checkout and Portal URLs are created only after an authenticated
-  tenant-admin request and use allowlisted return URLs.
-- Webhook endpoints verify signatures, rate limit invalid traffic, and retain
-  only necessary event data.
-- Billing tables with `tenant_id` use and force RLS. Cross-tenant finance jobs
-  use a dedicated least-privilege role, not `brain_app`.
-- Billing actions require step-up authentication or a recent authenticated
-  session and emit immutable before and after audit records.
-- Stripe Customer metadata contains opaque Brain ids, not ledger data or API
-  secrets.
-- Data retention, deletion, invoice retention, and subject-access handling are
-  reviewed against applicable privacy and accounting rules.
-- Tax registration, invoice wording, refunds, revenue recognition, sanctions,
-  and jurisdiction availability are legal and finance responsibilities, not
-  engineering defaults.
+- Stripe secret keys and webhook secrets use environment-scoped secret storage
+  and gated rotation. They never enter client code or audit output.
+- Hosted URLs are created only after an authenticated tenant-admin request and
+  use allowlisted return URLs.
+- Billing records with `tenant_id` enable and force row-level security.
+- Cross-tenant finance work uses a dedicated least-privilege role.
+- Billing mutations require recent authentication or approved step-up,
+  idempotency, compare-and-set versions, and immutable actor attribution.
+- Stripe metadata contains opaque Brain identifiers, not Ledger data, x402
+  payment payloads, or API secrets.
+- Compliance-owned launch countries, KYB trigger criteria, tax registrations,
+  merchant entity, and Stripe Tax configuration are not scoped here. The
+  billing activation gate consumes their approved configuration when Damon
+  completes that track.
+- Damon is the single accountable owner at acceptance. Finance Controller,
+  Billing Engineering, Treasury, Security, Product, client surface, Core, and
+  Platform are responsibility labels, not claims that separate role-holders or
+  teams exist today.
+- Each approval, close, reconciliation, deployment, and exception stores both
+  the stable responsibility label and authenticated actor. A later assignment
+  registry may delegate any label to another person without changing billing
+  records, workflows, schemas, or evidence contracts. Until delegation is
+  explicit, every label resolves to Damon.
+- The initial assignment uses authenticated actor
+  `user_01M0NTPB2292Z4BF5BHVEM41C6`, Damon's most recently active production
+  admin principal at the 2026-09-03 read-only diagnostic.
+- Stripe-hosted Checkout, Portal, Quotes, and invoices keep card data outside
+  Brain. The implementation targets PCI SAQ A scope. Damon signs off under the
+  Security responsibility label before activation.
 
-## 10. Required APIs and records
+## 10. Planned API boundary
 
-Implementation is expected to add, after separate schema review:
+Names are illustrative and require later OpenAPI review:
 
-- billing accounts and tenant links,
-- Stripe customer, subscription, invoice, and payment-status projections,
-- immutable commercial catalog versions and Stripe Price mappings,
-- Stripe webhook inbox and processing attempts,
-- Stripe meter export outbox and acknowledgements,
-- commercial outcome events, rollups, disputes, and reversals,
-- billable period close and invoice reconciliation,
-- billing-mode transitions and delinquency consequences, and
-- customer-visible invoice and usage summaries that expose no Stripe secret.
+- `GET /v1/billing/catalog`
+- `GET /v1/tenants/{tenantId}/billing`
+- `POST /v1/tenants/{tenantId}/billing/checkout-session`
+- `POST /v1/tenants/{tenantId}/billing/change-preview`
+- `POST /v1/tenants/{tenantId}/billing/change-confirm`
+- `POST /v1/tenants/{tenantId}/billing/cancel`
+- `POST /v1/tenants/{tenantId}/billing/cancel-reversal`
+- `POST /v1/tenants/{tenantId}/billing/portal-session`
 
-Core must expose read endpoints for the authenticated tenant admin and narrow
-mutation endpoints described in RFC 0011. Payment-provider calls stay behind a
-billing service port so Stripe test doubles can exercise the full state
-machine.
+Mutation endpoints accept a public catalog revision and server-issued preview,
+never an arbitrary Stripe Price id or entitlement value. API and MCP overage
+payment headers and settlement endpoints belong to RFC 0012, not this API.
 
-## 11. Sequencing and effort
+## 11. Approved implementation decisions
 
-Indicative engineering effort excludes legal, finance, tax, pricing, and
-Stripe account review:
+- Annual public price equals ten monthly payments, a 16.67 percent discount.
+- Fixed USD/EUR/GBP price books use the 2026-09-03 current spot reference rate,
+  2 percent risk buffer, two-decimal rounding, quarterly review, and immutable
+  catalog revisions.
+- Paid downgrades apply immediately with customer-balance credit rather than a
+  cash refund.
+- Failed-payment notices follow the cadence in section 7.
+- Collections resolved costs 10 percent of qualifying net recovered principal
+  under the attribution and reversal rules in section 3.2.
+- Fraud caught or stopped costs 2 percent of verified prevented principal,
+  with a $10 minimum and no maximum, under section 3.2.
+- Outcome fees and RobotMoney money-movement fees are itemized monthly through
+  Stripe even when the recurring base plan is annual.
+- The 0.3 percent fee uses the assessment and reversal rules in section 8.
+- Cross-currency money movement adds a 0.50 percent RobotMoney spread to a
+  60-second executable partner quote, with reconfirmation after an adverse
+  move greater than 0.10 percent.
+- Damon owns every responsibility label assigned in section 9 until an explicit
+  future delegation changes the assignment registry.
+- Removing a billing account's final tenant link starts the same seven-year
+  retention period used for accounting and settlement evidence.
 
-1. Commercial and compliance decisions: external gate, 2 to 4 engineer-days
-   of support.
-2. Billing schema, Stripe customer mapping, webhook inbox, and provider port:
-   5 to 8 engineer-days.
-3. Base subscription and hosted Checkout integration: 4 to 6 engineer-days.
-4. Reconciled usage export and invoice matching: 6 to 10 engineer-days.
-5. Dunning, access projection, notifications, and recovery: 4 to 7
-   engineer-days.
-6. First outcome type and reversal handling: 6 to 10 engineer-days after its
-   commercial rule is approved.
-7. Test-mode, test-clock, shadow, finance, and failure rehearsals: 5 to 8
-   engineer-days.
+Compliance-owned launch countries, KYB trigger criteria, tax registrations,
+merchant entity, and Stripe Tax configuration remain outside this commercial
+decision register. The implementation exposes configuration and activation
+gates for those separately supplied inputs without inventing defaults.
 
-RFC 0010 and RFC 0011 can overlap after the billing account, catalog, and
-webhook contracts are stable. Outcome charging should follow stable request
-overage billing, not launch simultaneously with it.
+## 12. Stripe workstream checkpoints
 
-## 12. Decisions required before implementation
+### Checkpoint A. Contracts and sandbox foundation
 
-- Public tier names, currencies, intervals, base prices, included units, and
-  overage rates.
-- Whether annual plans are in the first release.
-- Exact upgrade allowance treatment inside a billing period.
-- Initial chargeable outcome, terminal evidence, price, reversal window, and
-  dispute policy, or a decision to defer all outcome charges.
-- Merchant legal entity, supported customer countries, tax registration, and
-  whether Stripe Tax is required.
-- Invoice finalization grace period and internal daily close deadline.
-- Shadow qualification length. Recommendation: at least one complete monthly
-  cycle plus failure rehearsals before the first real invoice.
-- Dunning retry configuration, grace period, access degradation, notification,
-  and termination policy.
-- Refund, credit, goodwill adjustment, chargeback, and outcome-dispute
-  authority.
-- Payment methods and currencies allowed at launch.
-- Accounting export, revenue-recognition owner, and invoice reconciliation
-  sign-off.
-- Required PCI assessor or internal security owner and privacy retention
-  schedule.
+- Approve the later schema and OpenAPI changes separately.
+- Configure Stripe test-mode Products, monthly and annual Prices, localized
+  price books, Tax integration points, promotion codes, and webhook endpoints.
+- Implement provider commands, webhook inbox, idempotent projection,
+  responsibility-label assignments, and reconciliation with all mutations
+  fenced to Stripe test mode.
+- Use Stripe Test Clocks to exercise monthly and annual transitions, upgrades,
+  downgrades, cancellation, failed payment, and recovery.
 
-## 13. Required validation
+### Checkpoint B. Subscription shadow
 
-- The same Brain source interval cannot be exported twice under different
-  identifiers.
-- Stripe accepted quantities reconcile to closed Brain chargeable units.
-- Invoice lines reconcile separately for base, request overage, and every
-  outcome type.
-- Sandbox and demo traffic can never produce a nonzero Stripe export.
-- Unknown keys, rate-limit rejections, core failures, and meter failures remain
-  nonchargeable under the initial policy.
-- Duplicate and reordered webhooks produce one projection transition.
-- A browser redirect without a verified webhook cannot activate service.
-- Failed first payment cannot grant production access.
-- Dunning and recovery transitions are idempotent and auditable.
-- A late correction produces an adjustment, not mutation of a closed period.
-- Stripe test clocks cover renewal, upgrade, downgrade, cancellation, failed
-  payment, recovery, and final invoice cases.
-- No card or bank credential reaches Brain logs, databases, traces, or client
-  analytics.
-- Standard typecheck, test, lint, invariants, RLS, OpenAPI, SDK, migration, and
-  no-em-dashes checks pass.
+- Generate subscription previews and expected entitlement transitions without
+  creating live subscriptions.
+- Compare Brain projections with Stripe test objects and catalog revisions.
+- Run at least 30 days or two accelerated complete billing cycles, whichever
+  gives broader lifecycle coverage.
+- Exit only with zero unexplained projection divergence and replay-safe webhook
+  processing.
+
+### Checkpoint C. Internal live subscription canary
+
+- Enable live Stripe only for allowlisted RobotMoney-owned tenants.
+- Use low-value monthly and annual purchases, refunds, prorations, payment
+  failures, and cancellation rehearsals.
+- Reconcile daily and require Damon to sign off under the Finance Controller,
+  Billing Engineering, and Security responsibility labels.
+
+### Checkpoint D. Fee shadow
+
+- Compute Collections, fraud, 0.3 percent movement, and FX charges from real
+  production facts without exporting invoice items.
+- Run at least 30 days and independently review every chargeable outcome and a
+  risk-based sample of nonchargeable outcomes.
+- Exercise all reversal, credit-note, and dispute paths with test invoices.
+
+### Checkpoint E. Limited customer billing
+
+- Enable subscriptions and fee invoicing for a small allowlisted cohort.
+- Keep daily reconciliation, customer-visible evidence, automatic restriction,
+  and operator repair ready before expansion.
+- Do not enable outcome or movement fee export until the fee-shadow checkpoint has no
+  unexplained quantity or attribution difference.
+
+### Checkpoint F. General availability
+
+- Expand through a separate production activation runbook after RFC 0011 and
+  RFC 0012 gates pass and the compliance inputs are present.
+- Preserve daily reconciliation and immutable monthly close after launch.
+
+## 13. Required validation for a later implementation
+
+- A browser redirect without a verified webhook cannot activate a paid tier.
+- A Free tenant cannot accidentally create a paid Stripe subscription.
+- Each Stripe event produces at most one projection transition.
+- Reordered events converge on current Stripe object state.
+- Failed first payment leaves the prior entitlement in force.
+- A Stripe invoice contains no API or MCP x402 overage.
+- Every outcome or money-movement invoice line maps to a finalized Brain fact
+  and never to an attempt, proposal, risk score, or unsettled movement.
+- Stripe subscription state cannot satisfy an x402 payment requirement.
+- An x402 settlement cannot satisfy recurring subscription payment.
+- Upgrade, downgrade, cancellation, failure, and recovery transitions are
+  idempotent and auditable.
+- No card credential reaches Brain logs, databases, traces, or analytics.
+- Consolidated statements reconcile without treating unlike provider finality
+  as one event type.
+- Monthly and annual price books present the approved USD, EUR, and GBP amount
+  without invoice-time currency drift.
+- Outcome disputes and movement reversals create compensating records and
+  Stripe credit notes without rewriting closed history.
+- Standard typecheck, test, lint, invariants, row-level-security, OpenAPI, SDK,
+  migration, and no-em-dashes checks pass when implementation begins.
 
 ## 14. Done and pending checklist
 
-### Done in this RFC
+### Done in this revision
 
-- [x] Chose Stripe and the hybrid base, overage, and outcome model.
-- [x] Kept RFC 0008 facts and reconciliation authoritative.
-- [x] Defined chargeable units and the Stripe export boundary.
-- [x] Defined an outcome ledger separate from request outcomes.
-- [x] Scoped payment collection, invoicing, dunning, and access effects.
-- [x] Defined per-tenant shadow exit and permanent free sandbox behavior.
-- [x] Identified legal, compliance, finance, tax, and PCI gates.
+- [x] Limited Stripe request overage scope to no API or MCP usage.
+- [x] Added Enterprise, outcome-fee, and money-movement invoicing.
+- [x] Preserved RFC 0008 durable facts, reconciliation, and period close.
+- [x] Removed Stripe meters as the assumed API and MCP overage rail.
+- [x] Separated provider-specific evidence from consolidated reporting.
+- [x] Incorporated RobotMoney ownership of money-movement fees.
+- [x] Approved Collections pricing, uncapped fraud pricing, and FX mechanics.
+- [x] Assigned every responsibility label to Damon with a delegable registry
+      boundary.
+- [x] Flagged the RFC 0010 KYB trigger question without changing RFC 0010.
+- [x] Added the disabled billing-account, Stripe projection, durable event,
+      provider-command, charge-fact, and responsibility-assignment contracts.
 
-### Pending approval or implementation
+### Pending implementation and activation review
 
-- [ ] Resolve every decision in section 12.
-- [ ] Obtain legal, finance, tax, security, privacy, and PCI sign-off.
-- [ ] Implement and review the billing schema and Stripe provider boundary.
-- [ ] Rehearse the complete lifecycle in Stripe test mode.
-- [ ] Complete the approved production shadow period.
+- [x] Closed every commercial and technical decision in section 11.
+- [ ] Complete legal, finance, tax, compliance, security, and support review.
+- [x] Reviewed the Phase 1 billing schema against the split-rail model.
+- [ ] Implement and rehearse Stripe under separate implementation
+      authorization.
 - [ ] Approve a separate production billing activation runbook.
 
 ## 15. Primary references
 
-- [Stripe usage-based billing overview](https://docs.stripe.com/billing/subscriptions/usage-based/how-it-works)
-- [Stripe meter configuration](https://docs.stripe.com/billing/subscriptions/usage-based/meters/configure)
-- [Stripe meter event recording](https://docs.stripe.com/billing/subscriptions/usage-based/recording-usage-api)
-- [Stripe invoice finalization grace period](https://docs.stripe.com/billing/subscriptions/usage-based/configure-grace-period)
 - [Stripe subscription webhooks](https://docs.stripe.com/billing/subscriptions/webhooks)
-- [Stripe Billing recovery](https://docs.stripe.com/billing/revenue-recovery/smart-retries)
-- [Stripe-hosted Checkout](https://docs.stripe.com/payments/checkout)
+- [Stripe subscription changes and pending updates](https://docs.stripe.com/billing/subscriptions/change)
+- [Stripe-hosted subscription Checkout](https://docs.stripe.com/payments/checkout/build-subscriptions)
 - [Stripe Customer Portal](https://docs.stripe.com/customer-management)
+- [Stripe Billing recovery](https://docs.stripe.com/billing/revenue-recovery/smart-retries)
 - [Stripe integration security](https://docs.stripe.com/security/guide)
+- [Stripe manual and localized currency pricing](https://docs.stripe.com/payments/checkout/localize-prices)
+- [Stripe recurring pricing models](https://docs.stripe.com/products-prices/pricing-models)
+- [Stripe Radar pricing benchmark](https://stripe.com/radar/pricing)
+- [FTC debt-collection contingency-fee benchmark](https://www.ftc.gov/sites/default/files/documents/public_events/debt-collection-protecting-customers/dcwr.pdf)
+- [x402 v2 specification](https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md)

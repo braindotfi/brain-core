@@ -117,6 +117,35 @@ describe("graduation routes", () => {
       await app.close();
     }
   });
+
+  it("lets an active tenant admin complete an approved unpaid graduation", async () => {
+    const { app, complete } = await buildApp(adminPrincipal(tenantId), "admin");
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/graduation/complete-unpaid`,
+        headers: { "idempotency-key": "graduation-complete-1" },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({
+        lineage: {
+          source_tenant_id: tenantId,
+          destination_tenant_id: otherTenantId,
+          graduation_mode: "unpaid",
+          financial_data_copied: false,
+        },
+        session: { token: "member-token", refresh_token: "refresh-token" },
+        agent: { id: "agent_destination", token: "agent-token" },
+      });
+      expect(complete).toHaveBeenCalledWith({
+        sourceTenantId: tenantId,
+        actorMemberId: memberId,
+        idempotencyKey: "graduation-complete-1",
+      });
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 async function buildApp(principal: Principal, memberRole: "admin" | "viewer") {
@@ -127,11 +156,13 @@ async function buildApp(principal: Principal, memberRole: "admin" | "viewer") {
   });
   const record = graduationRecord();
   const submit = vi.fn(async () => record);
+  const complete = vi.fn(async () => provisioningResult());
   await registerGraduationRoutes(app, {
     pool: fakePool(memberRole),
     service: { submit, getCurrent: vi.fn(async () => record) },
+    provisioning: { complete },
   });
-  return { app, submit };
+  return { app, submit, complete };
 }
 
 function fakePool(role: "admin" | "viewer"): Pool {
@@ -210,5 +241,42 @@ function graduationRecord(): GraduationRequestRecord {
     },
     createdAt: "2026-09-02T00:00:00.000Z",
     updatedAt: "2026-09-02T00:00:01.000Z",
+  };
+}
+
+function provisioningResult() {
+  return {
+    lineage: {
+      id: "gvl_01K123456789ABCDEFGHJKMNPQ",
+      requestId: "grad_01K123456789ABCDEFGHJKMNPQ",
+      sourceTenantId: tenantId,
+      destinationTenantId: otherTenantId,
+      destinationMemberId: "user_01K123456789ABCDEFGHJKMNPQ",
+      graduationMode: "unpaid" as const,
+      copiedFields: {
+        business: {
+          legal_business_name: "Brightline Labs",
+          registration_country: "US",
+          company_registration_number: null,
+          website: "https://brightline.example/",
+          business_email: "owner@brightline.example",
+        },
+        bootstrap_member: {
+          email: "owner@brightline.example",
+          display_name: "Owner",
+          role: "admin" as const,
+        },
+      },
+      excludedDataClasses: ["ledger", "raw"],
+      financialDataCopied: false as const,
+      createdAt: "2026-09-02T00:00:02.000Z",
+    },
+    session: { token: "member-token", refreshToken: "refresh-token", expiresIn: 900 },
+    agent: {
+      id: "agent_destination",
+      token: "agent-token",
+      tokenId: "token_destination",
+      expiresAt: 1_788_328_000,
+    },
   };
 }

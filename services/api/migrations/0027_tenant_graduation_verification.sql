@@ -25,9 +25,7 @@ CREATE TABLE IF NOT EXISTS tenant_graduation_requests (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, id),
-  UNIQUE (tenant_id, idempotency_key),
-  FOREIGN KEY (tenant_id, initiated_by_member_id)
-    REFERENCES members(tenant_id, id) ON UPDATE CASCADE ON DELETE RESTRICT
+  UNIQUE (tenant_id, idempotency_key)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_graduation_active_request
@@ -49,9 +47,7 @@ CREATE TABLE IF NOT EXISTS tenant_graduation_evidence (
   PRIMARY KEY (tenant_id, id),
   UNIQUE (tenant_id, request_id, evidence_version),
   FOREIGN KEY (tenant_id, request_id)
-    REFERENCES tenant_graduation_requests(tenant_id, id) ON DELETE RESTRICT,
-  FOREIGN KEY (tenant_id, submitted_by_member_id)
-    REFERENCES members(tenant_id, id) ON UPDATE CASCADE ON DELETE RESTRICT
+    REFERENCES tenant_graduation_requests(tenant_id, id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS tenant_graduation_assessments (
@@ -149,5 +145,9 @@ COMMENT ON TABLE tenant_graduation_assessments IS
   'Immutable explainable verification outcomes produced by a versioned pluggable policy.';
 COMMENT ON TABLE tenant_graduation_review_decisions IS
   'Append-only manual-review decisions. No member-session mutation route is granted.';
+
+-- Cross-service member foreign keys are installed by execution migration 0035.
+-- The global migrator applies every api migration before execution creates
+-- members, so declaring those references here breaks a fresh database.
 
 COMMIT;

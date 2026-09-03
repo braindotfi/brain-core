@@ -17,6 +17,8 @@ export type GraduationRequestStatus =
   | "evaluating"
   | GraduationVerificationOutcome
   | "verification_error"
+  | "graduating"
+  | "graduated"
   | "cancelled";
 
 export interface GraduationRequestRecord {
