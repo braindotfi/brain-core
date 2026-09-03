@@ -232,23 +232,18 @@ jobs:
             docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
               -v ON_ERROR_STOP=1 <<'SQL'
             BEGIN TRANSACTION READ ONLY;
-            SET LOCAL statement_timeout = '5s';
+            SET LOCAL statement_timeout = '10s';
             SET LOCAL lock_timeout = '1s';
 
             WITH candidate AS (
               SELECT DISTINCT m.tenant_id, m.id AS actor_id
                 FROM members m
-                LEFT JOIN audit_events ae
-                  ON ae.tenant_id = m.tenant_id
-                 AND ae.actor = m.id
                WHERE m.role = 'admin'
                  AND m.active = TRUE
                  AND m.status = 'active'
                  AND (
                    lower(m.email) LIKE '%damon%'
                    OR lower(m.display_name) LIKE '%damon%'
-                   OR lower(COALESCE(ae.actor_email, '')) LIKE '%damon%'
-                   OR lower(COALESCE(ae.actor_display_name, '')) LIKE '%damon%'
                  )
             )
             SELECT json_build_object(
@@ -259,22 +254,6 @@ jobs:
               FROM candidate
              ORDER BY tenant_id, actor_id;
 
-            WITH latest_created AS (
-              SELECT DISTINCT ON (tenant_id)
-                     tenant_id,
-                     NULLIF(btrim(inputs->>'company_name'), '') AS business_name
-                FROM audit_events
-               WHERE action = 'tenant.created'
-               ORDER BY tenant_id, created_at DESC, id DESC
-            )
-            SELECT json_build_object(
-              'event', 'commercial_business_name_coverage',
-              'tenant_count', COUNT(*),
-              'with_business_name', COUNT(*) FILTER (WHERE latest_created.business_name IS NOT NULL),
-              'without_business_name', COUNT(*) FILTER (WHERE latest_created.business_name IS NULL)
-            )::text
-              FROM tenants
-              LEFT JOIN latest_created ON latest_created.tenant_id = tenants.id;
             COMMIT;
             SQL
             exit 0
