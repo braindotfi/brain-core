@@ -14,6 +14,27 @@ const EXPECTED_TARGET_COUNT = 1519;
 const EXPECTED_TARGET_SHA256 = "bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8";
 const TARGET_PATH = "/tmp/commercial-demo-retirement-targets.csv";
 const ACTOR = "ops-commercial-demo-retirement";
+const EXPECTED_DEMO_SECOND_APPROVERS = 788;
+const APPROVED_NON_BOOTSTRAP_MEMBERS = new Map([
+  [
+    "tnt_01KWP8B8YX3GJM4W62E3BQ3S6V:user_01KWP8B953TTGGFR444ENYYSFN",
+    {
+      email: "viewer@example.com",
+      role: "approver",
+      status: "deactivated",
+      active: false,
+    },
+  ],
+  [
+    "tnt_01KX4FS0NM8JTH780M09TFCZ6M:user_01KX4FSNGFTADPGW4P8P80857D",
+    {
+      email: "damon@brain.fi",
+      role: "viewer",
+      status: "active",
+      active: true,
+    },
+  ],
+]);
 const PROTECTED_TENANT_IDS = new Set([
   "tnt_00000000010000000000000000",
   "tnt_01KYAT7A1QRKHTYW9H4RAR2SEX",
@@ -126,6 +147,86 @@ async function scalarCount(client, sql, params = []) {
   return Number(result.rows[0]?.count ?? 0);
 }
 
+async function assertApprovedNonBootstrapMembers(client) {
+  const result = await client.query(
+    `SELECT member.tenant_id,
+            member.id,
+            lower(member.email) AS email,
+            member.display_name,
+            member.role,
+            member.status,
+            member.active,
+            abs(extract(epoch FROM (member.created_at - tenant.created_at))) <= 5
+              AS created_within_five_seconds,
+            EXISTS (
+              SELECT 1
+                FROM users user_row
+               WHERE user_row.tenant_id = member.tenant_id
+                 AND user_row.id = member.id
+            ) AS has_matching_user
+       FROM members member
+       JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+       JOIN tenants tenant ON tenant.id = member.tenant_id
+      WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+      ORDER BY member.tenant_id, member.id`,
+  );
+
+  let demoSecondApprovers = 0;
+  const approvedSeen = new Set();
+  const unexpected = [];
+  for (const row of result.rows) {
+    const isDemoSecondApprover =
+      row.email === `approver2+${String(row.tenant_id).toLowerCase()}@brain.invalid` &&
+      row.display_name === "Second Approver" &&
+      row.role === "admin" &&
+      row.status === "active" &&
+      row.active === true &&
+      row.created_within_five_seconds === true &&
+      row.has_matching_user === false;
+    if (isDemoSecondApprover) {
+      demoSecondApprovers += 1;
+      continue;
+    }
+
+    const key = `${row.tenant_id}:${row.id}`;
+    const approved = APPROVED_NON_BOOTSTRAP_MEMBERS.get(key);
+    const matchesApproved =
+      approved !== undefined &&
+      row.email === approved.email &&
+      row.role === approved.role &&
+      row.status === approved.status &&
+      row.active === approved.active &&
+      row.has_matching_user === false;
+    if (matchesApproved) {
+      approvedSeen.add(key);
+      continue;
+    }
+    unexpected.push({ tenant_id: row.tenant_id, member_id: row.id });
+  }
+
+  if (
+    result.rowCount !== EXPECTED_DEMO_SECOND_APPROVERS + APPROVED_NON_BOOTSTRAP_MEMBERS.size ||
+    demoSecondApprovers !== EXPECTED_DEMO_SECOND_APPROVERS ||
+    approvedSeen.size !== APPROVED_NON_BOOTSTRAP_MEMBERS.size ||
+    unexpected.length !== 0
+  ) {
+    throw new Error(
+      `approved non-bootstrap member preflight failed: ${JSON.stringify({
+        total: result.rowCount,
+        demo_second_approvers: demoSecondApprovers,
+        approved_individual_members: approvedSeen.size,
+        unexpected,
+      })}`,
+    );
+  }
+
+  return {
+    total: result.rowCount,
+    demo_second_approvers: demoSecondApprovers,
+    approved_individual_members: approvedSeen.size,
+  };
+}
+
 async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   const tenantSummary = await client.query(
     `SELECT COUNT(tenant.id)::int AS present,
@@ -153,6 +254,8 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   if (protectedCount !== 0) {
     throw new Error(`protected tenant preflight failed: ${protectedCount}`);
   }
+
+  const approvedNonBootstrapMembers = await assertApprovedNonBootstrapMembers(client);
 
   const checks = [
     [
@@ -190,10 +293,6 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
     [
       "usable_users",
       `SELECT COUNT(*) FROM users user_row JOIN retirement_targets target ON target.tenant_id = user_row.tenant_id WHERE user_row.password_hash IS NOT NULL OR user_row.email_verified_at IS NOT NULL OR lower(user_row.email) NOT LIKE 'bootstrap+%@brain.invalid'`,
-    ],
-    [
-      "non_bootstrap_members",
-      `SELECT COUNT(*) FROM members member JOIN retirement_targets target ON target.tenant_id = member.tenant_id WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'`,
     ],
     [
       "api_request_meter_events",
@@ -256,7 +355,7 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   if (agentFenceRow?.total !== agentFenceRow?.quarantined) {
     throw new Error(`agent quarantine preflight failed: ${JSON.stringify(agentFenceRow)}`);
   }
-  return { ...results, agentFence: agentFenceRow };
+  return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
 }
 
 async function captureCounts(client, liveTables) {
