@@ -46,6 +46,8 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(runner, /QUIET_POLL_SECONDS=15/);
   assert.match(runner, /QUIET_TIMEOUT_SECONDS=900/);
   assert.match(runner, /wait_for_candidate_quiescence/);
+  assert.match(runner, /clear_rehearsal_outputs/);
+  assert.match(runner, /docker exec -u 0 brain-prod-postgres rm -f/);
   assert.match(runner, /commercial_demo_retirement_quiet_window_reset/);
   assert.match(runner, /pre-fence-cohort\.log/);
   assert.match(runner, /final-preflight\.log/);
