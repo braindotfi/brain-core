@@ -290,13 +290,19 @@ jobs:
               business_name="$(docker exec \
                 -e PGOPTIONS='-c statement_timeout=5000 -c lock_timeout=1000' \
                 brain-prod-postgres psql -U brain -d brain -AtX \
-                -v ON_ERROR_STOP=1 -c "SELECT COALESCE((
-                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
+                -v ON_ERROR_STOP=1 -c "WITH early_events AS MATERIALIZED (
+                    SELECT event.action, event.inputs, event.created_at, event.id
                       FROM audit_events event
                      WHERE event.tenant_id = '$tenant_id'
-                       AND event.action = 'tenant.created'
                        AND event.created_at >= '$tenant_created_at'::timestamptz - interval '5 minutes'
                        AND event.created_at <= '$tenant_created_at'::timestamptz + interval '7 days'
+                     ORDER BY event.created_at ASC, event.id ASC
+                     LIMIT 500
+                  )
+                  SELECT COALESCE((
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
+                      FROM early_events event
+                     WHERE event.action = 'tenant.created'
                      ORDER BY event.created_at ASC, event.id ASC
                      LIMIT 1
                   ), '');")" || {
