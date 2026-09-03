@@ -312,5 +312,58 @@ SELECT json_build_object(
 )::text
   FROM anomalies anomaly
  ORDER BY anomaly.tenant_id, anomaly.id;
+
+WITH anomaly_members AS (
+  SELECT member.tenant_id, member.id
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+     AND NOT (
+       lower(member.email) = 'approver2+' || lower(member.tenant_id) || '@brain.invalid'
+       AND member.display_name = 'Second Approver'
+     )
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_anomaly_audit',
+  'tenant_id', anomaly.tenant_id,
+  'member_id', anomaly.id,
+  'audit_event_id', event.id,
+  'actor', event.actor,
+  'action', event.action,
+  'mutation', event.inputs ->> 'mutation',
+  'after_role', event.outputs #>> '{after,role}',
+  'after_status', event.outputs #>> '{after,status}',
+  'after_active', event.outputs #>> '{after,active}',
+  'created_at', event.created_at
+)::text
+  FROM anomaly_members anomaly
+  JOIN audit_events event
+    ON event.tenant_id = anomaly.tenant_id
+   AND event.action = 'member.changed'
+   AND event.outputs #>> '{after,id}' = anomaly.id
+ ORDER BY anomaly.tenant_id, event.created_at, event.id;
+
+WITH anomaly_tenants AS (
+  SELECT DISTINCT member.tenant_id
+    FROM members member
+    JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+   WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+     AND NOT (
+       lower(member.email) = 'approver2+' || lower(member.tenant_id) || '@brain.invalid'
+       AND member.display_name = 'Second Approver'
+     )
+)
+SELECT json_build_object(
+  'event', 'commercial_demo_retirement_member_anomaly_tenant_action',
+  'tenant_id', anomaly.tenant_id,
+  'action', event.action,
+  'event_count', COUNT(*),
+  'first_at', MIN(event.created_at),
+  'last_at', MAX(event.created_at)
+)::text
+  FROM anomaly_tenants anomaly
+  JOIN audit_events event ON event.tenant_id = anomaly.tenant_id
+ GROUP BY anomaly.tenant_id, event.action
+ ORDER BY anomaly.tenant_id, event.action;
 SQL
 REMOTE
