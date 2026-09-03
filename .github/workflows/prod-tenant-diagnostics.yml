@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      commercial_owner_actor_report:
+        description: "When true, resolve the current Damon admin actor and business-name backfill coverage"
+        required: false
+        type: boolean
+        default: false
       compliance_proposal_duplicate_report:
         description: "When true, report one tenant's pending Compliance proposal subject groups."
         required: false
@@ -77,6 +82,7 @@ jobs:
       PROPOSAL_READ_MODEL_SMOKE: ${{ inputs.proposal_read_model_smoke }}
       INGESTION_LINEAGE: ${{ inputs.ingestion_lineage }}
       TRUST_GATE_IMPACT: ${{ inputs.trust_gate_impact }}
+      COMMERCIAL_OWNER_ACTOR_REPORT: ${{ inputs.commercial_owner_actor_report }}
       COMPLIANCE_PROPOSAL_DUPLICATE_REPORT: ${{ inputs.compliance_proposal_duplicate_report }}
       COMPLIANCE_SOURCE_REFS_REPORT: ${{ inputs.compliance_source_refs_report }}
     steps:
@@ -88,12 +94,20 @@ jobs:
             echo "trust_gate_impact must be true or false"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id must match ^tnt_[0-9A-HJKMNP-TV-Z]{26}$"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
-            echo "trust_gate_impact is cross-tenant and requires tenant_id to be empty"
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" != "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" != "false" ]]; then
+            echo "commercial_owner_actor_report must be true or false"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true") && -n "$TENANT_ID" ]]; then
+            echo "cross-tenant reports require tenant_id to be empty"
+            exit 1
+          fi
+          if [[ "$TRUST_GATE_IMPACT" == "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
+            echo "select exactly one cross-tenant report"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -147,7 +161,7 @@ jobs:
               "azureuser@$VM_HOST:~/brain-core/scripts/ops/report-compliance-proposal-source-refs.sql"
           fi
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
+            "TENANT_ID='$TENANT_ID' WIKI_QUESTION_EVENT_ID_B64='$wiki_question_event_id_b64' WIKI_QUESTION_SINCE_B64='$wiki_question_since_b64' WIKI_QUESTION_UNTIL_B64='$wiki_question_until_b64' WIKI_QUESTION_SEARCH_B64='$wiki_question_search_b64' PROPOSAL_READ_MODEL_SMOKE='$PROPOSAL_READ_MODEL_SMOKE' INGESTION_LINEAGE='$INGESTION_LINEAGE' TRUST_GATE_IMPACT='$TRUST_GATE_IMPACT' COMMERCIAL_OWNER_ACTOR_REPORT='$COMMERCIAL_OWNER_ACTOR_REPORT' COMPLIANCE_PROPOSAL_DUPLICATE_REPORT='$COMPLIANCE_PROPOSAL_DUPLICATE_REPORT' COMPLIANCE_SOURCE_REFS_REPORT='$COMPLIANCE_SOURCE_REFS_REPORT' bash -s" <<'REMOTE'
           set -euo pipefail
 
           WIKI_QUESTION_EVENT_ID="$(printf '%s' "$WIKI_QUESTION_EVENT_ID_B64" | base64 -d)"
@@ -159,12 +173,16 @@ jobs:
             echo "trust_gate_impact failed remote validation"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
+          if [[ "$TRUST_GATE_IMPACT" == "false" && "$COMMERCIAL_OWNER_ACTOR_REPORT" == "false" && ! "$TENANT_ID" =~ ^tnt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
             echo "tenant_id failed remote validation"
             exit 1
           fi
-          if [[ "$TRUST_GATE_IMPACT" == "true" && -n "$TENANT_ID" ]]; then
-            echo "trust_gate_impact requires an empty tenant_id"
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" != "true" && "$COMMERCIAL_OWNER_ACTOR_REPORT" != "false" ]]; then
+            echo "commercial_owner_actor_report failed remote validation"
+            exit 1
+          fi
+          if [[ ("$TRUST_GATE_IMPACT" == "true" || "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true") && -n "$TENANT_ID" ]]; then
+            echo "cross-tenant report requires an empty tenant_id"
             exit 1
           fi
           if [[ -n "$WIKI_QUESTION_EVENT_ID" && ! "$WIKI_QUESTION_EVENT_ID" =~ ^evt_[0-9A-HJKMNP-TV-Z]{26}$ ]]; then
@@ -207,6 +225,58 @@ jobs:
             docker exec -i brain-prod-postgres psql -U brain -d brain \
               -v ON_ERROR_STOP=1 -v tenant_id="$TENANT_ID" -f - \
               < scripts/ops/report-compliance-proposal-source-refs.sql
+            exit 0
+          fi
+
+          if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
+            docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
+              -v ON_ERROR_STOP=1 <<'SQL'
+            BEGIN TRANSACTION READ ONLY;
+            SET LOCAL statement_timeout = '5s';
+            SET LOCAL lock_timeout = '1s';
+
+            WITH candidate AS (
+              SELECT DISTINCT m.tenant_id, m.id AS actor_id
+                FROM members m
+                LEFT JOIN audit_events ae
+                  ON ae.tenant_id = m.tenant_id
+                 AND ae.actor = m.id
+               WHERE m.role = 'admin'
+                 AND m.active = TRUE
+                 AND m.status = 'active'
+                 AND (
+                   lower(m.email) LIKE '%damon%'
+                   OR lower(m.display_name) LIKE '%damon%'
+                   OR lower(COALESCE(ae.actor_email, '')) LIKE '%damon%'
+                   OR lower(COALESCE(ae.actor_display_name, '')) LIKE '%damon%'
+                 )
+            )
+            SELECT json_build_object(
+              'event', 'commercial_owner_actor_candidate',
+              'tenant_id', tenant_id,
+              'actor_id', actor_id
+            )::text
+              FROM candidate
+             ORDER BY tenant_id, actor_id;
+
+            WITH latest_created AS (
+              SELECT DISTINCT ON (tenant_id)
+                     tenant_id,
+                     NULLIF(btrim(inputs->>'company_name'), '') AS business_name
+                FROM audit_events
+               WHERE action = 'tenant.created'
+               ORDER BY tenant_id, created_at DESC, id DESC
+            )
+            SELECT json_build_object(
+              'event', 'commercial_business_name_coverage',
+              'tenant_count', COUNT(*),
+              'with_business_name', COUNT(*) FILTER (WHERE latest_created.business_name IS NOT NULL),
+              'without_business_name', COUNT(*) FILTER (WHERE latest_created.business_name IS NULL)
+            )::text
+              FROM tenants
+              LEFT JOIN latest_created ON latest_created.tenant_id = tenants.id;
+            COMMIT;
+            SQL
             exit 0
           fi
 
