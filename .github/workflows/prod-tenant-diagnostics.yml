@@ -230,32 +230,37 @@ jobs:
 
           if [[ "$COMMERCIAL_OWNER_ACTOR_REPORT" == "true" ]]; then
             docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
-              -v ON_ERROR_STOP=1 <<'SQL'
-            BEGIN TRANSACTION READ ONLY;
-            SET LOCAL statement_timeout = '10s';
-            SET LOCAL lock_timeout = '1s';
-
-            WITH candidate AS (
-              SELECT DISTINCT m.tenant_id, m.id AS actor_id
-                FROM members m
-               WHERE m.role = 'admin'
-                 AND m.active = TRUE
-                 AND m.status = 'active'
-                 AND (
-                   lower(m.email) LIKE '%damon%'
-                   OR lower(m.display_name) LIKE '%damon%'
-                 )
-            )
-            SELECT json_build_object(
-              'event', 'commercial_owner_actor_candidate',
-              'tenant_id', tenant_id,
-              'actor_id', actor_id
-            )::text
-              FROM candidate
-             ORDER BY tenant_id, actor_id;
-
-            COMMIT;
-            SQL
+              -v ON_ERROR_STOP=1 -c "
+                SET statement_timeout = '30s';
+                SET lock_timeout = '1s';
+                SELECT json_build_object(
+                  'event', 'commercial_owner_actor_candidate',
+                  'tenant_id', member.tenant_id,
+                  'actor_id', member.id,
+                  'last_actor_event_at', (
+                    SELECT max(event.created_at)
+                      FROM audit_events event
+                     WHERE event.tenant_id = member.tenant_id
+                       AND event.actor = member.id
+                  ),
+                  'business_name', (
+                    SELECT NULLIF(btrim(event.inputs->>'company_name'), '')
+                      FROM audit_events event
+                     WHERE event.tenant_id = member.tenant_id
+                       AND event.action = 'tenant.created'
+                     ORDER BY event.created_at DESC, event.id DESC
+                     LIMIT 1
+                  )
+                )::text
+                  FROM members member
+                 WHERE member.role = 'admin'
+                   AND member.active = TRUE
+                   AND member.status = 'active'
+                   AND (
+                     lower(member.email) LIKE '%damon%'
+                     OR lower(member.display_name) LIKE '%damon%'
+                   )
+                 ORDER BY member.tenant_id, member.id;"
             exit 0
           fi
 
