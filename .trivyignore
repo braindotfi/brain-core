@@ -1,3 +1,6 @@
+# Debian 12 has no vendor fix for this systemd-homed issue as of 2026-09-03. The runtime image includes only libsystemd0 and libudev1, does not run systemd-homed, and runs as the unprivileged node user. Reassess by 2026-10-03.
+# exp:2026-10-03
+CVE-2026-16742
 # Debian 12 has no vendor fix for this util-linux issue as of 2026-08-02. Reassess by 2026-09-02.
 # exp:2026-09-02
 CVE-2026-53615
