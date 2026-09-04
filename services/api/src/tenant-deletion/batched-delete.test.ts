@@ -3,6 +3,7 @@ import {
   assertNoProtectedTenantIds,
   batchDeleteStatement,
   deleteTableInBatches,
+  lockCandidateTenants,
 } from "./batched-delete.js";
 
 describe("bounded tenant deletion", () => {
@@ -50,5 +51,18 @@ describe("bounded tenant deletion", () => {
     expect(() =>
       assertNoProtectedTenantIds(["tnt_safe", "tnt_northstar"], new Set(["tnt_northstar"])),
     ).toThrow("candidate-list contains protected tenant id: tnt_northstar");
+  });
+
+  it("locks the exact candidate tenant set before deletion", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 2 });
+    await lockCandidateTenants({ query }, 2);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE OF tenant"));
+  });
+
+  it("rejects a candidate tenant lock-count mismatch", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    await expect(lockCandidateTenants({ query }, 2)).rejects.toThrow(
+      "candidate tenant lock count mismatch: 1",
+    );
   });
 });

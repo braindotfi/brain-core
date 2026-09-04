@@ -5,12 +5,13 @@ import test from "node:test";
 const execution = readFileSync("scripts/ops/execute-commercial-demo-retirement.mjs", "utf8");
 const runner = readFileSync("scripts/ops/run-commercial-demo-retirement.sh", "utf8");
 const workflow = readFileSync(".github/workflows/ops-delete-orphan-demo-tenants.yml", "utf8");
-const phaseARunner = readFileSync(
-  "scripts/ops/run-commercial-demo-retirement-phase-a.sh",
-  "utf8",
-);
+const phaseARunner = readFileSync("scripts/ops/run-commercial-demo-retirement-phase-a.sh", "utf8");
 const phaseAWorkflow = readFileSync(
   ".github/workflows/ops-commercial-demo-retirement-phase-a.yml",
+  "utf8",
+);
+const privilegeCheck = readFileSync(
+  "scripts/ops/check-commercial-demo-retirement-privileges.mjs",
   "utf8",
 );
 
@@ -93,6 +94,10 @@ test("Phase A keeps one SHA contract and remains read only", () => {
   assert.match(phaseAWorkflow, /production-tenant-deletion/);
   assert.doesNotMatch(phaseARunner, /execute-commercial-demo-retirement\.mjs/);
   assert.doesNotMatch(phaseARunner, /DELETE\s+FROM/i);
+  assert.match(phaseARunner, /check-commercial-demo-retirement-privileges\.mjs/);
+  assert.match(privilegeCheck, /BRAIN_TENANT_DELETION_DB_URL/);
+  assert.match(privilegeCheck, /BEGIN TRANSACTION READ ONLY/);
+  assert.match(privilegeCheck, /assertTenantDeletionPrivilegeContract/);
 });
 
 test("Phase A uses the shared exact-match host overlap checker", () => {

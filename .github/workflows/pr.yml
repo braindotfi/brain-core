@@ -199,6 +199,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      DATABASE_URL_TENANT_DELETION: postgres://brain_tenant_deletion:brain_tenant_deletion@localhost:5432/brain
       # Least-privilege request-path role (infra/db-roles.sql, applied below).
       # brain_app is NOBYPASSRLS and not the table owner, so it is the one
       # connection in this job that Postgres actually subjects to RLS.

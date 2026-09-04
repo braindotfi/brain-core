@@ -111,6 +111,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      DATABASE_URL_TENANT_DELETION: postgres://brain_tenant_deletion:brain_tenant_deletion@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v7.0.1
@@ -135,6 +136,29 @@ jobs:
           pnpm -C tools/migrate run build
           node tools/migrate/dist/cli.js up
       - run: pnpm run test:coverage
+      - name: Apply DB role model for least-privilege integration tests
+        env:
+          PGPASSWORD: brain
+        run: |
+          command -v psql >/dev/null 2>&1 || { sudo apt-get -qq update && sudo apt-get -qq install -y --no-install-recommends postgresql-client; }
+          psql -v ON_ERROR_STOP=1 -h localhost -U brain -d brain \
+            -v brain_app_password="brain_app" \
+            -v brain_privileged_password="brain_privileged" \
+            -v brain_wiki_reader_password="brain_wiki_reader" \
+            -v brain_mcp_reader_password="brain_mcp_reader" \
+            -v brain_raw_worker_password="brain_raw_worker" \
+            -v brain_canonical_projector_password="brain_canonical_projector" \
+            -v brain_ledger_projector_password="brain_ledger_projector" \
+            -v brain_execution_worker_password="brain_execution_worker" \
+            -v brain_audit_verifier_password="brain_audit_verifier" \
+            -v brain_audit_publisher_password="brain_audit_publisher" \
+            -v brain_resolver_password="brain_resolver" \
+            -v brain_tenant_deletion_password="brain_tenant_deletion" \
+            -v brain_surface_gateway_password="brain_surface_gateway" \
+            -v brain_surface_audit_writer_password="brain_surface_audit_writer" \
+            -v brain_auth_password="brain_auth" \
+            -v brain_auth_audit_writer_password="brain_auth_audit_writer" \
+            -f infra/db-roles.sql
       - name: Integration tests
         # `--if-present` must precede the script name; after it, pnpm forwards it
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.

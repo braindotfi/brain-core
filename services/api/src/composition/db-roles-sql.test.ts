@@ -237,6 +237,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       }
     }
     expect(SQL).toContain("GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion;");
+    expect(SQL).toContain("GRANT SELECT, UPDATE, DELETE ON tenants TO brain_tenant_deletion;");
     expect(SQL).not.toMatch(
       /GRANT[^;]*(INSERT|UPDATE|DELETE|TRUNCATE)[^;]*ON audit_integrity_findings TO brain_tenant_deletion/,
     );

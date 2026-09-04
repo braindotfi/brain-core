@@ -365,7 +365,7 @@ BEGIN
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity
   LOOP EXECUTE format('GRANT SELECT, DELETE ON %s TO brain_tenant_deletion', t); END LOOP;
 END $$;
-GRANT SELECT, DELETE ON tenants TO brain_tenant_deletion;
+GRANT SELECT, UPDATE, DELETE ON tenants TO brain_tenant_deletion;
 GRANT SELECT, UPDATE ON raw_artifacts TO brain_tenant_deletion;
 GRANT SELECT, INSERT, UPDATE ON tenant_blob_purge_jobs, tenant_blob_purge_audit_outbox
   TO brain_tenant_deletion;
