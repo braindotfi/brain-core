@@ -98,6 +98,14 @@ import { registerDemoProvisionAnchorRoute } from "./demo/anchor-route.js";
 import { registerDemoPolicyActivateRoute } from "./demo/policy-activate-route.js";
 import { DEMO_GOLDEN_USER, DEMO_GOLDEN_TENANT } from "./demo/golden-tenant.js";
 import { registerProductionTenancyRoutes } from "./production-tenancy/routes.js";
+import { registerGraduationRoutes } from "./graduation/routes.js";
+import { PostgresGraduationVerificationRepository } from "./graduation/repository.js";
+import { GraduationVerificationService } from "./graduation/service.js";
+import { buildPendingComplianceGraduationVerifier } from "./graduation/verifier.js";
+import { UnpaidGraduationService } from "./graduation/provisioning.js";
+import { PostgresGraduationProvisioningStore } from "./graduation/provisioning-repository.js";
+import { CommercialTierService } from "./usage/commercial-tiers.js";
+import { registerCommercialTierRoutes } from "./usage/commercial-tier-routes.js";
 import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
   buildApiKeyAuthenticator,
@@ -2574,6 +2582,36 @@ async function main(): Promise<void> {
             demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
           }),
         );
+        const graduationVerificationService = new GraduationVerificationService(
+          new PostgresGraduationVerificationRepository(pool),
+          buildPendingComplianceGraduationVerifier(),
+          audit,
+        );
+        const graduationProvisioningService = new UnpaidGraduationService(
+          new PostgresGraduationProvisioningStore(
+            pool,
+            process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
+              "0x0000000000000000000000000000000000000000",
+          ),
+          siwxSigner,
+          audit,
+        );
+        await v1.register(async (child) =>
+          registerGraduationRoutes(child, {
+            pool,
+            service: graduationVerificationService,
+            provisioning: graduationProvisioningService,
+          }),
+        );
+        if (cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED) {
+          const commercialTierService = new CommercialTierService(pool, audit);
+          await v1.register(async (child) =>
+            registerCommercialTierRoutes(child, {
+              pool,
+              service: commercialTierService,
+            }),
+          );
+        }
         await v1.register(async (child) =>
           registerGovernanceRoutes(child, {
             pool,

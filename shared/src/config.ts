@@ -435,6 +435,50 @@ const envSchema = z.object({
   /** Maximum Redis wait before commercial API-key traffic fails closed. */
   BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
 
+  // ---- RobotMoney commercial control plane (RFC 0009, 0011, 0012) ----
+  /**
+   * Phase 1 contract gates. Every gate defaults off. Provider credentials are
+   * deliberately absent from this contract and arrive only in their reviewed
+   * sandbox phases.
+   */
+  BRAIN_COMMERCIAL_CATALOG_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  /** Records counterfactual commercial decisions without changing request behavior. */
+  BRAIN_COMMERCIAL_SHADOW_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_ENTITY_SCOPE_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_AGENT_CAPACITY_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_EXECUTION_LIMITS_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_STRIPE_BILLING_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_X402_PAYMENTS_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_OUTCOME_FEES_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  BRAIN_MOVEMENT_FEES_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+
   // ---- Self-serve onboarding (RFC 0002) ----
   /**
    * Set to "true" to expose the public self-serve signup surface

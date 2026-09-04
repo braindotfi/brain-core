@@ -178,7 +178,10 @@ export async function registerProductionTenancyRoutes(
       typeof body?.founder?.display_name === "string" && body.founder.display_name.length > 0
         ? body.founder.display_name
         : founderEmail;
-    const companyName = typeof body?.company_name === "string" ? body.company_name : null;
+    const companyName =
+      typeof body?.company_name === "string" && body.company_name.trim().length > 0
+        ? body.company_name.trim()
+        : null;
     const externalRef = requireString(body?.founder_external_ref, "founder_external_ref");
     const linkedMember = await findMemberByPlatformExternalRef(deps.resolverPool, externalRef);
     if (linkedMember !== null) throw platformIdentityAlreadyLinked(linkedMember.tenant_id);
@@ -204,15 +207,16 @@ export async function registerProductionTenancyRoutes(
         await client.query(
           `INSERT INTO tenants (
              id, kind, sandbox, created_via, audit_anchor_mode,
-             provisioning_state, data_profile, access_stage
+             provisioning_state, data_profile, access_stage, business_name
            )
-           VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5)`,
+           VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5, $6)`,
           [
             tenantId,
             demoSeedRequested ? "db_only" : "onchain",
             demoSeedRequested ? "provisioning" : null,
             demoSeedRequested ? "synthetic_brightline_v1" : "customer",
             demoSeedRequested ? "demo" : "production",
+            companyName,
           ],
         );
         await client.query(
@@ -286,7 +290,7 @@ export async function registerProductionTenancyRoutes(
       layer: "execution",
       actor: memberId,
       action: "tenant.created",
-      inputs: { company_name: typeof body?.company_name === "string" ? body.company_name : null },
+      inputs: { company_name: companyName },
       outputs: {
         tenant_id: tenantId,
         member_id: memberId,

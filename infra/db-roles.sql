@@ -417,7 +417,8 @@ REVOKE UPDATE, DELETE, TRUNCATE ON api_gateway_request_observations,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 
 -- Commercial API entitlements are server-owned. Member request paths may
--- read the effective policy but cannot assign a tier or key override.
+-- read the effective policy but cannot assign a tier or key override. The
+-- Phase 1 RobotMoney foundation grants no commercial writer.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_rate_limit_tiers,
   tenant_api_entitlements, api_key_rate_limit_overrides
   FROM brain_app, brain_wiki_reader, brain_mcp_reader, brain_raw_worker,

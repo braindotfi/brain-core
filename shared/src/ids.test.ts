@@ -22,6 +22,24 @@ import {
   newReconciliationMatchId,
   newRequestId,
   newTenantId,
+  newTenantGraduationAssessmentId,
+  newTenantGraduationEvidenceId,
+  newTenantGraduationLineageId,
+  newTenantGraduationRequestId,
+  newTenantGraduationReviewId,
+  newCommercialTierChangeId,
+  newRobotMoneyEntityId,
+  newCommercialAgentInstanceId,
+  newCommercialBillingAccountId,
+  newCommercialStripeSubscriptionId,
+  newCommercialStripeEventId,
+  newUsageAllowanceReservationId,
+  newCommercialExecutionPeriodId,
+  newCommercialExecutionReservationId,
+  newCommercialExecutionAdjustmentId,
+  newCommercialChargeFactId,
+  newX402PaymentOperationId,
+  newCommercialProviderCommandId,
   newTokenId,
   newTransactionId,
   newTransferId,
@@ -59,6 +77,24 @@ describe("convenience generators", () => {
     expect(newExecutionId().startsWith("exec_")).toBe(true);
     expect(newPolicyId().startsWith("pol_")).toBe(true);
     expect(newGovernanceReportSnapshotId().startsWith("grpt_")).toBe(true);
+    expect(newTenantGraduationRequestId().startsWith("grad_")).toBe(true);
+    expect(newTenantGraduationEvidenceId().startsWith("gve_")).toBe(true);
+    expect(newTenantGraduationAssessmentId().startsWith("gva_")).toBe(true);
+    expect(newTenantGraduationReviewId().startsWith("gvr_")).toBe(true);
+    expect(newTenantGraduationLineageId().startsWith("gvl_")).toBe(true);
+    expect(newCommercialTierChangeId().startsWith("ctchg_")).toBe(true);
+    expect(newRobotMoneyEntityId().startsWith("rme_")).toBe(true);
+    expect(newCommercialAgentInstanceId().startsWith("cmai_")).toBe(true);
+    expect(newCommercialBillingAccountId().startsWith("bill_")).toBe(true);
+    expect(newCommercialStripeSubscriptionId().startsWith("strsub_")).toBe(true);
+    expect(newCommercialStripeEventId().startsWith("stevt_")).toBe(true);
+    expect(newUsageAllowanceReservationId().startsWith("uar_")).toBe(true);
+    expect(newCommercialExecutionPeriodId().startsWith("xper_")).toBe(true);
+    expect(newCommercialExecutionReservationId().startsWith("xrsv_")).toBe(true);
+    expect(newCommercialExecutionAdjustmentId().startsWith("xadj_")).toBe(true);
+    expect(newCommercialChargeFactId().startsWith("chg_")).toBe(true);
+    expect(newX402PaymentOperationId().startsWith("xpay_")).toBe(true);
+    expect(newCommercialProviderCommandId().startsWith("pcmd_")).toBe(true);
   });
 });
 

@@ -29,6 +29,39 @@ describe("parseConfig", () => {
     expect(cfg.AUTH_ISSUER).toBe("https://auth.brain.fi");
     expect(cfg.AUTH_CLOCK_TOLERANCE_SECONDS).toBe(5);
     expect(cfg.BRAIN_TRUST_GATE_ENABLED).toBe(false);
+    expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(false);
+    expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(false);
+    expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(false);
+    expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(false);
+    expect(cfg.BRAIN_EXECUTION_LIMITS_ENABLED).toBe(false);
+    expect(cfg.BRAIN_STRIPE_BILLING_ENABLED).toBe(false);
+    expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(false);
+    expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(false);
+    expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(false);
+  });
+
+  it("parses each commercial gate independently without provider credentials", () => {
+    const cfg = parseConfig({
+      ...MIN_ENV,
+      BRAIN_COMMERCIAL_CATALOG_ENABLED: "true",
+      BRAIN_COMMERCIAL_SHADOW_ENABLED: "true",
+      BRAIN_ENTITY_SCOPE_ENABLED: "true",
+      BRAIN_AGENT_CAPACITY_ENABLED: "true",
+      BRAIN_EXECUTION_LIMITS_ENABLED: "true",
+      BRAIN_STRIPE_BILLING_ENABLED: "true",
+      BRAIN_X402_PAYMENTS_ENABLED: "true",
+      BRAIN_OUTCOME_FEES_ENABLED: "true",
+      BRAIN_MOVEMENT_FEES_ENABLED: "true",
+    });
+    expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(true);
+    expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(true);
+    expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(true);
+    expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(true);
+    expect(cfg.BRAIN_EXECUTION_LIMITS_ENABLED).toBe(true);
+    expect(cfg.BRAIN_STRIPE_BILLING_ENABLED).toBe(true);
+    expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(true);
+    expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(true);
+    expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(true);
   });
 
   it("rejects missing DATABASE_URL with a helpful message", () => {
