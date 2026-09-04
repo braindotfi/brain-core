@@ -30,7 +30,10 @@ test("commercial demo retirement protects every approved denylist tenant", () =>
 });
 
 test("commercial demo retirement stays fail closed and transactionally audited", () => {
-  assert.match(execution, /BEGIN ISOLATION LEVEL REPEATABLE READ/);
+  assert.match(execution, /BEGIN ISOLATION LEVEL READ COMMITTED/);
+  assert.match(execution, /SET LOCAL statement_timeout = '3min'/);
+  assert.match(execution, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(execution, /SET LOCAL idle_in_transaction_session_timeout = '5min'/);
   assert.match(execution, /ROLLBACK/);
   assert.match(execution, /tenant_blob_purge_jobs/);
   assert.match(execution, /tenant_blob_purge_audit_outbox/);
@@ -49,14 +52,26 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(runner, /clear_rehearsal_outputs/);
   assert.match(runner, /docker exec -u 0 brain-prod-postgres rm -f/);
   assert.match(runner, /commercial_demo_retirement_quiet_window_reset/);
+  assert.match(runner, /DATABASE_EXECUTION_WATCHDOG_SECONDS=10800/);
+  assert.match(runner, /FENCE_MONITOR_SECONDS=15/);
+  assert.match(runner, /commercial_demo_retirement_activity_fence_breached/);
+  assert.match(runner, /commercial_demo_retirement_activity_fence_held/);
+  assert.match(runner, /candidate_activity_count_since "\$fence_started_at"/);
   assert.match(runner, /pre-fence-cohort\.log/);
   assert.match(runner, /final-preflight\.log/);
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /production-tenant-deletion/);
-  assert.match(
-    workflow,
-    /GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion/,
-  );
+  assert.match(workflow, /GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion/);
   assert.match(workflow, /integrity finding grant is broader than SELECT/);
   assert.match(workflow, /unexpectedly has verifier checkpoint access/);
+  assert.match(workflow, /timeout-minutes: 210/);
+  assert.match(workflow, /Exact promoted commit SHA/);
+  assert.match(workflow, /brain-prod-worker restart count is not zero/);
+});
+
+test("commercial demo rows are deleted in bounded materialized batches", () => {
+  assert.match(execution, /COMMERCIAL_DEMO_ROW_BATCH_SIZE/);
+  assert.match(execution, /COMMERCIAL_DEMO_TENANT_BATCH_SIZE/);
+  assert.match(execution, /deleteTableInBatches/);
+  assert.doesNotMatch(execution, /DELETE FROM \$\{table\} row USING retirement_targets/);
 });

@@ -7,6 +7,12 @@ import {
   PRESERVED_TABLES,
   TENANT_SCOPED_TABLES,
 } from "../../services/api/dist/tenant-deletion/service.js";
+import {
+  COMMERCIAL_DEMO_ROW_BATCH_SIZE,
+  COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
+  assertNoProtectedTenantIds,
+  deleteTableInBatches,
+} from "../../services/api/dist/tenant-deletion/batched-delete.js";
 
 const { Pool } = pg;
 
@@ -80,10 +86,8 @@ function parseTargetCsv(bytes) {
     if (!/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) {
       throw new Error(`candidate-list contains invalid tenant id: ${id}`);
     }
-    if (PROTECTED_TENANT_IDS.has(id)) {
-      throw new Error(`candidate-list contains protected tenant id: ${id}`);
-    }
   }
+  assertNoProtectedTenantIds(ids, PROTECTED_TENANT_IDS);
   return { digest, ids };
 }
 
@@ -358,6 +362,19 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
 }
 
+async function lockCandidateTenants(client) {
+  const result = await client.query(
+    `SELECT tenant.id
+       FROM tenants tenant
+       JOIN retirement_targets target ON target.tenant_id = tenant.id
+      ORDER BY tenant.id
+      FOR UPDATE OF tenant`,
+  );
+  if (result.rowCount !== EXPECTED_TARGET_COUNT) {
+    throw new Error(`candidate tenant lock count mismatch: ${result.rowCount}`);
+  }
+}
+
 async function captureCounts(client, liveTables) {
   const perTenant = new Map();
   const totals = {};
@@ -479,23 +496,21 @@ async function deleteRows(client, liveTables, expectedTotals) {
     if (!liveTables.has(entry.table)) continue;
     const table = assertIdentifier(entry.table);
     const column = assertIdentifier(entry.column);
-    const result = await client.query(
-      `DELETE FROM ${table} row USING retirement_targets target WHERE row.${column} = target.tenant_id`,
-    );
-    actual[table] = result.rowCount ?? 0;
-    if (actual[table] !== expectedTotals[table]) {
-      throw new Error(
-        `delete count mismatch for ${table}: expected ${expectedTotals[table]}, got ${actual[table]}`,
-      );
-    }
+    actual[table] = await deleteTableInBatches(client, {
+      table,
+      column,
+      expectedRows: expectedTotals[table],
+      batchSize: COMMERCIAL_DEMO_ROW_BATCH_SIZE,
+      onProgress: (progress) => console.log(JSON.stringify(progress)),
+    });
   }
-  const tenants = await client.query(
-    "DELETE FROM tenants tenant USING retirement_targets target WHERE tenant.id = target.tenant_id",
-  );
-  actual.tenants = tenants.rowCount ?? 0;
-  if (actual.tenants !== EXPECTED_TARGET_COUNT) {
-    throw new Error(`tenant delete count mismatch: ${actual.tenants}`);
-  }
+  actual.tenants = await deleteTableInBatches(client, {
+    table: "tenants",
+    column: "id",
+    expectedRows: EXPECTED_TARGET_COUNT,
+    batchSize: COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
+    onProgress: (progress) => console.log(JSON.stringify(progress)),
+  });
   return actual;
 }
 
@@ -540,13 +555,31 @@ async function main() {
   const { digest, ids } = parseTargetCsv(await readFile(TARGET_PATH));
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const client = await pool.connect();
+  const transactionStartedAt = Date.now();
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
-    await client.query("SET LOCAL statement_timeout = '45min'");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await client.query("SET LOCAL statement_timeout = '3min'");
     await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
+    const timeoutSettings = await client.query(
+      `SELECT current_setting('transaction_isolation') AS transaction_isolation,
+              current_setting('statement_timeout') AS statement_timeout,
+              current_setting('lock_timeout') AS lock_timeout,
+              current_setting('idle_in_transaction_session_timeout') AS idle_in_transaction_session_timeout`,
+    );
+    console.log(
+      JSON.stringify({
+        event: "commercial_demo_retirement_transaction_started",
+        ...timeoutSettings.rows[0],
+        row_batch_size: COMMERCIAL_DEMO_ROW_BATCH_SIZE,
+        tenant_batch_size: COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
+        started_at: new Date(transactionStartedAt).toISOString(),
+      }),
+    );
     await assertDatabaseRole(client);
     await insertTargets(client, ids);
     const liveTables = await assertRegistryCoverage(client);
+    await lockCandidateTenants(client);
     const preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
     const preservedBefore = await capturePreservedCounts(client);
     const { perTenant, totals } = await captureCounts(client, liveTables);
@@ -603,6 +636,7 @@ async function main() {
         blob_artifact_rows: blobs.rows.length,
         preflight,
         fence_started_at: fenceStartedAt,
+        transaction_duration_ms: Date.now() - transactionStartedAt,
         committed_at: new Date().toISOString(),
       }),
     );
