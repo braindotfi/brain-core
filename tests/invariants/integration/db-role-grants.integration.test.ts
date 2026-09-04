@@ -131,6 +131,8 @@ const MATRIX: ReadonlyArray<{
     role: "brain_tenant_deletion",
     can: [
       ["ledger_obligations", "DELETE"],
+      ["tenants", "SELECT"],
+      ["tenants", "UPDATE"],
       ["tenants", "DELETE"],
       ["tenant_blob_purge_jobs", "UPDATE"],
       ["raw_artifacts", "UPDATE"],

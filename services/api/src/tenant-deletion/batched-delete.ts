@@ -7,6 +7,22 @@ export interface BatchDeleteClient {
   query: (sql: string, values?: unknown[]) => Promise<Pick<QueryResult, "rowCount">>;
 }
 
+export async function lockCandidateTenants(
+  client: BatchDeleteClient,
+  expectedTargetCount: number,
+): Promise<void> {
+  const result = await client.query(
+    `SELECT tenant.id
+       FROM tenants tenant
+       JOIN retirement_targets target ON target.tenant_id = tenant.id
+      ORDER BY tenant.id
+      FOR UPDATE OF tenant`,
+  );
+  if (result.rowCount !== expectedTargetCount) {
+    throw new Error(`candidate tenant lock count mismatch: ${result.rowCount}`);
+  }
+}
+
 export interface BatchDeleteProgress {
   event: "tenant_deletion_batch_completed";
   table: string;

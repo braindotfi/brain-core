@@ -12,7 +12,9 @@ import {
   COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
   assertNoProtectedTenantIds,
   deleteTableInBatches,
+  lockCandidateTenants,
 } from "../../services/api/dist/tenant-deletion/batched-delete.js";
+import { assertTenantDeletionPrivilegeContract } from "../../services/api/dist/tenant-deletion/privilege-contract.js";
 
 const { Pool } = pg;
 
@@ -362,19 +364,6 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
 }
 
-async function lockCandidateTenants(client) {
-  const result = await client.query(
-    `SELECT tenant.id
-       FROM tenants tenant
-       JOIN retirement_targets target ON target.tenant_id = tenant.id
-      ORDER BY tenant.id
-      FOR UPDATE OF tenant`,
-  );
-  if (result.rowCount !== EXPECTED_TARGET_COUNT) {
-    throw new Error(`candidate tenant lock count mismatch: ${result.rowCount}`);
-  }
-}
-
 async function captureCounts(client, liveTables) {
   const perTenant = new Map();
   const totals = {};
@@ -579,7 +568,17 @@ async function main() {
     await assertDatabaseRole(client);
     await insertTargets(client, ids);
     const liveTables = await assertRegistryCoverage(client);
-    await lockCandidateTenants(client);
+    const privilegeReport = await assertTenantDeletionPrivilegeContract(
+      client,
+      TENANT_SCOPED_TABLES.filter(({ table }) => liveTables.has(table)).map(({ table }) => table),
+    );
+    console.log(
+      JSON.stringify({
+        event: "commercial_demo_retirement_privilege_preflight_passed",
+        ...privilegeReport,
+      }),
+    );
+    await lockCandidateTenants(client, EXPECTED_TARGET_COUNT);
     const preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
     const preservedBefore = await capturePreservedCounts(client);
     const { perTenant, totals } = await captureCounts(client, liveTables);

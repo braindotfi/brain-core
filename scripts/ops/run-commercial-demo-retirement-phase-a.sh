@@ -30,6 +30,7 @@ ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" "mkdir -p '$REMOTE_ROOT' && chmod 7
 scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
   scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
+  scripts/ops/check-commercial-demo-retirement-privileges.mjs \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
   "azureuser@$VM_HOST:$REMOTE_ROOT/"
 
@@ -252,6 +253,12 @@ printf 'fence_started_at=%s\nworker_stopped=true\nagents_stopped=true\n' "$fence
 
 run_complete_rehearsal "$REPORT_DIR/pre-fence-cohort.log"
 validate_target_file
+
+docker cp "$REMOTE_ROOT/check-commercial-demo-retirement-privileges.mjs" \
+  brain-prod-api:/app/scripts/ops/check-commercial-demo-retirement-privileges.mjs
+docker exec brain-prod-api \
+  node /app/scripts/ops/check-commercial-demo-retirement-privileges.mjs \
+  | tee "$REPORT_DIR/deletion-role-privileges.jsonl"
 
 {
   crontab -l 2>/dev/null || true
