@@ -10,6 +10,11 @@ on:
         options:
           - staging
           - production
+      expected_sha:
+        description: "Optional full commit SHA to verify on API and worker containers."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -22,6 +27,7 @@ jobs:
     environment: ${{ inputs.target == 'production' && 'production' || '' }}
     env:
       TARGET: ${{ inputs.target }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
       VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
       VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
       VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
@@ -120,4 +126,167 @@ jobs:
                 -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
             || true
           echo "::endgroup::"
+          REMOTE
+
+      - name: Verify production runtime and deletion-role grant
+        if: inputs.target == 'production' && inputs.expected_sha != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_sha must be a full lowercase commit SHA"
+            exit 1
+          fi
+
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "EXPECTED_SHA='$EXPECTED_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          api_sha="$(docker exec brain-prod-api printenv GIT_SHA)"
+          worker_sha="$(docker exec brain-prod-worker printenv GIT_SHA)"
+          agents_health="$(docker inspect \
+            --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+            brain-prod-agents)"
+          worker_state="$(docker inspect \
+            --format '{{.State.Status}} restarts={{.RestartCount}}' \
+            brain-prod-worker)"
+
+          printf 'api_git_sha=%s\n' "$api_sha"
+          printf 'worker_git_sha=%s\n' "$worker_sha"
+          printf 'worker_state=%s\n' "$worker_state"
+          printf 'agents_container_health=%s\n' "$agents_health"
+
+          [[ "$api_sha" == "$EXPECTED_SHA" ]]
+          [[ "$worker_sha" == "$EXPECTED_SHA" ]]
+          [[ "$agents_health" == "healthy" ]]
+
+          role_failures="$(docker logs --since 20m brain-prod-worker 2>&1 \
+            | { grep -F 'DB role verification failed' || true; } \
+            | wc -l \
+            | tr -d ' ')"
+          printf 'worker_db_role_invariant_failures=%s\n' "$role_failures"
+          [[ "$role_failures" == "0" ]]
+
+          cd ~/brain-core
+          compose='docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents'
+          for service in postgres redis minio auth api worker surface-gateway agents caddy; do
+            container_id="$($compose ps -q "$service")"
+            if [[ -z "$container_id" ]]; then
+              echo "service_missing=$service"
+              exit 1
+            fi
+            state="$(docker inspect --format '{{.State.Status}}' "$container_id")"
+            health="$(docker inspect \
+              --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+              "$container_id")"
+            printf 'service=%s state=%s health=%s\n' "$service" "$state" "$health"
+            [[ "$state" == "running" ]]
+            [[ "$health" == "healthy" || "$health" == "none" ]]
+          done
+
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -AtX -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '5s';
+          SET LOCAL lock_timeout = '1s';
+          DO $$
+          BEGIN
+            IF NOT has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'SELECT'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding SELECT grant is absent';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'TRUNCATE'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'REFERENCES'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'TRIGGER'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding grant is broader than SELECT';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'SELECT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'TRUNCATE'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'REFERENCES'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'TRIGGER'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion unexpectedly has verifier checkpoint access';
+            END IF;
+          END
+          $$;
+          SELECT json_build_object(
+            'role', 'brain_tenant_deletion',
+            'audit_integrity_findings_select', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'SELECT'
+            ),
+            'audit_integrity_findings_insert', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'INSERT'
+            ),
+            'audit_integrity_findings_update', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'UPDATE'
+            ),
+            'audit_integrity_findings_delete', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'DELETE'
+            ),
+            'audit_integrity_findings_truncate', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'TRUNCATE'
+            ),
+            'audit_integrity_findings_references', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'REFERENCES'
+            ),
+            'audit_integrity_findings_trigger', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'TRIGGER'
+            ),
+            'audit_verifier_checkpoint_access', has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+            )
+          )::text;
+          COMMIT;
+          SQL
           REMOTE
