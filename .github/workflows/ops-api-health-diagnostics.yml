@@ -23,7 +23,7 @@ jobs:
   diagnose:
     name: api health diagnostics
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: ${{ inputs.target == 'production' && 'production' || '' }}
     env:
       TARGET: ${{ inputs.target }}
@@ -289,4 +289,21 @@ jobs:
           )::text;
           COMMIT;
           SQL
+          REMOTE
+
+      - name: Diagnose commercial demo retirement batch performance
+        if: inputs.target == 'production' && inputs.expected_sha != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/diagnose-commercial-demo-retirement-performance.mjs \
+            "azureuser@$VM_HOST:/tmp/"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker cp \
+            /tmp/diagnose-commercial-demo-retirement-performance.mjs \
+            brain-prod-api:/app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
+          docker exec brain-prod-api \
+            node /app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
           REMOTE
