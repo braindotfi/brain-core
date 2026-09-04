@@ -320,6 +320,9 @@ jobs:
           docker cp \
             /tmp/diagnose-commercial-demo-retirement-performance.mjs \
             brain-prod-api:/app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
+          docker cp \
+            /tmp/commercial-demo-retirement-targets.csv \
+            brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
           docker exec brain-prod-api \
             node /app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
           REMOTE
