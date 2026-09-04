@@ -467,8 +467,10 @@ REVOKE INSERT ON audit_events
 -- dedicated recovery role, not to the broad runtime roles. (Codex 9389568 P1.)
 -- brain_audit_verifier is the only §4 role that touches the forensic tables; it
 -- gets the same confinement brain_privileged had (cursor S/I/U + findings S/I,
--- but no erase). Every other §4 role is stripped entirely (defense in depth —
--- the forensic tables are RLS-exempt so they were never in any grant loop).
+-- but no erase). Every other §4 role is stripped entirely, except that tenant
+-- deletion gets SELECT on findings after this blanket revoke. That single read
+-- captures the preserved-evidence count inside the deletion transaction. It
+-- receives no checkpoint access and no finding mutation privilege.
 REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings
   FROM brain_app, brain_wiki_reader,
        brain_mcp_reader,
@@ -480,6 +482,7 @@ REVOKE DELETE, TRUNCATE ON audit_verifier_checkpoint
   FROM brain_privileged, brain_audit_verifier;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings
   FROM brain_privileged, brain_audit_verifier;
+GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion;
 
 -- Layer-truth append-only: raw_artifacts, canonical_journal_entry, and
 -- ledger_obligations are append-only to their projection workers. The prefix
