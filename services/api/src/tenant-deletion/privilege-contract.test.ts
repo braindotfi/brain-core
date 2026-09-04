@@ -54,6 +54,16 @@ describe("tenant-deletion privilege contract", () => {
         { table: "audit_integrity_findings", privilege: "SELECT", expected: true },
         { table: "audit_integrity_findings", privilege: "UPDATE", expected: false },
         { table: "audit_verifier_checkpoint", privilege: "SELECT", expected: false },
+        {
+          table: "commercial_demo_retirement_progress",
+          privilege: "INSERT",
+          expected: true,
+        },
+        {
+          table: "commercial_demo_retirement_progress",
+          privilege: "DELETE",
+          expected: false,
+        },
       ]),
     );
   });

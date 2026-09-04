@@ -31,6 +31,8 @@ scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
   scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
   scripts/ops/check-commercial-demo-retirement-privileges.mjs \
+  scripts/ops/execute-commercial-demo-retirement.mjs \
+  scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
   "azureuser@$VM_HOST:$REMOTE_ROOT/"
 
@@ -318,6 +320,16 @@ if [[ "$final_activity_count" != "0" ]]; then
 fi
 printf 'final_activity_count=0\n' >> "$REPORT_DIR/fence-status.txt"
 
+docker cp "$REPORT_DIR/commercial-demo-retirement-targets.csv" \
+  brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
+docker cp "$REMOTE_ROOT/execute-commercial-demo-retirement.mjs" \
+  brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
+docker cp "$REMOTE_ROOT/rehearse-commercial-demo-tenant-retirement.mjs" \
+  brain-prod-api:/app/scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs
+docker exec brain-prod-api \
+  node /app/scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs \
+  | tee "$REPORT_DIR/one-tenant-timing-rehearsal.jsonl"
+
 awk -F, 'BEGIN { OFS="," }
   NR == 1 { print $0,"batch_size","batch_count"; next }
   {
@@ -329,7 +341,7 @@ awk -F, 'BEGIN { OFS="," }
 
 awk -F, 'NR > 1 && $2 == "delete" { rows += $3; batches += $6 }
   END {
-    printf "delete_rows=%d\ndelete_batches=%d\nexpected_transaction_minutes=75-120\ndatabase_watchdog_minutes=180\nworkflow_limit_minutes=210\n", rows, batches
+    printf "delete_rows=%d\nlegacy_batch_statements=%d\ntenant_transactions=1519\nexpected_execution_minutes=10-45\ndatabase_watchdog_minutes=180\nworkflow_limit_minutes=210\n", rows, batches
   }' "$REPORT_DIR/batch-plan.csv" > "$REPORT_DIR/batch-summary.txt"
 
 printf 'repository_scheduled_workflows=none\nactive_backup_processes=0\nmanual_database_operations=0\nworker_schedulers_stopped=true\n' \

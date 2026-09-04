@@ -71,6 +71,18 @@ export function tenantDeletionPrivilegeExpectations(
   );
   addExpected(expectations, "tenant_blob_purge_jobs", ["SELECT", "INSERT", "UPDATE"], true);
   addExpected(expectations, "tenant_blob_purge_audit_outbox", ["SELECT", "INSERT", "UPDATE"], true);
+  addExpected(
+    expectations,
+    "commercial_demo_retirement_progress",
+    ["SELECT", "INSERT", "UPDATE"],
+    true,
+  );
+  addExpected(
+    expectations,
+    "commercial_demo_retirement_progress",
+    ["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"],
+    false,
+  );
   return [...expectations.values()].sort(
     (left, right) =>
       left.table.localeCompare(right.table) || left.privilege.localeCompare(right.privilege),

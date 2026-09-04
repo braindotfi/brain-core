@@ -143,6 +143,46 @@ run_complete_rehearsal() {
     /tmp/commercial-demo-retirement-targets.csv
 }
 
+durable_progress_count() {
+  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 <<'SQL' \
+    | tail -n 1
+SELECT COUNT(*)
+  FROM commercial_demo_retirement_progress
+ WHERE operation_id = 'commercial-demo-retirement-2026-09-03';
+SQL
+}
+
+restore_targets_from_progress() {
+  clear_rehearsal_outputs
+  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 <<'SQL'
+\copy (
+  SELECT tenant_id
+    FROM commercial_demo_retirement_progress
+   WHERE operation_id = 'commercial-demo-retirement-2026-09-03'
+   ORDER BY ordinal
+) TO '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
+SQL
+  docker cp brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv \
+    /tmp/commercial-demo-retirement-targets.csv
+}
+
+prepare_target_file() {
+  local log_file="$1"
+  local progress_count
+  progress_count="$(durable_progress_count)"
+  if [[ "$progress_count" == "0" ]]; then
+    run_complete_rehearsal "$log_file"
+    return
+  fi
+  if [[ "$progress_count" != "$EXPECTED_TARGET_COUNT" ]]; then
+    echo "durable retirement progress count mismatch: $progress_count"
+    return 1
+  fi
+  restore_targets_from_progress
+  printf '{"event":"commercial_demo_retirement_targets_restored_from_progress","count":%s}\n' \
+    "$progress_count" | tee "$log_file"
+}
+
 validate_target_file() {
   local actual_target_sha256 target_count tenant_id
   actual_target_sha256="$(sha256sum /tmp/commercial-demo-retirement-targets.csv | cut -d ' ' -f 1)"
@@ -269,12 +309,12 @@ if container_is_running brain-prod-agents || container_is_running brain-prod-wor
   echo "activity fence failed to stop a worker container"
   exit 1
 fi
-run_complete_rehearsal "$REPORT_DIR/pre-fence-cohort.log"
+prepare_target_file "$REPORT_DIR/pre-fence-cohort.log"
 validate_target_file
 
 fence_started_at="$(wait_for_candidate_quiescence)"
 printf '%s\n' "$fence_started_at" > "$REPORT_DIR/fence-started-at.txt"
-run_complete_rehearsal "$REPORT_DIR/final-preflight.log"
+prepare_target_file "$REPORT_DIR/final-preflight.log"
 validate_target_file
 
 printf '%s  %s\n' "$EXPECTED_TARGET_SHA256" commercial-demo-retirement-targets.csv \
@@ -379,6 +419,9 @@ printf '{"event":"commercial_demo_retirement_activity_fence_held","database_wind
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$REPORT_DIR/database-execution.jsonl"
 deletion_committed=true
 
+# Purge jobs are enqueued atomically with each tenant deletion. The fenced
+# worker cannot observe a job before that tenant commits, and processes the
+# idempotent jobs only after the database loop has completed successfully.
 read -r expected_blob_jobs expected_blob_artifacts < <(
   docker exec -i brain-prod-api node -e '
     let input = "";

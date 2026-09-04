@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Client, Pool, type PoolClient } from "pg";
 import { deleteTableInBatches, lockCandidateTenants } from "./batched-delete.js";
+import {
+  COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
+  initializeRetirementProgress,
+  runRetirementTenantAttempt,
+} from "./per-tenant-retirement.js";
 
 const OWNER_DB_URL = process.env.DATABASE_URL;
 const DELETION_DB_URL = process.env.DATABASE_URL_TENANT_DELETION;
@@ -37,6 +42,27 @@ suite("bounded tenant deletion transaction behavior", () => {
     await bootstrap.query(`CREATE TABLE ${schema}.tenants (
       id text PRIMARY KEY
     )`);
+    await bootstrap.query(`CREATE TABLE ${schema}.commercial_demo_retirement_progress (
+      operation_id text NOT NULL,
+      tenant_id text NOT NULL,
+      candidate_list_sha256 text NOT NULL,
+      ordinal integer NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      attempt_count integer NOT NULL DEFAULT 0,
+      expected_rows jsonb NOT NULL,
+      deleted_rows jsonb,
+      total_rows_deleted bigint,
+      blob_purge_job_id text,
+      blob_artifact_count integer,
+      first_started_at timestamptz,
+      last_attempt_at timestamptz,
+      committed_at timestamptz,
+      last_error text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (operation_id, tenant_id),
+      UNIQUE (operation_id, ordinal)
+    )`);
     await bootstrap.query(`GRANT USAGE ON SCHEMA ${schema} TO brain_tenant_deletion`);
     await bootstrap.query(`GRANT SELECT ON ${schema}.retirement_targets TO brain_tenant_deletion`);
     await bootstrap.query(
@@ -44,6 +70,10 @@ suite("bounded tenant deletion transaction behavior", () => {
     );
     await bootstrap.query(
       `GRANT SELECT, UPDATE, DELETE ON ${schema}.tenants TO brain_tenant_deletion`,
+    );
+    await bootstrap.query(
+      `GRANT SELECT, INSERT, UPDATE ON ${schema}.commercial_demo_retirement_progress
+       TO brain_tenant_deletion`,
     );
     await bootstrap.end();
 
@@ -65,7 +95,8 @@ suite("bounded tenant deletion transaction behavior", () => {
 
   beforeEach(async () => {
     await ownerPool.query(
-      "TRUNCATE retirement_test_rows, retirement_targets, tenants RESTART IDENTITY",
+      `TRUNCATE retirement_test_rows, retirement_targets, tenants,
+         commercial_demo_retirement_progress RESTART IDENTITY`,
     );
     await ownerPool.query("GRANT UPDATE ON tenants TO brain_tenant_deletion");
     await ownerPool.query("INSERT INTO retirement_targets (tenant_id) VALUES ('target')");
@@ -321,5 +352,129 @@ suite("bounded tenant deletion transaction behavior", () => {
       await ownerPool.query("GRANT UPDATE ON tenants TO brain_tenant_deletion");
       deleter.release();
     }
+  });
+
+  it("commits one tenant at a time and resumes without repeating completed work", async () => {
+    await ownerPool.query("INSERT INTO tenants (id) VALUES ('target-one'), ('target-two')");
+    await ownerPool.query(
+      `INSERT INTO retirement_test_rows (tenant_id, payload)
+       VALUES ('target-one', 'delete-one'), ('target-two', 'delete-two')`,
+    );
+    const setup = await deletionPool.connect();
+    try {
+      await setup.query("BEGIN");
+      await initializeRetirementProgress(setup, "a".repeat(64), [
+        {
+          tenantId: "target-one",
+          ordinal: 1,
+          expectedRows: { retirement_test_rows: 1, tenants: 1 },
+        },
+        {
+          tenantId: "target-two",
+          ordinal: 2,
+          expectedRows: { retirement_test_rows: 1, tenants: 1 },
+        },
+      ]);
+      await setup.query("COMMIT");
+    } finally {
+      setup.release();
+    }
+
+    const execute = async (
+      client: PoolClient,
+      tenantId: string,
+      expectedRows: Record<string, number>,
+      fail: boolean,
+    ) => {
+      const rows = await client.query("DELETE FROM retirement_test_rows WHERE tenant_id = $1", [
+        tenantId,
+      ]);
+      expect(rows.rowCount).toBe(expectedRows.retirement_test_rows);
+      if (fail) throw new Error("injected tenant failure");
+      const tenants = await client.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+      expect(tenants.rowCount).toBe(expectedRows.tenants);
+      return {
+        deletedRows: { retirement_test_rows: 1, tenants: 1 },
+        totalRowsDeleted: 2,
+        blobPurgeJobId: null,
+        blobArtifactCount: 0,
+      };
+    };
+
+    const first = await runRetirementTenantAttempt(deletionPool, "target-one", (client, counts) =>
+      execute(client, "target-one", counts, false),
+    );
+    const failed = await runRetirementTenantAttempt(deletionPool, "target-two", (client, counts) =>
+      execute(client, "target-two", counts, true),
+    );
+    expect(first.status).toBe("completed");
+    expect(failed).toMatchObject({ status: "failed", error: "injected tenant failure" });
+    expect(
+      await ownerPool.query("SELECT id FROM tenants ORDER BY id").then(({ rows }) => rows),
+    ).toEqual([{ id: "target-two" }]);
+    expect(
+      await ownerPool
+        .query("SELECT tenant_id FROM retirement_test_rows ORDER BY tenant_id")
+        .then(({ rows }) => rows),
+    ).toEqual([{ tenant_id: "target-two" }]);
+
+    const skipped = await runRetirementTenantAttempt(deletionPool, "target-one", () => {
+      throw new Error("completed tenant must not execute again");
+    });
+    const resumed = await runRetirementTenantAttempt(deletionPool, "target-two", (client, counts) =>
+      execute(client, "target-two", counts, false),
+    );
+    expect(skipped.status).toBe("skipped");
+    expect(resumed.status).toBe("completed");
+    const progress = await ownerPool.query(
+      `SELECT tenant_id, status, attempt_count
+         FROM commercial_demo_retirement_progress
+        WHERE operation_id = $1
+        ORDER BY ordinal`,
+      [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+    );
+    expect(progress.rows).toEqual([
+      { tenant_id: "target-one", status: "completed", attempt_count: 1 },
+      { tenant_id: "target-two", status: "completed", attempt_count: 2 },
+    ]);
+  });
+
+  it("rolls back a tenant when its total transaction duration exceeds the cap", async () => {
+    await ownerPool.query("INSERT INTO tenants (id) VALUES ('target')");
+    await ownerPool.query(
+      "INSERT INTO retirement_test_rows (tenant_id, payload) VALUES ('target', 'keep-on-timeout')",
+    );
+    const setup = await deletionPool.connect();
+    try {
+      await setup.query("BEGIN");
+      await initializeRetirementProgress(setup, "b".repeat(64), [
+        {
+          tenantId: "target",
+          ordinal: 1,
+          expectedRows: { retirement_test_rows: 1, tenants: 1 },
+        },
+      ]);
+      await setup.query("COMMIT");
+    } finally {
+      setup.release();
+    }
+    const result = await runRetirementTenantAttempt(
+      deletionPool,
+      "target",
+      async (client) => {
+        await client.query("DELETE FROM retirement_test_rows WHERE tenant_id = 'target'");
+        return {
+          deletedRows: { retirement_test_rows: 1, tenants: 0 },
+          totalRowsDeleted: 1,
+          blobPurgeJobId: null,
+          blobArtifactCount: 0,
+        };
+      },
+      { maxDurationMs: -1 },
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("tenant retirement exceeded");
+    const rows = await ownerPool.query("SELECT payload FROM retirement_test_rows");
+    expect(rows.rows).toEqual([{ payload: "keep-on-timeout" }]);
   });
 });
