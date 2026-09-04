@@ -28,7 +28,32 @@ describe("discoverMigrations", () => {
     ]);
     expect(found[0]?.sequence).toBe("0001");
     expect(found[0]?.service).toBe("audit");
+    expect(found[0]?.transactionMode).toBe("transactional");
     expect(found[2]?.sql).toContain("CREATE TABLE raw_parsed");
+  });
+
+  it("recognizes the opt-in non-transactional directive", async () => {
+    await writeSql(
+      root,
+      "execution",
+      "0001_concurrent_index.sql",
+      "-- brain-migration: no-transaction\nCREATE INDEX CONCURRENTLY example_idx ON example(id);",
+    );
+
+    const found = await discoverMigrations(root);
+    expect(found[0]?.transactionMode).toBe("none");
+  });
+
+  it("requires the non-transactional directive on the first line", async () => {
+    await writeSql(
+      root,
+      "execution",
+      "0001_concurrent_index.sql",
+      "-- context\n-- brain-migration: no-transaction\nCREATE INDEX CONCURRENTLY example_idx ON example(id);",
+    );
+
+    const found = await discoverMigrations(root);
+    expect(found[0]?.transactionMode).toBe("transactional");
   });
 
   it("ignores non-SQL files and malformed names", async () => {

@@ -23,6 +23,9 @@ function makeFakeClient(selectRows: Array<Record<string, unknown>> = []): {
       const summary = text.trim().split("\n")[0]!.trim();
       log.push(summary);
       const upper = text.trim().toUpperCase();
+      if (upper.includes("PG_TRY_ADVISORY_LOCK")) {
+        return { rows: [{ acquired: true }], rowCount: 1 };
+      }
       if (upper.startsWith("SELECT")) return { rows, rowCount: rows.length };
       return { rows: [], rowCount: 0 };
     }),
@@ -36,13 +39,19 @@ function makeFakeClient(selectRows: Array<Record<string, unknown>> = []): {
   };
 }
 
-function m(service: string, name: string, sql: string): DiscoveredMigration {
+function m(
+  service: string,
+  name: string,
+  sql: string,
+  transactionMode: DiscoveredMigration["transactionMode"] = "transactional",
+): DiscoveredMigration {
   return {
     service,
     name,
     sequence: name.slice(0, 4),
     path: `${service}/${name}`,
     sql,
+    transactionMode,
     key: `${service}/${name}`,
   };
 }
@@ -123,6 +132,9 @@ describe("applyAll", () => {
       query: vi.fn(async (text: string) => {
         const upper = text.trim().toUpperCase();
         log.push(text.trim().split("\n")[0]!.trim());
+        if (upper.includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (upper.startsWith("SELECT")) return { rows: [], rowCount: 0 };
         if (text.includes("DROP BAD")) throw new Error("syntax error");
         return { rows: [], rowCount: 0 };
@@ -133,6 +145,59 @@ describe("applyAll", () => {
     );
     expect(log).toContain("ROLLBACK");
   });
+
+  it("applies an opted-in migration without a transaction block", async () => {
+    const { client, log } = makeFakeClient();
+    const migration = m(
+      "execution",
+      "0035_proposals_superseded_by_index.sql",
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON proposals(superseded_by);",
+      "none",
+    );
+
+    const result = await applyAll(client, [migration], { appliedBy: "test-user" });
+    const meaningful = log.filter(
+      (line) =>
+        !line.startsWith("SELECT") && !line.includes("CREATE TABLE IF NOT EXISTS brain_migrations"),
+    );
+
+    expect(result.applied).toEqual([migration]);
+    expect(meaningful).toEqual([
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON proposals(superseded_by);",
+      expect.stringContaining("INSERT INTO brain_migrations"),
+    ]);
+  });
+
+  it("does not record a failed non-transactional migration", async () => {
+    const log: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const trimmed = text.trim();
+        log.push(trimmed.split("\n")[0]!.trim());
+        if (trimmed.toUpperCase().includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
+        if (trimmed.startsWith("SELECT")) return { rows: [], rowCount: 0 };
+        if (trimmed.includes("CREATE INDEX CONCURRENTLY")) {
+          throw new Error("index build failed");
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    const migration = m(
+      "execution",
+      "0035_proposals_superseded_by_index.sql",
+      "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON proposals(superseded_by);",
+      "none",
+    );
+
+    await expect(applyAll(client, [migration])).rejects.toThrow(
+      /migration execution\/0035_proposals_superseded_by_index\.sql failed: index build failed/,
+    );
+    expect(log).not.toContain("BEGIN");
+    expect(log).not.toContain("ROLLBACK");
+    expect(log.some((line) => line.includes("INSERT INTO brain_migrations"))).toBe(false);
+  });
 });
 
 describe("advisory lock", () => {
@@ -141,7 +206,7 @@ describe("advisory lock", () => {
     await applyAll(client, [m("audit", "0001_audit_events.sql", "-- audit sql")]);
 
     const lockIdx = log.findIndex((l) =>
-      l.includes("pg_advisory_lock(hashtext('brain_migrations')"),
+      l.includes("pg_try_advisory_lock(hashtext('brain_migrations')"),
     );
     const unlockIdx = log.findIndex((l) =>
       l.includes("pg_advisory_unlock(hashtext('brain_migrations')"),
@@ -157,12 +222,34 @@ describe("advisory lock", () => {
     expect(unlockIdx).toBeGreaterThan(createIdx);
   });
 
+  it("polls without blocking until the advisory lock is available", async () => {
+    let attempts = 0;
+    const client = {
+      query: vi.fn(async (text: string) => {
+        const upper = text.trim().toUpperCase();
+        if (upper.includes("PG_TRY_ADVISORY_LOCK")) {
+          attempts += 1;
+          return { rows: [{ acquired: attempts >= 2 }], rowCount: 1 };
+        }
+        if (upper.startsWith("SELECT")) return { rows: [], rowCount: 0 };
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    await applyAll(client, [m("audit", "0001_audit_events.sql", "-- audit sql")]);
+
+    expect(attempts).toBe(2);
+  });
+
   it("releases the lock even when a migration fails", async () => {
     const log: string[] = [];
     const client = {
       query: vi.fn(async (text: string) => {
         const upper = text.trim().toUpperCase();
         log.push(text.trim().split("\n")[0]!.trim());
+        if (upper.includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (upper.startsWith("SELECT")) return { rows: [], rowCount: 0 };
         if (text.includes("DROP BAD")) throw new Error("syntax error");
         return { rows: [], rowCount: 0 };
@@ -230,6 +317,9 @@ describe("applyAll baselines", () => {
         const trimmed = text.trim();
         log.push(trimmed.split("\n")[0]!.trim());
         calls.push({ text: trimmed, values });
+        if (trimmed.toUpperCase().includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (trimmed.startsWith("SELECT key, service, name, sequence")) {
           return { rows: [], rowCount: 0 };
         }
@@ -270,6 +360,9 @@ describe("applyAll baselines", () => {
       query: vi.fn(async (text: string) => {
         const trimmed = text.trim();
         log.push(trimmed.split("\n")[0]!.trim());
+        if (trimmed.toUpperCase().includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (trimmed.startsWith("SELECT key, service, name, sequence")) {
           return { rows: [], rowCount: 0 };
         }
@@ -301,6 +394,9 @@ describe("applyAll baselines", () => {
     const client = {
       query: vi.fn(async (text: string) => {
         const trimmed = text.trim();
+        if (trimmed.toUpperCase().includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (trimmed.startsWith("SELECT key, service, name, sequence")) {
           return { rows: [appliedRow], rowCount: 1 };
         }
@@ -333,6 +429,9 @@ describe("applyAll baselines", () => {
     const client = {
       query: vi.fn(async (text: string) => {
         const trimmed = text.trim();
+        if (trimmed.toUpperCase().includes("PG_TRY_ADVISORY_LOCK")) {
+          return { rows: [{ acquired: true }], rowCount: 1 };
+        }
         if (trimmed.startsWith("SELECT key, service, name, sequence")) {
           return { rows: [appliedRow], rowCount: 1 };
         }
