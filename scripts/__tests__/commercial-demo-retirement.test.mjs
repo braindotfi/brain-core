@@ -5,6 +5,14 @@ import test from "node:test";
 const execution = readFileSync("scripts/ops/execute-commercial-demo-retirement.mjs", "utf8");
 const runner = readFileSync("scripts/ops/run-commercial-demo-retirement.sh", "utf8");
 const workflow = readFileSync(".github/workflows/ops-delete-orphan-demo-tenants.yml", "utf8");
+const phaseARunner = readFileSync(
+  "scripts/ops/run-commercial-demo-retirement-phase-a.sh",
+  "utf8",
+);
+const phaseAWorkflow = readFileSync(
+  ".github/workflows/ops-commercial-demo-retirement-phase-a.yml",
+  "utf8",
+);
 
 test("commercial demo retirement is pinned to the approved cohort", () => {
   for (const source of [execution, runner]) {
@@ -75,4 +83,26 @@ test("commercial demo rows are deleted in bounded materialized batches", () => {
   assert.match(execution, /COMMERCIAL_DEMO_TENANT_BATCH_SIZE/);
   assert.match(execution, /deleteTableInBatches/);
   assert.doesNotMatch(execution, /DELETE FROM \$\{table\} row USING retirement_targets/);
+});
+
+test("Phase A keeps one SHA contract and remains read only", () => {
+  assert.match(phaseAWorkflow, /EXPECTED_SHA: \$\{\{ inputs\.sha \}\}/);
+  assert.match(phaseAWorkflow, /ref: \$\{\{ inputs\.sha \}\}/);
+  assert.doesNotMatch(phaseAWorkflow, /runtime_sha|workflow_sha/);
+  assert.match(phaseAWorkflow, /environment: production/);
+  assert.match(phaseAWorkflow, /production-tenant-deletion/);
+  assert.doesNotMatch(phaseARunner, /execute-commercial-demo-retirement\.mjs/);
+  assert.doesNotMatch(phaseARunner, /DELETE\s+FROM/i);
+});
+
+test("Phase A uses the shared exact-match host overlap checker", () => {
+  assert.match(phaseARunner, /scripts\/ops\/check-commercial-demo-retirement-host-overlap\.sh/);
+  assert.match(
+    phaseARunner,
+    /bash "\$REMOTE_ROOT\/check-commercial-demo-retirement-host-overlap\.sh"/,
+  );
+  assert.doesNotMatch(
+    phaseARunner,
+    /grep -Eiq '\(pg_dump\|pg_basebackup\|backup\|restic\|borg\|azcopy/,
+  );
 });

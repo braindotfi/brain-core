@@ -1,0 +1,67 @@
+name: ops-commercial-demo-retirement-phase-a
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact promoted commit SHA to check out and verify in production."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: fenced read-only commercial demo retirement preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: production-tenant-deletion
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Check out the exact promoted retirement source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Validate the single SHA contract and deployed deletion path
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+          grep -F 'tenant-deletion/batched-delete.js' \
+            scripts/ops/execute-commercial-demo-retirement.mjs
+          grep -F 'BEGIN ISOLATION LEVEL READ COMMITTED' \
+            scripts/ops/execute-commercial-demo-retirement.mjs
+          grep -F 'DATABASE_EXECUTION_WATCHDOG_SECONDS=10800' \
+            scripts/ops/run-commercial-demo-retirement.sh
+          grep -F 'timeout-minutes: 210' \
+            .github/workflows/ops-delete-orphan-demo-tenants.yml
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run fenced read-only Phase A preflight
+        shell: bash
+        run: scripts/ops/run-commercial-demo-retirement-phase-a.sh
+
+      - name: Upload Phase A evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: commercial-demo-retirement-phase-a
+          path: commercial-demo-retirement-phase-a/
+          if-no-files-found: warn
+          retention-days: 30
