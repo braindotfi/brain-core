@@ -17,6 +17,7 @@ on:
         default: ""
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -297,10 +298,22 @@ jobs:
       - name: Diagnose commercial demo retirement batch performance
         if: inputs.target == 'production' && inputs.expected_sha != ''
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          candidate_dir="$(mktemp -d)"
+          gh run download 33914841453 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name commercial-demo-retirement-phase-a \
+            --dir "$candidate_dir"
+          printf '%s  %s\n' \
+            'bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8' \
+            "$candidate_dir/commercial-demo-retirement-targets.csv" \
+            | sha256sum --check --status
           scp -i ~/.ssh/id_deploy \
             scripts/ops/diagnose-commercial-demo-retirement-performance.mjs \
+            "$candidate_dir/commercial-demo-retirement-targets.csv" \
             "azureuser@$VM_HOST:/tmp/"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
