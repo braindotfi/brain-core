@@ -57,6 +57,7 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(runner, /commercial_demo_retirement_activity_fence_breached/);
   assert.match(runner, /commercial_demo_retirement_activity_fence_held/);
   assert.match(runner, /candidate_activity_count_since "\$fence_started_at"/);
+  assert.match(runner, /check-commercial-demo-retirement-host-overlap\.sh/);
   assert.match(runner, /pre-fence-cohort\.log/);
   assert.match(runner, /final-preflight\.log/);
   assert.match(workflow, /environment: production/);

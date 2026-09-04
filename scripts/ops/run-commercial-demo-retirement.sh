@@ -30,6 +30,7 @@ fi
 
 scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+  scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
   scripts/ops/execute-commercial-demo-retirement.mjs \
   "azureuser@$VM_HOST:/tmp/"
@@ -64,6 +65,14 @@ fi
 mkdir -p "$REPORT_DIR"
 chmod 700 "$REPORT_DIR"
 rm -f "$REPORT_DIR"/*
+
+{
+  crontab -l 2>/dev/null || true
+  cat /etc/crontab 2>/dev/null || true
+  systemctl list-timers --all --no-pager 2>/dev/null || true
+} > "$REPORT_DIR/host-schedules.txt"
+bash /tmp/check-commercial-demo-retirement-host-overlap.sh \
+  < "$REPORT_DIR/host-schedules.txt"
 
 worker_was_running=false
 agents_were_running=false
