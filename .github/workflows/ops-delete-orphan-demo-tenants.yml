@@ -44,6 +44,82 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
+      - name: Grant and verify narrow preserved-evidence read
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -U brain -d brain -At -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion;
+          DO $$
+          BEGIN
+            IF NOT has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'SELECT'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding SELECT grant is absent';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'TRUNCATE'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding grant is broader than SELECT';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'SELECT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'TRUNCATE'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion unexpectedly has verifier checkpoint access';
+            END IF;
+          END
+          $$;
+          SELECT json_build_object(
+            'event', 'tenant_deletion_integrity_read_grant_verified',
+            'role', 'brain_tenant_deletion',
+            'table', 'audit_integrity_findings',
+            'select', true,
+            'insert', false,
+            'update', false,
+            'delete', false,
+            'truncate', false,
+            'checkpoint_access', false
+          )::text;
+          COMMIT;
+          SQL
+          REMOTE
+
       - name: Fence, preflight, retire, purge, and reconcile
         shell: bash
         run: scripts/ops/run-commercial-demo-retirement.sh

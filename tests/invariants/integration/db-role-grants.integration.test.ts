@@ -134,10 +134,15 @@ const MATRIX: ReadonlyArray<{
       ["tenants", "DELETE"],
       ["tenant_blob_purge_jobs", "UPDATE"],
       ["raw_artifacts", "UPDATE"],
+      ["audit_integrity_findings", "SELECT"],
     ],
     cannot: [
       ["audit_events", "DELETE"],
-      ["audit_integrity_findings", "SELECT"],
+      ["audit_verifier_checkpoint", "SELECT"],
+      ["audit_integrity_findings", "INSERT"],
+      ["audit_integrity_findings", "UPDATE"],
+      ["audit_integrity_findings", "DELETE"],
+      ["audit_integrity_findings", "TRUNCATE"],
     ],
   },
   {

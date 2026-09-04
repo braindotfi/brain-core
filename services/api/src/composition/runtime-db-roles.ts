@@ -149,12 +149,17 @@ export async function assertRuntimeDbRoles(input: {
       query: asQuery(input.pools.tenantDeletion),
       mustBypassRls: true,
       expectedRole: "brain_tenant_deletion",
-      // Broad DELETE for GDPR erasure, but audit history stays preserved and
-      // forensic state is off-limits.
+      // Broad DELETE for GDPR erasure, but audit history stays preserved.
+      // The role can only read integrity findings to count preserved evidence;
+      // it cannot read the verifier checkpoint or mutate findings.
       forbidden: [
         { table: "audit_events", privilege: "DELETE" },
         { table: "audit_events", privilege: "UPDATE" },
-        { table: "audit_integrity_findings", privilege: "SELECT" },
+        { table: "audit_verifier_checkpoint", privilege: "SELECT" },
+        { table: "audit_integrity_findings", privilege: "INSERT" },
+        { table: "audit_integrity_findings", privilege: "UPDATE" },
+        { table: "audit_integrity_findings", privilege: "DELETE" },
+        { table: "audit_integrity_findings", privilege: "TRUNCATE" },
       ],
     },
     {

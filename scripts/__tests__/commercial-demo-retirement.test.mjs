@@ -53,4 +53,10 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(runner, /final-preflight\.log/);
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /production-tenant-deletion/);
+  assert.match(
+    workflow,
+    /GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion/,
+  );
+  assert.match(workflow, /integrity finding grant is broader than SELECT/);
+  assert.match(workflow, /unexpectedly has verifier checkpoint access/);
 });

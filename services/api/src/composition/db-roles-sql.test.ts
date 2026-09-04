@@ -224,7 +224,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(revoke?.[0]).toContain("brain_auth_audit_writer");
   });
 
-  it("keeps forensic state off-limits to every new role except the verifier", () => {
+  it("limits tenant deletion to read-only integrity finding evidence", () => {
     const revokeAll = SQL.match(
       /REVOKE ALL ON audit_verifier_checkpoint, audit_integrity_findings\s+FROM[\s\S]*?;/,
     );
@@ -236,6 +236,10 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
         expect(revokeAll?.[0], `${role} not stripped of forensic tables`).toContain(role);
       }
     }
+    expect(SQL).toContain("GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion;");
+    expect(SQL).not.toMatch(
+      /GRANT[^;]*(INSERT|UPDATE|DELETE|TRUNCATE)[^;]*ON audit_integrity_findings TO brain_tenant_deletion/,
+    );
     // The verifier still cannot erase a detected break.
     expect(SQL).toMatch(
       /REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings\s+FROM brain_privileged, brain_audit_verifier/,
