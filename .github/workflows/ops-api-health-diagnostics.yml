@@ -33,6 +33,9 @@ jobs:
       VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
       VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
     steps:
+      - name: Check out diagnostic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Select target
         shell: bash
         run: |
