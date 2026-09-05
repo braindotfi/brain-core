@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertTenantReconciliationEmpty,
   captureTenantReconciliationCounts,
+  selectLargestProposalTenant,
   tenantReconciliationCountStatement,
 } from "./per-tenant-retirement.js";
 
@@ -51,5 +52,21 @@ describe("per-tenant reconciliation", () => {
         "tnt_test",
       ),
     ).rejects.toThrow('tenant rows remain after delete: [["proposals",1]]');
+  });
+
+  it("selects the largest proposal tenant with one grouped candidate query", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [{ tenant_id: "tenant-1500", proposal_count: 51 }],
+      rowCount: 1,
+    });
+
+    await expect(
+      selectLargestProposalTenant({ query }, ["tenant-0001", "tenant-1500"]),
+    ).resolves.toEqual({ tenantId: "tenant-1500", proposalCount: 51 });
+    expect(query).toHaveBeenCalledOnce();
+    expect(query.mock.calls[0]?.[0]).toContain("WHERE proposal.tenant_id = ANY($1::text[])");
+    expect(query.mock.calls[0]?.[0]).toContain("GROUP BY proposal.tenant_id");
+    expect(query.mock.calls[0]?.[0]).not.toContain("CROSS JOIN LATERAL");
+    expect(query.mock.calls[0]?.[1]).toEqual([["tenant-0001", "tenant-1500"]]);
   });
 });

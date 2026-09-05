@@ -7,6 +7,7 @@ import {
   COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
   initializeRetirementProgress,
   runRetirementTenantAttempt,
+  selectLargestProposalTenant,
   tenantReconciliationCountStatement,
 } from "./per-tenant-retirement.js";
 
@@ -51,6 +52,13 @@ suite("bounded tenant deletion transaction behavior", () => {
     )`);
     await bootstrap.query(
       `CREATE INDEX audit_events_tenant_id_idx ON ${schema}.audit_events (tenant_id)`,
+    );
+    await bootstrap.query(`CREATE TABLE ${schema}.proposals (
+      id bigserial PRIMARY KEY,
+      tenant_id text NOT NULL
+    )`);
+    await bootstrap.query(
+      `CREATE INDEX proposals_tenant_id_idx ON ${schema}.proposals (tenant_id)`,
     );
     await bootstrap.query(`CREATE TABLE ${schema}.commercial_demo_retirement_progress (
       operation_id text NOT NULL,
@@ -107,7 +115,7 @@ suite("bounded tenant deletion transaction behavior", () => {
   beforeEach(async () => {
     await ownerPool.query(
       `TRUNCATE retirement_test_rows, retirement_targets, tenants,
-         audit_events, commercial_demo_retirement_progress RESTART IDENTITY`,
+         audit_events, proposals, commercial_demo_retirement_progress RESTART IDENTITY`,
     );
     await ownerPool.query("GRANT UPDATE ON tenants TO brain_tenant_deletion");
     await ownerPool.query("INSERT INTO retirement_targets (tenant_id) VALUES ('target')");
@@ -211,6 +219,30 @@ suite("bounded tenant deletion transaction behavior", () => {
     } finally {
       await rollback(deleter);
     }
+  });
+
+  it("selects the largest proposal tenant from a 1500-tenant fixture in under five seconds", async () => {
+    const tenantIds = Array.from(
+      { length: 1_500 },
+      (_, index) => `tenant-${String(index + 1).padStart(4, "0")}`,
+    );
+    await ownerPool.query(
+      `INSERT INTO proposals (tenant_id)
+       SELECT 'tenant-' || lpad(value::text, 4, '0')
+         FROM generate_series(1, 1500) value`,
+    );
+    await ownerPool.query(
+      `INSERT INTO proposals (tenant_id)
+       SELECT 'tenant-1500' FROM generate_series(1, 50)`,
+    );
+    await ownerPool.query("ANALYZE proposals");
+
+    const startedAt = performance.now();
+    const selected = await selectLargestProposalTenant(ownerPool, tenantIds);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(selected).toEqual({ tenantId: "tenant-1500", proposalCount: 51 });
+    expect(elapsedMs).toBeLessThan(5_000);
   });
 
   it("deletes more than one batch and commits only the target rows", async () => {
