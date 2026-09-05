@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import pg from "../../services/api/node_modules/pg/lib/index.js";
 import { TENANT_SCOPED_TABLES } from "../../services/api/dist/tenant-deletion/service.js";
 import { assertTenantDeletionPrivilegeContract } from "../../services/api/dist/tenant-deletion/privilege-contract.js";
+import { selectLargestProposalTenant } from "../../services/api/dist/tenant-deletion/per-tenant-retirement.js";
 import {
   assertDatabaseRole,
   assertRegistryCoverage,
@@ -31,6 +32,7 @@ async function main() {
   const client = await pool.connect();
   let rolledBack = false;
   try {
+    const candidate = await selectLargestProposalTenant(client, ids);
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     await client.query("SET LOCAL statement_timeout = '30s'");
     await client.query("SET LOCAL lock_timeout = '5s'");
@@ -47,20 +49,7 @@ async function main() {
     ) {
       throw new Error("rehearsal connection must use the brain database owner");
     }
-    const candidate = await client.query(
-      `SELECT candidate.tenant_id, proposal_counts.proposal_count
-         FROM unnest($1::text[]) candidate(tenant_id)
-         CROSS JOIN LATERAL (
-           SELECT COUNT(*)::int AS proposal_count
-             FROM proposals proposal
-            WHERE proposal.tenant_id = candidate.tenant_id
-         ) proposal_counts
-        ORDER BY proposal_counts.proposal_count DESC, candidate.tenant_id
-        LIMIT 1`,
-      [ids],
-    );
-    const tenantId = candidate.rows[0]?.tenant_id;
-    if (typeof tenantId !== "string") throw new Error("no rehearsal tenant was selected");
+    const tenantId = candidate.tenantId;
     const liveTables = await assertRegistryCoverage(client);
     const expectedRows = await captureTenantCounts(client, liveTables, tenantId);
     const startedAt = Date.now();
@@ -99,7 +88,7 @@ async function main() {
         event: "commercial_demo_retirement_one_tenant_rehearsal_passed",
         candidate_list_sha256: digest,
         tenant_id: tenantId,
-        proposal_count: candidate.rows[0]?.proposal_count,
+        proposal_count: candidate.proposalCount,
         elapsed_ms: elapsedMs,
         max_elapsed_ms: MAX_REHEARSAL_MS,
         total_rows_deleted: result.totalRowsDeleted,

@@ -36,6 +36,11 @@ export interface RetirementAttemptResult {
   result?: RetirementTenantResult;
 }
 
+export interface RehearsalTenantSelection {
+  tenantId: string;
+  proposalCount: number;
+}
+
 export interface RetirementProgressRow extends Record<string, unknown> {
   tenant_id: string;
   ordinal: number;
@@ -97,6 +102,28 @@ export async function assertTenantReconciliationEmpty(
     throw new Error(`tenant rows remain after delete: ${JSON.stringify(remaining)}`);
   }
   return counts;
+}
+
+export async function selectLargestProposalTenant(
+  client: PerTenantRetirementClient,
+  tenantIds: readonly string[],
+): Promise<RehearsalTenantSelection> {
+  if (tenantIds.length === 0) throw new Error("no rehearsal tenant candidates were provided");
+  const result = await client.query<{ tenant_id: string; proposal_count: number }>(
+    `SELECT proposal.tenant_id,
+            COUNT(*)::int AS proposal_count
+       FROM proposals proposal
+      WHERE proposal.tenant_id = ANY($1::text[])
+      GROUP BY proposal.tenant_id
+      ORDER BY proposal_count DESC, proposal.tenant_id
+      LIMIT 1`,
+    [[...tenantIds]],
+  );
+  const selected = result.rows[0];
+  if (selected !== undefined) {
+    return { tenantId: selected.tenant_id, proposalCount: Number(selected.proposal_count) };
+  }
+  return { tenantId: [...tenantIds].sort()[0] as string, proposalCount: 0 };
 }
 
 export async function initializeRetirementProgress(

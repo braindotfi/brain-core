@@ -114,8 +114,8 @@ test("per-tenant reconciliation uses direct indexed predicates", () => {
   assert.match(execution, /ANALYZE retirement_targets/);
   assert.match(execution, /commercial_demo_retirement_cohort_reconciliation_started/);
   assert.match(execution, /commercial_demo_retirement_cohort_reconciliation_passed/);
-  assert.match(timingRehearsal, /CROSS JOIN LATERAL/);
-  assert.match(timingRehearsal, /WHERE proposal\.tenant_id = candidate\.tenant_id/);
+  assert.match(timingRehearsal, /selectLargestProposalTenant/);
+  assert.doesNotMatch(timingRehearsal, /CROSS JOIN LATERAL/);
   assert.doesNotMatch(timingRehearsal, /LEFT JOIN proposals/);
 });
 
@@ -124,10 +124,19 @@ test("Phase A rehearses one real tenant and rolls every change back", () => {
   assert.match(timingRehearsal, /MAX_REHEARSAL_MS = 30_000/);
   assert.match(timingRehearsal, /POSTGRES_PASSWORD/);
   assert.match(timingRehearsal, /rehearsal connection must use the brain database owner/);
+  const selectorIndex = timingRehearsal.indexOf("selectLargestProposalTenant(client, ids)");
+  const transactionIndex = timingRehearsal.indexOf(
+    'client.query("BEGIN ISOLATION LEVEL READ COMMITTED")',
+  );
   const quarantineIndex = timingRehearsal.indexOf("UPDATE agents");
   const deletionRoleIndex = timingRehearsal.indexOf("SET LOCAL ROLE brain_tenant_deletion");
   const deleteIndex = timingRehearsal.indexOf("const result = await executeOneTenant");
   const rollbackIndex = timingRehearsal.indexOf('await client.query("ROLLBACK")');
+  assert.ok(selectorIndex > 0, "the rehearsal must select a candidate");
+  assert.ok(
+    transactionIndex > selectorIndex,
+    "the candidate selector must run before the timed rehearsal transaction",
+  );
   assert.ok(quarantineIndex > 0, "the rehearsal must quarantine the selected tenant's agents");
   assert.ok(
     deletionRoleIndex > quarantineIndex,
