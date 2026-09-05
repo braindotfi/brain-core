@@ -9,6 +9,8 @@ readonly EXPECTED_TARGET_COUNT=1519
 readonly QUIET_WINDOW_SECONDS=120
 readonly QUIET_POLL_SECONDS=15
 readonly QUIET_TIMEOUT_SECONDS=900
+readonly DATABASE_EXECUTION_WATCHDOG_SECONDS=10800
+readonly FENCE_MONITOR_SECONDS=15
 readonly REMOTE_REPORT_DIR="/tmp/commercial-demo-retirement-execution"
 
 if [[ "${CONFIRMATION:-}" != "$EXPECTED_CONFIRMATION" ]]; then
@@ -28,6 +30,7 @@ fi
 
 scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
+  scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
   scripts/ops/execute-commercial-demo-retirement.mjs \
   "azureuser@$VM_HOST:/tmp/"
@@ -42,6 +45,8 @@ readonly EXPECTED_TARGET_COUNT=1519
 readonly QUIET_WINDOW_SECONDS=120
 readonly QUIET_POLL_SECONDS=15
 readonly QUIET_TIMEOUT_SECONDS=900
+readonly DATABASE_EXECUTION_WATCHDOG_SECONDS=10800
+readonly FENCE_MONITOR_SECONDS=15
 readonly REPORT_DIR="/tmp/commercial-demo-retirement-execution"
 readonly PROTECTED_TENANTS=(
   tnt_00000000010000000000000000
@@ -60,6 +65,14 @@ fi
 mkdir -p "$REPORT_DIR"
 chmod 700 "$REPORT_DIR"
 rm -f "$REPORT_DIR"/*
+
+{
+  crontab -l 2>/dev/null || true
+  cat /etc/crontab 2>/dev/null || true
+  systemctl list-timers --all --no-pager 2>/dev/null || true
+} > "$REPORT_DIR/host-schedules.txt"
+bash /tmp/check-commercial-demo-retirement-host-overlap.sh \
+  < "$REPORT_DIR/host-schedules.txt"
 
 worker_was_running=false
 agents_were_running=false
@@ -130,6 +143,46 @@ run_complete_rehearsal() {
     /tmp/commercial-demo-retirement-targets.csv
 }
 
+durable_progress_count() {
+  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 <<'SQL' \
+    | tail -n 1
+SELECT COUNT(*)
+  FROM commercial_demo_retirement_progress
+ WHERE operation_id = 'commercial-demo-retirement-2026-09-03';
+SQL
+}
+
+restore_targets_from_progress() {
+  clear_rehearsal_outputs
+  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 <<'SQL'
+\copy (
+  SELECT tenant_id
+    FROM commercial_demo_retirement_progress
+   WHERE operation_id = 'commercial-demo-retirement-2026-09-03'
+   ORDER BY ordinal
+) TO '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
+SQL
+  docker cp brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv \
+    /tmp/commercial-demo-retirement-targets.csv
+}
+
+prepare_target_file() {
+  local log_file="$1"
+  local progress_count
+  progress_count="$(durable_progress_count)"
+  if [[ "$progress_count" == "0" ]]; then
+    run_complete_rehearsal "$log_file"
+    return
+  fi
+  if [[ "$progress_count" != "$EXPECTED_TARGET_COUNT" ]]; then
+    echo "durable retirement progress count mismatch: $progress_count"
+    return 1
+  fi
+  restore_targets_from_progress
+  printf '{"event":"commercial_demo_retirement_targets_restored_from_progress","count":%s}\n' \
+    "$progress_count" | tee "$log_file"
+}
+
 validate_target_file() {
   local actual_target_sha256 target_count tenant_id
   actual_target_sha256="$(sha256sum /tmp/commercial-demo-retirement-targets.csv | cut -d ' ' -f 1)"
@@ -152,7 +205,9 @@ validate_target_file() {
 
 candidate_activity_count_since() {
   local activity_since="$1"
-  docker exec -i brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 \
+  docker exec -i \
+    -e PGOPTIONS='-c statement_timeout=30000 -c lock_timeout=1000' \
+    brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 \
     -v activity_since="$activity_since" <<'SQL' | tail -n 1
 CREATE TEMP TABLE activity_targets (tenant_id TEXT PRIMARY KEY);
 \copy activity_targets FROM '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
@@ -254,12 +309,12 @@ if container_is_running brain-prod-agents || container_is_running brain-prod-wor
   echo "activity fence failed to stop a worker container"
   exit 1
 fi
-run_complete_rehearsal "$REPORT_DIR/pre-fence-cohort.log"
+prepare_target_file "$REPORT_DIR/pre-fence-cohort.log"
 validate_target_file
 
 fence_started_at="$(wait_for_candidate_quiescence)"
 printf '%s\n' "$fence_started_at" > "$REPORT_DIR/fence-started-at.txt"
-run_complete_rehearsal "$REPORT_DIR/final-preflight.log"
+prepare_target_file "$REPORT_DIR/final-preflight.log"
 validate_target_file
 
 printf '%s  %s\n' "$EXPECTED_TARGET_SHA256" commercial-demo-retirement-targets.csv \
@@ -296,20 +351,87 @@ docker cp /tmp/commercial-demo-retirement-targets.csv \
   brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
 docker cp /tmp/execute-commercial-demo-retirement.mjs \
   brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
-docker exec \
-  -e FENCE_STARTED_AT="$fence_started_at" \
-  brain-prod-api \
-  node /app/scripts/ops/execute-commercial-demo-retirement.mjs \
-  | tee "$REPORT_DIR/database-execution.jsonl"
+
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "the remote host must provide the timeout command"
+  exit 1
+fi
+if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+  echo "activity fence was not active immediately before database execution"
+  exit 1
+fi
+
+database_started_epoch="$(date -u +%s)"
+printf '{"event":"commercial_demo_retirement_database_watchdog_started","timeout_seconds":%s,"fence_monitor_seconds":%s,"started_at":"%s"}\n' \
+  "$DATABASE_EXECUTION_WATCHDOG_SECONDS" "$FENCE_MONITOR_SECONDS" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$REPORT_DIR/database-execution.jsonl"
+set +e
+timeout --signal=TERM --kill-after=30s "${DATABASE_EXECUTION_WATCHDOG_SECONDS}s" \
+  docker exec \
+    -e FENCE_STARTED_AT="$fence_started_at" \
+    brain-prod-api \
+    node /app/scripts/ops/execute-commercial-demo-retirement.mjs \
+  > >(tee -a "$REPORT_DIR/database-execution.jsonl") 2>&1 &
+database_execution_pid=$!
+fence_breached=false
+while kill -0 "$database_execution_pid" 2>/dev/null; do
+  if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+    fence_breached=true
+    printf '{"event":"commercial_demo_retirement_activity_fence_breached","observed_at":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$REPORT_DIR/database-execution.jsonl"
+    kill -TERM "$database_execution_pid" 2>/dev/null || true
+    break
+  fi
+  activity_count="$(candidate_activity_count_since "$fence_started_at")"
+  if [[ ! "$activity_count" =~ ^[0-9]+$ ]] || (( activity_count > 0 )); then
+    fence_breached=true
+    printf '{"event":"commercial_demo_retirement_activity_fence_breached","activity_count":"%s","observed_at":"%s"}\n' \
+      "$activity_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      | tee -a "$REPORT_DIR/database-execution.jsonl"
+    kill -TERM "$database_execution_pid" 2>/dev/null || true
+    break
+  fi
+  sleep "$FENCE_MONITOR_SECONDS"
+done
+wait "$database_execution_pid"
+database_execution_status=$?
+set -e
+database_finished_epoch="$(date -u +%s)"
+
+if [[ "$fence_breached" == "true" ]]; then
+  echo "activity fence failed during database execution"
+  exit 1
+fi
+if (( database_execution_status != 0 )); then
+  if (( database_execution_status == 124 )); then
+    echo "database execution exceeded the ${DATABASE_EXECUTION_WATCHDOG_SECONDS}-second watchdog"
+  else
+    echo "database execution failed with status $database_execution_status"
+  fi
+  exit "$database_execution_status"
+fi
+if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+  echo "activity fence was not active after database execution"
+  exit 1
+fi
+printf '{"event":"commercial_demo_retirement_activity_fence_held","database_window_seconds":%s,"verified_at":"%s"}\n' \
+  "$((database_finished_epoch - database_started_epoch))" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$REPORT_DIR/database-execution.jsonl"
 deletion_committed=true
 
+# Purge jobs are enqueued atomically with each tenant deletion. The fenced
+# worker cannot observe a job before that tenant commits, and processes the
+# idempotent jobs only after the database loop has completed successfully.
 read -r expected_blob_jobs expected_blob_artifacts < <(
   docker exec -i brain-prod-api node -e '
     let input = "";
     process.stdin.on("data", (chunk) => { input += chunk; });
     process.stdin.on("end", () => {
-      const lines = input.trim().split("\n");
-      const value = JSON.parse(lines.at(-1));
+      const values = input.trim().split("\n").map((line) => JSON.parse(line));
+      const value = values.findLast(
+        (candidate) => candidate.event === "commercial_demo_retirement_committed",
+      );
+      if (value === undefined) process.exit(1);
       process.stdout.write(`${value.blob_purge_jobs_enqueued} ${value.blob_artifact_rows}`);
     });
   ' < "$REPORT_DIR/database-execution.jsonl"
@@ -409,12 +531,14 @@ SELECT json_build_object(
 SQL
 
 {
-  printf '{"brain_prod_worker":{"state":"%s","health":"%s"},' \
+  printf '{"brain_prod_worker":{"state":"%s","health":"%s","restart_count":%s},' \
     "$(docker inspect --format='{{.State.Status}}' brain-prod-worker)" \
-    "$(docker inspect --format='{{.State.Health.Status}}' brain-prod-worker)"
-  printf '"brain_prod_agents":{"state":"%s","health":"%s"}}\n' \
+    "$(docker inspect --format='{{.State.Health.Status}}' brain-prod-worker)" \
+    "$(docker inspect --format='{{.RestartCount}}' brain-prod-worker)"
+  printf '"brain_prod_agents":{"state":"%s","health":"%s","restart_count":%s}}\n' \
     "$(docker inspect --format='{{.State.Status}}' brain-prod-agents)" \
-    "$(docker inspect --format='{{.State.Health.Status}}' brain-prod-agents)"
+    "$(docker inspect --format='{{.State.Health.Status}}' brain-prod-agents)" \
+    "$(docker inspect --format='{{.RestartCount}}' brain-prod-agents)"
 } > "$REPORT_DIR/worker-restart-status.json"
 
 (cd "$REPORT_DIR" && sha256sum ./* > report-SHA256SUMS)

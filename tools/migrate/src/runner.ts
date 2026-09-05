@@ -2,9 +2,9 @@
  * Brain migration runner.
  *
  * Applies discovered migrations serially, tracking applied ones in
- * `brain_migrations`. Each migration runs inside its own transaction. A
- * failing migration rolls back and stops the run — no attempt to reconcile
- * partial application.
+ * `brain_migrations`. Migrations run inside their own transaction by default.
+ * A migration may explicitly opt out for PostgreSQL operations such as
+ * `CREATE INDEX CONCURRENTLY` that cannot run in a transaction block.
  *
  * Schema of `brain_migrations` (created on first run):
  *   CREATE TABLE brain_migrations (
@@ -77,13 +77,18 @@ export function contentSha(sql: string): Buffer {
 const MIGRATION_LOCK_EXPR = "hashtext('brain_migrations')";
 
 /**
- * Acquire the session-level migration advisory lock. Blocks until granted, so
- * concurrent runners (e.g. parallel integration-test schemas) apply migrations
- * one at a time instead of racing global DDL such as role/grant statements
- * (`tuple concurrently updated`). Must be released on the same connection.
+ * Acquire the session-level migration advisory lock. Polling avoids leaving a
+ * statement transaction blocked on the lock because that transaction can
+ * deadlock with `CREATE INDEX CONCURRENTLY` in the current lock holder.
  */
 export async function acquireMigrationLock(client: RunnerClient): Promise<void> {
-  await client.query(`SELECT pg_advisory_lock(${MIGRATION_LOCK_EXPR})`);
+  for (;;) {
+    const { rows } = await client.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_lock(${MIGRATION_LOCK_EXPR}) AS acquired`,
+    );
+    if (rows[0]?.acquired === true) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 /** Release the session-level migration advisory lock acquired above. */
@@ -206,28 +211,27 @@ export async function applyAll(
         // migration normally below, so an unproven database fails loudly.
       }
 
-      await client.query("BEGIN");
-      try {
-        await client.query(m.sql);
-        await client.query(
-          `INSERT INTO brain_migrations
-             (key, service, name, sequence, content_sha, applied_by)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [m.key, m.service, m.name, m.sequence, sha, appliedBy],
-        );
-        await client.query("COMMIT");
-      } catch (err) {
+      if (m.transactionMode === "none") {
         try {
-          await client.query("ROLLBACK");
-        } catch {
-          /* swallow */
+          await client.query(m.sql);
+          await recordMigration(client, m, sha, appliedBy);
+        } catch (err) {
+          throw migrationError(m, err);
         }
-        throw new Error(
-          `migration ${m.key} failed: ${err instanceof Error ? err.message : String(err)}`,
-          {
-            cause: err instanceof Error ? err : undefined,
-          },
-        );
+      } else {
+        await client.query("BEGIN");
+        try {
+          await client.query(m.sql);
+          await recordMigration(client, m, sha, appliedBy);
+          await client.query("COMMIT");
+        } catch (err) {
+          try {
+            await client.query("ROLLBACK");
+          } catch {
+            /* swallow */
+          }
+          throw migrationError(m, err);
+        }
       }
       result.applied.push(m);
     }
@@ -240,6 +244,29 @@ export async function applyAll(
       /* best-effort: the lock is released on connection close regardless */
     }
   }
+}
+
+async function recordMigration(
+  client: RunnerClient,
+  migration: DiscoveredMigration,
+  sha: Buffer,
+  appliedBy: string,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO brain_migrations
+       (key, service, name, sequence, content_sha, applied_by)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [migration.key, migration.service, migration.name, migration.sequence, sha, appliedBy],
+  );
+}
+
+function migrationError(migration: DiscoveredMigration, err: unknown): Error {
+  return new Error(
+    `migration ${migration.key} failed: ${err instanceof Error ? err.message : String(err)}`,
+    {
+      cause: err instanceof Error ? err : undefined,
+    },
+  );
 }
 
 export async function status(

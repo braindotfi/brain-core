@@ -25,11 +25,14 @@ export interface DiscoveredMigration {
   path: string;
   /** SQL content. */
   sql: string;
+  /** Whether the runner wraps this migration in a transaction. */
+  transactionMode: "transactional" | "none";
   /** Stable sort key: `{service}/{name}`. */
   key: string;
 }
 
 const FILENAME_RE = /^(\d{4,})_[a-z0-9_]+\.sql$/i;
+const NO_TRANSACTION_DIRECTIVE = "-- brain-migration: no-transaction";
 
 export async function discoverMigrations(repoRoot: string): Promise<DiscoveredMigration[]> {
   const servicesDir = join(repoRoot, "services");
@@ -53,6 +56,7 @@ export async function discoverMigrations(repoRoot: string): Promise<DiscoveredMi
         sequence,
         path,
         sql,
+        transactionMode: parseTransactionMode(sql),
         key: `${service}${sep}${name}`,
       });
     }
@@ -61,6 +65,14 @@ export async function discoverMigrations(repoRoot: string): Promise<DiscoveredMi
   // Stable global order: service ascending, then filename ascending.
   results.sort((a, b) => a.key.localeCompare(b.key));
   return results;
+}
+
+export function parseTransactionMode(sql: string): DiscoveredMigration["transactionMode"] {
+  const firstLine = sql
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/, 1)[0]
+    ?.trim();
+  return firstLine === NO_TRANSACTION_DIRECTIVE ? "none" : "transactional";
 }
 
 async function safeListDirs(root: string): Promise<string[]> {

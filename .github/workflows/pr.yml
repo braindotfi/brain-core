@@ -23,7 +23,10 @@ jobs:
     name: dependency audit (high + critical)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    # pnpm audit can spend up to four minutes on its built-in registry retries.
+    # Leave enough headroom when hosted-runner setup is slow so the fail-closed
+    # audit receives a definitive result instead of being cancelled mid-retry.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v4.1.0
@@ -196,6 +199,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
+      DATABASE_URL_TENANT_DELETION: postgres://brain_tenant_deletion:brain_tenant_deletion@localhost:5432/brain
       # Least-privilege request-path role (infra/db-roles.sql, applied below).
       # brain_app is NOBYPASSRLS and not the table owner, so it is the one
       # connection in this job that Postgres actually subjects to RLS.

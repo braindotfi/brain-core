@@ -237,12 +237,29 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
       }
     }
     expect(SQL).toContain("GRANT SELECT ON audit_integrity_findings TO brain_tenant_deletion;");
+    expect(SQL).toContain("GRANT SELECT, UPDATE, DELETE ON tenants TO brain_tenant_deletion;");
     expect(SQL).not.toMatch(
       /GRANT[^;]*(INSERT|UPDATE|DELETE|TRUNCATE)[^;]*ON audit_integrity_findings TO brain_tenant_deletion/,
     );
     // The verifier still cannot erase a detected break.
     expect(SQL).toMatch(
       /REVOKE UPDATE, DELETE, TRUNCATE ON audit_integrity_findings\s+FROM brain_privileged, brain_audit_verifier/,
+    );
+  });
+
+  it("makes commercial demo retirement progress append-only to the deletion role", () => {
+    const revokeAll = SQL.match(
+      /REVOKE ALL ON commercial_demo_retirement_progress\s+FROM[\s\S]*?;/,
+    );
+    expect(revokeAll).not.toBeNull();
+    for (const role of RUNTIME_ROLES) {
+      expect(revokeAll?.[0], `${role} not stripped of retirement progress`).toContain(role);
+    }
+    expect(SQL).toMatch(
+      /GRANT SELECT, INSERT, UPDATE ON commercial_demo_retirement_progress\s+TO brain_tenant_deletion;/,
+    );
+    expect(SQL).not.toMatch(
+      /GRANT[^;]*DELETE[^;]*ON commercial_demo_retirement_progress[^;]*TO brain_tenant_deletion/,
     );
   });
 });
