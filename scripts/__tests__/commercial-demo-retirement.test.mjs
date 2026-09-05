@@ -14,6 +14,18 @@ const privilegeCheck = readFileSync(
   "scripts/ops/check-commercial-demo-retirement-privileges.mjs",
   "utf8",
 );
+const progressMigration = readFileSync(
+  "services/api/migrations/0034_commercial_demo_retirement_progress.sql",
+  "utf8",
+);
+const perTenantRetirement = readFileSync(
+  "services/api/src/tenant-deletion/per-tenant-retirement.ts",
+  "utf8",
+);
+const timingRehearsal = readFileSync(
+  "scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs",
+  "utf8",
+);
 
 test("commercial demo retirement is pinned to the approved cohort", () => {
   for (const source of [execution, runner]) {
@@ -39,11 +51,11 @@ test("commercial demo retirement protects every approved denylist tenant", () =>
 });
 
 test("commercial demo retirement stays fail closed and transactionally audited", () => {
-  assert.match(execution, /BEGIN ISOLATION LEVEL READ COMMITTED/);
-  assert.match(execution, /SET LOCAL statement_timeout = '3min'/);
-  assert.match(execution, /SET LOCAL lock_timeout = '5s'/);
-  assert.match(execution, /SET LOCAL idle_in_transaction_session_timeout = '5min'/);
-  assert.match(execution, /ROLLBACK/);
+  assert.match(perTenantRetirement, /BEGIN ISOLATION LEVEL READ COMMITTED/);
+  assert.match(perTenantRetirement, /SET LOCAL statement_timeout = '30s'/);
+  assert.match(perTenantRetirement, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(perTenantRetirement, /SET LOCAL idle_in_transaction_session_timeout = '45s'/);
+  assert.match(perTenantRetirement, /ROLLBACK/);
   assert.match(execution, /tenant_blob_purge_jobs/);
   assert.match(execution, /tenant_blob_purge_audit_outbox/);
   assert.match(execution, /assertPostDelete/);
@@ -79,11 +91,25 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(workflow, /brain-prod-worker restart count is not zero/);
 });
 
-test("commercial demo rows are deleted in bounded materialized batches", () => {
-  assert.match(execution, /COMMERCIAL_DEMO_ROW_BATCH_SIZE/);
-  assert.match(execution, /COMMERCIAL_DEMO_TENANT_BATCH_SIZE/);
-  assert.match(execution, /deleteTableInBatches/);
-  assert.doesNotMatch(execution, /DELETE FROM \$\{table\} row USING retirement_targets/);
+test("commercial demo rows use durable one-tenant transactions", () => {
+  assert.match(execution, /initializeRetirementProgress/);
+  assert.match(execution, /runRetirementTenantAttempt/);
+  assert.match(execution, /assertCountSnapshot/);
+  assert.match(execution, /commercial_demo_retirement_completed_with_failures/);
+  assert.match(runner, /durable_progress_count/);
+  assert.match(runner, /restore_targets_from_progress/);
+  assert.match(progressMigration, /PRIMARY KEY \(operation_id, tenant_id\)/);
+  assert.match(progressMigration, /status IN \('pending', 'running', 'completed', 'failed'\)/);
+  assert.match(progressMigration, /FORCE ROW LEVEL SECURITY/);
+  assert.doesNotMatch(execution, /deleteTableInBatches/);
+});
+
+test("Phase A rehearses one real tenant and rolls every change back", () => {
+  assert.match(phaseARunner, /rehearse-commercial-demo-tenant-retirement\.mjs/);
+  assert.match(timingRehearsal, /MAX_REHEARSAL_MS = 30_000/);
+  assert.match(timingRehearsal, /executeOneTenant/);
+  assert.match(timingRehearsal, /ROLLBACK/);
+  assert.match(timingRehearsal, /rollback_only: true/);
 });
 
 test("Phase A keeps one SHA contract and remains read only", () => {
@@ -92,8 +118,11 @@ test("Phase A keeps one SHA contract and remains read only", () => {
   assert.doesNotMatch(phaseAWorkflow, /runtime_sha|workflow_sha/);
   assert.match(phaseAWorkflow, /environment: production/);
   assert.match(phaseAWorkflow, /production-tenant-deletion/);
-  assert.doesNotMatch(phaseARunner, /execute-commercial-demo-retirement\.mjs/);
   assert.doesNotMatch(phaseARunner, /DELETE\s+FROM/i);
+  assert.doesNotMatch(
+    phaseARunner,
+    /node \/app\/scripts\/ops\/execute-commercial-demo-retirement\.mjs/,
+  );
   assert.match(phaseARunner, /check-commercial-demo-retirement-privileges\.mjs/);
   assert.match(privilegeCheck, /BRAIN_TENANT_DELETION_DB_URL/);
   assert.match(privilegeCheck, /BEGIN TRANSACTION READ ONLY/);

@@ -2,19 +2,21 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import pg from "../../services/api/node_modules/pg/lib/index.js";
 import {
   PRESERVED_TABLES,
   TENANT_SCOPED_TABLES,
+  tenantDeleteStatement,
 } from "../../services/api/dist/tenant-deletion/service.js";
-import {
-  COMMERCIAL_DEMO_ROW_BATCH_SIZE,
-  COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
-  assertNoProtectedTenantIds,
-  deleteTableInBatches,
-  lockCandidateTenants,
-} from "../../services/api/dist/tenant-deletion/batched-delete.js";
+import { assertNoProtectedTenantIds } from "../../services/api/dist/tenant-deletion/batched-delete.js";
 import { assertTenantDeletionPrivilegeContract } from "../../services/api/dist/tenant-deletion/privilege-contract.js";
+import {
+  COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
+  initializeRetirementProgress,
+  listRetirementProgress,
+  runRetirementTenantAttempt,
+} from "../../services/api/dist/tenant-deletion/per-tenant-retirement.js";
 
 const { Pool } = pg;
 
@@ -71,7 +73,7 @@ function fixedId(prefix, seed) {
   return `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 26).toUpperCase()}`;
 }
 
-function parseTargetCsv(bytes) {
+export function parseTargetCsv(bytes) {
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (digest !== EXPECTED_TARGET_SHA256) {
     throw new Error(`candidate-list hash mismatch: ${digest}`);
@@ -101,7 +103,7 @@ async function insertTargets(client, ids) {
   await client.query(`INSERT INTO retirement_targets (tenant_id) VALUES ${placeholders}`, ids);
 }
 
-async function assertDatabaseRole(client) {
+export async function assertDatabaseRole(client) {
   const result = await client.query(
     `SELECT current_user AS role,
             COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user), false) AS bypass_rls`,
@@ -112,7 +114,7 @@ async function assertDatabaseRole(client) {
   }
 }
 
-async function assertRegistryCoverage(client) {
+export async function assertRegistryCoverage(client) {
   const live = await client.query(
     `SELECT DISTINCT ON (column_name_group.table_name)
             column_name_group.table_name,
@@ -153,34 +155,11 @@ async function scalarCount(client, sql, params = []) {
   return Number(result.rows[0]?.count ?? 0);
 }
 
-async function assertApprovedNonBootstrapMembers(client) {
-  const result = await client.query(
-    `SELECT member.tenant_id,
-            member.id,
-            lower(member.email) AS email,
-            member.display_name,
-            member.role,
-            member.status,
-            member.active,
-            abs(extract(epoch FROM (member.created_at - tenant.created_at))) <= 5
-              AS created_within_five_seconds,
-            EXISTS (
-              SELECT 1
-                FROM users user_row
-               WHERE user_row.tenant_id = member.tenant_id
-                 AND user_row.id = member.id
-            ) AS has_matching_user
-       FROM members member
-       JOIN retirement_targets target ON target.tenant_id = member.tenant_id
-       JOIN tenants tenant ON tenant.id = member.tenant_id
-      WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
-      ORDER BY member.tenant_id, member.id`,
-  );
-
+function classifyApprovedNonBootstrapMembers(rows, requireFullCohort) {
   let demoSecondApprovers = 0;
   const approvedSeen = new Set();
   const unexpected = [];
-  for (const row of result.rows) {
+  for (const row of rows) {
     const isDemoSecondApprover =
       row.email === `approver2+${String(row.tenant_id).toLowerCase()}@brain.invalid` &&
       row.display_name === "Second Approver" &&
@@ -210,15 +189,15 @@ async function assertApprovedNonBootstrapMembers(client) {
     unexpected.push({ tenant_id: row.tenant_id, member_id: row.id });
   }
 
-  if (
-    result.rowCount !== EXPECTED_DEMO_SECOND_APPROVERS + APPROVED_NON_BOOTSTRAP_MEMBERS.size ||
-    demoSecondApprovers !== EXPECTED_DEMO_SECOND_APPROVERS ||
-    approvedSeen.size !== APPROVED_NON_BOOTSTRAP_MEMBERS.size ||
-    unexpected.length !== 0
-  ) {
+  const exactFullCohortMismatch =
+    requireFullCohort &&
+    (rows.length !== EXPECTED_DEMO_SECOND_APPROVERS + APPROVED_NON_BOOTSTRAP_MEMBERS.size ||
+      demoSecondApprovers !== EXPECTED_DEMO_SECOND_APPROVERS ||
+      approvedSeen.size !== APPROVED_NON_BOOTSTRAP_MEMBERS.size);
+  if (exactFullCohortMismatch || unexpected.length !== 0) {
     throw new Error(
       `approved non-bootstrap member preflight failed: ${JSON.stringify({
-        total: result.rowCount,
+        total: rows.length,
         demo_second_approvers: demoSecondApprovers,
         approved_individual_members: approvedSeen.size,
         unexpected,
@@ -227,25 +206,64 @@ async function assertApprovedNonBootstrapMembers(client) {
   }
 
   return {
-    total: result.rowCount,
+    total: rows.length,
     demo_second_approvers: demoSecondApprovers,
     approved_individual_members: approvedSeen.size,
   };
 }
 
-async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
+async function selectNonBootstrapMembers(client, predicate, values = []) {
+  return client.query(
+    `SELECT member.tenant_id,
+            member.id,
+            lower(member.email) AS email,
+            member.display_name,
+            member.role,
+            member.status,
+            member.active,
+            abs(extract(epoch FROM (member.created_at - tenant.created_at))) <= 5
+              AS created_within_five_seconds,
+            EXISTS (
+              SELECT 1
+                FROM users user_row
+               WHERE user_row.tenant_id = member.tenant_id
+                 AND user_row.id = member.id
+            ) AS has_matching_user
+       FROM members member
+       JOIN retirement_targets target ON target.tenant_id = member.tenant_id
+       JOIN tenants tenant ON tenant.id = member.tenant_id
+      WHERE lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+        AND ${predicate}
+      ORDER BY member.tenant_id, member.id`,
+    values,
+  );
+}
+
+async function assertApprovedNonBootstrapMembers(client, requireFullCohort) {
+  const result = await selectNonBootstrapMembers(client, "true");
+  return classifyApprovedNonBootstrapMembers(result.rows, requireFullCohort);
+}
+
+async function assertFinalPreflight(client, fenceStartedAt, liveTables, options = {}) {
+  const completedTenantIds = options.completedTenantIds ?? [];
+  const expectedPresent = options.expectedPresent ?? EXPECTED_TARGET_COUNT;
   const tenantSummary = await client.query(
     `SELECT COUNT(tenant.id)::int AS present,
             COUNT(*) FILTER (WHERE tenant.kind <> 'demo')::int AS non_demo,
-            COUNT(*) FILTER (WHERE tenant.created_at >= '2026-09-01T00:00:00Z')::int AS september_or_later
+            COUNT(*) FILTER (WHERE tenant.created_at >= '2026-09-01T00:00:00Z')::int AS september_or_later,
+            COUNT(*) FILTER (
+              WHERE tenant.id = ANY($1::text[])
+            )::int AS completed_still_present
        FROM retirement_targets target
        LEFT JOIN tenants tenant ON tenant.id = target.tenant_id`,
+    [completedTenantIds],
   );
   const summary = tenantSummary.rows[0];
   if (
-    summary?.present !== EXPECTED_TARGET_COUNT ||
+    summary?.present !== expectedPresent ||
     summary?.non_demo !== 0 ||
-    summary?.september_or_later !== 0
+    summary?.september_or_later !== 0 ||
+    summary?.completed_still_present !== 0
   ) {
     throw new Error(`tenant identity preflight failed: ${JSON.stringify(summary)}`);
   }
@@ -261,7 +279,10 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
     throw new Error(`protected tenant preflight failed: ${protectedCount}`);
   }
 
-  const approvedNonBootstrapMembers = await assertApprovedNonBootstrapMembers(client);
+  const approvedNonBootstrapMembers = await assertApprovedNonBootstrapMembers(
+    client,
+    options.requireFullMemberCohort ?? true,
+  );
 
   const checks = [
     [
@@ -364,8 +385,8 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables) {
   return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
 }
 
-async function captureCounts(client, liveTables) {
-  const perTenant = new Map();
+async function captureCounts(client, liveTables, ids) {
+  const perTenant = new Map(ids.map((tenantId) => [tenantId, { tenants: 1 }]));
   const totals = {};
   for (const entry of TENANT_SCOPED_TABLES) {
     if (!liveTables.has(entry.table)) continue;
@@ -388,10 +409,22 @@ async function captureCounts(client, liveTables) {
     totals[table] = total;
   }
   totals.tenants = EXPECTED_TARGET_COUNT;
-  for (const tenantId of perTenant.keys()) {
-    perTenant.get(tenantId).tenants = 1;
-  }
   return { perTenant, totals };
+}
+
+export async function captureTenantCounts(client, liveTables, tenantId) {
+  const counts = { tenants: 1 };
+  for (const entry of TENANT_SCOPED_TABLES) {
+    if (!liveTables.has(entry.table)) continue;
+    const table = assertIdentifier(entry.table);
+    const column = assertIdentifier(entry.column);
+    counts[table] = await scalarCount(
+      client,
+      `SELECT COUNT(*) FROM ${table} WHERE ${column} = $1`,
+      [tenantId],
+    );
+  }
+  return counts;
 }
 
 async function capturePreservedCounts(client) {
@@ -479,31 +512,37 @@ async function insertAuditOutbox(client, ids, countsByTenant, blobsByTenant, fen
   }
 }
 
-async function deleteRows(client, liveTables, expectedTotals) {
+async function deleteTenantRows(client, liveTables, tenantId, expectedRows) {
   const actual = {};
   for (const entry of TENANT_SCOPED_TABLES) {
     if (!liveTables.has(entry.table)) continue;
     const table = assertIdentifier(entry.table);
     const column = assertIdentifier(entry.column);
-    actual[table] = await deleteTableInBatches(client, {
-      table,
-      column,
-      expectedRows: expectedTotals[table],
-      batchSize: COMMERCIAL_DEMO_ROW_BATCH_SIZE,
-      onProgress: (progress) => console.log(JSON.stringify(progress)),
-    });
+    const result = await client.query(tenantDeleteStatement(table, column), [tenantId]);
+    actual[table] = result.rowCount ?? 0;
+    if (actual[table] !== (expectedRows[table] ?? 0)) {
+      throw new Error(
+        `delete count mismatch for ${tenantId} ${table}: expected ${expectedRows[table] ?? 0}, got ${actual[table]}`,
+      );
+    }
   }
-  actual.tenants = await deleteTableInBatches(client, {
-    table: "tenants",
-    column: "id",
-    expectedRows: EXPECTED_TARGET_COUNT,
-    batchSize: COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
-    onProgress: (progress) => console.log(JSON.stringify(progress)),
-  });
+  const tenantResult = await client.query(tenantDeleteStatement("tenants", "id"), [tenantId]);
+  actual.tenants = tenantResult.rowCount ?? 0;
+  if (actual.tenants !== 1) {
+    throw new Error(
+      `delete count mismatch for ${tenantId} tenants: expected 1, got ${actual.tenants}`,
+    );
+  }
   return actual;
 }
 
-async function assertPostDelete(client, liveTables, preservedBefore, blobsByTenant) {
+async function assertPostDelete(
+  client,
+  liveTables,
+  preservedBefore,
+  blobsByTenant,
+  expectedTargetCount = 1,
+) {
   const remainingTenants = await scalarCount(
     client,
     "SELECT COUNT(*) FROM tenants tenant JOIN retirement_targets target ON target.tenant_id = tenant.id",
@@ -527,7 +566,7 @@ async function assertPostDelete(client, liveTables, preservedBefore, blobsByTena
       table === "tenant_blob_purge_jobs"
         ? blobsByTenant.size
         : table === "tenant_blob_purge_audit_outbox"
-          ? EXPECTED_TARGET_COUNT + blobsByTenant.size
+          ? expectedTargetCount + blobsByTenant.size
           : 0;
     if (preservedAfter[table] !== before + expectedIncrease) {
       throw new Error(
@@ -538,33 +577,100 @@ async function assertPostDelete(client, liveTables, preservedBefore, blobsByTena
   return preservedAfter;
 }
 
-async function main() {
-  const fenceStartedAt = requiredEnv("FENCE_STARTED_AT");
-  const databaseUrl = requiredEnv("BRAIN_TENANT_DELETION_DB_URL");
-  const { digest, ids } = parseTargetCsv(await readFile(TARGET_PATH));
-  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+function assertCountSnapshot(tenantId, expected, actual) {
+  const tables = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  const mismatches = [...tables]
+    .sort()
+    .filter((table) => Number(expected[table] ?? 0) !== Number(actual[table] ?? 0))
+    .map((table) => ({
+      table,
+      expected: Number(expected[table] ?? 0),
+      actual: Number(actual[table] ?? 0),
+    }));
+  if (mismatches.length > 0) {
+    throw new Error(
+      `per-tenant count preflight failed for ${tenantId}: ${JSON.stringify(mismatches)}`,
+    );
+  }
+}
+
+function assertProgressMatches(progressRows, digest, ids) {
+  if (progressRows.length !== ids.length) {
+    throw new Error(`retirement progress count mismatch: ${progressRows.length}`);
+  }
+  for (let index = 0; index < ids.length; index += 1) {
+    const row = progressRows[index];
+    if (
+      row?.tenant_id !== ids[index] ||
+      row.ordinal !== index + 1 ||
+      row.candidate_list_sha256 !== digest
+    ) {
+      throw new Error(`retirement progress candidate mismatch at ordinal ${index + 1}`);
+    }
+  }
+}
+
+export async function executeOneTenant(client, tenantId, expectedRows, fenceStartedAt, liveTables) {
+  await insertTargets(client, [tenantId]);
+  await client.query("SELECT id FROM tenants WHERE id = $1 FOR UPDATE", [tenantId]);
+  await assertFinalPreflight(client, fenceStartedAt, liveTables, {
+    expectedPresent: 1,
+    requireFullMemberCohort: false,
+  });
+  const actualBefore = await captureTenantCounts(client, liveTables, tenantId);
+  assertCountSnapshot(tenantId, expectedRows, actualBefore);
+  const preservedBefore = await capturePreservedCounts(client);
+  const blobs = await client.query(
+    `SELECT blob_uri
+       FROM raw_artifacts
+      WHERE tenant_id = $1 AND blob_uri IS NOT NULL
+      ORDER BY blob_uri`,
+    [tenantId],
+  );
+  const blobUris = blobs.rows.map(({ blob_uri }) => blob_uri);
+  const blobsByTenant = new Map(blobUris.length > 0 ? [[tenantId, blobUris]] : []);
+  const existingPurgeJobs = await scalarCount(
+    client,
+    "SELECT COUNT(*) FROM tenant_blob_purge_jobs WHERE tenant_id = $1",
+    [tenantId],
+  );
+  const existingAuditOutboxRows = await scalarCount(
+    client,
+    "SELECT COUNT(*) FROM tenant_blob_purge_audit_outbox WHERE tenant_id = $1",
+    [tenantId],
+  );
+  if (existingPurgeJobs !== 0 || existingAuditOutboxRows !== 0) {
+    throw new Error(
+      `retirement evidence already exists for ${tenantId}: purge=${existingPurgeJobs}, outbox=${existingAuditOutboxRows}`,
+    );
+  }
+
+  await insertBlobJobs(client, blobsByTenant);
+  const deleted = await deleteTenantRows(client, liveTables, tenantId, expectedRows);
+  await insertAuditOutbox(
+    client,
+    [tenantId],
+    new Map([[tenantId, expectedRows]]),
+    blobsByTenant,
+    fenceStartedAt,
+  );
+  await assertPostDelete(client, liveTables, preservedBefore, blobsByTenant);
+  return {
+    deletedRows: deleted,
+    totalRowsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+    blobPurgeJobId:
+      blobUris.length > 0 ? fixedId("tbp", `commercial-demo-retirement:${tenantId}`) : null,
+    blobArtifactCount: blobUris.length,
+  };
+}
+
+async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
   const client = await pool.connect();
-  const transactionStartedAt = Date.now();
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-    await client.query("SET LOCAL statement_timeout = '3min'");
+    await client.query("SET LOCAL statement_timeout = '30s'");
     await client.query("SET LOCAL lock_timeout = '5s'");
-    await client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
-    const timeoutSettings = await client.query(
-      `SELECT current_setting('transaction_isolation') AS transaction_isolation,
-              current_setting('statement_timeout') AS statement_timeout,
-              current_setting('lock_timeout') AS lock_timeout,
-              current_setting('idle_in_transaction_session_timeout') AS idle_in_transaction_session_timeout`,
-    );
-    console.log(
-      JSON.stringify({
-        event: "commercial_demo_retirement_transaction_started",
-        ...timeoutSettings.rows[0],
-        row_batch_size: COMMERCIAL_DEMO_ROW_BATCH_SIZE,
-        tenant_batch_size: COMMERCIAL_DEMO_TENANT_BATCH_SIZE,
-        started_at: new Date(transactionStartedAt).toISOString(),
-      }),
-    );
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '45s'");
     await assertDatabaseRole(client);
     await insertTargets(client, ids);
     const liveTables = await assertRegistryCoverage(client);
@@ -572,93 +678,177 @@ async function main() {
       client,
       TENANT_SCOPED_TABLES.filter(({ table }) => liveTables.has(table)).map(({ table }) => table),
     );
+    let progressRows = await listRetirementProgress(client);
+    if (progressRows.length === 0) {
+      const preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
+      const { perTenant } = await captureCounts(client, liveTables, ids);
+      await initializeRetirementProgress(
+        client,
+        digest,
+        ids.map((tenantId, index) => ({
+          tenantId,
+          ordinal: index + 1,
+          expectedRows: perTenant.get(tenantId),
+        })),
+      );
+      progressRows = await listRetirementProgress(client);
+      console.log(
+        JSON.stringify({
+          event: "commercial_demo_retirement_progress_initialized",
+          operation_id: COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
+          target_count: progressRows.length,
+          preflight,
+        }),
+      );
+    } else {
+      assertProgressMatches(progressRows, digest, ids);
+      const completedTenantIds = progressRows
+        .filter(({ status }) => status === "completed")
+        .map(({ tenant_id }) => tenant_id);
+      await assertFinalPreflight(client, fenceStartedAt, liveTables, {
+        completedTenantIds,
+        expectedPresent: ids.length - completedTenantIds.length,
+        requireFullMemberCohort: false,
+      });
+      console.log(
+        JSON.stringify({
+          event: "commercial_demo_retirement_progress_resumed",
+          operation_id: COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
+          completed: completedTenantIds.length,
+          remaining: ids.length - completedTenantIds.length,
+        }),
+      );
+    }
+    assertProgressMatches(progressRows, digest, ids);
+    await client.query("COMMIT");
+    return { liveTables, privilegeReport, progressRows };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function completionReport(pool) {
+  const summary = await pool.query(
+    `SELECT status, COUNT(*)::int AS count
+       FROM commercial_demo_retirement_progress
+      WHERE operation_id = $1
+      GROUP BY status
+      ORDER BY status`,
+    [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+  );
+  const totals = await pool.query(
+    `SELECT COALESCE(SUM(total_rows_deleted), 0)::bigint AS total_rows_deleted,
+            COALESCE(SUM(blob_artifact_count), 0)::int AS blob_artifact_rows,
+            COUNT(*) FILTER (WHERE blob_purge_job_id IS NOT NULL)::int AS blob_purge_jobs_enqueued
+       FROM commercial_demo_retirement_progress
+      WHERE operation_id = $1 AND status = 'completed'`,
+    [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+  );
+  const perTable = await pool.query(
+    `SELECT entry.key AS table_name, SUM((entry.value)::bigint)::bigint AS rows_deleted
+       FROM commercial_demo_retirement_progress progress
+       CROSS JOIN LATERAL jsonb_each_text(progress.deleted_rows) entry
+      WHERE progress.operation_id = $1 AND progress.status = 'completed'
+      GROUP BY entry.key
+      ORDER BY entry.key`,
+    [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+  );
+  const failures = await pool.query(
+    `SELECT tenant_id, attempt_count, last_error
+       FROM commercial_demo_retirement_progress
+      WHERE operation_id = $1 AND status <> 'completed'
+      ORDER BY ordinal`,
+    [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+  );
+  return {
+    statuses: summary.rows,
+    totals: totals.rows[0],
+    per_table_deleted: Object.fromEntries(
+      perTable.rows.map(({ table_name, rows_deleted }) => [table_name, Number(rows_deleted)]),
+    ),
+    failures: failures.rows,
+  };
+}
+
+async function main() {
+  const startedAt = Date.now();
+  const fenceStartedAt = requiredEnv("FENCE_STARTED_AT");
+  const databaseUrl = requiredEnv("BRAIN_TENANT_DELETION_DB_URL");
+  const { digest, ids } = parseTargetCsv(await readFile(TARGET_PATH));
+  const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+  try {
+    const { liveTables, privilegeReport, progressRows } = await initializeOrValidateRun(
+      pool,
+      digest,
+      ids,
+      fenceStartedAt,
+    );
     console.log(
       JSON.stringify({
         event: "commercial_demo_retirement_privilege_preflight_passed",
         ...privilegeReport,
       }),
     );
-    await lockCandidateTenants(client, EXPECTED_TARGET_COUNT);
-    const preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
-    const preservedBefore = await capturePreservedCounts(client);
-    const { perTenant, totals } = await captureCounts(client, liveTables);
-    const blobs = await client.query(
-      `SELECT artifact.tenant_id, artifact.blob_uri
-         FROM raw_artifacts artifact
-         JOIN retirement_targets target ON target.tenant_id = artifact.tenant_id
-        WHERE artifact.blob_uri IS NOT NULL
-        ORDER BY artifact.tenant_id, artifact.blob_uri`,
-    );
-    const blobsByTenant = new Map();
-    for (const row of blobs.rows) {
-      const uris = blobsByTenant.get(row.tenant_id) ?? [];
-      uris.push(row.blob_uri);
-      blobsByTenant.set(row.tenant_id, uris);
-    }
-    const existingPurgeJobs = await scalarCount(
-      client,
-      `SELECT COUNT(*) FROM tenant_blob_purge_jobs job JOIN retirement_targets target ON target.tenant_id = job.tenant_id`,
-    );
-    if (existingPurgeJobs !== 0) {
-      throw new Error(`candidate tenants already have blob purge jobs: ${existingPurgeJobs}`);
-    }
-    const existingAuditOutboxRows = await scalarCount(
-      client,
-      `SELECT COUNT(*) FROM tenant_blob_purge_audit_outbox outbox JOIN retirement_targets target ON target.tenant_id = outbox.tenant_id`,
-    );
-    if (existingAuditOutboxRows !== 0) {
-      throw new Error(
-        `candidate tenants already have deletion audit outbox rows: ${existingAuditOutboxRows}`,
+
+    let processed = 0;
+    for (const progress of progressRows) {
+      const attempt = await runRetirementTenantAttempt(
+        pool,
+        progress.tenant_id,
+        (client, expectedRows) =>
+          executeOneTenant(client, progress.tenant_id, expectedRows, fenceStartedAt, liveTables),
+      );
+      processed += 1;
+      console.log(
+        JSON.stringify({
+          event: "commercial_demo_retirement_tenant_finished",
+          ordinal: progress.ordinal,
+          processed,
+          target_count: ids.length,
+          ...attempt,
+        }),
       );
     }
-    await insertBlobJobs(client, blobsByTenant);
-    const deleted = await deleteRows(client, liveTables, totals);
-    await insertAuditOutbox(client, ids, perTenant, blobsByTenant, fenceStartedAt);
-    const preservedAfter = await assertPostDelete(
-      client,
-      liveTables,
-      preservedBefore,
-      blobsByTenant,
-    );
-    await client.query("COMMIT");
 
+    const report = await completionReport(pool);
+    const complete = report.failures.length === 0;
     console.log(
       JSON.stringify({
-        event: "commercial_demo_retirement_committed",
+        event: complete
+          ? "commercial_demo_retirement_committed"
+          : "commercial_demo_retirement_completed_with_failures",
+        operation_id: COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
         candidate_list_sha256: digest,
         target_count: ids.length,
-        total_rows_deleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
-        per_table_deleted: deleted,
-        preserved_before: preservedBefore,
-        preserved_after_commit: preservedAfter,
-        blob_purge_jobs_enqueued: blobsByTenant.size,
-        blob_artifact_rows: blobs.rows.length,
-        preflight,
+        total_rows_deleted: Number(report.totals.total_rows_deleted),
+        per_table_deleted: report.per_table_deleted,
+        blob_purge_jobs_enqueued: report.totals.blob_purge_jobs_enqueued,
+        blob_artifact_rows: report.totals.blob_artifact_rows,
+        statuses: report.statuses,
+        failures: report.failures,
         fence_started_at: fenceStartedAt,
-        transaction_duration_ms: Date.now() - transactionStartedAt,
-        committed_at: new Date().toISOString(),
+        execution_duration_ms: Date.now() - startedAt,
+        completed_at: new Date().toISOString(),
       }),
     );
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      // The original failure is the primary evidence.
-    }
-    throw error;
+    if (!complete) process.exitCode = 1;
   } finally {
-    client.release();
     await pool.end();
   }
 }
 
-main().catch((error) => {
-  console.error(
-    JSON.stringify({
-      event: "commercial_demo_retirement_aborted",
-      error: error instanceof Error ? error.message : String(error),
-      at: new Date().toISOString(),
-    }),
-  );
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(
+      JSON.stringify({
+        event: "commercial_demo_retirement_aborted",
+        error: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      }),
+    );
+    process.exitCode = 1;
+  });
+}

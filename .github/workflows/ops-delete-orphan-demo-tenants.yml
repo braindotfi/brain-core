@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       sha:
-        description: "Exact promoted commit SHA containing the bounded retirement implementation."
+        description: "Exact promoted commit SHA containing the per-tenant retirement implementation."
         required: true
         type: string
 
