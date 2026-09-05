@@ -109,6 +109,161 @@ jobs:
           echo
           echo "::endgroup::"
 
+          echo "::group::commercial demo blob purge verification"
+          docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
+            -v ON_ERROR_STOP=1 > /tmp/commercial-demo-blob-purge.json <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '30s';
+          SET LOCAL lock_timeout = '1s';
+
+          WITH cohort_jobs AS MATERIALIZED (
+            SELECT DISTINCT job.*
+              FROM tenant_blob_purge_jobs job
+              JOIN tenant_blob_purge_audit_outbox requested
+                ON requested.job_id = job.id
+             WHERE requested.action = 'tenant_blob.purge_requested'
+               AND requested.actor = 'ops-commercial-demo-retirement'
+          ),
+          cohort_outbox AS MATERIALIZED (
+            SELECT outbox.*
+              FROM tenant_blob_purge_audit_outbox outbox
+             WHERE outbox.job_id IN (SELECT id FROM cohort_jobs)
+                OR (
+                  outbox.action = 'tenant.deleted'
+                  AND outbox.actor = 'ops-commercial-demo-retirement'
+                  AND outbox.tenant_id IN (SELECT tenant_id FROM cohort_jobs)
+                )
+          )
+          SELECT json_build_object(
+            'jobs', COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', job.id,
+                'tenant_id', job.tenant_id,
+                'status', job.status,
+                'attempts', job.attempts,
+                'next_attempt_at', job.next_attempt_at,
+                'blob_artifact_count', job.blob_artifact_count,
+                'deleted_count', job.deleted_count,
+                'last_error', job.last_error,
+                'requested_at', job.requested_at,
+                'completed_at', job.completed_at
+              ) ORDER BY job.tenant_id)
+                FROM cohort_jobs job
+            ), '[]'::json),
+            'outbox', COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', outbox.id,
+                'job_id', outbox.job_id,
+                'tenant_id', outbox.tenant_id,
+                'action', outbox.action,
+                'status', outbox.status,
+                'attempts', outbox.attempts,
+                'next_attempt_at', outbox.next_attempt_at,
+                'last_error', outbox.last_error,
+                'published_at', outbox.published_at
+              ) ORDER BY outbox.tenant_id, outbox.created_at, outbox.id)
+                FROM cohort_outbox outbox
+            ), '[]'::json),
+            'artifact_uris', COALESCE((
+              SELECT json_agg(uri ORDER BY deleted.tenant_id, uri)
+                FROM cohort_outbox deleted
+                CROSS JOIN LATERAL jsonb_array_elements_text(
+                  deleted.payload->'blob_uris_pending_purge'
+                ) uri
+               WHERE deleted.action = 'tenant.deleted'
+            ), '[]'::json)
+          )::text;
+
+          COMMIT;
+          SQL
+
+          cat > /tmp/verify-commercial-demo-minio.mjs <<'NODE'
+          import { ListObjectVersionsCommand, S3Client } from "@aws-sdk/client-s3";
+
+          let input = "";
+          for await (const chunk of process.stdin) input += chunk;
+          const lines = input.trim().split("\n").filter(Boolean);
+          const evidence = JSON.parse(lines.find((line) => line.startsWith("{")) ?? "{}");
+          const jobs = evidence.jobs ?? [];
+          const outbox = evidence.outbox ?? [];
+          const artifactUris = evidence.artifact_uris ?? [];
+
+          const client = new S3Client({
+            endpoint: process.env.S3_ENDPOINT,
+            region: process.env.S3_REGION,
+            forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+            credentials: {
+              accessKeyId: process.env.S3_ACCESS_KEY_ID,
+              secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+            },
+          });
+
+          async function remainingVersions(prefix) {
+            let keyMarker;
+            let versionIdMarker;
+            let count = 0;
+            do {
+              const page = await client.send(new ListObjectVersionsCommand({
+                Bucket: process.env.BLOB_CONTAINER,
+                Prefix: prefix,
+                ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
+                ...(versionIdMarker === undefined ? {} : { VersionIdMarker: versionIdMarker }),
+              }));
+              count += (page.Versions ?? []).length + (page.DeleteMarkers ?? []).length;
+              keyMarker = page.IsTruncated === true ? page.NextKeyMarker : undefined;
+              versionIdMarker = page.IsTruncated === true ? page.NextVersionIdMarker : undefined;
+            } while (keyMarker !== undefined || versionIdMarker !== undefined);
+            return count;
+          }
+
+          let remaining = 0;
+          for (const job of jobs) {
+            const remainingForTenant = await remainingVersions(`${job.tenant_id}/`);
+            remaining += remainingForTenant;
+            console.log(JSON.stringify({ event: "blob_purge_job", ...job, remaining_versions: remainingForTenant }));
+          }
+          for (const row of outbox) {
+            console.log(JSON.stringify({ event: "blob_purge_outbox", ...row }));
+          }
+
+          const pendingJobs = jobs.filter((job) => job.status !== "completed");
+          const pendingOutbox = outbox.filter((row) => row.status !== "published");
+          const artifactCount = jobs.reduce((sum, job) => sum + Number(job.blob_artifact_count ?? 0), 0);
+          const deletedCount = jobs.reduce((sum, job) => sum + Number(job.deleted_count ?? 0), 0);
+          const summary = {
+            event: "commercial_demo_blob_purge_summary",
+            jobs: jobs.length,
+            completed_jobs: jobs.length - pendingJobs.length,
+            pending_jobs: pendingJobs.length,
+            artifact_rows: artifactCount,
+            artifact_uris: artifactUris.length,
+            deleted_objects: deletedCount,
+            outbox_rows: outbox.length,
+            pending_outbox: pendingOutbox.length,
+            remaining_minio_versions: remaining,
+          };
+          console.log(JSON.stringify(summary));
+
+          if (
+            jobs.length !== 24 ||
+            artifactCount !== 68 ||
+            artifactUris.length !== 68 ||
+            pendingJobs.length !== 0 ||
+            pendingOutbox.length !== 0 ||
+            deletedCount !== 68 ||
+            remaining !== 0
+          ) process.exitCode = 1;
+          NODE
+
+          docker cp /tmp/verify-commercial-demo-minio.mjs \
+            brain-prod-api:/tmp/verify-commercial-demo-minio.mjs
+          docker exec -i brain-prod-api \
+            node /tmp/verify-commercial-demo-minio.mjs \
+            < /tmp/commercial-demo-blob-purge.json
+          docker exec brain-prod-api rm -f /tmp/verify-commercial-demo-minio.mjs
+          rm -f /tmp/verify-commercial-demo-minio.mjs /tmp/commercial-demo-blob-purge.json
+          echo "::endgroup::"
+
           echo "::group::api redacted logs"
           docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
             logs --tail=160 api 2>&1 \
