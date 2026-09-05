@@ -432,7 +432,7 @@ read -r expected_blob_jobs expected_blob_artifacts < <(
         (candidate) => candidate.event === "commercial_demo_retirement_committed",
       );
       if (value === undefined) process.exit(1);
-      process.stdout.write(`${value.blob_purge_jobs_enqueued} ${value.blob_artifact_rows}`);
+      console.log(`${value.blob_purge_jobs_enqueued} ${value.blob_artifact_rows}`);
     });
   ' < "$REPORT_DIR/database-execution.jsonl"
 )
