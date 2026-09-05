@@ -3,9 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Client, Pool, type PoolClient } from "pg";
 import { deleteTableInBatches, lockCandidateTenants } from "./batched-delete.js";
 import {
+  captureTenantReconciliationCounts,
   COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
   initializeRetirementProgress,
   runRetirementTenantAttempt,
+  tenantReconciliationCountStatement,
 } from "./per-tenant-retirement.js";
 
 const OWNER_DB_URL = process.env.DATABASE_URL;
@@ -42,6 +44,14 @@ suite("bounded tenant deletion transaction behavior", () => {
     await bootstrap.query(`CREATE TABLE ${schema}.tenants (
       id text PRIMARY KEY
     )`);
+    await bootstrap.query(`CREATE TABLE ${schema}.audit_events (
+      id bigserial PRIMARY KEY,
+      tenant_id text NOT NULL,
+      payload text NOT NULL
+    )`);
+    await bootstrap.query(
+      `CREATE INDEX audit_events_tenant_id_idx ON ${schema}.audit_events (tenant_id)`,
+    );
     await bootstrap.query(`CREATE TABLE ${schema}.commercial_demo_retirement_progress (
       operation_id text NOT NULL,
       tenant_id text NOT NULL,
@@ -71,6 +81,7 @@ suite("bounded tenant deletion transaction behavior", () => {
     await bootstrap.query(
       `GRANT SELECT, UPDATE, DELETE ON ${schema}.tenants TO brain_tenant_deletion`,
     );
+    await bootstrap.query(`GRANT SELECT ON ${schema}.audit_events TO brain_tenant_deletion`);
     await bootstrap.query(
       `GRANT SELECT, INSERT, UPDATE ON ${schema}.commercial_demo_retirement_progress
        TO brain_tenant_deletion`,
@@ -96,7 +107,7 @@ suite("bounded tenant deletion transaction behavior", () => {
   beforeEach(async () => {
     await ownerPool.query(
       `TRUNCATE retirement_test_rows, retirement_targets, tenants,
-         commercial_demo_retirement_progress RESTART IDENTITY`,
+         audit_events, commercial_demo_retirement_progress RESTART IDENTITY`,
     );
     await ownerPool.query("GRANT UPDATE ON tenants TO brain_tenant_deletion");
     await ownerPool.query("INSERT INTO retirement_targets (tenant_id) VALUES ('target')");
@@ -138,6 +149,68 @@ suite("bounded tenant deletion transaction behavior", () => {
       superuser: false,
       table_owner: "brain",
     });
+  });
+
+  it("uses the audit-events tenant index for per-tenant reconciliation", async () => {
+    await ownerPool.query(
+      `INSERT INTO audit_events (tenant_id, payload)
+       SELECT CASE WHEN value <= 10 THEN 'target' ELSE 'bystander' END,
+              repeat('x', 64)
+         FROM generate_series(1, 100000) value`,
+    );
+    await ownerPool.query("VACUUM ANALYZE audit_events");
+
+    const deleter = await deletionPool.connect();
+    try {
+      await deleter.query("BEGIN TRANSACTION READ ONLY");
+      const identity = await deleter.query<{ role: string; superuser: boolean }>(
+        `SELECT current_user AS role, role.rolsuper AS superuser
+           FROM pg_roles role
+          WHERE role.rolname = current_user`,
+      );
+      expect(identity.rows[0]).toEqual({ role: "brain_tenant_deletion", superuser: false });
+      await expect(
+        captureTenantReconciliationCounts(
+          deleter,
+          [{ table: "audit_events", column: "tenant_id" }],
+          "target",
+        ),
+      ).resolves.toEqual({ audit_events: 10 });
+
+      const explained = await deleter.query<{ "QUERY PLAN": Array<Record<string, unknown>> }>(
+        `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+         ${tenantReconciliationCountStatement("audit_events", "tenant_id")}`,
+        ["target"],
+      );
+      const root = explained.rows[0]?.["QUERY PLAN"]?.[0]?.Plan as
+        | Record<string, unknown>
+        | undefined;
+      expect(root).toBeDefined();
+      const nodes: Array<Record<string, unknown>> = [];
+      const visit = (node: Record<string, unknown>): void => {
+        nodes.push(node);
+        for (const child of (node.Plans as Array<Record<string, unknown>> | undefined) ?? []) {
+          visit(child);
+        }
+      };
+      visit(root as Record<string, unknown>);
+      expect(
+        nodes.some(
+          (node) =>
+            node["Relation Name"] === "audit_events" &&
+            typeof node["Node Type"] === "string" &&
+            node["Node Type"].includes("Index"),
+        ),
+      ).toBe(true);
+      expect(
+        nodes.some(
+          (node) => node["Relation Name"] === "audit_events" && node["Node Type"] === "Seq Scan",
+        ),
+      ).toBe(false);
+      await deleter.query("ROLLBACK");
+    } finally {
+      await rollback(deleter);
+    }
   });
 
   it("deletes more than one batch and commits only the target rows", async () => {

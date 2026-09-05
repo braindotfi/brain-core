@@ -10,6 +10,11 @@ export interface PerTenantRetirementClient {
   ) => Promise<Pick<QueryResult<Row>, "rows" | "rowCount">>;
 }
 
+export interface TenantReconciliationTable {
+  table: string;
+  column: "id" | "owner_id" | "tenant_id" | "brain_tenant_id";
+}
+
 export interface RetirementProgressSeed {
   tenantId: string;
   ordinal: number;
@@ -47,6 +52,51 @@ function normalizedRowCounts(counts: Record<string, number>): string {
   return JSON.stringify(
     Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+function assertIdentifier(value: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(value)) {
+    throw new Error(`invalid tenant reconciliation identifier: ${value}`);
+  }
+  return value;
+}
+
+export function tenantReconciliationCountStatement(
+  tableName: string,
+  columnName: TenantReconciliationTable["column"],
+): string {
+  const table = assertIdentifier(tableName);
+  const column = assertIdentifier(columnName);
+  return `SELECT COUNT(*)::bigint AS count FROM ${table} WHERE ${column} = $1`;
+}
+
+export async function captureTenantReconciliationCounts(
+  client: PerTenantRetirementClient,
+  tables: readonly TenantReconciliationTable[],
+  tenantId: string,
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const { table, column } of tables) {
+    const result = await client.query<{ count: string }>(
+      tenantReconciliationCountStatement(table, column),
+      [tenantId],
+    );
+    counts[table] = Number(result.rows[0]?.count ?? 0);
+  }
+  return counts;
+}
+
+export async function assertTenantReconciliationEmpty(
+  client: PerTenantRetirementClient,
+  tables: readonly TenantReconciliationTable[],
+  tenantId: string,
+): Promise<Record<string, number>> {
+  const counts = await captureTenantReconciliationCounts(client, tables, tenantId);
+  const remaining = Object.entries(counts).filter(([, count]) => count !== 0);
+  if (remaining.length > 0) {
+    throw new Error(`tenant rows remain after delete: ${JSON.stringify(remaining)}`);
+  }
+  return counts;
 }
 
 export async function initializeRetirementProgress(

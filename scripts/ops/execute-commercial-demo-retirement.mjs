@@ -12,6 +12,8 @@ import {
 import { assertNoProtectedTenantIds } from "../../services/api/dist/tenant-deletion/batched-delete.js";
 import { assertTenantDeletionPrivilegeContract } from "../../services/api/dist/tenant-deletion/privilege-contract.js";
 import {
+  assertTenantReconciliationEmpty,
+  captureTenantReconciliationCounts,
   COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
   initializeRetirementProgress,
   listRetirementProgress,
@@ -101,6 +103,7 @@ async function insertTargets(client, ids) {
   );
   const placeholders = ids.map((_, index) => `($${index + 1})`).join(",");
   await client.query(`INSERT INTO retirement_targets (tenant_id) VALUES ${placeholders}`, ids);
+  await client.query("ANALYZE retirement_targets");
 }
 
 export async function assertDatabaseRole(client) {
@@ -244,6 +247,33 @@ async function assertApprovedNonBootstrapMembers(client, requireFullCohort) {
   return classifyApprovedNonBootstrapMembers(result.rows, requireFullCohort);
 }
 
+async function assertTenantApprovedNonBootstrapMembers(client, tenantId) {
+  const result = await client.query(
+    `SELECT member.tenant_id,
+            member.id,
+            lower(member.email) AS email,
+            member.display_name,
+            member.role,
+            member.status,
+            member.active,
+            abs(extract(epoch FROM (member.created_at - tenant.created_at))) <= 5
+              AS created_within_five_seconds,
+            EXISTS (
+              SELECT 1
+                FROM users user_row
+               WHERE user_row.tenant_id = member.tenant_id
+                 AND user_row.id = member.id
+            ) AS has_matching_user
+       FROM members member
+       JOIN tenants tenant ON tenant.id = member.tenant_id
+      WHERE member.tenant_id = $1
+        AND lower(member.email) NOT LIKE 'bootstrap+%@brain.invalid'
+      ORDER BY member.id`,
+    [tenantId],
+  );
+  return classifyApprovedNonBootstrapMembers(result.rows, false);
+}
+
 async function assertFinalPreflight(client, fenceStartedAt, liveTables, options = {}) {
   const completedTenantIds = options.completedTenantIds ?? [];
   const expectedPresent = options.expectedPresent ?? EXPECTED_TARGET_COUNT;
@@ -385,9 +415,211 @@ async function assertFinalPreflight(client, fenceStartedAt, liveTables, options 
   return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
 }
 
+async function assertTenantFinalPreflight(client, tenantId, fenceStartedAt, liveTables) {
+  if (PROTECTED_TENANT_IDS.has(tenantId)) {
+    throw new Error(`protected tenant preflight failed: ${tenantId}`);
+  }
+  const tenantSummary = await client.query(
+    `SELECT COUNT(*)::int AS present,
+            COUNT(*) FILTER (WHERE tenant.kind <> 'demo')::int AS non_demo,
+            COUNT(*) FILTER (WHERE tenant.created_at >= '2026-09-01T00:00:00Z')::int
+              AS september_or_later
+       FROM tenants tenant
+      WHERE tenant.id = $1`,
+    [tenantId],
+  );
+  const summary = tenantSummary.rows[0];
+  if (summary?.present !== 1 || summary?.non_demo !== 0 || summary?.september_or_later !== 0) {
+    throw new Error(`tenant identity preflight failed: ${JSON.stringify(summary)}`);
+  }
+
+  const approvedNonBootstrapMembers = await assertTenantApprovedNonBootstrapMembers(
+    client,
+    tenantId,
+  );
+  const checks = [
+    [
+      "active_session_refresh_tokens",
+      "session_refresh_tokens",
+      `SELECT COUNT(*) FROM session_refresh_tokens token
+        WHERE token.tenant_id = $1
+          AND token.revoked_at IS NULL
+          AND token.expires_at > now()`,
+      [tenantId],
+    ],
+    [
+      "active_api_keys",
+      "api_keys",
+      `SELECT COUNT(*) FROM api_keys key
+        WHERE key.tenant_id = $1
+          AND key.revoked_at IS NULL
+          AND (key.expires_at IS NULL OR key.expires_at > now())`,
+      [tenantId],
+    ],
+    [
+      "active_production_agent_tokens",
+      "production_agent_tokens",
+      `SELECT COUNT(*) FROM production_agent_tokens token
+        WHERE token.tenant_id = $1
+          AND token.revoked_at IS NULL
+          AND token.expires_at > now()`,
+      [tenantId],
+    ],
+    [
+      "active_oauth_authorization_codes",
+      "oauth_authorization_codes",
+      `SELECT COUNT(*) FROM oauth_authorization_codes code
+        WHERE code.tenant_id = $1
+          AND code.consumed_at IS NULL
+          AND code.expires_at > now()`,
+      [tenantId],
+    ],
+    [
+      "active_oauth_consent_grants",
+      "oauth_consent_grants",
+      `SELECT COUNT(*) FROM oauth_consent_grants grant_row
+        WHERE grant_row.tenant_id = $1
+          AND grant_row.revoked_at IS NULL`,
+      [tenantId],
+    ],
+    [
+      "active_oauth_refresh_tokens",
+      "oauth_refresh_tokens",
+      `SELECT COUNT(*) FROM oauth_refresh_tokens token
+        WHERE token.tenant_id = $1
+          AND token.revoked_at IS NULL
+          AND token.rotated_at IS NULL
+          AND token.expires_at > now()`,
+      [tenantId],
+    ],
+    [
+      "member_identity_links",
+      "member_identity_links",
+      "SELECT COUNT(*) FROM member_identity_links WHERE tenant_id = $1",
+      [tenantId],
+    ],
+    [
+      "wallet_identities",
+      "wallet_identities",
+      "SELECT COUNT(*) FROM wallet_identities WHERE tenant_id = $1",
+      [tenantId],
+    ],
+    [
+      "usable_users",
+      "users",
+      `SELECT COUNT(*) FROM users user_row
+        WHERE user_row.tenant_id = $1
+          AND (
+            user_row.password_hash IS NOT NULL
+            OR user_row.email_verified_at IS NOT NULL
+            OR lower(user_row.email) NOT LIKE 'bootstrap+%@brain.invalid'
+          )`,
+      [tenantId],
+    ],
+    [
+      "api_request_meter_events",
+      "api_request_meter_events",
+      "SELECT COUNT(*) FROM api_request_meter_events WHERE tenant_id = $1",
+      [tenantId],
+    ],
+    [
+      "live_external_source_credentials",
+      "raw_sources",
+      `SELECT COUNT(*) FROM raw_sources source
+        WHERE source.tenant_id = $1
+          AND source.encrypted_credentials IS NOT NULL
+          AND source.status <> 'disconnected'`,
+      [tenantId],
+    ],
+    [
+      "new_raw_artifacts_since_approved_dry_run",
+      "raw_artifacts",
+      `SELECT COUNT(*) FROM raw_artifacts artifact
+        WHERE artifact.tenant_id = $1
+          AND artifact.ingested_at >= '2026-09-03T17:55:01Z'`,
+      [tenantId],
+    ],
+    [
+      "new_raw_sources_since_approved_dry_run",
+      "raw_sources",
+      `SELECT COUNT(*) FROM raw_sources source
+        WHERE source.tenant_id = $1
+          AND source.created_at >= '2026-09-03T17:55:01Z'`,
+      [tenantId],
+    ],
+    [
+      "in_flight_execution_outbox",
+      "execution_outbox",
+      `SELECT COUNT(*) FROM execution_outbox outbox
+        WHERE outbox.tenant_id = $1
+          AND outbox.status IN ('dispatching', 'reconciling')`,
+      [tenantId],
+    ],
+    [
+      "audit_activity_after_fence",
+      "audit_events",
+      `SELECT COUNT(*) FROM audit_events event
+        WHERE event.tenant_id = $1
+          AND event.created_at >= $2::timestamptz`,
+      [tenantId, fenceStartedAt],
+    ],
+    [
+      "agent_runs_after_fence",
+      "agent_runs",
+      `SELECT COUNT(*) FROM agent_runs run
+        WHERE run.tenant_id = $1
+          AND run.created_at >= $2::timestamptz`,
+      [tenantId, fenceStartedAt],
+    ],
+    [
+      "proposals_after_fence",
+      "proposals",
+      `SELECT COUNT(*) FROM proposals proposal
+        WHERE proposal.tenant_id = $1
+          AND proposal.created_at >= $2::timestamptz`,
+      [tenantId, fenceStartedAt],
+    ],
+  ];
+
+  const results = {};
+  for (const [name, table, sql, params] of checks) {
+    if (!liveTables.has(table)) {
+      throw new Error(`preflight table is absent for check: ${name}`);
+    }
+    results[name] = await scalarCount(client, sql, params);
+  }
+  const failures = Object.entries(results).filter(([, count]) => count !== 0);
+  if (failures.length > 0) {
+    throw new Error(
+      `credential, session, or activity preflight failed: ${JSON.stringify(results)}`,
+    );
+  }
+
+  const agentFence = await client.query(
+    `SELECT COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE state = 'quarantined')::int AS quarantined
+       FROM agents
+      WHERE tenant_id = $1`,
+    [tenantId],
+  );
+  const agentFenceRow = agentFence.rows[0];
+  if (agentFenceRow?.total !== agentFenceRow?.quarantined) {
+    throw new Error(`agent quarantine preflight failed: ${JSON.stringify(agentFenceRow)}`);
+  }
+  return { ...results, approvedNonBootstrapMembers, agentFence: agentFenceRow };
+}
+
 async function captureCounts(client, liveTables, ids) {
-  const perTenant = new Map(ids.map((tenantId) => [tenantId, { tenants: 1 }]));
-  const totals = {};
+  const perTenant = new Map(ids.map((tenantId) => [tenantId, { tenants: 0 }]));
+  const tenantRows = await client.query(
+    `SELECT tenant.id AS tenant_id
+       FROM tenants tenant
+       JOIN retirement_targets target ON target.tenant_id = tenant.id`,
+  );
+  for (const { tenant_id: tenantId } of tenantRows.rows) {
+    perTenant.get(tenantId).tenants = 1;
+  }
+  const totals = { tenants: tenantRows.rowCount ?? 0 };
   for (const entry of TENANT_SCOPED_TABLES) {
     if (!liveTables.has(entry.table)) continue;
     const table = assertIdentifier(entry.table);
@@ -408,26 +640,21 @@ async function captureCounts(client, liveTables, ids) {
     }
     totals[table] = total;
   }
-  totals.tenants = EXPECTED_TARGET_COUNT;
   return { perTenant, totals };
 }
 
 export async function captureTenantCounts(client, liveTables, tenantId) {
-  const counts = { tenants: 1 };
-  for (const entry of TENANT_SCOPED_TABLES) {
-    if (!liveTables.has(entry.table)) continue;
-    const table = assertIdentifier(entry.table);
-    const column = assertIdentifier(entry.column);
-    counts[table] = await scalarCount(
-      client,
-      `SELECT COUNT(*) FROM ${table} WHERE ${column} = $1`,
-      [tenantId],
-    );
-  }
-  return counts;
+  return captureTenantReconciliationCounts(
+    client,
+    [
+      ...TENANT_SCOPED_TABLES.filter(({ table }) => liveTables.has(table)),
+      { table: "tenants", column: "id" },
+    ],
+    tenantId,
+  );
 }
 
-async function capturePreservedCounts(client) {
+async function captureCohortPreservedCounts(client) {
   const counts = {};
   for (const tableName of PRESERVED_TABLES) {
     const table = assertIdentifier(tableName);
@@ -437,6 +664,14 @@ async function capturePreservedCounts(client) {
     );
   }
   return counts;
+}
+
+async function captureTenantPreservedCounts(client, tenantId) {
+  return captureTenantReconciliationCounts(
+    client,
+    [...PRESERVED_TABLES].map((table) => ({ table, column: "tenant_id" })),
+    tenantId,
+  );
 }
 
 async function insertBlobJobs(client, blobsByTenant) {
@@ -538,29 +773,22 @@ async function deleteTenantRows(client, liveTables, tenantId, expectedRows) {
 
 async function assertPostDelete(
   client,
+  tenantId,
   liveTables,
   preservedBefore,
   blobsByTenant,
   expectedTargetCount = 1,
 ) {
-  const remainingTenants = await scalarCount(
+  await assertTenantReconciliationEmpty(
     client,
-    "SELECT COUNT(*) FROM tenants tenant JOIN retirement_targets target ON target.tenant_id = tenant.id",
+    [
+      ...TENANT_SCOPED_TABLES.filter(({ table }) => liveTables.has(table)),
+      { table: "tenants", column: "id" },
+    ],
+    tenantId,
   );
-  if (remainingTenants !== 0) throw new Error(`tenants remain after delete: ${remainingTenants}`);
 
-  for (const entry of TENANT_SCOPED_TABLES) {
-    if (!liveTables.has(entry.table)) continue;
-    const table = assertIdentifier(entry.table);
-    const column = assertIdentifier(entry.column);
-    const remaining = await scalarCount(
-      client,
-      `SELECT COUNT(*) FROM ${table} row JOIN retirement_targets target ON target.tenant_id = row.${column}`,
-    );
-    if (remaining !== 0) throw new Error(`${table} rows remain after delete: ${remaining}`);
-  }
-
-  const preservedAfter = await capturePreservedCounts(client);
+  const preservedAfter = await captureTenantPreservedCounts(client, tenantId);
   for (const [table, before] of Object.entries(preservedBefore)) {
     const expectedIncrease =
       table === "tenant_blob_purge_jobs"
@@ -611,15 +839,11 @@ function assertProgressMatches(progressRows, digest, ids) {
 }
 
 export async function executeOneTenant(client, tenantId, expectedRows, fenceStartedAt, liveTables) {
-  await insertTargets(client, [tenantId]);
   await client.query("SELECT id FROM tenants WHERE id = $1 FOR UPDATE", [tenantId]);
-  await assertFinalPreflight(client, fenceStartedAt, liveTables, {
-    expectedPresent: 1,
-    requireFullMemberCohort: false,
-  });
+  await assertTenantFinalPreflight(client, tenantId, fenceStartedAt, liveTables);
   const actualBefore = await captureTenantCounts(client, liveTables, tenantId);
   assertCountSnapshot(tenantId, expectedRows, actualBefore);
-  const preservedBefore = await capturePreservedCounts(client);
+  const preservedBefore = await captureTenantPreservedCounts(client, tenantId);
   const blobs = await client.query(
     `SELECT blob_uri
        FROM raw_artifacts
@@ -654,7 +878,7 @@ export async function executeOneTenant(client, tenantId, expectedRows, fenceStar
     blobsByTenant,
     fenceStartedAt,
   );
-  await assertPostDelete(client, liveTables, preservedBefore, blobsByTenant);
+  await assertPostDelete(client, tenantId, liveTables, preservedBefore, blobsByTenant);
   return {
     deletedRows: deleted,
     totalRowsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
@@ -668,9 +892,9 @@ async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-    await client.query("SET LOCAL statement_timeout = '30s'");
+    await client.query("SET LOCAL statement_timeout = '3min'");
     await client.query("SET LOCAL lock_timeout = '5s'");
-    await client.query("SET LOCAL idle_in_transaction_session_timeout = '45s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
     await assertDatabaseRole(client);
     await insertTargets(client, ids);
     const liveTables = await assertRegistryCoverage(client);
@@ -679,16 +903,30 @@ async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
       TENANT_SCOPED_TABLES.filter(({ table }) => liveTables.has(table)).map(({ table }) => table),
     );
     let progressRows = await listRetirementProgress(client);
+    let preflight;
     if (progressRows.length === 0) {
-      const preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
-      const { perTenant } = await captureCounts(client, liveTables, ids);
+      preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables);
+    } else {
+      assertProgressMatches(progressRows, digest, ids);
+      const completedTenantIds = progressRows
+        .filter(({ status }) => status === "completed")
+        .map(({ tenant_id }) => tenant_id);
+      preflight = await assertFinalPreflight(client, fenceStartedAt, liveTables, {
+        completedTenantIds,
+        expectedPresent: ids.length - completedTenantIds.length,
+        requireFullMemberCohort: false,
+      });
+    }
+
+    const cohortCounts = await captureCounts(client, liveTables, ids);
+    if (progressRows.length === 0) {
       await initializeRetirementProgress(
         client,
         digest,
         ids.map((tenantId, index) => ({
           tenantId,
           ordinal: index + 1,
-          expectedRows: perTenant.get(tenantId),
+          expectedRows: cohortCounts.perTenant.get(tenantId),
         })),
       );
       progressRows = await listRetirementProgress(client);
@@ -701,15 +939,9 @@ async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
         }),
       );
     } else {
-      assertProgressMatches(progressRows, digest, ids);
       const completedTenantIds = progressRows
         .filter(({ status }) => status === "completed")
         .map(({ tenant_id }) => tenant_id);
-      await assertFinalPreflight(client, fenceStartedAt, liveTables, {
-        completedTenantIds,
-        expectedPresent: ids.length - completedTenantIds.length,
-        requireFullMemberCohort: false,
-      });
       console.log(
         JSON.stringify({
           event: "commercial_demo_retirement_progress_resumed",
@@ -720,8 +952,95 @@ async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
       );
     }
     assertProgressMatches(progressRows, digest, ids);
+    assertCohortCounts(expectedRemainingCounts(progressRows), cohortCounts.totals);
+    const cohortPreserved = await captureCohortPreservedCounts(client);
+    console.log(
+      JSON.stringify({
+        event: "commercial_demo_retirement_cohort_reconciliation_started",
+        deletable_rows: cohortCounts.totals,
+        preserved_rows: cohortPreserved,
+        retirement_targets_analyzed: true,
+      }),
+    );
     await client.query("COMMIT");
-    return { liveTables, privilegeReport, progressRows };
+    return {
+      liveTables,
+      privilegeReport,
+      progressRows,
+      cohortBefore: {
+        deletable: cohortCounts.totals,
+        preserved: cohortPreserved,
+      },
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function expectedRemainingCounts(progressRows) {
+  const totals = {};
+  for (const progress of progressRows) {
+    if (progress.status === "completed") continue;
+    for (const [table, count] of Object.entries(progress.expected_rows)) {
+      totals[table] = (totals[table] ?? 0) + Number(count);
+    }
+  }
+  return totals;
+}
+
+function assertCohortCounts(expected, actual) {
+  const tables = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  const mismatches = [...tables]
+    .sort()
+    .filter((table) => Number(expected[table] ?? 0) !== Number(actual[table] ?? 0))
+    .map((table) => ({
+      table,
+      expected: Number(expected[table] ?? 0),
+      actual: Number(actual[table] ?? 0),
+    }));
+  if (mismatches.length > 0) {
+    throw new Error(`final cohort count reconciliation failed: ${JSON.stringify(mismatches)}`);
+  }
+}
+
+async function reconcileCompletedCohort(pool, ids, liveTables, cohortBefore) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await client.query("SET LOCAL statement_timeout = '3min'");
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
+    await assertDatabaseRole(client);
+    await insertTargets(client, ids);
+    const progressRows = await listRetirementProgress(client);
+    const cohortAfter = await captureCounts(client, liveTables, ids);
+    const expectedRemaining = expectedRemainingCounts(progressRows);
+    assertCohortCounts(expectedRemaining, cohortAfter.totals);
+
+    const preservedAfter = await captureCohortPreservedCounts(client);
+    const stablePreservedTables = ["audit_anchors", "audit_events", "audit_integrity_findings"];
+    for (const table of stablePreservedTables) {
+      if (preservedAfter[table] !== cohortBefore.preserved[table]) {
+        throw new Error(
+          `preserved cohort count mismatch for ${table}: before ${cohortBefore.preserved[table]}, after ${preservedAfter[table]}`,
+        );
+      }
+    }
+    console.log(
+      JSON.stringify({
+        event: "commercial_demo_retirement_cohort_reconciliation_passed",
+        expected_remaining_rows: expectedRemaining,
+        actual_remaining_rows: cohortAfter.totals,
+        preserved_rows_before: cohortBefore.preserved,
+        preserved_rows_after: preservedAfter,
+        stable_preserved_tables: stablePreservedTables,
+        retirement_targets_analyzed: true,
+      }),
+    );
+    await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -780,12 +1099,8 @@ async function main() {
   const { digest, ids } = parseTargetCsv(await readFile(TARGET_PATH));
   const pool = new Pool({ connectionString: databaseUrl, max: 2 });
   try {
-    const { liveTables, privilegeReport, progressRows } = await initializeOrValidateRun(
-      pool,
-      digest,
-      ids,
-      fenceStartedAt,
-    );
+    const { liveTables, privilegeReport, progressRows, cohortBefore } =
+      await initializeOrValidateRun(pool, digest, ids, fenceStartedAt);
     console.log(
       JSON.stringify({
         event: "commercial_demo_retirement_privilege_preflight_passed",
@@ -813,6 +1128,7 @@ async function main() {
       );
     }
 
+    await reconcileCompletedCohort(pool, ids, liveTables, cohortBefore);
     const report = await completionReport(pool);
     const complete = report.failures.length === 0;
     console.log(
