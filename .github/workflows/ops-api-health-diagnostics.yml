@@ -256,11 +256,11 @@ jobs:
           NODE
 
           docker cp /tmp/verify-commercial-demo-minio.mjs \
-            brain-prod-api:/tmp/verify-commercial-demo-minio.mjs
+            brain-prod-api:/app/verify-commercial-demo-minio.mjs
           docker exec -i brain-prod-api \
-            node /tmp/verify-commercial-demo-minio.mjs \
+            node /app/verify-commercial-demo-minio.mjs \
             < /tmp/commercial-demo-blob-purge.json
-          docker exec brain-prod-api rm -f /tmp/verify-commercial-demo-minio.mjs
+          docker exec brain-prod-api rm -f /app/verify-commercial-demo-minio.mjs
           rm -f /tmp/verify-commercial-demo-minio.mjs /tmp/commercial-demo-blob-purge.json
           echo "::endgroup::"
 
