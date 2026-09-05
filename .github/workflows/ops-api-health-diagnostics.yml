@@ -26,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'production-tenant-deletion' || 'staging-api-health-diagnostics' }}
+      cancel-in-progress: false
     env:
       TARGET: ${{ inputs.target }}
       EXPECTED_SHA: ${{ inputs.expected_sha }}
@@ -295,7 +298,7 @@ jobs:
           SQL
           REMOTE
 
-      - name: Diagnose commercial demo retirement batch performance
+      - name: Diagnose one-tenant retirement performance
         if: inputs.target == 'production' && inputs.expected_sha != ''
         shell: bash
         env:
@@ -303,7 +306,7 @@ jobs:
         run: |
           set -euo pipefail
           candidate_dir="$(mktemp -d)"
-          gh run download 33914841453 \
+          gh run download 33964061539 \
             --repo "${GITHUB_REPOSITORY}" \
             --name commercial-demo-retirement-phase-a \
             --dir "$candidate_dir"
@@ -313,16 +316,159 @@ jobs:
             | sha256sum --check --status
           scp -i ~/.ssh/id_deploy \
             scripts/ops/diagnose-commercial-demo-retirement-performance.mjs \
+            scripts/ops/execute-commercial-demo-retirement.mjs \
             "$candidate_dir/commercial-demo-retirement-targets.csv" \
             "azureuser@$VM_HOST:/tmp/"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
+
+          readonly QUIET_WINDOW_SECONDS=120
+          readonly QUIET_POLL_SECONDS=15
+          readonly QUIET_TIMEOUT_SECONDS=900
+
+          container_is_running() {
+            [[ "$(docker inspect --format='{{.State.Running}}' "$1" 2>/dev/null || true)" == "true" ]]
+          }
+
+          container_is_healthy() {
+            [[ "$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || true)" == "healthy" ]]
+          }
+
+          wait_for_healthy() {
+            local container="$1"
+            local attempts=0
+            until container_is_healthy "$container"; do
+              attempts=$((attempts + 1))
+              if (( attempts >= 36 )); then
+                echo "$container did not become healthy"
+                return 1
+              fi
+              sleep 5
+            done
+          }
+
+          restore_fenced_containers() {
+            local status=0
+            if ! container_is_running brain-prod-worker; then
+              docker start brain-prod-worker >/dev/null || status=1
+            fi
+            if ! container_is_running brain-prod-agents; then
+              docker start brain-prod-agents >/dev/null || status=1
+            fi
+            wait_for_healthy brain-prod-worker || status=1
+            wait_for_healthy brain-prod-agents || status=1
+            return "$status"
+          }
+
+          on_exit() {
+            local exit_code=$?
+            restore_fenced_containers || exit_code=1
+            for container in brain-prod-worker brain-prod-agents; do
+              printf 'restored_container=%s state=%s health=%s restart_count=%s\n' \
+                "$container" \
+                "$(docker inspect --format='{{.State.Status}}' "$container")" \
+                "$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")" \
+                "$(docker inspect --format='{{.RestartCount}}' "$container")"
+            done
+            exit "$exit_code"
+          }
+          trap on_exit EXIT
+
+          candidate_activity_count_since() {
+            local activity_since="$1"
+            docker exec -i \
+              -e PGOPTIONS='-c statement_timeout=30000 -c lock_timeout=1000' \
+              brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 \
+              -v activity_since="$activity_since" <<'SQL' | tail -n 1
+          CREATE TEMP TABLE activity_targets (tenant_id TEXT PRIMARY KEY);
+          \copy activity_targets FROM '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
+          SELECT (
+            (SELECT COUNT(*) FROM audit_events event JOIN activity_targets target ON target.tenant_id = event.tenant_id WHERE event.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM agent_runs run JOIN activity_targets target ON target.tenant_id = run.tenant_id WHERE run.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM proposals proposal JOIN activity_targets target ON target.tenant_id = proposal.tenant_id WHERE proposal.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM raw_artifacts artifact JOIN activity_targets target ON target.tenant_id = artifact.tenant_id WHERE artifact.ingested_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM raw_sources source JOIN activity_targets target ON target.tenant_id = source.tenant_id WHERE source.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM execution_outbox outbox JOIN activity_targets target ON target.tenant_id = outbox.tenant_id WHERE outbox.created_at >= :'activity_since'::timestamptz OR outbox.status IN ('dispatching', 'reconciling'))
+          )::bigint;
+          SQL
+          }
+
+          wait_for_candidate_quiescence() {
+            local started_epoch deadline_epoch quiet_since quiet_since_epoch now_epoch quiet_seconds activity_count
+            started_epoch="$(date -u +%s)"
+            deadline_epoch=$((started_epoch + QUIET_TIMEOUT_SECONDS))
+            quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            quiet_since_epoch="$started_epoch"
+            while true; do
+              sleep "$QUIET_POLL_SECONDS"
+              if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+                echo "activity fence released during quiescence"
+                return 1
+              fi
+              activity_count="$(candidate_activity_count_since "$quiet_since")"
+              [[ "$activity_count" =~ ^[0-9]+$ ]]
+              now_epoch="$(date -u +%s)"
+              if (( activity_count > 0 )); then
+                printf 'quiet_window_reset activity_count=%s observed_at=%s\n' \
+                  "$activity_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                quiet_since_epoch="$now_epoch"
+              else
+                quiet_seconds=$((now_epoch - quiet_since_epoch))
+                printf 'quiet_window_observation quiet_seconds=%s required_seconds=%s\n' \
+                  "$quiet_seconds" "$QUIET_WINDOW_SECONDS"
+                if (( quiet_seconds >= QUIET_WINDOW_SECONDS )); then
+                  printf '%s\n' "$quiet_since"
+                  return 0
+                fi
+              fi
+              if (( now_epoch >= deadline_epoch )); then
+                echo "candidate activity did not quiesce within $QUIET_TIMEOUT_SECONDS seconds"
+                return 1
+              fi
+            done
+          }
+
+          container_is_healthy brain-prod-worker
+          container_is_healthy brain-prod-agents
+          worker_restart_before="$(docker inspect --format='{{.RestartCount}}' brain-prod-worker)"
+          agents_restart_before="$(docker inspect --format='{{.RestartCount}}' brain-prod-agents)"
+
           docker cp \
             /tmp/diagnose-commercial-demo-retirement-performance.mjs \
             brain-prod-api:/app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
           docker cp \
+            /tmp/execute-commercial-demo-retirement.mjs \
+            brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
+          docker cp \
             /tmp/commercial-demo-retirement-targets.csv \
             brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
-          docker exec brain-prod-api \
+          docker cp \
+            /tmp/commercial-demo-retirement-targets.csv \
+            brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv
+
+          docker stop -t 30 brain-prod-agents brain-prod-worker >/dev/null
+          if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+            echo "activity fence failed to stop worker containers"
+            exit 1
+          fi
+          fence_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'activity_fence_started_at=%s\n' "$fence_started_at"
+          quiet_since="$(wait_for_candidate_quiescence | tail -n 1)"
+          final_activity_count="$(candidate_activity_count_since "$quiet_since")"
+          [[ "$final_activity_count" == "0" ]]
+          printf 'quiescence_passed=true quiet_since=%s final_activity_count=0\n' "$quiet_since"
+
+          docker exec -e FENCE_STARTED_AT="$fence_started_at" brain-prod-api \
             node /app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
+
+          if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+            echo "activity fence released during diagnostic"
+            exit 1
+          fi
+          restore_fenced_containers
+          [[ "$(docker inspect --format='{{.RestartCount}}' brain-prod-worker)" == "$worker_restart_before" ]]
+          [[ "$(docker inspect --format='{{.RestartCount}}' brain-prod-agents)" == "$agents_restart_before" ]]
+          printf 'diagnostic_fence_restored=true worker_restarts=%s agents_restarts=%s\n' \
+            "$worker_restart_before" "$agents_restart_before"
           REMOTE
