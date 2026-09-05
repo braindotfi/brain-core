@@ -104,6 +104,21 @@ test("commercial demo rows use durable one-tenant transactions", () => {
   assert.doesNotMatch(execution, /deleteTableInBatches/);
 });
 
+test("per-tenant reconciliation uses direct indexed predicates", () => {
+  const oneTenantStart = execution.indexOf("export async function executeOneTenant");
+  const oneTenantEnd = execution.indexOf("async function initializeOrValidateRun", oneTenantStart);
+  const oneTenantPath = execution.slice(oneTenantStart, oneTenantEnd);
+  assert.match(execution, /captureTenantReconciliationCounts/);
+  assert.match(execution, /assertTenantReconciliationEmpty/);
+  assert.doesNotMatch(oneTenantPath, /JOIN retirement_targets/);
+  assert.match(execution, /ANALYZE retirement_targets/);
+  assert.match(execution, /commercial_demo_retirement_cohort_reconciliation_started/);
+  assert.match(execution, /commercial_demo_retirement_cohort_reconciliation_passed/);
+  assert.match(timingRehearsal, /CROSS JOIN LATERAL/);
+  assert.match(timingRehearsal, /WHERE proposal\.tenant_id = candidate\.tenant_id/);
+  assert.doesNotMatch(timingRehearsal, /LEFT JOIN proposals/);
+});
+
 test("Phase A rehearses one real tenant and rolls every change back", () => {
   assert.match(phaseARunner, /rehearse-commercial-demo-tenant-retirement\.mjs/);
   assert.match(timingRehearsal, /MAX_REHEARSAL_MS = 30_000/);

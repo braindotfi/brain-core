@@ -48,11 +48,14 @@ async function main() {
       throw new Error("rehearsal connection must use the brain database owner");
     }
     const candidate = await client.query(
-      `SELECT candidate.tenant_id
+      `SELECT candidate.tenant_id, proposal_counts.proposal_count
          FROM unnest($1::text[]) candidate(tenant_id)
-         LEFT JOIN proposals proposal ON proposal.tenant_id = candidate.tenant_id
-        GROUP BY candidate.tenant_id
-        ORDER BY COUNT(proposal.id) DESC, candidate.tenant_id
+         CROSS JOIN LATERAL (
+           SELECT COUNT(*)::int AS proposal_count
+             FROM proposals proposal
+            WHERE proposal.tenant_id = candidate.tenant_id
+         ) proposal_counts
+        ORDER BY proposal_counts.proposal_count DESC, candidate.tenant_id
         LIMIT 1`,
       [ids],
     );
@@ -96,6 +99,7 @@ async function main() {
         event: "commercial_demo_retirement_one_tenant_rehearsal_passed",
         candidate_list_sha256: digest,
         tenant_id: tenantId,
+        proposal_count: candidate.rows[0]?.proposal_count,
         elapsed_ms: elapsedMs,
         max_elapsed_ms: MAX_REHEARSAL_MS,
         total_rows_deleted: result.totalRowsDeleted,
