@@ -107,6 +107,22 @@ test("commercial demo rows use durable one-tenant transactions", () => {
 test("Phase A rehearses one real tenant and rolls every change back", () => {
   assert.match(phaseARunner, /rehearse-commercial-demo-tenant-retirement\.mjs/);
   assert.match(timingRehearsal, /MAX_REHEARSAL_MS = 30_000/);
+  assert.match(timingRehearsal, /POSTGRES_PASSWORD/);
+  assert.match(timingRehearsal, /rehearsal connection must use the brain database owner/);
+  const quarantineIndex = timingRehearsal.indexOf("UPDATE agents");
+  const deletionRoleIndex = timingRehearsal.indexOf("SET LOCAL ROLE brain_tenant_deletion");
+  const deleteIndex = timingRehearsal.indexOf("const result = await executeOneTenant");
+  const rollbackIndex = timingRehearsal.indexOf('await client.query("ROLLBACK")');
+  assert.ok(quarantineIndex > 0, "the rehearsal must quarantine the selected tenant's agents");
+  assert.ok(
+    deletionRoleIndex > quarantineIndex,
+    "the rehearsal must quarantine before assuming the deletion role",
+  );
+  assert.ok(deleteIndex > deletionRoleIndex, "the real delete path must run as the deletion role");
+  assert.ok(
+    rollbackIndex > deleteIndex,
+    "the rehearsal must roll back quarantine and deletion together",
+  );
   assert.match(timingRehearsal, /executeOneTenant/);
   assert.match(timingRehearsal, /ROLLBACK/);
   assert.match(timingRehearsal, /rollback_only: true/);
