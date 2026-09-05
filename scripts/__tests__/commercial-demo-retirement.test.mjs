@@ -104,6 +104,17 @@ test("commercial demo rows use durable one-tenant transactions", () => {
   assert.doesNotMatch(execution, /deleteTableInBatches/);
 });
 
+test("commercial demo wrapper terminates blob expectations with a newline", () => {
+  assert.match(
+    runner,
+    /console\.log\(`\$\{value\.blob_purge_jobs_enqueued\} \$\{value\.blob_artifact_rows\}`\);/,
+  );
+  assert.doesNotMatch(
+    runner,
+    /process\.stdout\.write\(`\$\{value\.blob_purge_jobs_enqueued\} \$\{value\.blob_artifact_rows\}`\);/,
+  );
+});
+
 test("per-tenant reconciliation uses direct indexed predicates", () => {
   const oneTenantStart = execution.indexOf("export async function executeOneTenant");
   const oneTenantEnd = execution.indexOf("async function initializeOrValidateRun", oneTenantStart);
