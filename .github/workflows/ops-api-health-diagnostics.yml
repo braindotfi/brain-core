@@ -10,23 +10,36 @@ on:
         options:
           - staging
           - production
+      expected_sha:
+        description: "Optional full commit SHA to verify on API and worker containers."
+        required: false
+        type: string
+        default: ""
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   diagnose:
     name: api health diagnostics
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'production-tenant-deletion' || 'staging-api-health-diagnostics' }}
+      cancel-in-progress: false
     env:
       TARGET: ${{ inputs.target }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
       VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
       VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
       VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
       VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
     steps:
+      - name: Check out diagnostic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Select target
         shell: bash
         run: |
@@ -120,4 +133,342 @@ jobs:
                 -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
             || true
           echo "::endgroup::"
+          REMOTE
+
+      - name: Verify production runtime and deletion-role grant
+        if: inputs.target == 'production' && inputs.expected_sha != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_sha must be a full lowercase commit SHA"
+            exit 1
+          fi
+
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "EXPECTED_SHA='$EXPECTED_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          api_sha="$(docker exec brain-prod-api printenv GIT_SHA)"
+          worker_sha="$(docker exec brain-prod-worker printenv GIT_SHA)"
+          agents_health="$(docker inspect \
+            --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+            brain-prod-agents)"
+          worker_state="$(docker inspect \
+            --format '{{.State.Status}} restarts={{.RestartCount}}' \
+            brain-prod-worker)"
+
+          printf 'api_git_sha=%s\n' "$api_sha"
+          printf 'worker_git_sha=%s\n' "$worker_sha"
+          printf 'worker_state=%s\n' "$worker_state"
+          printf 'agents_container_health=%s\n' "$agents_health"
+
+          [[ "$api_sha" == "$EXPECTED_SHA" ]]
+          [[ "$worker_sha" == "$EXPECTED_SHA" ]]
+          [[ "$agents_health" == "healthy" ]]
+
+          role_failures="$(docker logs --since 20m brain-prod-worker 2>&1 \
+            | { grep -F 'DB role verification failed' || true; } \
+            | wc -l \
+            | tr -d ' ')"
+          printf 'worker_db_role_invariant_failures=%s\n' "$role_failures"
+          [[ "$role_failures" == "0" ]]
+
+          cd ~/brain-core
+          compose='docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml -f docker-compose.caddy.yml --profile agents'
+          for service in postgres redis minio auth api worker surface-gateway agents caddy; do
+            container_id="$($compose ps -q "$service")"
+            if [[ -z "$container_id" ]]; then
+              echo "service_missing=$service"
+              exit 1
+            fi
+            state="$(docker inspect --format '{{.State.Status}}' "$container_id")"
+            health="$(docker inspect \
+              --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+              "$container_id")"
+            printf 'service=%s state=%s health=%s\n' "$service" "$state" "$health"
+            [[ "$state" == "running" ]]
+            [[ "$health" == "healthy" || "$health" == "none" ]]
+          done
+
+          docker exec -i brain-prod-postgres psql -U brain -d brain \
+            -AtX -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '5s';
+          SET LOCAL lock_timeout = '1s';
+          DO $$
+          BEGIN
+            IF NOT has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'SELECT'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding SELECT grant is absent';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'TRUNCATE'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'REFERENCES'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_integrity_findings',
+              'TRIGGER'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion integrity finding grant is broader than SELECT';
+            END IF;
+            IF has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'SELECT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'INSERT'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'UPDATE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'DELETE'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'TRUNCATE'
+            ) OR has_any_column_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'REFERENCES'
+            ) OR has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'TRIGGER'
+            ) THEN
+              RAISE EXCEPTION 'tenant-deletion unexpectedly has verifier checkpoint access';
+            END IF;
+          END
+          $$;
+          SELECT json_build_object(
+            'role', 'brain_tenant_deletion',
+            'audit_integrity_findings_select', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'SELECT'
+            ),
+            'audit_integrity_findings_insert', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'INSERT'
+            ),
+            'audit_integrity_findings_update', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'UPDATE'
+            ),
+            'audit_integrity_findings_delete', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'DELETE'
+            ),
+            'audit_integrity_findings_truncate', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'TRUNCATE'
+            ),
+            'audit_integrity_findings_references', has_any_column_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'REFERENCES'
+            ),
+            'audit_integrity_findings_trigger', has_table_privilege(
+              'brain_tenant_deletion', 'audit_integrity_findings', 'TRIGGER'
+            ),
+            'audit_verifier_checkpoint_access', has_table_privilege(
+              'brain_tenant_deletion',
+              'audit_verifier_checkpoint',
+              'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+            )
+          )::text;
+          COMMIT;
+          SQL
+          REMOTE
+
+      - name: Diagnose one-tenant retirement performance
+        if: inputs.target == 'production' && inputs.expected_sha != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate_dir="$(mktemp -d)"
+          gh run download 33964061539 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name commercial-demo-retirement-phase-a \
+            --dir "$candidate_dir"
+          printf '%s  %s\n' \
+            'bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8' \
+            "$candidate_dir/commercial-demo-retirement-targets.csv" \
+            | sha256sum --check --status
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/diagnose-commercial-demo-retirement-performance.mjs \
+            scripts/ops/execute-commercial-demo-retirement.mjs \
+            "$candidate_dir/commercial-demo-retirement-targets.csv" \
+            "azureuser@$VM_HOST:/tmp/"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          readonly QUIET_WINDOW_SECONDS=120
+          readonly QUIET_POLL_SECONDS=15
+          readonly QUIET_TIMEOUT_SECONDS=900
+
+          container_is_running() {
+            [[ "$(docker inspect --format='{{.State.Running}}' "$1" 2>/dev/null || true)" == "true" ]]
+          }
+
+          container_is_healthy() {
+            [[ "$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || true)" == "healthy" ]]
+          }
+
+          wait_for_healthy() {
+            local container="$1"
+            local attempts=0
+            until container_is_healthy "$container"; do
+              attempts=$((attempts + 1))
+              if (( attempts >= 36 )); then
+                echo "$container did not become healthy"
+                return 1
+              fi
+              sleep 5
+            done
+          }
+
+          restore_fenced_containers() {
+            local status=0
+            if ! container_is_running brain-prod-worker; then
+              docker start brain-prod-worker >/dev/null || status=1
+            fi
+            if ! container_is_running brain-prod-agents; then
+              docker start brain-prod-agents >/dev/null || status=1
+            fi
+            wait_for_healthy brain-prod-worker || status=1
+            wait_for_healthy brain-prod-agents || status=1
+            return "$status"
+          }
+
+          on_exit() {
+            local exit_code=$?
+            restore_fenced_containers || exit_code=1
+            for container in brain-prod-worker brain-prod-agents; do
+              printf 'restored_container=%s state=%s health=%s restart_count=%s\n' \
+                "$container" \
+                "$(docker inspect --format='{{.State.Status}}' "$container")" \
+                "$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")" \
+                "$(docker inspect --format='{{.RestartCount}}' "$container")"
+            done
+            exit "$exit_code"
+          }
+          trap on_exit EXIT
+
+          candidate_activity_count_since() {
+            local activity_since="$1"
+            docker exec -i \
+              -e PGOPTIONS='-c statement_timeout=30000 -c lock_timeout=1000' \
+              brain-prod-postgres psql -U brain -d brain -qAt -v ON_ERROR_STOP=1 \
+              -v activity_since="$activity_since" <<'SQL' | tail -n 1
+          CREATE TEMP TABLE activity_targets (tenant_id TEXT PRIMARY KEY);
+          \copy activity_targets FROM '/tmp/commercial-demo-retirement-targets.csv' WITH (FORMAT csv, HEADER true)
+          SELECT (
+            (SELECT COUNT(*) FROM audit_events event JOIN activity_targets target ON target.tenant_id = event.tenant_id WHERE event.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM agent_runs run JOIN activity_targets target ON target.tenant_id = run.tenant_id WHERE run.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM proposals proposal JOIN activity_targets target ON target.tenant_id = proposal.tenant_id WHERE proposal.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM raw_artifacts artifact JOIN activity_targets target ON target.tenant_id = artifact.tenant_id WHERE artifact.ingested_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM raw_sources source JOIN activity_targets target ON target.tenant_id = source.tenant_id WHERE source.created_at >= :'activity_since'::timestamptz) +
+            (SELECT COUNT(*) FROM execution_outbox outbox JOIN activity_targets target ON target.tenant_id = outbox.tenant_id WHERE outbox.created_at >= :'activity_since'::timestamptz OR outbox.status IN ('dispatching', 'reconciling'))
+          )::bigint;
+          SQL
+          }
+
+          wait_for_candidate_quiescence() {
+            local started_epoch deadline_epoch quiet_since quiet_since_epoch now_epoch quiet_seconds activity_count
+            started_epoch="$(date -u +%s)"
+            deadline_epoch=$((started_epoch + QUIET_TIMEOUT_SECONDS))
+            quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            quiet_since_epoch="$started_epoch"
+            while true; do
+              sleep "$QUIET_POLL_SECONDS"
+              if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+                echo "activity fence released during quiescence"
+                return 1
+              fi
+              activity_count="$(candidate_activity_count_since "$quiet_since")"
+              [[ "$activity_count" =~ ^[0-9]+$ ]]
+              now_epoch="$(date -u +%s)"
+              if (( activity_count > 0 )); then
+                printf 'quiet_window_reset activity_count=%s observed_at=%s\n' \
+                  "$activity_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                quiet_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                quiet_since_epoch="$now_epoch"
+              else
+                quiet_seconds=$((now_epoch - quiet_since_epoch))
+                printf 'quiet_window_observation quiet_seconds=%s required_seconds=%s\n' \
+                  "$quiet_seconds" "$QUIET_WINDOW_SECONDS"
+                if (( quiet_seconds >= QUIET_WINDOW_SECONDS )); then
+                  printf '%s\n' "$quiet_since"
+                  return 0
+                fi
+              fi
+              if (( now_epoch >= deadline_epoch )); then
+                echo "candidate activity did not quiesce within $QUIET_TIMEOUT_SECONDS seconds"
+                return 1
+              fi
+            done
+          }
+
+          container_is_healthy brain-prod-worker
+          container_is_healthy brain-prod-agents
+          worker_restart_before="$(docker inspect --format='{{.RestartCount}}' brain-prod-worker)"
+          agents_restart_before="$(docker inspect --format='{{.RestartCount}}' brain-prod-agents)"
+
+          docker cp \
+            /tmp/diagnose-commercial-demo-retirement-performance.mjs \
+            brain-prod-api:/app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
+          docker cp \
+            /tmp/execute-commercial-demo-retirement.mjs \
+            brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
+          docker cp \
+            /tmp/commercial-demo-retirement-targets.csv \
+            brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
+          docker cp \
+            /tmp/commercial-demo-retirement-targets.csv \
+            brain-prod-postgres:/tmp/commercial-demo-retirement-targets.csv
+
+          docker stop -t 30 brain-prod-agents brain-prod-worker >/dev/null
+          if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+            echo "activity fence failed to stop worker containers"
+            exit 1
+          fi
+          fence_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'activity_fence_started_at=%s\n' "$fence_started_at"
+          quiet_since="$(wait_for_candidate_quiescence | tail -n 1)"
+          final_activity_count="$(candidate_activity_count_since "$quiet_since")"
+          [[ "$final_activity_count" == "0" ]]
+          printf 'quiescence_passed=true quiet_since=%s final_activity_count=0\n' "$quiet_since"
+
+          docker exec -e FENCE_STARTED_AT="$fence_started_at" brain-prod-api \
+            node /app/scripts/ops/diagnose-commercial-demo-retirement-performance.mjs
+
+          if container_is_running brain-prod-agents || container_is_running brain-prod-worker; then
+            echo "activity fence released during diagnostic"
+            exit 1
+          fi
+          restore_fenced_containers
+          [[ "$(docker inspect --format='{{.RestartCount}}' brain-prod-worker)" == "$worker_restart_before" ]]
+          [[ "$(docker inspect --format='{{.RestartCount}}' brain-prod-agents)" == "$agents_restart_before" ]]
+          printf 'diagnostic_fence_restored=true worker_restarts=%s agents_restarts=%s\n' \
+            "$worker_restart_before" "$agents_restart_before"
           REMOTE
