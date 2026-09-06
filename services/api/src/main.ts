@@ -91,6 +91,9 @@ import { registerProofRoutes, poolProofBuilder } from "./proof/routes.js";
 import { TenantDeletionService } from "./tenant-deletion/service.js";
 import { startTenantBlobPurgeWorker } from "./tenant-deletion/blob-purge-worker.js";
 import { registerTenantDeletionRoute } from "./tenant-deletion/route.js";
+import { AdminTenantDeletionService } from "./tenant-deletion/admin-delete.js";
+import { registerAdminTenantDeletionRoutes } from "./tenant-deletion/admin-delete-route.js";
+import { startAdminTenantDeletionWorker } from "./tenant-deletion/admin-delete-worker.js";
 import { registerTenantExportRoute } from "./tenant-export/route.js";
 import { TenantExportService } from "./tenant-export/service.js";
 import { startTenantExportWorker } from "./tenant-export/worker.js";
@@ -1493,6 +1496,19 @@ async function main(): Promise<void> {
     : undefined;
   if (tenantBlobPurgeWorker !== undefined) log.info("tenant blob purge worker started");
 
+  // Dedicated asynchronous admin deletion. Unlike the one-time retirement,
+  // this worker never stops shared processes: it quarantines only the target
+  // tenant's agents, and the advisory lease keeps concurrency at one globally.
+  const adminTenantDeletionService = new AdminTenantDeletionService(tenantDeletionPool);
+  const adminTenantDeletionWorker = composition.workers.has("tenant_deletion")
+    ? startAdminTenantDeletionWorker({
+        pool: tenantDeletionPool,
+        metrics,
+        workerId: `tenant-deletion-worker-${process.pid}`,
+      })
+    : undefined;
+  if (adminTenantDeletionWorker !== undefined) log.info("tenant deletion worker started");
+
   const tenantExportService = new TenantExportService({ pool, blob, audit });
   const tenantExportWorker = composition.workers.has("tenant_export")
     ? startTenantExportWorker(
@@ -2411,6 +2427,12 @@ async function main(): Promise<void> {
         });
         await v1.register(async (child) =>
           registerTenantDeletionRoute(child, { service: tenantDeletionService }),
+        );
+        await v1.register(async (child) =>
+          registerAdminTenantDeletionRoutes(child, {
+            service: adminTenantDeletionService,
+            rateLimiter: apiKeyRateLimiter,
+          }),
         );
         await v1.register(async (child) =>
           registerTenantExportRoute(child, {
@@ -3986,6 +4008,7 @@ async function main(): Promise<void> {
           outboxWorker,
           webhookDispatchWorker,
           tenantBlobPurgeWorker,
+          adminTenantDeletionWorker,
           tenantExportWorker,
           auditConsistencyVerifier,
           anchorReconciler,

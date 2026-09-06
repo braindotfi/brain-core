@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MemoryBlobAdapter } from "./memory.js";
-import { blobPath, sha256Hex } from "./types.js";
+import { assertBlobLegalHoldManifest, blobPath, sha256Hex } from "./types.js";
 import { createBlobAdapter } from "./factory.js";
 
 describe("blobPath", () => {
@@ -87,6 +87,24 @@ describe("MemoryBlobAdapter", () => {
     const res = await a.purgeTenant("tnt_a");
     expect(res.deleted).toBe(1); // only tnt_a/, the trailing slash prevents tnt_ab/ matching
     expect([...a.objects.keys()].some((k) => k.startsWith("tnt_ab/"))).toBe(true);
+  });
+
+  it("releases only an inspected tenant manifest and rejects manifest tampering", async () => {
+    const a = new MemoryBlobAdapter();
+    await a.put("tnt_a/raw/held", Buffer.from("a"), { immutable: true });
+    await a.put("tnt_b/raw/held", Buffer.from("b"), { immutable: true });
+    const manifest = await a.inspectTenantLegalHolds("tnt_a");
+    expect(manifest.heldVersions).toHaveLength(1);
+    expect(() =>
+      assertBlobLegalHoldManifest({
+        ...manifest,
+        heldVersions: [{ path: "tnt_b/raw/held", versionId: null }],
+      }),
+    ).toThrow(/escaped tenant prefix|hash mismatch/);
+
+    await a.releaseTenantLegalHolds(manifest);
+    expect((await a.purgeTenant("tnt_a")).deleted).toBe(1);
+    expect((await a.inspectTenantLegalHolds("tnt_b")).heldVersions).toHaveLength(1);
   });
 });
 

@@ -6463,6 +6463,55 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /admin/tenants/{tenant_id}/delete:
+    post:
+      tags: [Admin]
+      summary: Enqueue an administrative tenant deletion
+      description: |
+        Requires a dedicated Brain Auth JWT with `principal_type=api_partner`
+        and the `tenant:delete` scope. Tenant API keys and the BFF service
+        secret are rejected. Requests are limited to 10 per minute per caller.
+        The worker fences only the target tenant, preserves audit evidence,
+        releases legal holds on exact versions under that tenant prefix, and
+        purges blobs after the database commit.
+      operationId: enqueueAdminTenantDeletion
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '202':
+          description: New or existing deletion job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantDeletionJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/tenant-deletions/{job_id}:
+    get:
+      tags: [Admin]
+      summary: Get an administrative tenant deletion job
+      description: Requires a dedicated `api_partner` credential with `tenant:delete`.
+      operationId: getAdminTenantDeletion
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tdel_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Deletion job status and reconciliation counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantDeletionJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /tenants/{id}/export:
     post:
       tags: [Admin]
@@ -7735,6 +7784,28 @@ components:
             updated_at: { type: string, format: date-time }
             projected_at: { type: [string, "null"], format: date-time }
             projector: { type: [string, "null"] }
+
+    TenantDeletionJob:
+      type: object
+      required: [job_id, tenant_id, status, counts, error, created_at, started_at, completed_at]
+      properties:
+        job_id: { type: string, pattern: '^tdel_[0-9A-HJKMNP-TV-Z]{26}$' }
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        status:
+          type: string
+          enum: [queued, fencing, deleting, purging_blobs, completed, failed]
+        counts:
+          type: object
+          required: [expected, deleted, total_deleted, blob_artifacts]
+          properties:
+            expected: { type: [object, "null"], additionalProperties: { type: integer } }
+            deleted: { type: [object, "null"], additionalProperties: { type: integer } }
+            total_deleted: { type: [integer, "null"] }
+            blob_artifacts: { type: [integer, "null"] }
+        error: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
 
     Error:
       type: object

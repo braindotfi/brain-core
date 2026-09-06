@@ -58,6 +58,9 @@ function fakePool(
       });
       return Promise.resolve({ rows: [], rowCount: 1 });
     }
+    if (sql.includes("UPDATE tenant_deletion_jobs")) {
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
     if (sql.includes("FROM tenant_blob_purge_audit_outbox") && sql.includes("status = 'pending'")) {
       const row = outbox.shift();
       return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
@@ -392,5 +395,29 @@ describe("runBlobPurgeCycle — real-adapter erasure (end-to-end)", () => {
     // The audit trail records the true count of erased objects.
     const completed = audit.events.find((e) => e.action === "tenant_blob.purge_completed");
     expect(completed?.outputs).toMatchObject({ deleted: 3 });
+  });
+
+  it("releases held versions only under the deleted tenant prefix before purging", async () => {
+    const blob = new MemoryBlobAdapter();
+    await blob.put("tnt_01TESTTENANT/raw/held.pdf", Buffer.from("target"), {
+      immutable: true,
+    });
+    await blob.put("tnt_OTHERTENANT/raw/held.pdf", Buffer.from("other"), {
+      immutable: true,
+    });
+    const { pool } = fakePool([job({ blob_artifact_count: 1 })]);
+    const audit = new InMemoryAuditEmitter();
+
+    const tally = await runBlobPurgeCycle({ privilegedPool: pool, blob, audit });
+
+    expect(tally.completed).toBe(1);
+    expect(blob.objects.has("tnt_01TESTTENANT/raw/held.pdf")).toBe(false);
+    expect(blob.objects.has("tnt_OTHERTENANT/raw/held.pdf")).toBe(true);
+    const other = await blob.inspectTenantLegalHolds("tnt_OTHERTENANT");
+    expect(other.heldVersions).toHaveLength(1);
+    expect(audit.events.map((event) => event.action)).toContain(
+      "tenant_blob.legal_hold_release_requested",
+    );
+    expect(audit.events.map((event) => event.action)).toContain("tenant_blob.legal_hold_released");
   });
 });

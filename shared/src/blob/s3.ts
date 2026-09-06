@@ -6,9 +6,11 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  GetObjectLegalHoldCommand,
   HeadBucketCommand,
   ListObjectVersionsCommand,
   PutObjectCommand,
+  PutObjectLegalHoldCommand,
   PutObjectTaggingCommand,
   S3Client,
   type ObjectLockLegalHoldStatus,
@@ -18,12 +20,14 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type {
   BlobAdapter,
   BlobObject,
+  BlobLegalHoldManifest,
   BlobPurgeFailure,
   BlobPurgeResult,
   PutOptions,
   SignedUrlOptions,
 } from "./types.js";
 import { sha256Hex } from "./types.js";
+import { assertBlobLegalHoldManifest, buildBlobLegalHoldManifest } from "./types.js";
 import { classifyBlobDeleteError } from "./purge-classify.js";
 
 export interface S3AdapterOptions {
@@ -172,6 +176,70 @@ export class S3BlobAdapter implements BlobAdapter {
     return { deleted, failures };
   }
 
+  public async inspectTenantLegalHolds(tenantId: string): Promise<BlobLegalHoldManifest> {
+    const prefix = `${tenantId}/`;
+    const versions: Array<{ path: string; versionId: string | null }> = [];
+    const heldVersions: Array<{ path: string; versionId: string | null }> = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectVersionsCommand({
+          Bucket: this.opts.bucket,
+          Prefix: prefix,
+          ...(keyMarker !== undefined ? { KeyMarker: keyMarker } : {}),
+          ...(versionIdMarker !== undefined ? { VersionIdMarker: versionIdMarker } : {}),
+        }),
+      );
+      for (const row of page.Versions ?? []) {
+        if (row.Key === undefined || row.VersionId === undefined) continue;
+        if (!row.Key.startsWith(prefix)) throw new Error("blob legal-hold prefix escaped tenant");
+        const version = { path: row.Key, versionId: row.VersionId };
+        versions.push(version);
+        try {
+          const hold = await this.client.send(
+            new GetObjectLegalHoldCommand({
+              Bucket: this.opts.bucket,
+              Key: row.Key,
+              VersionId: row.VersionId,
+            }),
+          );
+          if (hold.LegalHold?.Status === "ON") heldVersions.push(version);
+        } catch (error) {
+          const code = providerErrorCode(error);
+          if (code !== "NoSuchObjectLockConfiguration" && code !== "NoSuchKey") throw error;
+        }
+      }
+      keyMarker = page.IsTruncated === true ? page.NextKeyMarker : undefined;
+      versionIdMarker = page.IsTruncated === true ? page.NextVersionIdMarker : undefined;
+    } while (keyMarker !== undefined || versionIdMarker !== undefined);
+    return buildBlobLegalHoldManifest(tenantId, versions, heldVersions);
+  }
+
+  public async releaseTenantLegalHolds(manifest: BlobLegalHoldManifest): Promise<void> {
+    assertBlobLegalHoldManifest(manifest);
+    for (const version of manifest.heldVersions) {
+      await this.client.send(
+        new PutObjectLegalHoldCommand({
+          Bucket: this.opts.bucket,
+          Key: version.path,
+          ...(version.versionId !== null ? { VersionId: version.versionId } : {}),
+          LegalHold: { Status: "OFF" },
+        }),
+      );
+      const verified = await this.client.send(
+        new GetObjectLegalHoldCommand({
+          Bucket: this.opts.bucket,
+          Key: version.path,
+          ...(version.versionId !== null ? { VersionId: version.versionId } : {}),
+        }),
+      );
+      if (verified.LegalHold?.Status !== "OFF") {
+        throw new Error(`blob legal hold did not verify OFF for ${version.path}`);
+      }
+    }
+  }
+
   public async purgeObject(path: string): Promise<void> {
     let keyMarker: string | undefined;
     let versionIdMarker: string | undefined;
@@ -209,6 +277,12 @@ export class S3BlobAdapter implements BlobAdapter {
       return false;
     }
   }
+}
+
+function providerErrorCode(error: unknown): string {
+  if (error === null || typeof error !== "object") return "unknown";
+  const value = error as { name?: unknown; Code?: unknown; code?: unknown };
+  return String(value.name ?? value.Code ?? value.code ?? "unknown");
 }
 
 async function toBuffer(body: Uint8Array | NodeJS.ReadableStream): Promise<Buffer> {

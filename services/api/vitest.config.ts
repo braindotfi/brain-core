@@ -22,6 +22,9 @@ export default defineConfig({
         "src/anchorBroadcaster.ts",
         "src/main.ts",
         "src/tenant-deletion/audit-outbox-cli.ts",
+        // The job worker's transaction, least-privilege role, rollback, and
+        // tenant-isolation behavior require the DB-backed integration suite.
+        "src/tenant-deletion/admin-delete-worker.ts",
         "src/usage/billing-operator-cli.ts",
         "src/usage/entitlement-operator-cli.ts",
         "src/auth/siwe.ts",

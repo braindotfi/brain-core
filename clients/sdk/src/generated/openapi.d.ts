@@ -3167,6 +3167,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/tenants/{tenant_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enqueue an administrative tenant deletion
+         * @description Requires a dedicated Brain Auth JWT with `principal_type=api_partner`
+         *     and the `tenant:delete` scope. Tenant API keys and the BFF service
+         *     secret are rejected. Requests are limited to 10 per minute per caller.
+         *     The worker fences only the target tenant, preserves audit evidence,
+         *     releases legal holds on exact versions under that tenant prefix, and
+         *     purges blobs after the database commit.
+         */
+        post: operations["enqueueAdminTenantDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/tenant-deletions/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an administrative tenant deletion job
+         * @description Requires a dedicated `api_partner` credential with `tenant:delete`.
+         */
+        get: operations["getAdminTenantDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants/{id}/export": {
         parameters: {
             query?: never;
@@ -3934,6 +3979,29 @@ export interface components {
                 projected_at?: string | null;
                 projector?: string | null;
             };
+        };
+        TenantDeletionJob: {
+            job_id: string;
+            tenant_id: string;
+            /** @enum {string} */
+            status: "queued" | "fencing" | "deleting" | "purging_blobs" | "completed" | "failed";
+            counts: {
+                expected: {
+                    [key: string]: number;
+                } | null;
+                deleted: {
+                    [key: string]: number;
+                } | null;
+                total_deleted: number | null;
+                blob_artifacts: number | null;
+            };
+            error: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            completed_at: string | null;
         };
         /**
          * @description Canonical error envelope (Engineering Standards §4.1). All error
@@ -11140,6 +11208,57 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    enqueueAdminTenantDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New or existing deletion job */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantDeletionJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getAdminTenantDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion job status and reconciliation counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantDeletionJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     createTenantExport: {

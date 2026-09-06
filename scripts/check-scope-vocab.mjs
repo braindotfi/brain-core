@@ -44,6 +44,7 @@ const VALID_SCOPES = new Set([
   "governance:read",
   "surfaces:admin",
   "tenant:create",
+  "tenant:delete",
   "session:exchange",
   "invite:consume",
 ]);

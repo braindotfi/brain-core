@@ -5,7 +5,13 @@ import {
   type TenantDeletionPrivilegeClient,
 } from "./privilege-contract.js";
 
-function privilegeClient(options: { missingTenantUpdate?: boolean; superuser?: boolean } = {}) {
+function privilegeClient(
+  options: {
+    missingTenantUpdate?: boolean;
+    missingAgentStateUpdate?: boolean;
+    superuser?: boolean;
+  } = {},
+) {
   const query = vi
     .fn()
     .mockResolvedValueOnce({
@@ -37,7 +43,22 @@ function privilegeClient(options: { missingTenantUpdate?: boolean; superuser?: b
         })),
         rowCount: expectations.length,
       };
-    });
+    })
+    .mockImplementationOnce(() => ({
+      rows: [
+        {
+          column_name: "id",
+          expected: false,
+          actual: false,
+        },
+        {
+          column_name: "state",
+          expected: true,
+          actual: options.missingAgentStateUpdate !== true,
+        },
+      ],
+      rowCount: 2,
+    }));
   return { query, client: { query: query as TenantDeletionPrivilegeClient["query"] } };
 }
 
@@ -48,6 +69,7 @@ describe("tenant-deletion privilege contract", () => {
       expect.arrayContaining([
         { table: "agent_runs", privilege: "SELECT", expected: true },
         { table: "agent_runs", privilege: "DELETE", expected: true },
+        { table: "agents", privilege: "UPDATE", expected: false },
         { table: "tenants", privilege: "SELECT", expected: true },
         { table: "tenants", privilege: "UPDATE", expected: true },
         { table: "tenants", privilege: "DELETE", expected: true },
@@ -83,6 +105,13 @@ describe("tenant-deletion privilege contract", () => {
     const { client } = privilegeClient({ missingTenantUpdate: true });
     await expect(assertTenantDeletionPrivilegeContract(client, ["agent_runs"])).rejects.toThrow(
       '"table_name":"tenants","privilege_name":"UPDATE","expected":true,"actual":false',
+    );
+  });
+
+  it("fails closed when agents.state UPDATE is missing", async () => {
+    const { client } = privilegeClient({ missingAgentStateUpdate: true });
+    await expect(assertTenantDeletionPrivilegeContract(client, ["agent_runs"])).rejects.toThrow(
+      "tenant-deletion agent UPDATE contract failed",
     );
   });
 

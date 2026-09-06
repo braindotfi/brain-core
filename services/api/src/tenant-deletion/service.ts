@@ -20,24 +20,14 @@
  *   - require principal.tenantId === target tenant
  *   - reject if either check fails
  *
- * Blob cleanup (Raw artifact storage). The §3 Layer-1 immutability promise
- * forbids in-band hard-delete via the BlobAdapter (no `purge` method exists).
- * Tenant deletion therefore CANNOT, on its own, remove the bytes a user
- * uploaded into Azure Blob storage. To stay honest with the GDPR Article 17
- * claim, this service:
+ * Blob cleanup (Raw artifact storage) runs after the database transaction.
+ * To preserve the database and object-store commit boundary, this service:
  *   1. Selects every `raw_artifacts.blob_uri` for the tenant BEFORE the DELETE.
- *   2. Includes the URI list in the response payload AND in the
+ *   2. Includes the URI list in the response payload and in the
  *      `tenant.deleted` audit event under `blob_uris_pending_purge`.
- *   3. Returns `blob_artifact_count` alongside the row counts.
- * An operator (or a future scheduled purge job) must run a separate pass
- * against those URIs to satisfy Article 17 fully. The runbook for this is
- * tracked in docs/rollback.md.
- *
- * TODO(brain-gdpr): wire a privileged hard-delete path on BlobAdapter that
- * is callable only from this service. The architectural tension between §3
- * Layer-1 immutability ("Raw is the source of truth, never mutated") and
- * Article 17 ("the user can demand erasure") needs an explicit carveout in
- * Brain_Engineering_Standards.md §3 before that ships.
+ *   3. Enqueues a durable purge job that survives deletion. The purge worker
+ *      releases only exact version-specific legal holds under the tenant
+ *      prefix, then erases every version and delete marker idempotently.
  */
 
 import type { Pool } from "pg";
@@ -229,6 +219,8 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // RFC 0003 (P2 #1): the purge audit outbox likewise survives — it carries the
   // lifecycle audit intents the worker delivers after the tenant rows are gone.
   "tenant_blob_purge_audit_outbox",
+  // The asynchronous API job is retained as the durable erasure record.
+  "tenant_deletion_jobs",
   // The one-time commercial demo retirement commits one tenant at a time.
   // Progress must survive the tenant row so an interrupted run can resume.
   "commercial_demo_retirement_progress",

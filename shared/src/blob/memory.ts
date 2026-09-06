@@ -5,17 +5,20 @@
 import type {
   BlobAdapter,
   BlobObject,
+  BlobLegalHoldManifest,
   BlobPurgeResult,
   PutOptions,
   SignedUrlOptions,
 } from "./types.js";
 import { sha256Hex } from "./types.js";
+import { assertBlobLegalHoldManifest, buildBlobLegalHoldManifest } from "./types.js";
 
 interface MemoryObject {
   body: Buffer;
   contentType?: string;
   metadata: Record<string, string>;
   tombstoned: boolean;
+  legalHold: boolean;
 }
 
 export class MemoryBlobAdapter implements BlobAdapter {
@@ -32,10 +35,12 @@ export class MemoryBlobAdapter implements BlobAdapter {
       contentType?: string;
       metadata: Record<string, string>;
       tombstoned: false;
+      legalHold: boolean;
     } = {
       body: buf,
       metadata: { ...(opts.metadata ?? {}) },
       tombstoned: false,
+      legalHold: opts.immutable === true,
     };
     if (opts.contentType !== undefined) {
       entry.contentType = opts.contentType;
@@ -68,11 +73,43 @@ export class MemoryBlobAdapter implements BlobAdapter {
     let deleted = 0;
     for (const key of [...this.objects.keys()]) {
       if (key.startsWith(prefix)) {
+        if (this.objects.get(key)?.legalHold === true) {
+          return {
+            deleted,
+            failures: [
+              {
+                path: key,
+                category: "legal_hold",
+                retryable: false,
+                message: "memory object is under legal hold",
+              },
+            ],
+          };
+        }
         this.objects.delete(key);
         deleted += 1;
       }
     }
     return { deleted, failures: [] };
+  }
+
+  public async inspectTenantLegalHolds(tenantId: string): Promise<BlobLegalHoldManifest> {
+    const prefix = `${tenantId}/`;
+    const versions = [...this.objects.keys()]
+      .filter((path) => path.startsWith(prefix))
+      .sort()
+      .map((path) => ({ path, versionId: null }));
+    const heldVersions = versions.filter(({ path }) => this.objects.get(path)?.legalHold === true);
+    return buildBlobLegalHoldManifest(tenantId, versions, heldVersions);
+  }
+
+  public async releaseTenantLegalHolds(manifest: BlobLegalHoldManifest): Promise<void> {
+    assertBlobLegalHoldManifest(manifest);
+    for (const { path } of manifest.heldVersions) {
+      if (!path.startsWith(manifest.prefix)) throw new Error("legal-hold prefix escaped tenant");
+      const object = this.objects.get(path);
+      if (object !== undefined) object.legalHold = false;
+    }
   }
 
   public async purgeObject(path: string): Promise<void> {

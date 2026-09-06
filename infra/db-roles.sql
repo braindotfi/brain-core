@@ -366,9 +366,19 @@ BEGIN
   LOOP EXECUTE format('GRANT SELECT, DELETE ON %s TO brain_tenant_deletion', t); END LOOP;
 END $$;
 GRANT SELECT, UPDATE, DELETE ON tenants TO brain_tenant_deletion;
+-- Per-job fencing is tenant-local: the deletion worker quarantines only the
+-- target tenant's agents and never stops the shared worker process.
+GRANT UPDATE (state) ON agents TO brain_tenant_deletion;
 GRANT SELECT, UPDATE ON raw_artifacts TO brain_tenant_deletion;
 GRANT SELECT, INSERT, UPDATE ON tenant_blob_purge_jobs, tenant_blob_purge_audit_outbox
   TO brain_tenant_deletion;
+REVOKE ALL ON tenant_deletion_jobs
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT, INSERT, UPDATE ON tenant_deletion_jobs TO brain_tenant_deletion;
 GRANT SELECT, UPDATE ON tenant_export_jobs TO brain_tenant_deletion;
 -- This one-time operation ledger survives its tenant rows. Only the deletion
 -- role may append or advance progress, and it cannot erase completed evidence.

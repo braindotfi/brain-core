@@ -15,12 +15,14 @@ import {
 import type {
   BlobAdapter,
   BlobObject,
+  BlobLegalHoldManifest,
   BlobPurgeFailure,
   BlobPurgeResult,
   PutOptions,
   SignedUrlOptions,
 } from "./types.js";
 import { sha256Hex } from "./types.js";
+import { assertBlobLegalHoldManifest, buildBlobLegalHoldManifest } from "./types.js";
 import { classifyBlobDeleteError } from "./purge-classify.js";
 
 export interface AzureAdapterOptions {
@@ -181,6 +183,41 @@ export class AzureBlobAdapter implements BlobAdapter {
       }
     }
     return { deleted, failures };
+  }
+
+  public async inspectTenantLegalHolds(tenantId: string): Promise<BlobLegalHoldManifest> {
+    const prefix = `${tenantId}/`;
+    const versions: Array<{ path: string; versionId: string | null }> = [];
+    const heldVersions: Array<{ path: string; versionId: string | null }> = [];
+    const container = this.containerClient();
+    for await (const blob of container.listBlobsFlat({ prefix, includeVersions: true })) {
+      if (!blob.name.startsWith(prefix)) throw new Error("blob legal-hold prefix escaped tenant");
+      const version = { path: blob.name, versionId: blob.versionId ?? null };
+      versions.push(version);
+      const client = container.getBlobClient(blob.name);
+      const properties = await (blob.versionId === undefined
+        ? client.getProperties()
+        : client.withVersion(blob.versionId).getProperties());
+      if (properties.legalHold === true) heldVersions.push(version);
+    }
+    return buildBlobLegalHoldManifest(tenantId, versions, heldVersions);
+  }
+
+  public async releaseTenantLegalHolds(manifest: BlobLegalHoldManifest): Promise<void> {
+    assertBlobLegalHoldManifest(manifest);
+    const container = this.containerClient();
+    for (const version of manifest.heldVersions) {
+      if (!version.path.startsWith(manifest.prefix)) {
+        throw new Error("blob legal-hold manifest escaped tenant prefix");
+      }
+      const client = container.getBlobClient(version.path);
+      const target = version.versionId === null ? client : client.withVersion(version.versionId);
+      await target.setLegalHold(false);
+      const properties = await target.getProperties();
+      if (properties.legalHold === true) {
+        throw new Error(`blob legal hold remained ON for ${version.path}`);
+      }
+    }
   }
 
   public async purgeObject(path: string): Promise<void> {
