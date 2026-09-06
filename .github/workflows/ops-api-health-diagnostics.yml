@@ -229,45 +229,331 @@ jobs:
           COMMIT;
           SQL
 
-          docker exec -i brain-prod-postgres psql -U brain -d brain -qAtX \
-            -v ON_ERROR_STOP=1 > /tmp/commercial-demo-blob-purge-tenants.txt <<'SQL'
-          BEGIN TRANSACTION READ ONLY;
-          COPY (
-            SELECT DISTINCT job.tenant_id
-              FROM tenant_blob_purge_jobs job
-              JOIN tenant_blob_purge_audit_outbox requested
-                ON requested.job_id = job.id
-             WHERE requested.action = 'tenant_blob.purge_requested'
-               AND requested.actor = 'ops-commercial-demo-retirement'
-             ORDER BY job.tenant_id
-          ) TO STDOUT;
-          COMMIT;
-          SQL
+          # Read the exact version-level Object Lock state through the same AWS
+          # SDK and credentials used by the purge worker. This performs only
+          # List/Get operations. It does not clear holds, delete objects, or
+          # mutate purge jobs.
+          docker exec -i -w /app/services/api brain-prod-worker \
+            node --input-type=commonjs <<'NODE'
+          (async () => {
+          const { createHash } = require("node:crypto");
+          const { Client } = require("pg");
+          const {
+            GetBucketVersioningCommand,
+            GetObjectLegalHoldCommand,
+            GetObjectLockConfigurationCommand,
+            GetObjectRetentionCommand,
+            ListObjectVersionsCommand,
+            S3Client,
+          } = require("@aws-sdk/client-s3");
 
-          minio_evidence="$(docker compose -p "$COMPOSE_PROJECT" \
+          const protectedTenantIds = new Set([
+            "tnt_00000000010000000000000000",
+            "tnt_01KYAT7A1QRKHTYW9H4RAR2SEX",
+            "tnt_01KYAT31JH0G043K77H8SKYG4N",
+            "tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ",
+            "tnt_01M1GTBQN8R8PB6X6PN73YB6NP",
+            "tnt_01M1M64ZE1R8J9TB6C3DCRKA61",
+          ]);
+          const bucket = process.env.BLOB_CONTAINER;
+          if (!bucket) throw new Error("BLOB_CONTAINER is missing");
+          const dbUrl = process.env.BRAIN_TENANT_DELETION_DB_URL;
+          if (!dbUrl) throw new Error("BRAIN_TENANT_DELETION_DB_URL is missing");
+
+          const db = new Client({ connectionString: dbUrl });
+          const s3 = new S3Client({
+            endpoint: process.env.S3_ENDPOINT,
+            region: process.env.S3_REGION,
+            forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+            credentials: {
+              accessKeyId: process.env.S3_ACCESS_KEY_ID,
+              secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+            },
+          });
+          const emit = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+          const fingerprint = (value) =>
+            createHash("sha256").update(value).digest("hex").slice(0, 16);
+          const errorCode = (error) =>
+            error && typeof error === "object"
+              ? String(error.name || error.Code || error.code || "unknown")
+              : "unknown";
+          const splitHeldPath = (value) => {
+            const splitAt = value.lastIndexOf("@");
+            if (splitAt < 1 || splitAt === value.length - 1) {
+              throw new Error(`invalid held path: ${value}`);
+            }
+            return { key: value.slice(0, splitAt), versionId: value.slice(splitAt + 1) };
+          };
+          const listExactVersions = async (key) => {
+            const output = [];
+            let keyMarker;
+            let versionIdMarker;
+            do {
+              const page = await s3.send(
+                new ListObjectVersionsCommand({
+                  Bucket: bucket,
+                  Prefix: key,
+                  ...(keyMarker ? { KeyMarker: keyMarker } : {}),
+                  ...(versionIdMarker ? { VersionIdMarker: versionIdMarker } : {}),
+                }),
+              );
+              for (const version of page.Versions || []) {
+                if (version.Key === key && version.VersionId) output.push(version);
+              }
+              keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+              versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+            } while (keyMarker || versionIdMarker);
+            return output;
+          };
+          const inspectVersion = async (tenantId, key, versionId, objectKind, lastModified) => {
+            let legalHold = "OFF_OR_UNSET";
+            let legalHoldError = null;
+            let retention = null;
+            let retentionError = null;
+            try {
+              const response = await s3.send(
+                new GetObjectLegalHoldCommand({ Bucket: bucket, Key: key, VersionId: versionId }),
+              );
+              legalHold = response.LegalHold?.Status || "OFF_OR_UNSET";
+            } catch (error) {
+              legalHoldError = errorCode(error);
+            }
+            try {
+              const response = await s3.send(
+                new GetObjectRetentionCommand({ Bucket: bucket, Key: key, VersionId: versionId }),
+              );
+              retention = response.Retention
+                ? {
+                    mode: response.Retention.Mode || null,
+                    retain_until: response.Retention.RetainUntilDate?.toISOString() || null,
+                  }
+                : null;
+            } catch (error) {
+              retentionError = errorCode(error);
+            }
+            return {
+              tenant_id: tenantId,
+              object_kind: objectKind,
+              key_sha256: fingerprint(key),
+              version_id_sha256: fingerprint(versionId),
+              legal_hold: legalHold,
+              legal_hold_error: legalHoldError,
+              retention,
+              retention_error: retentionError,
+              last_modified: lastModified ? new Date(lastModified).toISOString() : null,
+            };
+          };
+
+          await db.connect();
+          await db.query("BEGIN TRANSACTION READ ONLY");
+          try {
+            const jobs = await db.query(`
+              SELECT DISTINCT job.id, job.tenant_id, job.status, job.attempts,
+                     job.blob_artifact_count, job.deleted_count,
+                     job.legal_hold_paths, job.requested_at, job.completed_at
+                FROM tenant_blob_purge_jobs job
+                JOIN tenant_blob_purge_audit_outbox requested
+                  ON requested.job_id = job.id
+               WHERE requested.action = 'tenant_blob.purge_requested'
+                 AND requested.actor = 'ops-commercial-demo-retirement'
+               ORDER BY job.tenant_id
+            `);
+            const tenantIds = jobs.rows.map((row) => row.tenant_id);
+            const protectedPresent = tenantIds.filter((id) => protectedTenantIds.has(id));
+            const heldPaths = jobs.rows.flatMap((row) =>
+              row.legal_hold_paths.map((value) => ({
+                job_id: row.id,
+                tenant_id: row.tenant_id,
+                ...splitHeldPath(value),
+              })),
+            );
+
+            const versioning = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+            const objectLock = await s3.send(
+              new GetObjectLockConfigurationCommand({ Bucket: bucket }),
+            );
+            emit({
+              event: "bucket_object_lock_configuration",
+              bucket,
+              versioning_status: versioning.Status || null,
+              mfa_delete: versioning.MFADelete || null,
+              object_lock_enabled:
+                objectLock.ObjectLockConfiguration?.ObjectLockEnabled || null,
+              default_retention_rule:
+                objectLock.ObjectLockConfiguration?.Rule?.DefaultRetention || null,
+              legal_hold_default_supported: false,
+            });
+            emit({
+              event: "retirement_hold_scope",
+              jobs: jobs.rowCount,
+              held_paths: heldPaths.length,
+              protected_ids_present: protectedPresent,
+              credential_source: "worker S3 credentials",
+              credential_fingerprint: fingerprint(process.env.S3_ACCESS_KEY_ID || ""),
+            });
+
+            const heldEvidence = [];
+            for (const item of heldPaths) {
+              const versions = await listExactVersions(item.key);
+              const version = versions.find((candidate) => candidate.VersionId === item.versionId);
+              heldEvidence.push(
+                await inspectVersion(
+                  item.tenant_id,
+                  item.key,
+                  item.versionId,
+                  "retirement_target",
+                  version?.LastModified,
+                ),
+              );
+            }
+            for (const evidence of heldEvidence) {
+              emit({ event: "retirement_object_hold", ...evidence });
+            }
+            emit({
+              event: "retirement_object_hold_summary",
+              inspected: heldEvidence.length,
+              legal_hold_on: heldEvidence.filter((row) => row.legal_hold === "ON").length,
+              legal_hold_off_or_unset: heldEvidence.filter(
+                (row) => row.legal_hold === "OFF_OR_UNSET",
+              ).length,
+              legal_hold_errors: heldEvidence.filter((row) => row.legal_hold_error !== null).length,
+              with_retention_rule: heldEvidence.filter((row) => row.retention !== null).length,
+              earliest_object_time:
+                heldEvidence.map((row) => row.last_modified).filter(Boolean).sort()[0] || null,
+              latest_object_time:
+                heldEvidence.map((row) => row.last_modified).filter(Boolean).sort().at(-1) || null,
+            });
+
+            const liveRaw = await db.query(`
+              SELECT tenant.id AS tenant_id, artifact.blob_uri, artifact.ingested_at
+                FROM tenants tenant
+                JOIN LATERAL (
+                  SELECT raw.blob_uri, raw.ingested_at
+                    FROM raw_artifacts raw
+                   WHERE raw.tenant_id = tenant.id
+                   ORDER BY raw.ingested_at DESC, raw.id DESC
+                   LIMIT 1
+                ) artifact ON true
+               WHERE tenant.id <> ALL($1::text[])
+               ORDER BY artifact.ingested_at DESC, tenant.id
+               LIMIT 5
+            `, [tenantIds]);
+            const liveRawEvidence = [];
+            for (const row of liveRaw.rows) {
+              const versions = await listExactVersions(row.blob_uri);
+              const latest = versions.find((version) => version.IsLatest) || versions[0];
+              if (!latest?.VersionId) {
+                liveRawEvidence.push({
+                  tenant_id: row.tenant_id,
+                  object_kind: "live_raw",
+                  key_sha256: fingerprint(row.blob_uri),
+                  version_missing: true,
+                });
+                continue;
+              }
+              liveRawEvidence.push(
+                await inspectVersion(
+                  row.tenant_id,
+                  row.blob_uri,
+                  latest.VersionId,
+                  "live_raw",
+                  latest.LastModified,
+                ),
+              );
+            }
+            for (const evidence of liveRawEvidence) {
+              emit({ event: "live_object_hold_sample", ...evidence });
+            }
+
+            const liveExports = await db.query(`
+              SELECT job.tenant_id, job.output_blob_uri
+                FROM tenant_export_jobs job
+                JOIN tenants tenant ON tenant.id = job.tenant_id
+               WHERE job.output_blob_uri IS NOT NULL
+                 AND job.purged_at IS NULL
+                 AND job.tenant_id <> ALL($1::text[])
+               ORDER BY job.created_at DESC
+               LIMIT 3
+            `, [tenantIds]);
+            for (const row of liveExports.rows) {
+              const versions = await listExactVersions(row.output_blob_uri);
+              const latest = versions.find((version) => version.IsLatest) || versions[0];
+              if (!latest?.VersionId) continue;
+              emit({
+                event: "live_object_hold_sample",
+                ...(await inspectVersion(
+                  row.tenant_id,
+                  row.output_blob_uri,
+                  latest.VersionId,
+                  "live_export",
+                  latest.LastModified,
+                )),
+              });
+            }
+
+            const catalog = await db.query(`
+              SELECT table_name, column_name
+                FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND (
+                   lower(column_name) LIKE '%legal%hold%'
+                   OR lower(column_name) LIKE '%compliance%hold%'
+                 )
+               ORDER BY table_name, column_name
+            `);
+            emit({ event: "application_legal_hold_columns", rows: catalog.rows });
+
+            const businessHoldEvents = await db.query(`
+              SELECT tenant_id, action, actor, created_at
+                FROM audit_events
+               WHERE tenant_id = ANY($1::text[])
+                 AND action <> 'tenant_blob.purge_blocked_legal_hold'
+                 AND lower(action) ~ '(legal|compliance)[._ -]?hold'
+               ORDER BY created_at, tenant_id
+            `, [tenantIds]);
+            emit({
+              event: "retirement_tenant_business_hold_audit",
+              matches: businessHoldEvents.rowCount,
+              rows: businessHoldEvents.rows,
+            });
+          } finally {
+            await db.query("ROLLBACK");
+            await db.end();
+            s3.destroy();
+          }
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+
+          minio_audit_env_keys="$(docker inspect brain-prod-minio \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | sed 's/=.*//' \
+            | grep -E '^MINIO_AUDIT' || true)"
+          if [[ -n "$minio_audit_env_keys" ]]; then
+            printf 'minio_audit_env_keys=%s\n' "$(printf '%s' "$minio_audit_env_keys" | paste -sd, -)"
+          else
+            echo 'minio_audit_env_keys=none'
+          fi
+
+          docker compose -p "$COMPOSE_PROJECT" \
             --env-file "$VM_ENV_FILE" $compose_files --profile agents \
             run --rm -T --no-deps --entrypoint /bin/sh minio-setup -c '
               set -eu
               mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-              checked=0
-              remaining=0
-              while IFS= read -r tenant_id; do
-                [ -n "$tenant_id" ] || continue
-                versions="$(mc ls --versions --recursive "local/$BLOB_CONTAINER/$tenant_id/" 2>/dev/null || true)"
-                if [ -n "$versions" ]; then
-                  count="$(printf "%s\n" "$versions" | wc -l | tr -d " ")"
-                else
-                  count=0
-                fi
-                checked=$((checked + 1))
-                remaining=$((remaining + count))
-                printf "minio_tenant=%s remaining_versions=%s\n" "$tenant_id" "$count"
-              done
-              printf "minio_tenants_checked=%s remaining_versions=%s\n" "$checked" "$remaining"
-              [ "$checked" -eq 24 ] && [ "$remaining" -eq 0 ]
-            ' < /tmp/commercial-demo-blob-purge-tenants.txt)"
-          printf '%s\n' "$minio_evidence"
-          rm -f /tmp/commercial-demo-blob-purge-tenants.txt
+              mc admin config get local audit_webhook \
+                | awk '\''
+                    /^[[:space:]]*#/ || NF == 0 { next }
+                    {
+                      printf "minio_config_subsystem=%s", $1
+                      for (i = 2; i <= NF; i += 1) {
+                        if ($i ~ /^enable=/) printf " %s", $i
+                      }
+                      print ""
+                    }
+                  '\''
+            '
           echo "::endgroup::"
 
           echo "::group::api redacted logs"
