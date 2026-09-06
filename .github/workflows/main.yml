@@ -135,8 +135,10 @@ jobs:
         run: |
           pnpm -C tools/migrate run build
           node tools/migrate/dist/cli.js up
-      - run: pnpm run test:coverage
       - name: Apply DB role model for least-privilege integration tests
+        # Coverage now includes tenant-deletion integration tests whenever its
+        # role URL is present. Apply the role and its test password before that
+        # pass, matching pr.yml, so main exercises the same narrow-role path.
         env:
           PGPASSWORD: brain
         run: |
@@ -159,6 +161,7 @@ jobs:
             -v brain_auth_password="brain_auth" \
             -v brain_auth_audit_writer_password="brain_auth_audit_writer" \
             -f infra/db-roles.sql
+      - run: pnpm run test:coverage
       - name: Integration tests
         # `--if-present` must precede the script name; after it, pnpm forwards it
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.
