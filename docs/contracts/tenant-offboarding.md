@@ -4,6 +4,28 @@ This contract covers tenant data portability and erasure for the Brain core API.
 It is the developer reference for GDPR Article 20 export and GDPR Article 17
 erasure behavior.
 
+## BrainMVB Demo TTL Cleanup
+
+BrainMVB calls `POST /v1/admin/tenants/{tenant_id}/delete` after its own TTL
+policy marks a demo tenant expired. It uses a dedicated Brain Auth bearer JWT
+for an `api_partner` principal with only the `tenant:delete` scope. A
+`brain_sk_*` tenant API key and the BFF shared secret are invalid on this
+surface. The credential must be provisioned and rotated through an
+operator-controlled Brain Auth signing process; this API does not expose a
+credential-issuance endpoint.
+
+The response is `202 Accepted` with a `job_id`. BrainMVB polls
+`GET /v1/admin/tenant-deletions/{job_id}` with its dedicated credential until the
+status is `completed` or `failed`. Intermediate states are `queued`, `fencing`,
+`deleting`, and `purging_blobs`. A repeated POST for the same tenant returns the
+existing job id. The POST limit is 10 requests per minute per caller.
+
+The worker quarantines only the target tenant's agents. Other tenants and the
+shared worker process remain active. Database deletion is transactional and
+reconciled under `brain_tenant_deletion`; blob purge runs only after commit.
+Any legal-hold release is version-specific under the exact tenant prefix and
+has a durable audit intent written before provider state changes.
+
 ## Export Before Erase
 
 A departing tenant should export first, verify the archive, then request

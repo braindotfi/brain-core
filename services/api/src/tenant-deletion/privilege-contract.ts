@@ -58,6 +58,7 @@ export function tenantDeletionPrivilegeExpectations(
   for (const table of deletionTables) {
     addExpected(expectations, table, ["SELECT", "DELETE"], true);
   }
+  addExpected(expectations, "agents", ["UPDATE"], false);
   addExpected(expectations, "tenants", ["SELECT", "UPDATE", "DELETE"], true);
   addExpected(expectations, "audit_events", ["SELECT"], true);
   addExpected(expectations, "audit_anchors", ["SELECT"], true);
@@ -71,6 +72,13 @@ export function tenantDeletionPrivilegeExpectations(
   );
   addExpected(expectations, "tenant_blob_purge_jobs", ["SELECT", "INSERT", "UPDATE"], true);
   addExpected(expectations, "tenant_blob_purge_audit_outbox", ["SELECT", "INSERT", "UPDATE"], true);
+  addExpected(expectations, "tenant_deletion_jobs", ["SELECT", "INSERT", "UPDATE"], true);
+  addExpected(
+    expectations,
+    "tenant_deletion_jobs",
+    ["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"],
+    false,
+  );
   addExpected(
     expectations,
     "commercial_demo_retirement_progress",
@@ -161,10 +169,31 @@ export async function assertTenantDeletionPrivilegeContract(
     throw new Error(`tenant-deletion privilege contract failed: ${JSON.stringify(mismatches)}`);
   }
 
+  const agentUpdateColumns = await client.query<{
+    column_name: string;
+    actual: boolean;
+    expected: boolean;
+  }>(
+    `SELECT column_name,
+            has_column_privilege(current_user, 'public.agents', column_name, 'UPDATE') AS actual,
+            (column_name = 'state') AS expected
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'agents'
+      ORDER BY ordinal_position`,
+  );
+  const columnMismatches = agentUpdateColumns.rows.filter(
+    ({ actual, expected }) => actual !== expected,
+  );
+  if (columnMismatches.length > 0) {
+    throw new Error(
+      `tenant-deletion agent UPDATE contract failed: ${JSON.stringify(columnMismatches)}`,
+    );
+  }
+
   return {
     role: role.role,
     superuser: role.superuser,
     tableOwnerMatches,
-    checkedPrivileges: results.rows.length,
+    checkedPrivileges: results.rows.length + agentUpdateColumns.rows.length,
   };
 }

@@ -15,10 +15,13 @@
  * worker cannot strand a job.
  *
  * Failure classification (review P1 #2): purgeTenant returns CLASSIFIED failures.
- * Transient / authorization / unknown errors are RETRIED (purgeTenant is
+ * Before purge, the worker writes a durable release-requested audit intent,
+ * clears legal holds only for the exact version manifest under the tenant
+ * prefix, and verifies each released version is OFF. Transient, authorization,
+ * and unknown errors are RETRIED (purgeTenant is
  * idempotent) and bounded by the attempt cap. Only when every remaining failure
  * is a confirmed legal hold (WORM / object-lock) does the job terminate as
- * `blocked_legal_hold`. A 503 or expired credential no longer masquerades as one.
+ * `blocked_legal_hold`. A 503 or expired credential never masquerades as one.
  *
  * Transactional audit (review P2 #1): every lifecycle transition writes its audit
  * INTENT to `tenant_blob_purge_audit_outbox` in the SAME transaction as the
@@ -171,6 +174,54 @@ export async function runBlobPurgeCycle(
         payload,
         eventKey,
       });
+      if (action === "tenant_blob.purge_completed") {
+        const deletionJob = await conn.query<{
+          id: string;
+          requested_by: string;
+          total_rows_deleted: string | null;
+        }>(
+          `UPDATE tenant_deletion_jobs
+              SET status = 'completed', completed_at = now(), updated_at = now(),
+                  last_error = NULL
+            WHERE blob_purge_job_id = $1 AND status = 'purging_blobs'
+            RETURNING id, requested_by, total_rows_deleted`,
+          [job.id],
+        );
+        const completedDeletion = deletionJob.rows[0];
+        if (completedDeletion !== undefined) {
+          await enqueueAuditOutbox(conn, {
+            jobId: job.id,
+            tenantId: job.tenant_id,
+            action: "tenant.delete_completed",
+            payload: {
+              deletion_job_id: completedDeletion.id,
+              total_rows_deleted: Number(completedDeletion.total_rows_deleted ?? 0),
+              blob_purge_job_id: job.id,
+              blobs_deleted: payload["deleted"] ?? 0,
+            },
+            eventKey: `${completedDeletion.id}:tenant.delete_completed`,
+            actor: completedDeletion.requested_by,
+          });
+        }
+      } else if (
+        action === "tenant_blob.purge_exhausted" ||
+        action === "tenant_blob.purge_blocked_legal_hold"
+      ) {
+        await conn.query(
+          `UPDATE tenant_deletion_jobs
+              SET status = 'failed', completed_at = now(), updated_at = now(),
+                  last_error = $2
+            WHERE blob_purge_job_id = $1 AND status = 'purging_blobs'`,
+          [job.id, action],
+        );
+      } else if (action === "tenant_blob.purge_retried") {
+        await conn.query(
+          `UPDATE tenant_deletion_jobs
+              SET last_error = $2, updated_at = now()
+            WHERE blob_purge_job_id = $1 AND status = 'purging_blobs'`,
+          [job.id, String(payload["last_error"] ?? "blob purge retry scheduled")],
+        );
+      }
       await conn.query("COMMIT");
       return true;
     } catch (err) {
@@ -235,6 +286,39 @@ export async function runBlobPurgeCycle(
       });
     }
     try {
+      if (
+        deps.blob.inspectTenantLegalHolds !== undefined &&
+        deps.blob.releaseTenantLegalHolds !== undefined
+      ) {
+        const manifest = await deps.blob.inspectTenantLegalHolds(job.tenant_id);
+        if (manifest.heldVersions.length > 0) {
+          const releaseEventKey = `${job.id}:tenant_blob.legal_hold_release_requested:${manifest.manifestSha256}`;
+          // Persist the intent before changing provider state. It records only the
+          // exact tenant manifest hash and counts, never bucket-wide authority.
+          await enqueueAuditOutbox(deps.privilegedPool, {
+            jobId: job.id,
+            tenantId: job.tenant_id,
+            action: "tenant_blob.legal_hold_release_requested",
+            payload: {
+              manifest_sha256: manifest.manifestSha256,
+              versions: manifest.versions.length,
+              held_versions: manifest.heldVersions.length,
+            },
+            eventKey: releaseEventKey,
+          });
+          await deps.blob.releaseTenantLegalHolds(manifest);
+          await enqueueAuditOutbox(deps.privilegedPool, {
+            jobId: job.id,
+            tenantId: job.tenant_id,
+            action: "tenant_blob.legal_hold_released",
+            payload: {
+              manifest_sha256: manifest.manifestSha256,
+              released_versions: manifest.heldVersions.length,
+            },
+            eventKey: `${job.id}:tenant_blob.legal_hold_released:${manifest.manifestSha256}`,
+          });
+        }
+      }
       const result = await deps.blob.purgeTenant(job.tenant_id);
       const { failures } = result;
       if (failures.length === 0) {

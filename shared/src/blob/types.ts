@@ -66,6 +66,60 @@ export interface BlobPurgeResult {
   failures: BlobPurgeFailure[];
 }
 
+export interface BlobLegalHoldVersion {
+  path: string;
+  versionId: string | null;
+}
+
+export interface BlobLegalHoldManifest {
+  tenantId: string;
+  prefix: string;
+  versions: ReadonlyArray<BlobLegalHoldVersion>;
+  heldVersions: ReadonlyArray<BlobLegalHoldVersion>;
+  manifestSha256: string;
+}
+
+export function buildBlobLegalHoldManifest(
+  tenantId: string,
+  versions: ReadonlyArray<BlobLegalHoldVersion>,
+  heldVersions: ReadonlyArray<BlobLegalHoldVersion>,
+): BlobLegalHoldManifest {
+  const prefix = `${tenantId}/`;
+  const held = new Set(
+    heldVersions.map(({ path, versionId }) => JSON.stringify([path, versionId])),
+  );
+  const canonical = [...versions]
+    .map(({ path, versionId }) =>
+      JSON.stringify([path, versionId, held.has(JSON.stringify([path, versionId]))]),
+    )
+    .sort()
+    .join("\n");
+  return {
+    tenantId,
+    prefix,
+    versions: [...versions],
+    heldVersions: [...heldVersions],
+    manifestSha256: sha256Hex(Buffer.from(`${canonical}\n`)),
+  };
+}
+
+export function assertBlobLegalHoldManifest(manifest: BlobLegalHoldManifest): void {
+  if (manifest.prefix !== `${manifest.tenantId}/`) throw new Error("invalid legal-hold prefix");
+  for (const version of manifest.versions) {
+    if (!version.path.startsWith(manifest.prefix)) {
+      throw new Error("blob legal-hold manifest escaped tenant prefix");
+    }
+  }
+  const rebuilt = buildBlobLegalHoldManifest(
+    manifest.tenantId,
+    manifest.versions,
+    manifest.heldVersions,
+  );
+  if (rebuilt.manifestSha256 !== manifest.manifestSha256) {
+    throw new Error("blob legal-hold manifest hash mismatch");
+  }
+}
+
 export interface BlobAdapter {
   put(
     path: string,
@@ -87,6 +141,10 @@ export interface BlobAdapter {
    * deletes the remainder.
    */
   purgeTenant(tenantId: string): Promise<BlobPurgeResult>;
+  /** Inspect one exact tenant prefix before any legal hold is changed. */
+  inspectTenantLegalHolds?(tenantId: string): Promise<BlobLegalHoldManifest>;
+  /** Release only the held versions captured by an inspected manifest. */
+  releaseTenantLegalHolds?(manifest: BlobLegalHoldManifest): Promise<void>;
   /**
    * Permanently delete one object. Used for expiring sensitive export archives
    * without touching the rest of the tenant prefix. Idempotent when the object

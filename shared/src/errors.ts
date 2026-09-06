@@ -181,6 +181,7 @@ export const BRAIN_ERROR_CODES = [
   "tenant_not_found",
   "tenant_identity_already_linked",
   "tenant_export_job_not_found",
+  "tenant_deletion_job_not_found",
   "tenant_suspended",
   "tenant_access_denied",
 
@@ -430,6 +431,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   tenant_not_found: 404,
   tenant_identity_already_linked: 409,
   tenant_export_job_not_found: 404,
+  tenant_deletion_job_not_found: 404,
   source_not_found: 404,
   agent_not_found: 404,
   action_not_found: 404,

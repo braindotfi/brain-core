@@ -92,6 +92,7 @@ export const ID_PREFIX = {
   // RFC 0003 — durable tenant blob purge job (GDPR Art. 17). One row per
   // tenant deletion; survives the deletion and is drained by a privileged worker.
   tenantBlobPurgeJob: "tbp",
+  tenantDeletionJob: "tdel",
   // BC-9 — durable tenant data export job (GDPR Art. 20 portability).
   tenantExportJob: "texp",
   // Governance API — immutable audit report snapshots for external review.
@@ -181,6 +182,7 @@ export const newApiBillingPeriodId = (): string => brainId(ID_PREFIX.apiBillingP
 export const newApiBillingAdjustmentId = (): string => brainId(ID_PREFIX.apiBillingAdjustment);
 export const newApiEntitlementChangeId = (): string => brainId(ID_PREFIX.apiEntitlementChange);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
+export const newTenantDeletionJobId = (): string => brainId(ID_PREFIX.tenantDeletionJob);
 export const newGovernanceReportSnapshotId = (): string =>
   brainId(ID_PREFIX.governanceReportSnapshot);
 export const newOauthClientId = (): string => brainId(ID_PREFIX.oauthClient);
