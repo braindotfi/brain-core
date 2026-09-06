@@ -527,6 +527,284 @@ jobs:
           });
           NODE
 
+          echo "::group::commercial demo legal hold release preflight"
+          docker exec -i -w /app/services/api brain-prod-worker \
+            node --input-type=commonjs <<'NODE'
+          (async () => {
+          const { createHash } = require("node:crypto");
+          const { Client } = require("pg");
+          const {
+            GetObjectLegalHoldCommand,
+            GetObjectRetentionCommand,
+            ListObjectVersionsCommand,
+            S3Client,
+          } = require("@aws-sdk/client-s3");
+
+          const EXPECTED_CANDIDATE_HASH =
+            "bb1b86215c7676d4587db4fe50191610d169f46fd57125b2623347f1223efad8";
+          const EXPECTED_CANDIDATES = 1519;
+          const EXPECTED_JOBS = 24;
+          const EXPECTED_KEYS = 68;
+          const EXPECTED_VERSIONS = 69;
+          const OPERATION_ID = "commercial-demo-retirement-2026-09-03";
+          const protectedTenantIds = [
+            "tnt_00000000010000000000000000",
+            "tnt_01KYAT7A1QRKHTYW9H4RAR2SEX",
+            "tnt_01KYAT31JH0G043K77H8SKYG4N",
+            "tnt_01M0KHRVY3RT3EXN7WT2SPDFMZ",
+            "tnt_01M1GTBQN8R8PB6X6PN73YB6NP",
+            "tnt_01M1M64ZE1R8J9TB6C3DCRKA61",
+          ];
+          const bucket = process.env.BLOB_CONTAINER;
+          const dbUrl = process.env.BRAIN_TENANT_DELETION_DB_URL;
+          if (!bucket || !dbUrl) throw new Error("required production configuration is missing");
+
+          const assert = (condition, message) => {
+            if (!condition) throw new Error(`release preflight failed: ${message}`);
+          };
+          const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+          const pairId = (key, versionId) => JSON.stringify([key, versionId]);
+          const sameSet = (left, right) =>
+            left.size === right.size && [...left].every((value) => right.has(value));
+          const splitHeldPath = (value) => {
+            const at = value.lastIndexOf("@");
+            assert(at > 0 && at < value.length - 1, "malformed key and version pair");
+            return { key: value.slice(0, at), versionId: value.slice(at + 1) };
+          };
+          const errorCode = (error) =>
+            error && typeof error === "object"
+              ? String(error.name || error.Code || error.code || "unknown")
+              : "unknown";
+
+          const db = new Client({ connectionString: dbUrl });
+          const s3 = new S3Client({
+            endpoint: process.env.S3_ENDPOINT,
+            region: process.env.S3_REGION,
+            forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+            credentials: {
+              accessKeyId: process.env.S3_ACCESS_KEY_ID,
+              secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+            },
+          });
+          const listPrefix = async (prefix) => {
+            const versions = [];
+            const deleteMarkers = [];
+            let keyMarker;
+            let versionIdMarker;
+            do {
+              const page = await s3.send(
+                new ListObjectVersionsCommand({
+                  Bucket: bucket,
+                  Prefix: prefix,
+                  ...(keyMarker ? { KeyMarker: keyMarker } : {}),
+                  ...(versionIdMarker ? { VersionIdMarker: versionIdMarker } : {}),
+                }),
+              );
+              versions.push(...(page.Versions || []));
+              deleteMarkers.push(...(page.DeleteMarkers || []));
+              keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+              versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+            } while (keyMarker || versionIdMarker);
+            return { versions, deleteMarkers };
+          };
+
+          await db.connect();
+          await db.query("BEGIN TRANSACTION READ ONLY");
+          try {
+            const progress = await db.query(
+              `SELECT COUNT(*)::int AS candidates,
+                      COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                      COUNT(DISTINCT candidate_list_sha256)::int AS hash_count,
+                      MIN(candidate_list_sha256) AS candidate_hash
+                 FROM commercial_demo_retirement_progress
+                WHERE operation_id = $1`,
+              [OPERATION_ID],
+            );
+            const progressRow = progress.rows[0];
+            assert(progressRow.candidates === EXPECTED_CANDIDATES, "candidate count changed");
+            assert(progressRow.completed === EXPECTED_CANDIDATES, "candidate progress is incomplete");
+            assert(progressRow.hash_count === 1, "candidate progress contains multiple hashes");
+            assert(
+              progressRow.candidate_hash === EXPECTED_CANDIDATE_HASH,
+              "original candidate hash changed",
+            );
+
+            const jobs = await db.query(
+              `SELECT job.id, job.tenant_id, job.status, job.attempts,
+                      job.blob_artifact_count, job.deleted_count,
+                      job.legal_hold_paths, job.locked_at, job.locked_by,
+                      job.requested_at, job.completed_at
+                 FROM tenant_blob_purge_jobs job
+                 JOIN commercial_demo_retirement_progress progress
+                   ON progress.operation_id = $1
+                  AND progress.tenant_id = job.tenant_id
+                  AND progress.blob_purge_job_id = job.id
+                WHERE progress.status = 'completed'
+                  AND job.id IN (
+                    SELECT requested.job_id
+                      FROM tenant_blob_purge_audit_outbox requested
+                     WHERE requested.action = 'tenant_blob.purge_requested'
+                       AND requested.actor = 'ops-commercial-demo-retirement'
+                  )
+                ORDER BY job.tenant_id, job.id`,
+              [OPERATION_ID],
+            );
+            assert(jobs.rowCount === EXPECTED_JOBS, "purge job count changed");
+            assert(new Set(jobs.rows.map((row) => row.tenant_id)).size === EXPECTED_JOBS,
+              "purge jobs do not map one-to-one to tenants");
+            assert(jobs.rows.every((row) => row.status === "blocked_legal_hold"),
+              "a purge job is no longer blocked_legal_hold");
+            assert(jobs.rows.every((row) => row.locked_at === null && row.locked_by === null),
+              "a purge job is currently leased");
+            assert(jobs.rows.reduce((sum, row) => sum + row.blob_artifact_count, 0) === EXPECTED_KEYS,
+              "artifact-row count changed");
+
+            const tenantIds = jobs.rows.map((row) => row.tenant_id);
+            const tenantSet = new Set(tenantIds);
+            const held = jobs.rows.flatMap((row) =>
+              row.legal_hold_paths.map((value) => ({
+                jobId: row.id,
+                tenantId: row.tenant_id,
+                ...splitHeldPath(value),
+              })),
+            );
+            const heldPairSet = new Set(held.map((row) => pairId(row.key, row.versionId)));
+            const heldKeySet = new Set(held.map((row) => row.key));
+            assert(held.length === EXPECTED_VERSIONS, "held version count changed");
+            assert(heldPairSet.size === EXPECTED_VERSIONS, "held version list contains duplicates");
+            assert(heldKeySet.size === EXPECTED_KEYS, "held unique-key count changed");
+            for (const tenantId of protectedTenantIds) {
+              assert(!tenantSet.has(tenantId), `protected tenant ${tenantId} is in the job set`);
+              assert(
+                held.every((row) => !row.key.startsWith(`${tenantId}/`)),
+                `protected tenant ${tenantId} is in the object manifest`,
+              );
+            }
+            for (const row of held) {
+              assert(row.key.startsWith(`${row.tenantId}/`),
+                `object prefix does not match job tenant ${row.tenantId}`);
+            }
+
+            const deletionEvidence = await db.query(
+              `SELECT deleted.tenant_id,
+                      uri.value AS blob_uri
+                 FROM tenant_blob_purge_audit_outbox deleted
+                 CROSS JOIN LATERAL jsonb_array_elements_text(
+                   deleted.payload->'blob_uris_pending_purge'
+                 ) uri(value)
+                WHERE deleted.action = 'tenant.deleted'
+                  AND deleted.actor = 'ops-commercial-demo-retirement'
+                  AND deleted.tenant_id = ANY($1::text[])
+                ORDER BY deleted.tenant_id, uri.value`,
+              [tenantIds],
+            );
+            const evidenceKeySet = new Set(deletionEvidence.rows.map((row) => row.blob_uri));
+            assert(deletionEvidence.rowCount === EXPECTED_KEYS, "deletion evidence row count changed");
+            assert(evidenceKeySet.size === EXPECTED_KEYS, "deletion evidence keys are not unique");
+            assert(sameSet(evidenceKeySet, heldKeySet),
+              "held keys differ from original tenant.deleted evidence");
+
+            const evidenceByTenant = new Map();
+            for (const row of held) {
+              const current = evidenceByTenant.get(row.tenantId) || [];
+              current.push(row);
+              evidenceByTenant.set(row.tenantId, current);
+            }
+            const perJob = [];
+            for (const job of jobs.rows) {
+              const expectedRows = evidenceByTenant.get(job.tenant_id) || [];
+              const expectedPairs = new Set(
+                expectedRows.map((row) => pairId(row.key, row.versionId)),
+              );
+              const inventory = await listPrefix(`${job.tenant_id}/`);
+              const actualPairs = new Set(
+                inventory.versions
+                  .filter((row) => row.Key && row.VersionId)
+                  .map((row) => pairId(row.Key, row.VersionId)),
+              );
+              assert(inventory.deleteMarkers.length === 0,
+                `unexpected delete marker under ${job.tenant_id}`);
+              assert(sameSet(actualPairs, expectedPairs),
+                `object version inventory changed for ${job.tenant_id}`);
+
+              for (const row of expectedRows) {
+                const hold = await s3.send(
+                  new GetObjectLegalHoldCommand({
+                    Bucket: bucket,
+                    Key: row.key,
+                    VersionId: row.versionId,
+                  }),
+                );
+                assert(hold.LegalHold?.Status === "ON",
+                  `legal hold is not ON for a manifest version in ${job.tenant_id}`);
+                try {
+                  const retention = await s3.send(
+                    new GetObjectRetentionCommand({
+                      Bucket: bucket,
+                      Key: row.key,
+                      VersionId: row.versionId,
+                    }),
+                  );
+                  assert(!retention.Retention,
+                    `a manifest version has an independent retention rule in ${job.tenant_id}`);
+                } catch (error) {
+                  assert(errorCode(error) === "NoSuchObjectLockConfiguration",
+                    `retention check failed for ${job.tenant_id}: ${errorCode(error)}`);
+                }
+              }
+
+              const canonicalLines = expectedRows
+                .map((row) => JSON.stringify([row.jobId, row.tenantId, row.key, row.versionId]))
+                .sort();
+              const times = inventory.versions
+                .map((row) => row.LastModified?.toISOString())
+                .filter(Boolean)
+                .sort();
+              perJob.push({
+                job_id: job.id,
+                tenant_id: job.tenant_id,
+                artifact_rows: job.blob_artifact_count,
+                unique_keys: new Set(expectedRows.map((row) => row.key)).size,
+                held_versions: expectedRows.length,
+                delete_markers: inventory.deleteMarkers.length,
+                manifest_sha256: sha256(`${canonicalLines.join("\n")}\n`),
+                earliest_object_time: times[0] || null,
+                latest_object_time: times.at(-1) || null,
+              });
+            }
+
+            const manifestLines = held
+              .map((row) => JSON.stringify([row.jobId, row.tenantId, row.key, row.versionId]))
+              .sort();
+            const manifestHash = sha256(`${manifestLines.join("\n")}\n`);
+            for (const summary of perJob) {
+              process.stdout.write(`${JSON.stringify({ event: "legal_hold_release_job", ...summary })}\n`);
+            }
+            process.stdout.write(`${JSON.stringify({
+              event: "legal_hold_release_manifest",
+              contract_passed: true,
+              original_candidate_count: progressRow.candidates,
+              original_candidate_hash: progressRow.candidate_hash,
+              jobs: jobs.rowCount,
+              tenants: tenantSet.size,
+              unique_keys: heldKeySet.size,
+              key_version_pairs: heldPairSet.size,
+              delete_markers: 0,
+              protected_ids_present: [],
+              manifest_sha256: manifestHash,
+            })}\n`);
+          } finally {
+            await db.query("ROLLBACK");
+            await db.end();
+            s3.destroy();
+          }
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+          echo "::endgroup::"
+
           minio_audit_env_keys="$(docker inspect brain-prod-minio \
             --format '{{range .Config.Env}}{{println .}}{{end}}' \
             | sed 's/=.*//' \
@@ -536,24 +814,6 @@ jobs:
           else
             echo 'minio_audit_env_keys=none'
           fi
-
-          docker compose -p "$COMPOSE_PROJECT" \
-            --env-file "$VM_ENV_FILE" $compose_files --profile agents \
-            run --rm -T --no-deps --entrypoint /bin/sh minio-setup -c '
-              set -eu
-              mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-              mc admin config get local audit_webhook \
-                | awk '\''
-                    /^[[:space:]]*#/ || NF == 0 { next }
-                    {
-                      printf "minio_config_subsystem=%s", $1
-                      for (i = 2; i <= NF; i += 1) {
-                        if ($i ~ /^enable=/) printf " %s", $i
-                      }
-                      print ""
-                    }
-                  '\''
-            '
           echo "::endgroup::"
 
           echo "::group::api redacted logs"
