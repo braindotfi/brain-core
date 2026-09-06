@@ -1,0 +1,76 @@
+name: ops-release-commercial-demo-blob-legal-holds
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_sha256:
+        description: "Approved SHA-256 of the exact 24-job, 69-version release manifest."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release exact demo blob holds and requeue purge
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: production-tenant-deletion
+      cancel-in-progress: false
+    env:
+      APPROVED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+    steps:
+      - name: Check out reviewed release operation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate approved manifest input and operation shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$APPROVED_MANIFEST_SHA256" == \
+            "90a7217ff41c9530a738fc05b2e6b7bb759cf2a62ecc1e6a733398d45ff44483" ]]
+          grep -F 'PutObjectLegalHoldCommand' \
+            scripts/ops/release-commercial-demo-blob-legal-holds.mjs
+          grep -F 'VersionId: row.versionId' \
+            scripts/ops/release-commercial-demo-blob-legal-holds.mjs
+          if grep -Ei 'legalhold (clear|set).*(--recursive|-r)|PutBucket|DeleteBucket' \
+            scripts/ops/release-commercial-demo-blob-legal-holds.mjs; then
+            echo "recursive or bucket-level object-lock operation is forbidden"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Release exact holds and requeue fixed purge jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_root="/tmp/commercial-demo-legal-hold-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "mkdir -p '$remote_root' && chmod 700 '$remote_root'"
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/release-commercial-demo-blob-legal-holds.mjs \
+            "azureuser@$VM_HOST:$remote_root/release.mjs"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "APPROVED_MANIFEST_SHA256='$APPROVED_MANIFEST_SHA256' REMOTE_ROOT='$remote_root' bash -s" \
+            <<'REMOTE'
+          set -euo pipefail
+          trap 'rm -rf "$REMOTE_ROOT"' EXIT
+          docker exec -i -w /app/services/api \
+            -e APPROVED_MANIFEST_SHA256="$APPROVED_MANIFEST_SHA256" \
+            brain-prod-worker node --input-type=module \
+            < "$REMOTE_ROOT/release.mjs" \
+            | tee "$REMOTE_ROOT/release-report.jsonl"
+          REMOTE
