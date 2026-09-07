@@ -1,61 +1,39 @@
-name: ops-api-health-diagnostics
+name: ops-mint-brainmvb-delete-jwt
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Deploy target to inspect."
+        description: "Deploy target for credential issuance."
         required: true
         type: choice
         options:
-          - staging
           - production
 
 permissions:
   contents: read
 
 jobs:
-  diagnose:
-    name: api health diagnostics
+  mint:
+    name: mint encrypted BrainMVB tenant-delete JWT
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    environment: production
     env:
       TARGET: ${{ inputs.target }}
-      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
-      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
-      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
-      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
     steps:
-      - name: Select target
+      - name: Require production target
         shell: bash
         run: |
-          case "$TARGET" in
-            staging)
-              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
-              {
-                echo "VM_SSH_KEY<<EOF"
-                echo "$VM_SSH_KEY_STAGING"
-                echo "EOF"
-              } >> "$GITHUB_ENV"
-              echo "VM_ENV_FILE=.env.staging" >> "$GITHUB_ENV"
-              echo "COMPOSE_PROJECT=brain-staging" >> "$GITHUB_ENV"
-              ;;
-            production)
-              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
-              {
-                echo "VM_SSH_KEY<<EOF"
-                echo "$VM_SSH_KEY_PRODUCTION"
-                echo "EOF"
-              } >> "$GITHUB_ENV"
-              echo "VM_ENV_FILE=.env.prod" >> "$GITHUB_ENV"
-              echo "COMPOSE_PROJECT=brain-prod" >> "$GITHUB_ENV"
-              ;;
-            *)
-              echo "target must be staging or production"
-              exit 1
-              ;;
-          esac
+          if [[ "$TARGET" != "production" ]]; then
+            echo "target must be production"
+            exit 1
+          fi
+
+      - name: Check out encrypted-delivery recipient
+        uses: actions/checkout@v4
 
       - name: Configure SSH
         shell: bash
@@ -65,59 +43,63 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
-      - name: Run fixed api diagnostics
+      - name: Mint and envelope-encrypt credential
         shell: bash
         run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
           set -euo pipefail
+          encrypted_path="$RUNNER_TEMP/brainmvb-tenant-delete-jwt.cms"
 
-          cd ~/brain-core
-          compose_files='-f docker-compose.prod.yml'
-          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          {
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+              "docker exec -i -w /app/services/auth brain-prod-auth node --input-type=module" <<'NODE'
+          import { JwtSigner } from "@brain/shared";
 
-          echo "::group::api signup env presence"
-          if [[ ! -f "$VM_ENV_FILE" ]]; then
-            echo "env_file=$VM_ENV_FILE"
-            echo "env_file_status=missing"
-            exit 1
-          fi
-          echo "env_file=$VM_ENV_FILE"
-          for key in \
-            BRAIN_SELF_SERVE_SIGNUP \
-            EMAIL_ENDPOINT \
-            EMAIL_API_KEY \
-            EMAIL_FROM
-          do
-            line="$(grep -E "^${key}=" "$VM_ENV_FILE" | tail -n 1 || true)"
-            if [[ -z "$line" ]]; then
-              echo "${key}=missing"
-            elif [[ "$line" == "${key}=" ]]; then
-              echo "${key}=blank"
-            else
-              echo "${key}=present"
-            fi
-          done
-          echo "::endgroup::"
+          const jti = "token_01M1XYGA2Y96GYKWD7HF16808Z";
+          const now = Math.floor(Date.now() / 1000);
+          const exp = now + 90 * 24 * 60 * 60;
+          const signingKey = JSON.parse(process.env.AUTH_SIGN_KEY);
+          const signer = new JwtSigner({
+            issuer: process.env.AUTH_ISSUER,
+            audience: "brain-api",
+            key: signingKey,
+            algorithm: signingKey.alg ?? "RS256",
+          });
 
-          echo "::group::api compose status"
-          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents ps api || true
-          echo "::endgroup::"
+          const token = await signer.sign({
+            id: "partner_01M1XHBVJZXPEFDAB98E70CBRF",
+            type: "api_partner",
+            tenantId: "tnt_00000000010000000000000000",
+            scopes: ["tenant:delete"],
+            tokenId: jti,
+            expiresAt: exp,
+          });
 
-          echo "::group::api local health"
-          curl -sS --max-time 5 http://localhost:3000/health || true
-          echo
-          echo "::endgroup::"
+          const response = await fetch(
+            "http://api:3000/v1/admin/tenant-deletions/tdel_01M1XSRCC2799C4DWPX6FYG7BH",
+            { headers: { authorization: `Bearer ${token}` } },
+          );
+          if (response.status !== 200) {
+            const body = await response.json().catch(() => ({}));
+            const code = body?.error?.code ?? body?.code ?? null;
+            throw new Error(
+              `new credential validation failed: http_status=${response.status} error_code=${String(code)}`,
+            );
+          }
 
-          echo "::group::api redacted logs"
-          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
-            logs --tail=160 api 2>&1 \
-            | sed -E \
-                -e 's/(AUTH_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's/(EMAIL_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's/(BRAIN_[A-Z0-9_]*PASSWORD=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's#(postgres(ql)?://)[^[:space:]]+#\1[redacted]#g' \
-                -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
-            || true
-          echo "::endgroup::"
-          REMOTE
+          process.stdout.write(token);
+          NODE
+          } | openssl cms -encrypt -binary -aes-256-cbc \
+            -outform DER \
+            -out "$encrypted_path" \
+            .github/ops/brainmvb-rotation-recipient-20260907.pem
+
+          test -s "$encrypted_path"
+          openssl cms -cmsout -inform DER -in "$encrypted_path" -noout
+
+      - name: Upload encrypted credential
+        uses: actions/upload-artifact@v4
+        with:
+          name: brainmvb-tenant-delete-jwt-encrypted
+          path: ${{ runner.temp }}/brainmvb-tenant-delete-jwt.cms
+          if-no-files-found: error
+          retention-days: 1
