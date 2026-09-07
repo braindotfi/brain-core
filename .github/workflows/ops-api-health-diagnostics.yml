@@ -109,6 +109,203 @@ jobs:
           echo
           echo "::endgroup::"
 
+          echo "::group::three tenant deletion jobs"
+          docker exec -i brain-prod-postgres psql -U brain -d brain -AtX \
+            -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+          SET LOCAL statement_timeout = '30s';
+          SET LOCAL lock_timeout = '1s';
+
+          CREATE TEMP TABLE target_deletions (
+            job_id text PRIMARY KEY,
+            tenant_id text NOT NULL UNIQUE
+          ) ON COMMIT DROP;
+          INSERT INTO target_deletions (job_id, tenant_id) VALUES
+            ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
+            ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK');
+
+          SELECT json_build_object(
+            'event', 'tenant_deletion_job',
+            'job_id', job.id,
+            'tenant_id', job.tenant_id,
+            'mapping_matches', job.tenant_id = target.tenant_id,
+            'status', job.status,
+            'expected_rows', job.expected_rows,
+            'deleted_rows', job.deleted_rows,
+            'total_rows_deleted', job.total_rows_deleted,
+            'blob_purge_job_id', job.blob_purge_job_id,
+            'blob_artifact_count', job.blob_artifact_count,
+            'last_error', job.last_error,
+            'created_at', job.created_at,
+            'started_at', job.started_at,
+            'completed_at', job.completed_at
+          )::text
+            FROM target_deletions target
+            LEFT JOIN tenant_deletion_jobs job ON job.id = target.job_id
+           ORDER BY target.job_id;
+
+          SELECT json_build_object(
+            'event', 'tenant_blob_purge_job',
+            'deletion_job_id', deletion.id,
+            'purge_job_id', purge.id,
+            'tenant_id', purge.tenant_id,
+            'status', purge.status,
+            'attempts', purge.attempts,
+            'blob_artifact_count', purge.blob_artifact_count,
+            'deleted_count', purge.deleted_count,
+            'legal_hold_paths', purge.legal_hold_paths,
+            'last_error', purge.last_error,
+            'requested_at', purge.requested_at,
+            'completed_at', purge.completed_at
+          )::text
+            FROM target_deletions target
+            JOIN tenant_deletion_jobs deletion ON deletion.id = target.job_id
+            LEFT JOIN tenant_blob_purge_jobs purge ON purge.id = deletion.blob_purge_job_id
+           ORDER BY target.job_id;
+
+          SELECT json_build_object(
+            'event', 'tenant_deletion_audit_outbox',
+            'deletion_job_id', deletion.id,
+            'tenant_id', outbox.tenant_id,
+            'action', outbox.action,
+            'status', outbox.status,
+            'attempts', outbox.attempts,
+            'audit_event_id', outbox.audit_event_id,
+            'last_error', outbox.last_error,
+            'payload', outbox.payload,
+            'published_at', outbox.published_at
+          )::text
+            FROM target_deletions target
+            JOIN tenant_deletion_jobs deletion ON deletion.id = target.job_id
+            JOIN tenant_blob_purge_audit_outbox outbox
+              ON outbox.tenant_id = target.tenant_id
+             AND (outbox.job_id IN (deletion.id, deletion.blob_purge_job_id)
+                  OR outbox.event_key LIKE deletion.id || ':%')
+           ORDER BY target.job_id, outbox.created_at, outbox.id;
+
+          SELECT json_build_object(
+            'event', 'preserved_audit_events',
+            'tenant_id', target.tenant_id,
+            'total_preserved', COALESCE(SUM(audit.action_count), 0),
+            'actions', COALESCE(
+              json_object_agg(audit.action, audit.action_count ORDER BY audit.action)
+                FILTER (WHERE audit.action IS NOT NULL),
+              '{}'::json
+            )
+          )::text
+            FROM target_deletions target
+            LEFT JOIN LATERAL (
+              SELECT action, COUNT(*)::integer AS action_count, MIN(id) AS id
+                FROM audit_events
+               WHERE tenant_id = target.tenant_id
+               GROUP BY action
+            ) audit ON true
+           GROUP BY target.tenant_id
+           ORDER BY target.tenant_id;
+
+          WITH job_summary AS (
+            SELECT COUNT(job.id)::integer AS found,
+                   COUNT(*) FILTER (WHERE job.tenant_id = target.tenant_id)::integer AS mappings,
+                   COUNT(*) FILTER (WHERE job.status = 'completed')::integer AS completed,
+                   COALESCE(SUM(job.total_rows_deleted), 0)::bigint AS rows_deleted,
+                   COALESCE(SUM(job.blob_artifact_count), 0)::integer AS blob_artifacts
+              FROM target_deletions target
+              LEFT JOIN tenant_deletion_jobs job ON job.id = target.job_id
+          ),
+          purge_summary AS (
+            SELECT COUNT(purge.id)::integer AS found,
+                   COUNT(*) FILTER (WHERE purge.status = 'completed')::integer AS completed,
+                   COALESCE(SUM(purge.deleted_count), 0)::integer AS deleted,
+                   COALESCE(SUM(cardinality(purge.legal_hold_paths)), 0)::integer AS holds_remaining
+              FROM target_deletions target
+              JOIN tenant_deletion_jobs deletion ON deletion.id = target.job_id
+              LEFT JOIN tenant_blob_purge_jobs purge ON purge.id = deletion.blob_purge_job_id
+          ),
+          tenant_summary AS (
+            SELECT COUNT(tenant.id)::integer AS remaining
+              FROM target_deletions target
+              LEFT JOIN tenants tenant ON tenant.id = target.tenant_id
+          ),
+          outbox_summary AS (
+            SELECT COUNT(*) FILTER (WHERE outbox.status <> 'published')::integer AS unpublished,
+                   COUNT(*) FILTER (WHERE outbox.action = 'tenant_blob.legal_hold_release_requested' AND outbox.status = 'published')::integer AS release_requested,
+                   COUNT(*) FILTER (WHERE outbox.action = 'tenant_blob.legal_hold_released' AND outbox.status = 'published')::integer AS holds_released,
+                   COUNT(*) FILTER (WHERE outbox.action = 'tenant_blob.purge_completed' AND outbox.status = 'published')::integer AS purges_completed,
+                   COUNT(*) FILTER (WHERE outbox.action = 'tenant.delete_completed' AND outbox.status = 'published')::integer AS deletions_completed,
+                   COUNT(*) FILTER (WHERE outbox.audit_event_id IS NOT NULL AND audit.id IS NULL)::integer AS published_audit_events_missing
+              FROM target_deletions target
+              JOIN tenant_deletion_jobs deletion ON deletion.id = target.job_id
+              JOIN tenant_blob_purge_audit_outbox outbox
+                ON outbox.tenant_id = target.tenant_id
+               AND (outbox.job_id IN (deletion.id, deletion.blob_purge_job_id)
+                    OR outbox.event_key LIKE deletion.id || ':%')
+              LEFT JOIN audit_events audit ON audit.id = outbox.audit_event_id
+          )
+          SELECT json_build_object(
+            'event', 'three_tenant_deletion_summary',
+            'jobs_found', job_summary.found,
+            'job_mappings_matched', job_summary.mappings,
+            'jobs_completed', job_summary.completed,
+            'total_rows_deleted', job_summary.rows_deleted,
+            'blob_artifact_rows', job_summary.blob_artifacts,
+            'purge_jobs_found', purge_summary.found,
+            'purge_jobs_completed', purge_summary.completed,
+            'objects_deleted', purge_summary.deleted,
+            'legal_hold_paths_remaining', purge_summary.holds_remaining,
+            'tenant_rows_remaining', tenant_summary.remaining,
+            'outbox_unpublished', outbox_summary.unpublished,
+            'release_requested_events', outbox_summary.release_requested,
+            'legal_hold_released_events', outbox_summary.holds_released,
+            'purge_completed_events', outbox_summary.purges_completed,
+            'delete_completed_events', outbox_summary.deletions_completed,
+            'published_audit_events_missing', outbox_summary.published_audit_events_missing,
+            'contract_passed', job_summary.found = 3
+              AND job_summary.mappings = 3
+              AND job_summary.completed = 3
+              AND purge_summary.found = 3
+              AND purge_summary.completed = 3
+              AND purge_summary.holds_remaining = 0
+              AND tenant_summary.remaining = 0
+              AND outbox_summary.unpublished = 0
+              AND outbox_summary.holds_released = 3
+              AND outbox_summary.purges_completed = 3
+              AND outbox_summary.deletions_completed = 3
+              AND outbox_summary.published_audit_events_missing = 0
+          )::text
+            FROM job_summary, purge_summary, tenant_summary, outbox_summary;
+
+          COMMIT;
+          SQL
+
+          minio_evidence="$(docker compose -p "$COMPOSE_PROJECT" \
+            --env-file "$VM_ENV_FILE" $compose_files --profile agents \
+            run --rm -T --no-deps --entrypoint /bin/sh minio-setup -c '
+              set -eu
+              mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+              checked=0
+              remaining=0
+              for tenant_id in \
+                tnt_01M1VDRWWFWR56GGWZ95BJJ1GW \
+                tnt_01M1WH52ZYD4HN2F43K3YRNQHM \
+                tnt_01M1WH5DKBA1A50Z1G3FTR6YBK
+              do
+                versions="$(mc ls --versions --recursive "local/$BLOB_CONTAINER/$tenant_id/" 2>/dev/null || true)"
+                if [ -n "$versions" ]; then
+                  count="$(printf "%s\n" "$versions" | wc -l | tr -d " ")"
+                else
+                  count=0
+                fi
+                checked=$((checked + 1))
+                remaining=$((remaining + count))
+                printf "minio_tenant=%s remaining_versions_or_markers=%s\n" "$tenant_id" "$count"
+              done
+              printf "minio_tenants_checked=%s remaining_versions_or_markers=%s\n" "$checked" "$remaining"
+              [ "$checked" -eq 3 ] && [ "$remaining" -eq 0 ]
+            ')"
+          printf '%s\n' "$minio_evidence"
+          echo "::endgroup::"
+
           echo "::group::api redacted logs"
           docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
             logs --tail=160 api 2>&1 \
