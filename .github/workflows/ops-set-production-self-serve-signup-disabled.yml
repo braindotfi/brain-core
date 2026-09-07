@@ -1,0 +1,109 @@
+name: ops-set-production-self-serve-signup-disabled
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type SET_PRODUCTION_SELF_SERVE_SIGNUP_FALSE to make the disabled state explicit."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: set production self-serve signup false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Set the production flag and recreate only the API
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "SET_PRODUCTION_SELF_SERVE_SIGNUP_FALSE" ]]
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "CONFIRMATION='$CONFIRMATION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "SET_PRODUCTION_SELF_SERVE_SIGNUP_FALSE" ]]
+
+          cd ~/brain-core
+          env_file=.env.prod
+          key=BRAIN_SELF_SERVE_SIGNUP
+
+          [[ -f "$env_file" ]]
+          count="$(grep -Ec "^${key}=" "$env_file" || true)"
+          if [[ "$count" -gt 1 ]]; then
+            echo "self_serve_signup_status=duplicate_env_entries"
+            exit 1
+          fi
+
+          current="$(grep -E "^${key}=" "$env_file" | tail -n 1 || true)"
+          if [[ "$current" == "${key}=false" ]]; then
+            echo "self_serve_signup_config_status=already_explicit_false"
+          else
+            backup="${env_file}.bak-self-serve-signup-$(date -u +%Y%m%dT%H%M%SZ)"
+            temporary="$(mktemp "${env_file}.tmp.XXXXXX")"
+            chmod --reference="$env_file" "$temporary"
+            cp --preserve=mode,ownership,timestamps "$env_file" "$backup"
+            awk -v key="$key" '
+              $0 ~ "^" key "=" {
+                print key "=false"
+                seen = 1
+                next
+              }
+              { print }
+              END {
+                if (!seen) print key "=false"
+              }
+            ' "$env_file" > "$temporary"
+            mv "$temporary" "$env_file"
+            echo "self_serve_signup_config_status=written_explicit_false"
+          fi
+
+          grep -qx "${key}=false" "$env_file"
+
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents \
+            up -d --no-deps --no-build --force-recreate api
+
+          for _ in $(seq 1 12); do
+            if docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents \
+              exec -T api printenv "$key" 2>/dev/null | grep -qx false \
+              && [[ "$(docker inspect --format '{{.State.Health.Status}}' brain-prod-api 2>/dev/null || true)" == "healthy" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents \
+            exec -T api printenv "$key" | grep -qx false
+          docker inspect --format '{{.State.Health.Status}}' brain-prod-api | grep -qx healthy
+          echo "self_serve_signup_runtime_value=false"
+          echo "api_git_sha=$(docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents exec -T api printenv GIT_SHA)"
+          REMOTE
+
+      - name: Verify public API health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 10 https://api.brain.fi/health
