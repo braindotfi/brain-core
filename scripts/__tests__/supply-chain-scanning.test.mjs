@@ -88,7 +88,16 @@ test("every temporary Trivy exception has a reason and expiry", () => {
   for (const { line, index } of advisoryIndexes) {
     const context = lines.slice(Math.max(0, index - 2), index).join("\n");
     assert.match(context, /# .+Reassess by \d{4}-\d{2}-\d{2}\./, `${line} needs a reason`);
-    assert.match(context, /# exp:\d{4}-\d{2}-\d{2}/, `${line} needs an expiry`);
+    assert.ok(
+      / exp:\d{4}-\d{2}-\d{2}$/.test(line) || /# exp:\d{4}-\d{2}-\d{2}/.test(context),
+      `${line} needs an expiry`,
+    );
+  }
+});
+
+test("reviewed util-linux exceptions use Trivy-enforced inline expiry", () => {
+  for (const advisory of ["CVE-2026-76642", "CVE-2026-78408", "CVE-2026-78409", "CVE-2026-78410"]) {
+    assert.match(trivyIgnore, new RegExp(`^${advisory} exp:2026-10-04$`, "m"));
   }
 });
 
