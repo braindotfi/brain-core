@@ -1,4 +1,4 @@
-name: ops-api-health-diagnostics
+name: ops-revoke-brainmvb-delete-jti
 
 on:
   workflow_dispatch:
@@ -8,54 +8,29 @@ on:
         required: true
         type: choice
         options:
-          - staging
           - production
 
 permissions:
   contents: read
 
 jobs:
-  diagnose:
-    name: api health diagnostics
+  revoke:
+    name: revoke BrainMVB tenant-delete jti
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    environment: production
     env:
       TARGET: ${{ inputs.target }}
-      VM_HOST_STAGING: ${{ secrets.VM_HOST_STAGING }}
-      VM_SSH_KEY_STAGING: ${{ secrets.VM_SSH_KEY_STAGING }}
-      VM_HOST_PRODUCTION: ${{ secrets.VM_HOST }}
-      VM_SSH_KEY_PRODUCTION: ${{ secrets.VM_SSH_KEY }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
     steps:
-      - name: Select target
+      - name: Require production target
         shell: bash
         run: |
-          case "$TARGET" in
-            staging)
-              echo "VM_HOST=$VM_HOST_STAGING" >> "$GITHUB_ENV"
-              {
-                echo "VM_SSH_KEY<<EOF"
-                echo "$VM_SSH_KEY_STAGING"
-                echo "EOF"
-              } >> "$GITHUB_ENV"
-              echo "VM_ENV_FILE=.env.staging" >> "$GITHUB_ENV"
-              echo "COMPOSE_PROJECT=brain-staging" >> "$GITHUB_ENV"
-              ;;
-            production)
-              echo "VM_HOST=$VM_HOST_PRODUCTION" >> "$GITHUB_ENV"
-              {
-                echo "VM_SSH_KEY<<EOF"
-                echo "$VM_SSH_KEY_PRODUCTION"
-                echo "EOF"
-              } >> "$GITHUB_ENV"
-              echo "VM_ENV_FILE=.env.prod" >> "$GITHUB_ENV"
-              echo "COMPOSE_PROJECT=brain-prod" >> "$GITHUB_ENV"
-              ;;
-            *)
-              echo "target must be staging or production"
-              exit 1
-              ;;
-          esac
+          if [[ "$TARGET" != "production" ]]; then
+            echo "target must be production"
+            exit 1
+          fi
 
       - name: Configure SSH
         shell: bash
@@ -65,59 +40,92 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
-      - name: Run fixed api diagnostics
+      - name: Revoke exact jti and verify rejection
         shell: bash
         run: |
-          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "VM_ENV_FILE='$VM_ENV_FILE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" <<'REMOTE'
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
 
-          cd ~/brain-core
-          compose_files='-f docker-compose.prod.yml'
-          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          docker inspect -f '{{.State.Status}}' brain-prod-api | grep -Fx running
+          docker inspect -f '{{.State.Status}}' brain-prod-auth | grep -Fx running
 
-          echo "::group::api signup env presence"
-          if [[ ! -f "$VM_ENV_FILE" ]]; then
-            echo "env_file=$VM_ENV_FILE"
-            echo "env_file_status=missing"
-            exit 1
-          fi
-          echo "env_file=$VM_ENV_FILE"
-          for key in \
-            BRAIN_SELF_SERVE_SIGNUP \
-            EMAIL_ENDPOINT \
-            EMAIL_API_KEY \
-            EMAIL_FROM
-          do
-            line="$(grep -E "^${key}=" "$VM_ENV_FILE" | tail -n 1 || true)"
-            if [[ -z "$line" ]]; then
-              echo "${key}=missing"
-            elif [[ "$line" == "${key}=" ]]; then
-              echo "${key}=blank"
-            else
-              echo "${key}=present"
-            fi
-          done
-          echo "::endgroup::"
+          docker exec -i -w /app/services/api brain-prod-api node --input-type=module <<'NODE'
+          import Redis from "ioredis";
+          import { RedisRevocationStore, redisRevocationKey } from "@brain/shared";
 
-          echo "::group::api compose status"
-          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents ps api || true
-          echo "::endgroup::"
+          const jti = "token_01M1XHBVK3TCFHTTGQVRF9NFRS";
+          const exp = 1796547429;
+          const redis = new Redis(process.env.REDIS_URL, {
+            enableReadyCheck: true,
+            maxRetriesPerRequest: 1,
+          });
 
-          echo "::group::api local health"
-          curl -sS --max-time 5 http://localhost:3000/health || true
-          echo
-          echo "::endgroup::"
+          try {
+            const store = new RedisRevocationStore(redis);
+            await store.revoke(jti, exp);
+            const revoked = await store.isRevoked(jti);
+            const ttlSeconds = await redis.ttl(redisRevocationKey(jti));
+            const maximumTtl = exp - Math.floor(Date.now() / 1000);
 
-          echo "::group::api redacted logs"
-          docker compose -p "$COMPOSE_PROJECT" --env-file "$VM_ENV_FILE" $compose_files --profile agents \
-            logs --tail=160 api 2>&1 \
-            | sed -E \
-                -e 's/(AUTH_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's/(EMAIL_[A-Z0-9_]*=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's/(BRAIN_[A-Z0-9_]*PASSWORD=)[^[:space:]]+/\1[redacted]/g' \
-                -e 's#(postgres(ql)?://)[^[:space:]]+#\1[redacted]#g' \
-                -e 's#(https?://)[^[:space:]]*(@)#\1[redacted]\2#g' \
-            || true
-          echo "::endgroup::"
+            if (!revoked || ttlSeconds <= 0 || ttlSeconds > maximumTtl) {
+              throw new Error(
+                `revocation verification failed: revoked=${revoked} ttl_seconds=${ttlSeconds}`,
+              );
+            }
+
+            console.log(
+              JSON.stringify({
+                jti,
+                revoked,
+                ttl_seconds: ttlSeconds,
+                expires_at: exp,
+              }),
+            );
+          } finally {
+            await redis.quit();
+          }
+          NODE
+
+          docker exec -i -w /app/services/auth brain-prod-auth node --input-type=module <<'NODE'
+          import { JwtSigner } from "@brain/shared";
+
+          const jti = "token_01M1XHBVK3TCFHTTGQVRF9NFRS";
+          const exp = 1796547429;
+          const signingKey = JSON.parse(process.env.AUTH_SIGN_KEY);
+          const signer = new JwtSigner({
+            issuer: process.env.AUTH_ISSUER,
+            audience: "brain-api",
+            key: signingKey,
+            algorithm: signingKey.alg ?? "RS256",
+          });
+          const token = await signer.sign({
+            id: "partner_01M1XHBVJZXPEFDAB98E70CBRF",
+            type: "api_partner",
+            tenantId: "tnt_00000000010000000000000000",
+            scopes: ["tenant:delete"],
+            tokenId: jti,
+            expiresAt: exp,
+          });
+
+          const response = await fetch(
+            "http://api:3000/v1/admin/tenant-deletions/tdel_01M1XSRCC2799C4DWPX6FYG7BH",
+            { headers: { authorization: `Bearer ${token}` } },
+          );
+          const body = await response.json().catch(() => ({}));
+          const code = body?.error?.code ?? body?.code ?? null;
+
+          if (response.status !== 401 || code !== "auth_token_invalid") {
+            throw new Error(
+              `old-jti rejection failed: http_status=${response.status} error_code=${String(code)}`,
+            );
+          }
+
+          console.log(
+            JSON.stringify({
+              jti,
+              old_jti_http_status: response.status,
+              old_jti_error_code: code,
+            }),
+          );
+          NODE
           REMOTE
