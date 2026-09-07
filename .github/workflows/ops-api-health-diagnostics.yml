@@ -116,15 +116,11 @@ jobs:
           SET LOCAL statement_timeout = '30s';
           SET LOCAL lock_timeout = '1s';
 
-          CREATE TEMP TABLE target_deletions (
-            job_id text PRIMARY KEY,
-            tenant_id text NOT NULL UNIQUE
-          ) ON COMMIT DROP;
-          INSERT INTO target_deletions (job_id, tenant_id) VALUES
+          WITH target_deletions(job_id, tenant_id) AS (VALUES
             ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
             ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
-            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK');
-
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK')
+          )
           SELECT json_build_object(
             'event', 'tenant_deletion_job',
             'job_id', job.id,
@@ -145,6 +141,11 @@ jobs:
             LEFT JOIN tenant_deletion_jobs job ON job.id = target.job_id
            ORDER BY target.job_id;
 
+          WITH target_deletions(job_id, tenant_id) AS (VALUES
+            ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
+            ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK')
+          )
           SELECT json_build_object(
             'event', 'tenant_blob_purge_job',
             'deletion_job_id', deletion.id,
@@ -164,6 +165,11 @@ jobs:
             LEFT JOIN tenant_blob_purge_jobs purge ON purge.id = deletion.blob_purge_job_id
            ORDER BY target.job_id;
 
+          WITH target_deletions(job_id, tenant_id) AS (VALUES
+            ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
+            ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK')
+          )
           SELECT json_build_object(
             'event', 'tenant_deletion_audit_outbox',
             'deletion_job_id', deletion.id,
@@ -184,6 +190,11 @@ jobs:
                   OR outbox.event_key LIKE deletion.id || ':%')
            ORDER BY target.job_id, outbox.created_at, outbox.id;
 
+          WITH target_deletions(job_id, tenant_id) AS (VALUES
+            ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
+            ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK')
+          )
           SELECT json_build_object(
             'event', 'preserved_audit_events',
             'tenant_id', target.tenant_id,
@@ -204,7 +215,12 @@ jobs:
            GROUP BY target.tenant_id
            ORDER BY target.tenant_id;
 
-          WITH job_summary AS (
+          WITH target_deletions(job_id, tenant_id) AS (VALUES
+            ('tdel_01M1XSRCC2799C4DWPX6FYG7BH', 'tnt_01M1VDRWWFWR56GGWZ95BJJ1GW'),
+            ('tdel_01M1XSRD4FDZ8PGDDQK1D4TJ94', 'tnt_01M1WH52ZYD4HN2F43K3YRNQHM'),
+            ('tdel_01M1XSRDZA8VG7AVR8YZWTZ6HR', 'tnt_01M1WH5DKBA1A50Z1G3FTR6YBK')
+          ),
+          job_summary AS (
             SELECT COUNT(job.id)::integer AS found,
                    COUNT(*) FILTER (WHERE job.tenant_id = target.tenant_id)::integer AS mappings,
                    COUNT(*) FILTER (WHERE job.status = 'completed')::integer AS completed,
