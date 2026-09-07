@@ -318,7 +318,7 @@ jobs:
               done
               printf "minio_tenants_checked=%s remaining_versions_or_markers=%s\n" "$checked" "$remaining"
               [ "$checked" -eq 3 ] && [ "$remaining" -eq 0 ]
-            ')"
+            ' </dev/null)"
           printf '%s\n' "$minio_evidence"
           echo "::endgroup::"
 
