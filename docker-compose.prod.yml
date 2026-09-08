@@ -162,9 +162,9 @@ services:
     restart: "no"
 
   # Reconcile the worker's managed MinIO user and exact bucket policy before
-  # any worker starts. The root credential is confined to this one-shot and
-  # the MinIO server/setup services. The managed credential lives in a
-  # separate host-only env file and is never loaded into api or surface-gateway.
+  # any worker starts. The worker receives only the managed credential from a
+  # separate host-only env file. Root access remains explicit on the API and
+  # surface gateway until the follow-up scope reduction is approved.
   minio-worker-setup:
     image: minio/mc:RELEASE.2024-10-08T09-37-26Z
     container_name: brain-prod-minio-worker-setup
