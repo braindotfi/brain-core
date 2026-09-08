@@ -1,0 +1,152 @@
+name: ops-audit-anchor-privileges
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact deployed commit SHA to verify."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify production audit-anchor privileges
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: prod-read-only-diagnostics
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - name: Validate exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Verify deployed SHA and runtime privileges
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "EXPECTED_SHA='$EXPECTED_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          env_file=.env.prod
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+
+          api_sha="$(docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents exec -T api printenv GIT_SHA | tr -d '\r')"
+          worker_sha="$(docker compose -p brain-prod --env-file "$env_file" $compose_files --profile agents exec -T worker printenv GIT_SHA | tr -d '\r')"
+          echo "api_git_sha=$api_sha"
+          echo "worker_git_sha=$worker_sha"
+          [[ "$api_sha" == "$EXPECTED_SHA" ]]
+          [[ "$worker_sha" == "$EXPECTED_SHA" ]]
+
+          docker exec -i brain-prod-postgres psql -X -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
+          BEGIN TRANSACTION READ ONLY;
+
+          WITH runtime_roles(role_name) AS (
+            VALUES
+              ('brain_app'),
+              ('brain_privileged'),
+              ('brain_wiki_reader'),
+              ('brain_mcp_reader'),
+              ('brain_raw_worker'),
+              ('brain_canonical_projector'),
+              ('brain_ledger_projector'),
+              ('brain_execution_worker'),
+              ('brain_audit_verifier'),
+              ('brain_audit_publisher'),
+              ('brain_resolver'),
+              ('brain_tenant_deletion'),
+              ('brain_surface_gateway'),
+              ('brain_surface_audit_writer'),
+              ('brain_auth'),
+              ('brain_auth_audit_writer')
+          )
+          SELECT
+            role_name,
+            has_table_privilege(role_name, 'audit_anchors', 'DELETE') AS can_delete,
+            has_table_privilege(role_name, 'audit_anchors', 'TRUNCATE') AS can_truncate
+          FROM runtime_roles
+          ORDER BY role_name;
+
+          DO $verify$
+          DECLARE
+            role_name text;
+          BEGIN
+            FOREACH role_name IN ARRAY ARRAY[
+              'brain_app',
+              'brain_privileged',
+              'brain_wiki_reader',
+              'brain_mcp_reader',
+              'brain_raw_worker',
+              'brain_canonical_projector',
+              'brain_ledger_projector',
+              'brain_execution_worker',
+              'brain_audit_verifier',
+              'brain_audit_publisher',
+              'brain_resolver',
+              'brain_tenant_deletion',
+              'brain_surface_gateway',
+              'brain_surface_audit_writer',
+              'brain_auth',
+              'brain_auth_audit_writer'
+            ]
+            LOOP
+              IF has_table_privilege(role_name, 'audit_anchors', 'DELETE')
+                OR has_table_privilege(role_name, 'audit_anchors', 'TRUNCATE')
+              THEN
+                RAISE EXCEPTION '% has forbidden audit_anchors erasure privilege', role_name;
+              END IF;
+            END LOOP;
+
+            IF NOT (
+              has_table_privilege('brain_app', 'audit_anchors', 'SELECT')
+              AND has_table_privilege('brain_app', 'audit_anchors', 'INSERT')
+              AND has_table_privilege('brain_app', 'audit_anchors', 'UPDATE')
+            ) THEN
+              RAISE EXCEPTION 'brain_app is missing required audit_anchors privileges';
+            END IF;
+            IF NOT (
+              has_table_privilege('brain_audit_verifier', 'audit_anchors', 'SELECT')
+              AND has_table_privilege('brain_audit_verifier', 'audit_anchors', 'UPDATE')
+            ) THEN
+              RAISE EXCEPTION 'brain_audit_verifier is missing required audit_anchors privileges';
+            END IF;
+            IF NOT has_table_privilege('brain_audit_publisher', 'audit_anchors', 'SELECT') THEN
+              RAISE EXCEPTION 'brain_audit_publisher is missing required audit_anchors SELECT';
+            END IF;
+            IF NOT has_table_privilege('brain_tenant_deletion', 'audit_anchors', 'SELECT') THEN
+              RAISE EXCEPTION 'brain_tenant_deletion is missing required audit_anchors SELECT';
+            END IF;
+          END
+          $verify$;
+
+          ROLLBACK;
+          SQL
+          REMOTE
+
+      - name: Clean up SSH key
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy

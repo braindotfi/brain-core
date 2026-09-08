@@ -43,6 +43,8 @@ export async function assertRuntimeDbRoles(input: {
       forbidden: [
         { table: "audit_events", privilege: "UPDATE" },
         { table: "audit_events", privilege: "DELETE" },
+        { table: "audit_anchors", privilege: "DELETE" },
+        { table: "audit_anchors", privilege: "TRUNCATE" },
         { table: "audit_verifier_checkpoint", privilege: "SELECT" },
         { table: "audit_integrity_findings", privilege: "SELECT" },
       ],
@@ -155,6 +157,8 @@ export async function assertRuntimeDbRoles(input: {
       forbidden: [
         { table: "audit_events", privilege: "DELETE" },
         { table: "audit_events", privilege: "UPDATE" },
+        { table: "audit_anchors", privilege: "DELETE" },
+        { table: "audit_anchors", privilege: "TRUNCATE" },
         { table: "audit_verifier_checkpoint", privilege: "SELECT" },
         { table: "audit_integrity_findings", privilege: "INSERT" },
         { table: "audit_integrity_findings", privilege: "UPDATE" },
