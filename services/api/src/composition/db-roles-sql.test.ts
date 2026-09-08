@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const SQL = readFileSync(new URL("../../../../infra/db-roles.sql", import.meta.url), "utf8");
+const RUNTIME_ROLE_SOURCE = readFileSync(new URL("./runtime-db-roles.ts", import.meta.url), "utf8");
 
 const ROLES = [
   "brain_raw_worker",
@@ -27,6 +28,18 @@ const ROLES = [
 ] as const;
 
 const RUNTIME_ROLES = [...ROLES, "brain_mcp_reader"] as const;
+
+const ALL_RUNTIME_ROLES = [
+  "brain_app",
+  "brain_privileged",
+  "brain_wiki_reader",
+  "brain_mcp_reader",
+  ...ROLES,
+  "brain_surface_gateway",
+  "brain_surface_audit_writer",
+  "brain_auth",
+  "brain_auth_audit_writer",
+] as const;
 
 describe("infra/db-roles.sql — §4 least-privilege roles", () => {
   it("creates all eight roles as BYPASSRLS", () => {
@@ -175,6 +188,31 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(insertRevoke).not.toBeNull();
     expect(insertRevoke?.[0]).toContain("brain_privileged");
     expect(insertRevoke?.[0]).not.toContain("brain_app");
+  });
+
+  it("keeps audit anchors undeletable by every runtime role", () => {
+    const revoke = SQL.match(/REVOKE DELETE, TRUNCATE ON audit_anchors\s+FROM[\s\S]*?;/);
+    expect(revoke).not.toBeNull();
+    for (const role of ALL_RUNTIME_ROLES) {
+      expect(revoke?.[0], `${role} not in audit_anchors REVOKE`).toContain(role);
+    }
+  });
+
+  it("fails boot when request or tenant-deletion pools can erase audit anchors", () => {
+    const request = RUNTIME_ROLE_SOURCE.match(
+      /label: "request",[\s\S]*?forbidden: \[([\s\S]*?)\n\s*\],/,
+    );
+    const deletion = RUNTIME_ROLE_SOURCE.match(
+      /label: "tenant-deletion",[\s\S]*?forbidden: \[([\s\S]*?)\n\s*\],/,
+    );
+    for (const [label, block] of [
+      ["request", request?.[1]],
+      ["tenant-deletion", deletion?.[1]],
+    ] as const) {
+      expect(block, `${label} forbidden privilege block missing`).toBeDefined();
+      expect(block).toContain('{ table: "audit_anchors", privilege: "DELETE" }');
+      expect(block).toContain('{ table: "audit_anchors", privilege: "TRUNCATE" }');
+    }
   });
 
   it("pins brain_auth's containment properties (finding 6)", () => {

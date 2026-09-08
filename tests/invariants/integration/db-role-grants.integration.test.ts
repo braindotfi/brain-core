@@ -22,6 +22,25 @@ import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.j
 const DB_URL = process.env.DATABASE_URL;
 const suite = DB_URL !== undefined && DB_URL !== "" ? describe : describe.skip;
 
+const ALL_RUNTIME_ROLES = [
+  "brain_app",
+  "brain_privileged",
+  "brain_wiki_reader",
+  "brain_mcp_reader",
+  "brain_raw_worker",
+  "brain_canonical_projector",
+  "brain_ledger_projector",
+  "brain_execution_worker",
+  "brain_audit_verifier",
+  "brain_audit_publisher",
+  "brain_resolver",
+  "brain_tenant_deletion",
+  "brain_surface_gateway",
+  "brain_surface_audit_writer",
+  "brain_auth",
+  "brain_auth_audit_writer",
+] as const;
+
 function repoRoot(): string {
   return new URL("../../..", import.meta.url).pathname;
 }
@@ -228,6 +247,30 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
       }
     });
   }
+
+  it("no runtime role can delete or truncate audit anchors", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      for (const role of ALL_RUNTIME_ROLES) {
+        await client.query(`SET ROLE ${role}`);
+        for (const privilege of ["DELETE", "TRUNCATE"] as const) {
+          const { rows } = await client.query<{ has: boolean }>(
+            "SELECT has_table_privilege(current_user, 'audit_anchors', $1) AS has",
+            [privilege],
+          );
+          expect(rows[0]?.has, `${role} must NOT hold ${privilege} on audit_anchors`).toBe(false);
+        }
+        await client.query("RESET ROLE");
+      }
+    } finally {
+      await client.query("RESET ROLE").catch(() => undefined);
+      client.release();
+    }
+  });
 
   it("brain_mcp_reader: holds only approved Raw column-level SELECT grants", async (ctx) => {
     if (!isSuper) {

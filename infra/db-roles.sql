@@ -412,6 +412,20 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
        brain_resolver, brain_tenant_deletion, brain_surface_gateway,
        brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
 
+-- Audit anchors are retained evidence, including during tenant deletion. The
+-- blanket brain_app grant and the tenant-deletion RLS-table loop above both
+-- grant DELETE, so this explicit revoke must follow those broad grants and be
+-- re-applied on every deploy. Runtime anchor publishing still uses the existing
+-- SELECT, INSERT, and UPDATE grants. Only the migration owner retains authority
+-- for a separately controlled administrative repair.
+REVOKE DELETE, TRUNCATE ON audit_anchors
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
 -- RFC 0008 request-meter facts are immutable to request-path roles. They are
 -- intentionally separate from audit_events, but carry the same append-only
 -- runtime guarantee. The tenant-deletion role retains DELETE for an approved
