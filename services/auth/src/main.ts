@@ -92,6 +92,25 @@ async function main(): Promise<void> {
       onchain,
       authAudience: cfg.AUTH_AUDIENCE,
       mcpPublicResourceUrl: cfg.MCP_PUBLIC_RESOURCE_URL,
+      ...(cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED
+        ? {
+            agentKeyExchange: {
+              authPool,
+              resolverPool,
+              audit,
+              signer,
+              pepper: requireAgentKeySetting(
+                "BRAIN_AGENT_API_KEY_PEPPER",
+                cfg.BRAIN_AGENT_API_KEY_PEPPER,
+              ),
+              environment: requireAgentKeySetting(
+                "BRAIN_AGENT_KEY_ENVIRONMENT",
+                cfg.BRAIN_AGENT_KEY_ENVIRONMENT,
+              ),
+              resource: cfg.BRAIN_API_RESOURCE_URL,
+            },
+          }
+        : {}),
     };
   } catch (error) {
     // BRAIN_AUTH_DB_URL / BRAIN_RESOLVER_DB_URL / BRAIN_AUTH_AUDIT_DB_URL
@@ -123,6 +142,13 @@ async function main(): Promise<void> {
   });
 
   await app.listen({ host: "0.0.0.0", port: cfg.PORT });
+}
+
+function requireAgentKeySetting<T>(name: string, value: T | undefined): T {
+  if (value === undefined || value === "") {
+    throw new Error(`${name} is required when BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true`);
+  }
+  return value;
 }
 
 main().catch((error: unknown) => {

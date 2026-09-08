@@ -90,6 +90,7 @@ locals {
     "auth-cookie-secret",
     "brain-agents-inbound-secret",
     "brain-api-key-pepper",
+    "brain-agent-api-key-pepper",
     "brain-demo-provision-secret",
     "brain-service-token-secret",
     "brain-platform-service-secret",

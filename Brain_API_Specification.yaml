@@ -703,10 +703,10 @@ paths:
         description: OAuth authorization server (production)
     post:
       tags: [OAuth Authorization Server]
-      summary: Token endpoint -- authorization_code and refresh_token grants
+      summary: Token endpoint for authorization code, refresh, and RFC 8693 exchange grants
       description: |
         `application/x-www-form-urlencoded` body, RFC 6749 §5.1/§6. Both
-        grant types are documented together since they share this one
+        OAuth grants and the RFC 8693 extension grant share this one
         endpoint and response shape.
 
         `grant_type=authorization_code`: single-use code exchange with
@@ -728,6 +728,12 @@ paths:
         returns `invalid_scope`. `resource` is accepted here too and
         re-derives the audience per request rather than reusing whatever
         was stored at issuance.
+
+        `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`:
+        exchanges a `brain_ak_*` subject token for a five-minute agent JWT.
+        It requires the agent-key subject token type and the exact API
+        `resource`. Scope is fixed by the key's server-owned profile and may
+        only be narrowed. The response never includes a refresh token.
       operationId: oauthToken
       security: [] # public -- PKCE/refresh-token possession authenticates
       requestBody:
@@ -736,16 +742,24 @@ paths:
           application/x-www-form-urlencoded:
             schema:
               type: object
-              required: [grant_type, client_id]
+              required: [grant_type]
               properties:
-                grant_type: { type: string, enum: [authorization_code, refresh_token] }
+                grant_type:
+                  type: string
+                  enum:
+                    - authorization_code
+                    - refresh_token
+                    - urn:ietf:params:oauth:grant-type:token-exchange
                 client_id: { type: string }
                 code: { type: string, description: authorization_code grant only. }
                 redirect_uri: { type: string, description: authorization_code grant only -- must match the value sent to GET /authorize. }
                 code_verifier: { type: string, description: authorization_code grant only -- PKCE verifier for the code's S256 challenge. }
                 resource: { type: string, description: 'RFC 8707 resource indicator, either grant.' }
                 refresh_token: { type: string, description: refresh_token grant only. }
-                scope: { type: string, description: 'refresh_token grant only -- space-delimited; may only narrow the original grant, never widen it.' }
+                scope: { type: string, description: 'Refresh or agent-key exchange. Space-delimited and may only narrow the existing grant or profile.' }
+                subject_token: { type: string, description: 'RFC 8693 exchange only. A brain_ak_test_* or brain_ak_live_* credential.' }
+                subject_token_type: { type: string, enum: ['urn:brain:params:oauth:token-type:agent-api-key'] }
+                requested_token_type: { type: string, enum: ['urn:ietf:params:oauth:token-type:access_token'] }
       responses:
         '200':
           description: Access token issued (and rotated refresh token, where applicable).
@@ -757,8 +771,9 @@ paths:
                 properties:
                   access_token: { type: string }
                   token_type: { type: string, enum: [Bearer] }
-                  expires_in: { type: integer, description: 'Seconds. Default 3600; RFC 6749 §5.1 ceiling is 1h.' }
+                  expires_in: { type: integer, description: 'Seconds. OAuth grants default to 3600; agent-key exchange is exactly 300.' }
                   refresh_token: { type: string, description: Present only when the client is registered for the refresh_token grant type. }
+                  issued_token_type: { type: string, description: 'RFC 8693 exchange responses identify the returned access token type.' }
                   scope: { type: string, description: Space-delimited granted scopes actually issued (may be narrower than requested). }
         '400':
           description: |
@@ -767,7 +782,8 @@ paths:
             token, or the agent is inactive/quarantined, or its on-chain
             scope hash has drifted since consent), `unauthorized_client`
             (client not registered for the `refresh_token` grant type), or
-            `invalid_scope` (refresh request tried to widen scope).
+            `invalid_scope` (refresh or exchange tried to widen scope), or
+            `invalid_target` (exchange resource is absent or not the API).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
@@ -1745,6 +1761,132 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /tenants/{tenantId}/agent-keys:
+    post:
+      tags: [Tenancy]
+      summary: Issue an exchange-only agent API key
+      description: |
+        Platform-managed and gated by `X-Platform-Service-Auth`. The profile,
+        not the caller, defines the exact scope set. The plaintext
+        `brain_ak_test_*` or `brain_ak_live_*` credential is returned once and
+        is valid only as an RFC 8693 subject token at the auth service `/token`
+        endpoint. It is rejected as a direct resource bearer.
+      operationId: issueAgentApiKey
+      security: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: X-Platform-Service-Auth
+          in: header
+          required: true
+          schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 256 }
+          description: Replays the same issuance response for 24 hours when the request body matches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, profile, environment, name]
+              properties:
+                agent_id: { type: string, pattern: '^agent_[0-9A-HJKMNP-TV-Z]{26}$' }
+                profile: { type: string, enum: [document_extractor_v1, bff_service_v1] }
+                environment: { type: string, enum: [test, live] }
+                name: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '201':
+          description: Agent key issued; plaintext returned exactly once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApiKeyIssued' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [Tenancy]
+      summary: List exchange-only agent API keys
+      description: Returns metadata only. Plaintext credentials are never listed.
+      operationId: listAgentApiKeys
+      security: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: X-Platform-Service-Auth
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Agent key metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentApiKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /agent-keys/{agentKeyId}/rotate:
+    post:
+      tags: [Tenancy]
+      summary: Rotate an exchange-only agent API key
+      description: Atomically revokes the active key and returns one replacement plaintext.
+      operationId: rotateAgentApiKey
+      security: []
+      parameters:
+        - name: agentKeyId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^agkey_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: X-Platform-Service-Auth
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Agent key rotated; replacement plaintext returned exactly once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentApiKeyIssued' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /agent-keys/{agentKeyId}:
+    delete:
+      tags: [Tenancy]
+      summary: Revoke an exchange-only agent API key
+      operationId: revokeAgentApiKey
+      security: []
+      parameters:
+        - name: agentKeyId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^agkey_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: X-Platform-Service-Auth
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Agent key revoked or already revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /tenants/{tenantId}/usage:
@@ -7408,6 +7550,8 @@ components:
         `governance:read`. A `brain_sk_test_` key may also hold `raw:read` and
         `raw:write` only while its tenant is a fully provisioned, verified
         synthetic demo. Live keys and customer-data tenants remain read-only.
+        Exchange-only `brain_ak_*` credentials are never accepted by this
+        scheme. They must first be exchanged at the authorization server.
         For agent
         principals, tokens are issued either by the sandbox/testnet-only
         `POST /auth/service-token` (this API), the production tenancy paths
@@ -7415,15 +7559,16 @@ components:
         separate OAuth authorization server at `https://auth.brain.fi` (see
         the `oauth2` scheme below) -- all verified against that server's
         published JWKS (`GET https://auth.brain.fi/.well-known/jwks.json`).
-        An OAuth-minted token is structurally incapable of approving or
-        executing a payment: its scope set is bounded by
-        `AGENT_PERMITTED_SCOPES`, which contains no `payment_intent:approve`,
-        `payment_intent:execute`, `*:admin`, or `policy:sign`. See
-        Engineering Standards section 2 for the full auth model.
+        An authorization-code token is bounded by `AGENT_PERMITTED_SCOPES`.
+        An exchanged machine token is bounded by its server-owned profile.
+        Neither can contain `payment_intent:approve`,
+        `payment_intent:execute`, `*:admin`, or `policy:sign`. See Engineering
+        Standards section 2 for the full auth model.
     oauth2:
       type: oauth2
       description: |
-        Authorization-code + PKCE (S256, mandatory) flow against the
+        Authorization-code + PKCE (S256, mandatory), plus RFC 8693 agent-key
+        exchange, against the
         authorization server at `https://auth.brain.fi` -- a separate
         deployable on a separate origin, not `api.brain.fi`. Mints
         propose-only agent tokens only; the scopes below are the full
@@ -7513,6 +7658,47 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+
+    AgentApiKey:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - agent_id
+        - profile
+        - environment
+        - scopes
+        - name
+        - key_prefix
+        - key_last4
+        - created_at
+        - expires_at
+      properties:
+        id: { type: string, pattern: '^agkey_[0-9A-HJKMNP-TV-Z]{26}$' }
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        agent_id: { type: string, pattern: '^agent_[0-9A-HJKMNP-TV-Z]{26}$' }
+        profile: { type: string, enum: [document_extractor_v1, bff_service_v1] }
+        environment: { type: string, enum: [test, live] }
+        scopes: { type: array, items: { type: string } }
+        name: { type: string }
+        key_prefix: { type: string, enum: [brain_ak_test_, brain_ak_live_] }
+        key_last4: { type: string, minLength: 4, maxLength: 4 }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        rotated_from_id: { type: [string, 'null'] }
+
+    AgentApiKeyIssued:
+      allOf:
+        - $ref: '#/components/schemas/AgentApiKey'
+        - type: object
+          required: [api_key]
+          properties:
+            api_key:
+              type: string
+              description: Plaintext exchange credential. Returned only in this response.
+              pattern: '^brain_ak_(test|live)_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{43}$'
 
     TenantExportJob:
       type: object

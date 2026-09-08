@@ -45,6 +45,7 @@ export * from "./db/tenant-scoped.js";
 // Auth (§3)
 export * from "./auth/principal.js";
 export * from "./auth/scopes.js";
+export * from "./auth/agent-api-key.js";
 export { JwtVerifier, projectPrincipal, verifyWithKey, type VerifyOptions } from "./auth/jwt.js";
 export { JwtSigner, type SignOptions } from "./auth/signer.js";
 export { toPublicJwk, jwksFromPrivate, generateSignKeyJwk } from "./auth/jwks.js";

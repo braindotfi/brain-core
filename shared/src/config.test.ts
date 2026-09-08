@@ -29,6 +29,8 @@ describe("parseConfig", () => {
     expect(cfg.AUTH_ISSUER).toBe("https://auth.brain.fi");
     expect(cfg.AUTH_CLOCK_TOLERANCE_SECONDS).toBe(5);
     expect(cfg.BRAIN_TRUST_GATE_ENABLED).toBe(false);
+    expect(cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED).toBe(false);
+    expect(cfg.BRAIN_API_RESOURCE_URL).toBe("https://api.brain.fi/");
   });
 
   it("rejects missing DATABASE_URL with a helpful message", () => {
@@ -80,12 +82,51 @@ describe("parseConfig", () => {
       PLAID_CLIENT_ID: "",
       PLAID_SECRET: "",
       BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: "",
+      BRAIN_AGENT_API_KEY_PEPPER: "",
     });
     expect(cfg.ANTHROPIC_API_KEY).toBeUndefined();
     expect(cfg.OPENAI_API_KEY).toBeUndefined();
     expect(cfg.PLAID_CLIENT_ID).toBeUndefined();
     expect(cfg.PLAID_SECRET).toBeUndefined();
     expect(cfg.BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME).toBeUndefined();
+    expect(cfg.BRAIN_AGENT_API_KEY_PEPPER).toBeUndefined();
+  });
+
+  it("parses additive agent-key exchange settings without enabling them by default", () => {
+    const cfg = parseConfig({
+      ...MIN_ENV,
+      BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true",
+      BRAIN_AGENT_API_KEY_PEPPER: "dedicated-agent-pepper",
+      BRAIN_AGENT_KEY_ENVIRONMENT: "live",
+      BRAIN_API_RESOURCE_URL: "https://api.example.test/",
+    });
+    expect(cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED).toBe(true);
+    expect(cfg.BRAIN_AGENT_API_KEY_PEPPER).toBe("dedicated-agent-pepper");
+    expect(cfg.BRAIN_AGENT_KEY_ENVIRONMENT).toBe("live");
+    expect(cfg.BRAIN_API_RESOURCE_URL).toBe("https://api.example.test/");
+  });
+
+  it("fails boot closed when agent-key exchange is enabled without either binding", () => {
+    expect(() =>
+      parseConfig({ ...MIN_ENV, BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true" }),
+    ).toThrowError(/BRAIN_AGENT_API_KEY_PEPPER.*BRAIN_AGENT_KEY_ENVIRONMENT/);
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true",
+        BRAIN_AGENT_API_KEY_PEPPER: "dedicated-agent-pepper",
+      }),
+    ).toThrowError(/BRAIN_AGENT_KEY_ENVIRONMENT/);
+  });
+
+  it("rejects reuse of the commercial API-key pepper", () => {
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_API_KEY_PEPPER: "same-pepper",
+        BRAIN_AGENT_API_KEY_PEPPER: "same-pepper",
+      }),
+    ).toThrowError(/must not reuse BRAIN_API_KEY_PEPPER/);
   });
 
   it("accepts optional OTLP endpoint and omits when absent", () => {

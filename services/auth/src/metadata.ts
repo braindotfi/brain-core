@@ -9,7 +9,11 @@
  * bug structurally impossible: there is no `AUTH_JWKS_URL` parameter to leak.
  */
 
-import { AGENT_PERMITTED_SCOPES } from "@brain/shared";
+import {
+  AGENT_PERMITTED_SCOPES,
+  BFF_SERVICE_AGENT_SCOPES,
+  TOKEN_EXCHANGE_GRANT_TYPE,
+} from "@brain/shared";
 
 export interface AuthorizationServerMetadata {
   readonly issuer: string;
@@ -30,17 +34,30 @@ export const WELL_KNOWN_AS_PATH = "/.well-known/oauth-authorization-server";
 export const WELL_KNOWN_JWKS_PATH = "/.well-known/jwks.json";
 
 /** `issuer` must be `AUTH_ISSUER` exactly: no trailing slash, no path. */
-export function buildAuthorizationServerMetadata(issuer: string): AuthorizationServerMetadata {
+export function buildAuthorizationServerMetadata(
+  issuer: string,
+  options: { agentKeyExchangeEnabled?: boolean } = {},
+): AuthorizationServerMetadata {
   return {
     issuer,
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     jwks_uri: `${issuer}${WELL_KNOWN_JWKS_PATH}`,
-    // Reused, not re-listed (shared/src/auth/scopes.ts:105). This is the
-    // single source of truth an OAuth-minted token's consent can ever reach.
-    scopes_supported: [...AGENT_PERMITTED_SCOPES],
+    // Human consent stays bounded by AGENT_PERMITTED_SCOPES. When machine
+    // exchange is enabled, advertise the server-owned BFF profile vocabulary
+    // too; issuance and exchange still bind the exact scopes per profile.
+    scopes_supported: [
+      ...new Set([
+        ...AGENT_PERMITTED_SCOPES,
+        ...(options.agentKeyExchangeEnabled === true ? BFF_SERVICE_AGENT_SCOPES : []),
+      ]),
+    ],
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    grant_types_supported: [
+      "authorization_code",
+      "refresh_token",
+      ...(options.agentKeyExchangeEnabled === true ? [TOKEN_EXCHANGE_GRANT_TYPE] : []),
+    ],
     // S256 only. The DB layer (Phase 2a) makes "plain" unstorable too.
     code_challenge_methods_supported: ["S256"],
     // Public clients only: PKCE plus exact redirect-URI matching authenticates.

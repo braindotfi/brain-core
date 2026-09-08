@@ -430,6 +430,20 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default(false),
   BRAIN_API_KEY_PEPPER: optionalNonEmptyString(),
+  /**
+   * Additive machine-credential exchange. When disabled, brain_ak_* issuance
+   * routes are absent and the RFC 8693 grant remains unsupported.
+   */
+  BRAIN_AGENT_KEY_EXCHANGE_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
+  /** Dedicated HMAC pepper. Never reuse the commercial API-key pepper. */
+  BRAIN_AGENT_API_KEY_PEPPER: optionalNonEmptyString(),
+  /** Prefix environment accepted and issued by this deployment. */
+  BRAIN_AGENT_KEY_ENVIRONMENT: z.enum(["test", "live"]).optional(),
+  /** Sole resource indicator and JWT audience for exchanged agent tokens. */
+  BRAIN_API_RESOURCE_URL: z.string().url().default("https://api.brain.fi/"),
   /** Coarse IP abuse ceiling. Commercial key and tenant limits are server-owned. */
   BRAIN_EDGE_RATE_LIMIT: z.coerce.number().int().positive().default(100_000),
   /** Maximum Redis wait before commercial API-key traffic fails closed. */
@@ -1021,6 +1035,26 @@ export function parseConfig(
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid Brain configuration:\n${issues}`);
+  }
+  if (
+    result.data.BRAIN_AGENT_KEY_EXCHANGE_ENABLED &&
+    (result.data.BRAIN_AGENT_API_KEY_PEPPER === undefined ||
+      result.data.BRAIN_AGENT_KEY_ENVIRONMENT === undefined)
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_AGENT_API_KEY_PEPPER and " +
+        "BRAIN_AGENT_KEY_ENVIRONMENT are required when " +
+        "BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true",
+    );
+  }
+  if (
+    result.data.BRAIN_AGENT_API_KEY_PEPPER !== undefined &&
+    result.data.BRAIN_AGENT_API_KEY_PEPPER === result.data.BRAIN_API_KEY_PEPPER
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_AGENT_API_KEY_PEPPER must not reuse " +
+        "BRAIN_API_KEY_PEPPER",
+    );
   }
   assertProductionInfraSecretsSafe(env, options);
   return result.data;

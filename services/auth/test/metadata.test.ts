@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_PERMITTED_SCOPES } from "@brain/shared";
+import { AGENT_PERMITTED_SCOPES, TOKEN_EXCHANGE_GRANT_TYPE } from "@brain/shared";
 import { buildAuthorizationServerMetadata, WELL_KNOWN_JWKS_PATH } from "../src/metadata.js";
 
 const ISSUER = "https://auth.brain.fi";
@@ -43,5 +43,18 @@ describe("buildAuthorizationServerMetadata", () => {
   it("advertises exactly AGENT_PERMITTED_SCOPES, imported not re-listed", () => {
     const md = buildAuthorizationServerMetadata(ISSUER);
     expect(new Set(md.scopes_supported)).toEqual(new Set(AGENT_PERMITTED_SCOPES));
+  });
+
+  it("advertises token exchange only when its infrastructure is enabled", () => {
+    expect(buildAuthorizationServerMetadata(ISSUER).grant_types_supported).not.toContain(
+      TOKEN_EXCHANGE_GRANT_TYPE,
+    );
+    expect(
+      buildAuthorizationServerMetadata(ISSUER, { agentKeyExchangeEnabled: true })
+        .grant_types_supported,
+    ).toContain(TOKEN_EXCHANGE_GRANT_TYPE);
+    expect(
+      buildAuthorizationServerMetadata(ISSUER, { agentKeyExchangeEnabled: true }).scopes_supported,
+    ).toContain("audit:read");
   });
 });

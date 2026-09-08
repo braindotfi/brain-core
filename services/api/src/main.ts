@@ -106,6 +106,7 @@ import {
   buildApiKeyAuthenticator,
   registerApiKeyRoutes,
 } from "./production-tenancy/api-key-routes.js";
+import { registerAgentApiKeyRoutes } from "./production-tenancy/agent-key-routes.js";
 import { API_KEY_ROUTE_CONTRACTS } from "./usage/api-key-route-contracts.js";
 import { PostgresApiRequestMeter } from "./usage/request-meter.js";
 import { registerProofViewRoute } from "./proof/view.js";
@@ -666,7 +667,9 @@ async function main(): Promise<void> {
     jwksUrl: cfg.AUTH_JWKS_URL,
     ...(cfg.BRAIN_DEMO_MODE ? { secret: DEMO_SIGN_SECRET } : {}),
     issuer: cfg.AUTH_ISSUER,
-    audience: cfg.AUTH_AUDIENCE,
+    audience: cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED
+      ? [cfg.AUTH_AUDIENCE, cfg.BRAIN_API_RESOURCE_URL]
+      : cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
     revocation: revocationStore,
   });
@@ -2082,6 +2085,21 @@ async function main(): Promise<void> {
   if (cfg.BRAIN_API_KEY_AUTH_ENABLED && cfg.BRAIN_API_KEY_PEPPER === undefined) {
     throw new Error("BRAIN_API_KEY_PEPPER is required when BRAIN_API_KEY_AUTH_ENABLED=true");
   }
+  if (
+    cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED &&
+    (cfg.BRAIN_AGENT_API_KEY_PEPPER === undefined || cfg.BRAIN_AGENT_KEY_ENVIRONMENT === undefined)
+  ) {
+    throw new Error(
+      "BRAIN_AGENT_API_KEY_PEPPER and BRAIN_AGENT_KEY_ENVIRONMENT are required " +
+        "when BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true",
+    );
+  }
+  if (cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED && cfg.BRAIN_PLATFORM_SERVICE_SECRET === undefined) {
+    throw new Error(
+      "BRAIN_PLATFORM_SERVICE_SECRET is required when " +
+        "BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true in the API process",
+    );
+  }
   const apiKeyRequestMeter = new PostgresApiRequestMeter(pool);
   const apiUsageTelemetry = new PostgresApiUsageTelemetry(pool);
   await app.register(authPlugin, {
@@ -2616,6 +2634,24 @@ async function main(): Promise<void> {
               resolverPool,
               audit,
               pepper: cfg.BRAIN_API_KEY_PEPPER!,
+            }),
+          );
+        }
+        // Exchange-only agent keys are platform-managed and are never accepted
+        // by resource routes. Registration is additive behind its own flag.
+        if (cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED) {
+          await v1.register(async (child) =>
+            registerAgentApiKeyRoutes(child, {
+              pool,
+              resolverPool,
+              audit,
+              pepper: cfg.BRAIN_AGENT_API_KEY_PEPPER!,
+              environment: cfg.BRAIN_AGENT_KEY_ENVIRONMENT!,
+              ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
+                ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
+                : {}),
+              idempotencyStore,
+              idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
             }),
           );
         }

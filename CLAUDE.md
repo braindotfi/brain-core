@@ -44,6 +44,14 @@ Private workspace, UNLICENSED.
   full `.env.prod` secret set (no `env_file:`), since it is a public
   browser-facing origin.
 
+Agent API keys are a separate, exchange-only credential class. The auth
+service accepts `brain_ak_test_*` and `brain_ak_live_*` only through the RFC
+8693 grant at `/token`; API resource routes reject direct use. Scope comes from
+the server-owned document-extractor or BFF profile, exchanged JWTs expire after
+five minutes with an exact API audience and `credential_id`, and no refresh
+token is issued. `BRAIN_AGENT_KEY_EXCHANGE_ENABLED` defaults off, preserving
+commercial `brain_sk_*` and current JWT behavior during staged migration.
+
 Dependency is one-directional and acyclic: core -> surfaces. A CI check should
 fail the build if anything under packages/surfaces imports @brain/core.
 

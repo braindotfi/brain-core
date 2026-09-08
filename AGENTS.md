@@ -44,6 +44,15 @@ digests in constant time, rejects revoked or expired keys, applies per-key rate
 limits, updates `last_used_at`, and attributes request audit events with
 `key_id`.
 
+Agent API keys are separate exchange-only machine credentials. Plaintext
+`brain_ak_test_*` and `brain_ak_live_*` keys are accepted only as RFC 8693
+subject tokens at the auth service `/token` endpoint and must be rejected at
+resource routes. Issuance uses server-owned profiles: the document extractor is
+exactly `raw:write`, and the BFF is exactly `BFF_SERVICE_AGENT_SCOPES`. Exchanged
+JWTs expire after five minutes, are restricted to `BRAIN_API_RESOURCE_URL`,
+carry `credential_id`, and never receive refresh tokens. The feature defaults
+off and must leave current JWT and `brain_sk_*` flows unchanged.
+
 Agent principals are propose-only at the identity layer. They must never resolve
 as members, receive member claims, or carry approval/member admin scopes.
 

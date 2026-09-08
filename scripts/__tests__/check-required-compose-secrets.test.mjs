@@ -127,6 +127,26 @@ test("enforces enabled application boot fences without affecting disabled integr
   );
 });
 
+test("requires every agent-key exchange binding only when exchange is enabled", () => {
+  withFiles(
+    {
+      compose: "services: {}\n",
+      env: "BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
+    },
+    (composePath, envPath) => {
+      assert.throws(
+        () => run(composePath, envPath),
+        (error) => {
+          assert.match(error.stderr, /missing secret: BRAIN_AGENT_API_KEY_PEPPER/);
+          assert.match(error.stderr, /missing secret: BRAIN_AGENT_KEY_ENVIRONMENT/);
+          assert.match(error.stderr, /missing secret: BRAIN_PLATFORM_SERVICE_SECRET/);
+          return true;
+        },
+      );
+    },
+  );
+});
+
 test("requires the canonical action handoff secret when an approval surface is enabled", () => {
   withFiles(
     {

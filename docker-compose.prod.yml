@@ -414,6 +414,10 @@ services:
       # pulling an image or recreating a container.
       AUTH_SIGN_KEY: ${AUTH_SIGN_KEY:?AUTH_SIGN_KEY is required in production}
       AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:?AUTH_COOKIE_SECRET is required in production}
+      BRAIN_AGENT_KEY_EXCHANGE_ENABLED: ${BRAIN_AGENT_KEY_EXCHANGE_ENABLED:-false}
+      BRAIN_AGENT_API_KEY_PEPPER: ${BRAIN_AGENT_API_KEY_PEPPER:-}
+      BRAIN_AGENT_KEY_ENVIRONMENT: ${BRAIN_AGENT_KEY_ENVIRONMENT:-}
+      BRAIN_API_RESOURCE_URL: ${BRAIN_API_RESOURCE_URL:-https://api.brain.fi/}
       BRAIN_AUTH_DB_URL: postgres://brain_auth:${BRAIN_AUTH_DB_PASSWORD:?BRAIN_AUTH_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_AUTH_AUDIT_DB_URL: postgres://brain_auth_audit_writer:${BRAIN_AUTH_AUDIT_DB_PASSWORD:?BRAIN_AUTH_AUDIT_DB_PASSWORD is required in production}@postgres:5432/brain
@@ -537,6 +541,9 @@ services:
       SERVICE_NAME: brain-worker
       BRAIN_HTTP_ENABLED: "false"
       BRAIN_WORKERS: "all"
+      # Exchange infrastructure belongs only to API issuance and auth. Keep
+      # worker config disabled even when the source production env enables it.
+      BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "false"
       # Worker-only role URLs (no resolver: that is request-path only).
       BRAIN_RAW_WORKER_DB_URL: postgres://brain_raw_worker:${BRAIN_RAW_WORKER_DB_PASSWORD:?BRAIN_RAW_WORKER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_CANONICAL_PROJECTOR_DB_URL: postgres://brain_canonical_projector:${BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD:?BRAIN_CANONICAL_PROJECTOR_DB_PASSWORD is required in production}@postgres:5432/brain

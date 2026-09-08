@@ -34,11 +34,18 @@ export class JwtSigner {
       tenant_id: principal.tenantId,
       principal_type: principal.type,
       scopes: principal.scopes,
+      ...(principal.credentialId !== undefined ? { credential_id: principal.credentialId } : {}),
     })
       .setProtectedHeader({ alg: this.opts.algorithm })
       .setIssuedAt()
       .setIssuer(this.opts.issuer)
-      .setAudience(audience !== undefined ? [...audience] : this.opts.audience)
+      .setAudience(
+        audience === undefined
+          ? this.opts.audience
+          : typeof audience === "string"
+            ? audience
+            : [...audience],
+      )
       .setExpirationTime(principal.expiresAt)
       .setSubject(principal.id)
       .setJti(principal.tokenId)

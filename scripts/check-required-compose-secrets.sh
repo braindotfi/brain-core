@@ -99,6 +99,11 @@ is_enabled() {
 if is_enabled BRAIN_API_KEY_AUTH_ENABLED; then
   add_requirement BRAIN_API_KEY_PEPPER
 fi
+if is_enabled BRAIN_AGENT_KEY_EXCHANGE_ENABLED; then
+  add_requirement BRAIN_AGENT_API_KEY_PEPPER
+  add_requirement BRAIN_AGENT_KEY_ENVIRONMENT
+  add_requirement BRAIN_PLATFORM_SERVICE_SECRET
+fi
 if is_enabled BRAIN_SERVICE_TOKEN_ENABLED; then
   add_requirement BRAIN_SERVICE_TOKEN_SECRET
 fi

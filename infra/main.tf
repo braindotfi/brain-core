@@ -340,14 +340,15 @@ locals {
 
   # Auth service secrets -- intentionally a small subset, see the resource.
   auth_secret_env = {
-    AUTH_SIGN_KEY           = "auth-sign-key"
-    AUTH_COOKIE_SECRET      = "auth-cookie-secret"
-    BRAIN_AUTH_DB_URL       = "brain-auth-db-url"
-    BRAIN_RESOLVER_DB_URL   = "brain-resolver-db-url"
-    BRAIN_AUTH_AUDIT_DB_URL = "brain-auth-audit-db-url"
-    EMAIL_ENDPOINT          = "email-endpoint"
-    EMAIL_API_KEY           = "email-api-key"
-    EMAIL_FROM              = "email-from"
+    AUTH_SIGN_KEY              = "auth-sign-key"
+    AUTH_COOKIE_SECRET         = "auth-cookie-secret"
+    BRAIN_AUTH_DB_URL          = "brain-auth-db-url"
+    BRAIN_RESOLVER_DB_URL      = "brain-resolver-db-url"
+    BRAIN_AUTH_AUDIT_DB_URL    = "brain-auth-audit-db-url"
+    EMAIL_ENDPOINT             = "email-endpoint"
+    EMAIL_API_KEY              = "email-api-key"
+    EMAIL_FROM                 = "email-from"
+    BRAIN_AGENT_API_KEY_PEPPER = "brain-agent-api-key-pepper"
   }
 
   auth_kv_secrets = {
@@ -393,6 +394,16 @@ locals {
     var.enable_onchain_signing ? { BRAIN_SESSION_KEY = "brain-session-key" } : {},
     var.enable_anchor_publisher ? { AUDIT_PUBLISHER_KEY = "audit-publisher-key" } : {},
   )
+
+  # The exchange pepper is intentionally absent from the worker. Only API
+  # issuance and auth exchange need it.
+  api_secret_env = merge(local.secret_env, {
+    BRAIN_AGENT_API_KEY_PEPPER = "brain-agent-api-key-pepper"
+  })
+  worker_kv_secret_refs = {
+    for name, secret_ref in local.kv_secret_refs : name => secret_ref
+    if name != "brain-agent-api-key-pepper"
+  }
 
   auth_fqdn = "${local.name_prefix}-auth.internal.${azurerm_container_app_environment.main.default_domain}"
 
@@ -513,7 +524,11 @@ resource "azurerm_container_app" "api" {
       memory = var.container_memory
 
       dynamic "env" {
-        for_each = local.common_env
+        for_each = merge(local.common_env, {
+          BRAIN_API_RESOURCE_URL           = var.api_resource_url
+          BRAIN_AGENT_KEY_EXCHANGE_ENABLED = tostring(var.enable_agent_key_exchange)
+          BRAIN_AGENT_KEY_ENVIRONMENT      = var.environment == "production" ? "live" : "test"
+        })
         content {
           name  = env.key
           value = env.value
@@ -521,7 +536,7 @@ resource "azurerm_container_app" "api" {
       }
 
       dynamic "env" {
-        for_each = local.secret_env
+        for_each = local.api_secret_env
         content {
           name        = env.key
           secret_name = env.value
@@ -606,7 +621,7 @@ resource "azurerm_container_app" "worker" {
   }
 
   dynamic "secret" {
-    for_each = local.kv_secret_refs
+    for_each = local.worker_kv_secret_refs
     content {
       name                = secret.key
       identity            = azurerm_user_assigned_identity.services.id
@@ -818,6 +833,18 @@ resource "azurerm_container_app" "auth" {
       env {
         name  = "AUTH_ISSUER"
         value = var.auth_issuer
+      }
+      env {
+        name  = "BRAIN_API_RESOURCE_URL"
+        value = var.api_resource_url
+      }
+      env {
+        name  = "BRAIN_AGENT_KEY_EXCHANGE_ENABLED"
+        value = tostring(var.enable_agent_key_exchange)
+      }
+      env {
+        name  = "BRAIN_AGENT_KEY_ENVIRONMENT"
+        value = var.environment == "production" ? "live" : "test"
       }
       env {
         name  = "AUTH_JWKS_URL"
