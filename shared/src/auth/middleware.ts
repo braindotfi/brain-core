@@ -152,6 +152,12 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
       });
       throw error;
     }
+    // Exchange credentials are bearer secrets only at the authorization
+    // server's /token endpoint. Reject them before either resource-server
+    // authenticator is invoked so they can never become direct API keys.
+    if (token.startsWith("brain_ak_")) {
+      throw brainError("auth_invalid_key", "agent API keys must be exchanged for an access token");
+    }
     if (token.startsWith("brain_sk_")) {
       const meterRequestId = newRequestId();
       const rawResult = await apiKeyAuthenticator?.(token, { requestId: meterRequestId });

@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import type { FastifyRequest } from "fastify";
 import { tokenRateLimitKey } from "../src/routes/oauth.js";
+import { TOKEN_EXCHANGE_GRANT_TYPE, generateAgentApiKey } from "@brain/shared";
 
 function fakeRequest(clientId: string | undefined, ip: string): FastifyRequest {
   return {
@@ -35,5 +36,24 @@ describe("tokenRateLimitKey", () => {
   it("falls back to anon for a missing client_id, still scoped by ip", () => {
     const key = tokenRateLimitKey(fakeRequest(undefined, "9.9.9.9"));
     expect(key).toBe("anon:9.9.9.9");
+  });
+
+  it("keys agent exchanges by public credential id and ip without including the secret", () => {
+    const generated = generateAgentApiKey("live");
+    const request = {
+      body: { grant_type: TOKEN_EXCHANGE_GRANT_TYPE, subject_token: generated.plaintext },
+      ip: "1.2.3.4",
+    } as unknown as FastifyRequest;
+    const key = tokenRateLimitKey(request);
+    expect(key).toBe(`${generated.id}:1.2.3.4`);
+    expect(key).not.toContain(generated.last4);
+  });
+
+  it("puts malformed exchange credentials in an IP-scoped fallback bucket", () => {
+    const request = {
+      body: { grant_type: TOKEN_EXCHANGE_GRANT_TYPE, subject_token: "not-a-key" },
+      ip: "5.6.7.8",
+    } as unknown as FastifyRequest;
+    expect(tokenRateLimitKey(request)).toBe("agent-key-invalid:5.6.7.8");
   });
 });

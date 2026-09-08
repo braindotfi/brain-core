@@ -35,7 +35,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import {
+  TOKEN_EXCHANGE_GRANT_TYPE,
   newTokenId,
+  parseAgentApiKey,
   withTenantScope,
   type AuditEmitter,
   type JwtSigner,
@@ -83,6 +85,7 @@ import {
 } from "../session.js";
 import { renderConsentPage, renderErrorPage, type ConsentAgentOption } from "../html.js";
 import { newRawToken, sha256Hex } from "../token.js";
+import { handleAgentKeyExchange, type AgentKeyExchangeDeps } from "../agent-key-exchange.js";
 
 export interface OauthRouteDeps {
   readonly authPool: Pool;
@@ -93,6 +96,8 @@ export interface OauthRouteDeps {
   readonly onchain: OnchainScopeChecker;
   readonly authAudience: string;
   readonly mcpPublicResourceUrl: string;
+  /** Present only when additive RFC 8693 agent-key exchange is enabled. */
+  readonly agentKeyExchange?: AgentKeyExchangeDeps;
   /** RFC 6749 section 5.1's ceiling is 1h; default matches it exactly. */
   readonly accessTokenTtlSeconds?: number;
 }
@@ -178,6 +183,11 @@ function redirectWithError(
  */
 export function tokenRateLimitKey(req: FastifyRequest): string {
   const body = req.body as Record<string, unknown> | undefined;
+  if (body?.["grant_type"] === TOKEN_EXCHANGE_GRANT_TYPE) {
+    const subjectToken = body["subject_token"];
+    const parsed = typeof subjectToken === "string" ? parseAgentApiKey(subjectToken) : null;
+    return `${parsed?.id ?? "agent-key-invalid"}:${req.ip}`;
+  }
   const clientId = typeof body?.["client_id"] === "string" ? body["client_id"] : "anon";
   return `${clientId}:${req.ip}`;
 }
@@ -971,7 +981,7 @@ export async function registerOauthRoutes(
     { config: tokenRateLimitConfig },
     async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply) => {
       // RFC 6749 section 5.1 requires no-store on token-endpoint responses.
-      reply.header("cache-control", "no-store");
+      reply.header("cache-control", "no-store").header("pragma", "no-cache");
       const body = request.body ?? {};
       const grantType = str(body["grant_type"]);
 
@@ -980,6 +990,9 @@ export async function registerOauthRoutes(
       }
       if (grantType === "refresh_token") {
         return handleRefreshTokenGrant(request, reply, body);
+      }
+      if (grantType === TOKEN_EXCHANGE_GRANT_TYPE && deps.agentKeyExchange !== undefined) {
+        return handleAgentKeyExchange(deps.agentKeyExchange, request, reply, body);
       }
       reply.code(400);
       return { error: "unsupported_grant_type" };

@@ -83,6 +83,7 @@ test("worker env renderer removes root and source credential names", () => {
         "MINIO_API_SECRET_ACCESS_KEY=api-secret",
         "S3_ACCESS_KEY_ID=old-access",
         "S3_SECRET_ACCESS_KEY=old-secret",
+        "BRAIN_AGENT_API_KEY_PEPPER=agent-key-pepper",
         "BRAIN_SESSION_KEY=session-secret",
         "",
       ].join("\n"),
@@ -103,7 +104,7 @@ test("worker env renderer removes root and source credential names", () => {
     assert.match(rendered, /S3_SECRET_ACCESS_KEY=[0-9a-f]{64}/);
     assert.doesNotMatch(
       rendered,
-      /MINIO_ROOT_|MINIO_API_|MINIO_WORKER_|old-access|old-secret|root-secret|api-secret/,
+      /MINIO_ROOT_|MINIO_API_|MINIO_WORKER_|BRAIN_AGENT_API_KEY_PEPPER|old-access|old-secret|root-secret|api-secret|agent-key-pepper/,
     );
     assert.match(credentialText, /^MINIO_WORKER_ACCESS_KEY_ID=brain-worker$/m);
     assert.match(credentialText, /^MINIO_WORKER_SECRET_ACCESS_KEY=[0-9a-f]{64}$/m);

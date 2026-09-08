@@ -103,6 +103,7 @@ export const ID_PREFIX = {
   // Per-customer API-key auth (token-exchange model). Public id for a row in
   // api_keys; distinct from the token/agent ids minted alongside it.
   apiKey: "akey",
+  agentApiKey: "agkey",
   apiRequestMeterEvent: "mtr",
   apiUsageReconciliationRun: "urr",
   apiBillingPeriod: "ubp",
@@ -175,6 +176,7 @@ export const newExecutionOutboxId = (): string => brainId(ID_PREFIX.executionOut
 export const newLedgerReservationId = (): string => brainId(ID_PREFIX.ledgerReservation);
 export const newWebhookDeadLetterId = (): string => brainId(ID_PREFIX.webhookDeadLetter);
 export const newApiKeyId = (): string => brainId(ID_PREFIX.apiKey);
+export const newAgentApiKeyId = (): string => brainId(ID_PREFIX.agentApiKey);
 export const newApiRequestMeterEventId = (): string => brainId(ID_PREFIX.apiRequestMeterEvent);
 export const newApiUsageReconciliationRunId = (): string =>
   brainId(ID_PREFIX.apiUsageReconciliationRun);

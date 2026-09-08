@@ -1,7 +1,7 @@
 import { SignJWT, generateKeyPair, importJWK, exportJWK, type CryptoKey } from "jose";
 import { describe, expect, it, vi } from "vitest";
 import { isBrainError } from "../errors.js";
-import { newAgentId, newTenantId, newTokenId, newUserId } from "../ids.js";
+import { newAgentApiKeyId, newAgentId, newTenantId, newTokenId, newUserId } from "../ids.js";
 import { InMemoryRevocationStore } from "./revocation.js";
 import { projectPrincipal, verifyWithKey } from "./jwt.js";
 
@@ -62,6 +62,24 @@ describe("projectPrincipal", () => {
     const claims = baseClaims({ sub: newAgentId(), principal_type: "agent" });
     const p = projectPrincipal(claims);
     expect(p.type).toBe("agent");
+  });
+
+  it("projects a valid exchange credential id", () => {
+    const credentialId = newAgentApiKeyId();
+    const claims = baseClaims({
+      sub: newAgentId(),
+      principal_type: "agent",
+      credential_id: credentialId,
+    });
+    expect(projectPrincipal(claims).credentialId).toBe(credentialId);
+  });
+
+  it("rejects a malformed exchange credential id", () => {
+    expect(() => projectPrincipal(baseClaims({ credential_id: "akey_wrong_kind" }))).toThrow();
+  });
+
+  it("rejects exchange credential attribution on a non-agent principal", () => {
+    expect(() => projectPrincipal(baseClaims({ credential_id: newAgentApiKeyId() }))).toThrow();
   });
 
   it("rejects missing sub", () => {
@@ -202,6 +220,32 @@ describe("verifyWithKey with an array aud claim (RFC 8707 resource)", () => {
     const principal = await verifyWithKey(token, async () => publicKey, BASE_OPTS);
     expect(principal.type).toBe("agent");
     expect(principal.tenantId).toBe(tenant);
+  });
+});
+
+describe("verifyWithKey with additive accepted audiences", () => {
+  it("accepts an API-resource token while retaining the legacy audience", async () => {
+    const { publicKey, privateKey } = await generateKeyPair("RS256");
+    const token = await new SignJWT({
+      tenant_id: newTenantId(),
+      principal_type: "agent",
+      scopes: ["raw:write"],
+      credential_id: newAgentApiKeyId(),
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "test-kid" })
+      .setIssuer("https://auth.brain.fi")
+      .setAudience("https://api.brain.fi/")
+      .setIssuedAt()
+      .setExpirationTime(Math.floor(Date.now() / 1000) + 300)
+      .setSubject(newAgentId())
+      .setJti(newTokenId())
+      .sign(privateKey);
+
+    const principal = await verifyWithKey(token, async () => publicKey, {
+      ...BASE_OPTS,
+      audience: ["brain-api", "https://api.brain.fi/"],
+    });
+    expect(principal.credentialId).toMatch(/^agkey_/);
   });
 });
 

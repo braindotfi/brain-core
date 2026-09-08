@@ -24,6 +24,8 @@ export interface Principal {
   readonly scopes: ReadonlyArray<Scope>;
   /** The `jti` — used for revocation checks. */
   readonly tokenId: string;
+  /** Exchange credential attribution. Present only on brain_ak_* minted JWTs. */
+  readonly credentialId?: string;
   /** Seconds-since-epoch expiry. */
   readonly expiresAt: number;
 }

@@ -505,6 +505,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{tenantId}/agent-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List exchange-only agent API keys
+         * @description Returns metadata only. Plaintext credentials are never listed.
+         */
+        get: operations["listAgentApiKeys"];
+        put?: never;
+        /**
+         * Issue an exchange-only agent API key
+         * @description Platform-managed and gated by `X-Platform-Service-Auth`. The profile,
+         *     not the caller, defines the exact scope set. The plaintext
+         *     `brain_ak_test_*` or `brain_ak_live_*` credential is returned once and
+         *     is valid only as an RFC 8693 subject token at the auth service `/token`
+         *     endpoint. It is rejected as a direct resource bearer.
+         */
+        post: operations["issueAgentApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent-keys/{agentKeyId}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an exchange-only agent API key
+         * @description Atomically revokes the active key and returns one replacement plaintext.
+         */
+        post: operations["rotateAgentApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent-keys/{agentKeyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an exchange-only agent API key */
+        delete: operations["revokeAgentApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants/{tenantId}/usage": {
         parameters: {
             query?: never;
@@ -3755,6 +3820,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentApiKey: {
+            id: string;
+            tenant_id: string;
+            agent_id: string;
+            /** @enum {string} */
+            profile: "document_extractor_v1" | "bff_service_v1";
+            /** @enum {string} */
+            environment: "test" | "live";
+            scopes: string[];
+            name: string;
+            /** @enum {string} */
+            key_prefix: "brain_ak_test_" | "brain_ak_live_";
+            key_last4: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            rotated_from_id?: string | null;
+        };
+        AgentApiKeyIssued: components["schemas"]["AgentApiKey"] & {
+            /** @description Plaintext exchange credential. Returned only in this response. */
+            api_key: string;
+        };
         TenantExportJob: {
             job_id: string;
             tenant_id: string;
@@ -6508,6 +6600,128 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAgentApiKeys: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Platform-Service-Auth": string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent key metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        keys: components["schemas"]["AgentApiKey"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    issueAgentApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Platform-Service-Auth": string;
+                /** @description Replays the same issuance response for 24 hours when the request body matches. */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                tenantId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    agent_id: string;
+                    /** @enum {string} */
+                    profile: "document_extractor_v1" | "bff_service_v1";
+                    /** @enum {string} */
+                    environment: "test" | "live";
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Agent key issued; plaintext returned exactly once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentApiKeyIssued"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    rotateAgentApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Platform-Service-Auth": string;
+            };
+            path: {
+                agentKeyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent key rotated; replacement plaintext returned exactly once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentApiKeyIssued"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeAgentApiKey: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Platform-Service-Auth": string;
+            };
+            path: {
+                agentKeyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent key revoked or already revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
         };
     };

@@ -273,6 +273,18 @@ variable "auth_issuer" {
   default     = "https://auth.brain.fi"
 }
 
+variable "api_resource_url" {
+  description = "Exact RFC 8707 resource and JWT audience for the Brain API."
+  type        = string
+  default     = "https://api.brain.fi/"
+}
+
+variable "enable_agent_key_exchange" {
+  description = "Enable additive brain_ak agent-key issuance and RFC 8693 exchange."
+  type        = bool
+  default     = false
+}
+
 variable "enable_onchain_signing" {
   description = <<-EOT
     Inject BRAIN_SESSION_KEY into api/worker.

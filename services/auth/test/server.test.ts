@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { generateSignKeyJwk } from "@brain/shared";
+import { TOKEN_EXCHANGE_GRANT_TYPE, generateSignKeyJwk } from "@brain/shared";
 import { buildAuthApp } from "../src/server.js";
 import { WELL_KNOWN_AS_PATH, WELL_KNOWN_JWKS_PATH } from "../src/metadata.js";
 
@@ -105,6 +105,15 @@ describe("Phase 2a increment 3: oauthCore replaces the stubs when supplied", () 
       expect(r.statusCode).not.toBe(503);
       expect(r.statusCode).toBe(400);
       expect(r.body).toContain("Unknown or disabled OAuth client");
+
+      const exchange = await withOauthCore.inject({
+        method: "POST",
+        url: "/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams({ grant_type: TOKEN_EXCHANGE_GRANT_TYPE }).toString(),
+      });
+      expect(exchange.statusCode).toBe(400);
+      expect(exchange.json()).toEqual({ error: "unsupported_grant_type" });
     } finally {
       await withOauthCore.close();
     }

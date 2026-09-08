@@ -34,7 +34,7 @@ export interface VerifyOptions {
    */
   secret?: string;
   issuer: string;
-  audience: string;
+  audience: string | readonly string[];
   /** Seconds of clock skew tolerance when checking exp/iat. */
   clockToleranceSeconds: number;
   /** Optional revocation check. Supply for production; omit only in tests. */
@@ -71,7 +71,7 @@ export async function verifyWithKey(
   try {
     const { payload: p } = await jwtVerify(token, key, {
       issuer: opts.issuer,
-      audience: opts.audience,
+      audience: typeof opts.audience === "string" ? opts.audience : [...opts.audience],
       clockTolerance: opts.clockToleranceSeconds,
       requiredClaims: ["sub", "exp", "jti"],
     });
@@ -113,6 +113,7 @@ export function projectPrincipal(payload: JWTPayload): Principal {
   const tenantId = (payload["tenant_id"] ?? "") as unknown;
   const principalType = (payload["principal_type"] ?? "") as unknown;
   const scopesRaw = (payload["scopes"] ?? []) as unknown;
+  const credentialId = payload["credential_id"] as unknown;
 
   if (typeof sub !== "string" || sub === "") {
     throw brainError("auth_token_invalid", "missing sub claim");
@@ -150,6 +151,16 @@ export function projectPrincipal(payload: JWTPayload): Principal {
       });
     }
   }
+  if (
+    credentialId !== undefined &&
+    (principalType !== "agent" ||
+      typeof credentialId !== "string" ||
+      !isBrainId(credentialId, "agkey"))
+  ) {
+    throw brainError("auth_token_invalid", "malformed credential_id claim", {
+      details: { credential_id: credentialId },
+    });
+  }
 
   return {
     id: sub,
@@ -157,6 +168,7 @@ export function projectPrincipal(payload: JWTPayload): Principal {
     tenantId,
     scopes: scopesRaw as Scope[],
     tokenId: jti,
+    ...(typeof credentialId === "string" ? { credentialId } : {}),
     expiresAt: exp,
   };
 }

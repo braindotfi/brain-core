@@ -196,6 +196,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "api_request_meter_events", column: "tenant_id" },
   { table: "api_key_rate_limit_overrides", column: "tenant_id" },
   { table: "api_keys", column: "tenant_id" },
+  { table: "agent_api_keys", column: "tenant_id" },
   { table: "tenant_api_entitlements", column: "tenant_id" },
   { table: "member_identity_links", column: "tenant_id" },
   { table: "members", column: "tenant_id" },

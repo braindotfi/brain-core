@@ -42,6 +42,41 @@ describe("extractBearer", () => {
   });
 });
 
+describe("exchange-only agent API keys", () => {
+  it("rejects direct resource use before invoking either authenticator", async () => {
+    let apiKeyCalls = 0;
+    let jwtCalls = 0;
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {
+        verify: async () => {
+          jwtCalls += 1;
+          throw new Error("must not run");
+        },
+      } as unknown as JwtVerifier,
+      apiKeyAuthenticator: async () => {
+        apiKeyCalls += 1;
+        return null;
+      },
+    });
+    app.get("/resource", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/resource",
+        headers: { authorization: "Bearer brain_ak_live_not-valid-but-still-exchange-only" },
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ code: "auth_invalid_key" });
+      expect(apiKeyCalls).toBe(0);
+      expect(jwtCalls).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 class InMemoryRequestMeter implements ApiRequestMeter {
   public readonly events: ApiRequestMeterEvent[] = [];
 

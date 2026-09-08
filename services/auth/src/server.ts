@@ -209,7 +209,9 @@ export async function buildAuthApp(opts: BuildAuthAppOptions): Promise<FastifyIn
     },
   );
 
-  const metadata = buildAuthorizationServerMetadata(opts.issuer);
+  const metadata = buildAuthorizationServerMetadata(opts.issuer, {
+    agentKeyExchangeEnabled: opts.oauthCore?.agentKeyExchange !== undefined,
+  });
   const { jwks } = buildJwks(opts.signKey);
 
   app.get("/healthz", async () => ({

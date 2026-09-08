@@ -136,6 +136,23 @@ export const API_KEY_SYNTHETIC_DEMO_PERMITTED_SCOPES: ReadonlySet<Scope> = new S
 ]);
 
 /**
+ * Propose-only scope set for the agent API-key BFF profile. API route tests
+ * assert this stays byte-for-byte equal to the legacy SERVICE_TOKEN_SCOPES
+ * literal required by the repository invariant guard.
+ */
+export const BFF_SERVICE_AGENT_SCOPES: readonly Scope[] = [
+  "ledger:read",
+  "wiki:read",
+  "raw:read",
+  "raw:write",
+  "policy:read",
+  "execution:read",
+  "execution:propose",
+  "payment_intent:propose",
+  "audit:read",
+];
+
+/**
  * Canonical scope set for the demo `payment` agent role (a subset of
  * AGENT_PERMITTED_SCOPES — no `raw:write`). Single source of truth shared by
  * SIWX token issuance (scopesForRole), the BrainSaaS demo seed

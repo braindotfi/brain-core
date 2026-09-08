@@ -290,6 +290,7 @@ GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_i
   member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,
   tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,
   oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
+GRANT SELECT (id, tenant_id) ON agent_api_keys TO brain_resolver;
 -- API-key authentication resolves the key before a tenant scope exists. Raw
 -- keys additionally need only the server-owned demo eligibility columns, not
 -- unrestricted tenant metadata.
@@ -339,6 +340,8 @@ GRANT SELECT, INSERT, UPDATE ON email_verifications TO brain_auth;
 -- Add SELECT, INSERT back here when Path 2 ships.
 GRANT UPDATE (password_hash, email_verified_at, status) ON users TO brain_auth;
 GRANT SELECT ON users, members, member_identity_links, tenants, agents TO brain_auth;
+GRANT SELECT ON agent_api_keys TO brain_auth;
+GRANT UPDATE (last_used_at) ON agent_api_keys TO brain_auth;
 
 COMMENT ON ROLE brain_auth IS
   'OAuth authorization server core (auth.brain.fi). Containment: brain_auth cannot INSERT or UPDATE members, cannot touch session_refresh_tokens or member_invites, cannot INSERT tenants or users, cannot UPDATE agents, and holds nothing on any ledger_* table or execution_outbox. The AS cannot mint a Brain session directly (no session table, no JWT signing key), but its column-list GRANT UPDATE (password_hash, email_verified_at, status) ON users is a credential-write primitive equivalent to one: setting a known scrypt hash on any owner and then calling POST /v1/auth/login reaches the same outcome as a minted session. AS compromise must therefore be modelled as tenant-wide account takeover, not merely as an OAuth-scoped foothold.';
