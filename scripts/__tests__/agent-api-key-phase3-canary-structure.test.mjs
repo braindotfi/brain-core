@@ -31,6 +31,10 @@ test("canary is exact-SHA gated and migrates only the document extractor", () =>
 test("canary proves the actual runtime key, claims, scope ceiling, and lifecycle", () => {
   assert.match(canary, /printenv BRAIN_API_TOKEN/);
   assert.match(canary, /legacy_runtime_source_match=true/);
+  assert.match(canary, /AGENT_KEY_ENVIRONMENT" == "test/);
+  assert.match(canary, /staging_fixture_binding=created_or_preserved/);
+  assert.match(canary, /agent_database_binding_status=active_internal/);
+  assert.match(canary, /docker exec -i brain-prod-postgres/);
   assert.match(canary, /test -z "\$\{BRAIN_API_TOKEN\+x\}"/);
   assert.match(canary, /runtime_agent_key_match=true/);
   assert.match(canary, /credential_id/);
