@@ -65,7 +65,16 @@ export function parseAgentApiKey(value: string): ParsedAgentApiKey | null {
 }
 
 export function hashAgentApiKey(value: string, pepper: string): string {
-  return createHmac("sha256", pepper).update(value, "utf8").digest("hex");
+  // This is a keyed lookup digest for a server-generated 256-bit bearer
+  // credential, not a user-chosen password. A password KDF would add a CPU
+  // denial-of-service primitive to the public exchange endpoint without
+  // improving resistance to guessing. The dedicated pepper supplies the
+  // separate server-side secret and the label domain-separates this use.
+  // codeql[js/insufficient-password-hash]
+  return createHmac("sha256", pepper)
+    .update("brain-agent-api-key-v1\0", "utf8")
+    .update(value, "utf8")
+    .digest("hex");
 }
 
 export function agentApiKeyHashesEqual(storedHex: string, computedHex: string): boolean {
