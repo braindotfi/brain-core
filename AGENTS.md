@@ -101,6 +101,15 @@ consumed DB URL password, `BRAIN_*_DB_PASSWORD`, `POSTGRES_PASSWORD`, MinIO
 credential, or S3/Azure blob secret is empty or uses a known weak default. The
 same check warns, but does not throw, in `NODE_ENV=staging`.
 
+The production worker uses the managed MinIO user `brain-worker` with the
+`brain-worker-artifacts-v1` policy, never the MinIO root credential. Host-only
+`MINIO_WORKER_ACCESS_KEY_ID` and `MINIO_WORKER_SECRET_ACCESS_KEY` live in
+`.env.minio-worker`. `scripts/ops/prepare-minio-worker-env.sh` renders
+`.env.worker.prod` without any root or credential-source variable before every
+staging or production recreate. The worker policy permits only object reads,
+writes, version listing, version deletion, and legal-hold inspection or change
+inside `brain-artifacts`.
+
 Legacy VM `.env.staging` and `.env.prod` files missed
 `BRAIN_MCP_READER_DB_PASSWORD` when credential hardening made it mandatory.
 Use the production-gated `ops-mcp-reader-db-password.yml` workflow to inspect

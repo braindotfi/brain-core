@@ -145,7 +145,9 @@ export class S3BlobAdapter implements BlobAdapter {
       );
       const entries = [...(list.Versions ?? []), ...(list.DeleteMarkers ?? [])];
       for (const entry of entries) {
-        if (entry.Key === undefined || entry.VersionId === undefined) continue;
+        if (entry.Key === undefined || entry.VersionId === undefined) {
+          throw new Error("s3: version listing returned an entry without Key or VersionId");
+        }
         try {
           await this.client.send(
             new DeleteObjectCommand({
@@ -192,7 +194,9 @@ export class S3BlobAdapter implements BlobAdapter {
         }),
       );
       for (const row of page.Versions ?? []) {
-        if (row.Key === undefined || row.VersionId === undefined) continue;
+        if (row.Key === undefined || row.VersionId === undefined) {
+          throw new Error("s3: version listing returned an entry without Key or VersionId");
+        }
         if (!row.Key.startsWith(prefix)) throw new Error("blob legal-hold prefix escaped tenant");
         const version = { path: row.Key, versionId: row.VersionId };
         versions.push(version);
@@ -256,11 +260,14 @@ export class S3BlobAdapter implements BlobAdapter {
         (entry) => entry.Key === path,
       );
       for (const entry of entries) {
+        if (entry.VersionId === undefined) {
+          throw new Error("s3: refusing unversioned purge after a version listing");
+        }
         await this.client.send(
           new DeleteObjectCommand({
             Bucket: this.opts.bucket,
             Key: path,
-            ...(entry.VersionId !== undefined ? { VersionId: entry.VersionId } : {}),
+            VersionId: entry.VersionId,
           }),
         );
       }
