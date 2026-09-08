@@ -404,7 +404,7 @@ echo "extraction_trigger_status=$trigger_status"
 parsed_id=""
 projection_status=""
 for _ in $(seq 1 72); do
-  state="$(docker exec brain-prod-postgres psql -X -At -U brain -d brain \
+  state="$(docker exec -i brain-prod-postgres psql -X -At -U brain -d brain \
     -v tenant_id="$tenant_id" -v raw_id="$raw_id" <<'SQL'
 SELECT COALESCE(j.status, '') || E'\t' || COALESCE(j.parsed_id, '') || E'\t' ||
        COALESCE(a.projection_status, '')

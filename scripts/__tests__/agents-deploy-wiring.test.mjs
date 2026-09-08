@@ -49,7 +49,7 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(
     buildImageJob,
-    /docker build -t ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} -f services\/agents\/Dockerfile services\/agents/,
+    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t ghcr\.io\/braindotfi\/brain-agents:\$\{\{ github\.sha \}\} -f services\/agents\/Dockerfile services\/agents/,
   );
   assert.match(
     buildImageJob,
