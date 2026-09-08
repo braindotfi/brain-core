@@ -5,6 +5,19 @@ import test from "node:test";
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 const workflow = read(".github/workflows/ops-agent-key-extractor-canary.yml");
 const canary = read("scripts/ops/cutover-document-extractor-agent-key.sh");
+const mainWorkflow = read(".github/workflows/main.yml");
+const promoteWorkflow = read(".github/workflows/promote-prod.yml");
+
+test("agent images and deploy gates bind the running extractor to the exact SHA", () => {
+  assert.match(
+    mainWorkflow,
+    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t ghcr\.io\/braindotfi\/brain-agents:/,
+  );
+  assert.match(mainWorkflow, /docker exec brain-prod-agents printenv GIT_SHA/);
+  assert.match(mainWorkflow, /actual" = "\$expected/);
+  assert.match(promoteWorkflow, /docker exec brain-prod-agents printenv GIT_SHA/);
+  assert.match(promoteWorkflow, /actual" = "\$expected/);
+});
 
 test("canary is exact-SHA gated and migrates only the document extractor", () => {
   assert.match(workflow, /inputs\.sha/);
