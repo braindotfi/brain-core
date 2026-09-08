@@ -131,7 +131,42 @@ unset legacy_token source_token
 echo "canary_tenant_id=$tenant_id"
 echo "canary_agent_id=$agent_id"
 
-inventory="$(docker exec brain-prod-postgres psql -X -At -U brain -d brain <<'SQL'
+if [[ "$AGENT_KEY_ENVIRONMENT" == "test" ]]; then
+  docker exec -i brain-prod-postgres psql -X -v ON_ERROR_STOP=1 -U brain -d brain \
+    -v tenant_id="$tenant_id" -v agent_id="$agent_id" <<'SQL' >/dev/null
+BEGIN;
+INSERT INTO tenants (id, kind)
+VALUES (:'tenant_id', 'demo')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
+VALUES (
+  :'agent_id', :'tenant_id', 'internal', 'document_extractor',
+  'Document Extractor', 'active', now()
+)
+ON CONFLICT (id) DO NOTHING;
+COMMIT;
+SQL
+  echo "staging_fixture_binding=created_or_preserved"
+fi
+
+binding="$(docker exec -i brain-prod-postgres psql -X -At -U brain -d brain \
+  -v tenant_id="$tenant_id" -v agent_id="$agent_id" <<'SQL'
+SELECT
+  (EXISTS (SELECT 1 FROM tenants WHERE id = :'tenant_id'))::int,
+  (EXISTS (
+    SELECT 1 FROM agents
+     WHERE id = :'agent_id' AND tenant_id = :'tenant_id'
+       AND kind = 'internal' AND state = 'active'
+  ))::int;
+SQL
+)"
+[[ "$binding" == "1|1" ]] || {
+  echo "agent_database_binding_status=missing_or_ineligible:$binding"
+  exit 1
+}
+echo "agent_database_binding_status=active_internal"
+
+inventory="$(docker exec -i brain-prod-postgres psql -X -At -U brain -d brain <<'SQL'
 SELECT
   count(DISTINCT agent_id) FILTER (
     WHERE revoked_at IS NULL AND expires_at > now()
