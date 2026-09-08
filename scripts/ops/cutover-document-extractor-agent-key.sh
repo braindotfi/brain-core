@@ -63,10 +63,24 @@ replace_or_append() {
   mv "$tmp" "$file"
 }
 
+print_redacted_agents_failure_logs() {
+  docker logs --since 30m brain-prod-agents 2>&1 | \
+    sed -E \
+      -e 's/brain_(ak|sk)_(test|live)_[A-Za-z0-9_-]+/[redacted_credential]/g' \
+      -e 's/(Bearer )[A-Za-z0-9._-]+/\1[redacted]/g' \
+      -e 's/sk-[A-Za-z0-9_-]+/[redacted_openai_key]/g' \
+      -e 's/(BRAIN_API_TOKEN|BRAIN_AGENT_API_KEY|OPENAI_API_KEY|BRAIN_AGENTS_INBOUND_SECRET)=([^[:space:]]+)/\1=[redacted]/g' | \
+    grep -Ei 'document_extract|error|exception|traceback|openai|httpx|status[_ ]code|timed out' | \
+    tail -240 || true
+}
+
 cleanup() {
   local status=$?
   rm -f "$FIXTURE_PATH" "$legacy_header_file" "$platform_header_file"
   if [[ $status -ne 0 && "$rollback_needed" == true ]]; then
+    echo "canary_failure_diagnostics=begin" >&2
+    print_redacted_agents_failure_logs >&2
+    echo "canary_failure_diagnostics=end" >&2
     echo "canary_status=failed_restoring_legacy_runtime" >&2
     replace_or_append BRAIN_AGENTS_AUTH_MODE legacy_jwt "$VM_ENV_FILE"
     bash scripts/ops/prepare-agents-auth-env.sh \

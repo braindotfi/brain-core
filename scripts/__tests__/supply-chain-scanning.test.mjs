@@ -51,7 +51,7 @@ test("container scans use the production images and gate staging", () => {
   assert.match(prJob, /docker build .* -t brain-core:ci -f Dockerfile \./);
   assert.match(
     prJob,
-    /docker build -t brain-agents:ci -f services\/agents\/Dockerfile services\/agents/,
+    /docker build --build-arg GIT_SHA=\$\{\{ github\.sha \}\} -t brain-agents:ci -f services\/agents\/Dockerfile services\/agents/,
   );
   assert.match(mainJob, /needs: build_image/);
   assert.match(mainJob, /image-ref: ghcr\.io\/braindotfi\/brain-core:\$\{\{ github\.sha \}\}/);

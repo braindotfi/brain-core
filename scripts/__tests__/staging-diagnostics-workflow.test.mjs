@@ -128,3 +128,14 @@ test("staging diagnostic nested heredocs close at their owning handler", () => {
   assert.doesNotMatch(reconciliationHandler, /docker exec -i brain-prod-postgres psql[^\n]*-c/);
   assert.doesNotMatch(reconciliationHandler, /-c \\\"SELECT/);
 });
+
+test("document extractor failure logs are bounded and credential redacted", () => {
+  const workflow = readFileSync(WORKFLOW, "utf8");
+
+  assert.match(workflow, /document-extractor-failure-logs/);
+  assert.match(workflow, /docker logs --since 30m brain-prod-agents/);
+  assert.match(workflow, /redacted_credential/);
+  assert.match(workflow, /redacted_openai_key/);
+  assert.match(workflow, /tail -240/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:[\s\S]*command:/);
+});

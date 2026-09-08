@@ -63,7 +63,7 @@ jobs:
       - name: Build production images once for scanning
         run: |
           docker build --build-arg GIT_SHA=${{ github.sha }} --build-arg SERVICE_VERSION=${{ github.sha }} -t brain-core:ci -f Dockerfile .
-          docker build -t brain-agents:ci -f services/agents/Dockerfile services/agents
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t brain-agents:ci -f services/agents/Dockerfile services/agents
       - name: Scan core image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

@@ -12,6 +12,7 @@ on:
           - upload-pipeline-state
           - upload-pipeline-worker-logs
           - document-extractor-connectivity
+          - document-extractor-failure-logs
           - contextless-payroll-obligation-audit
           - tenant-identity-lookup
           - wiki-question-trace
@@ -96,8 +97,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" && "$DIAGNOSTIC" != "trust-gate-24h-observation" ]]; then
-            echo "diagnostic must be counterparty-trust-gate-impact, upload-pipeline-state, upload-pipeline-worker-logs, document-extractor-connectivity, contextless-payroll-obligation-audit, tenant-identity-lookup, wiki-question-trace, anchor-reconciliation-correlation, anchor-cycle-runtime-trace, trust-gate-smoke-audit-reconciliation, trust-gate-prior-smoke-execution, or trust-gate-24h-observation"
+          if [[ "$DIAGNOSTIC" != "counterparty-trust-gate-impact" && "$DIAGNOSTIC" != "upload-pipeline-state" && "$DIAGNOSTIC" != "upload-pipeline-worker-logs" && "$DIAGNOSTIC" != "document-extractor-connectivity" && "$DIAGNOSTIC" != "document-extractor-failure-logs" && "$DIAGNOSTIC" != "contextless-payroll-obligation-audit" && "$DIAGNOSTIC" != "tenant-identity-lookup" && "$DIAGNOSTIC" != "wiki-question-trace" && "$DIAGNOSTIC" != "anchor-reconciliation-correlation" && "$DIAGNOSTIC" != "anchor-cycle-runtime-trace" && "$DIAGNOSTIC" != "trust-gate-smoke-audit-reconciliation" && "$DIAGNOSTIC" != "trust-gate-prior-smoke-execution" && "$DIAGNOSTIC" != "trust-gate-24h-observation" ]]; then
+            echo "diagnostic must be one of the fixed staging diagnostic choices"
             exit 1
           fi
 
@@ -897,6 +898,21 @@ jobs:
                     process.exitCode = 1;
                   });
               '\''
+            '
+            exit 0
+          fi
+
+          if [[ "$DIAGNOSTIC" == "document-extractor-failure-logs" ]]; then
+            ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
+              set -euo pipefail
+              docker logs --since 30m brain-prod-agents 2>&1 | \
+                sed -E \
+                  -e "s/brain_(ak|sk)_(test|live)_[A-Za-z0-9_-]+/[redacted_credential]/g" \
+                  -e "s/(Bearer )[A-Za-z0-9._-]+/\1[redacted]/g" \
+                  -e "s/sk-[A-Za-z0-9_-]+/[redacted_openai_key]/g" \
+                  -e "s/(BRAIN_API_TOKEN|BRAIN_AGENT_API_KEY|OPENAI_API_KEY|BRAIN_AGENTS_INBOUND_SECRET)=([^[:space:]]+)/\1=[redacted]/g" | \
+                grep -Ei "document_extract|error|exception|traceback|openai|httpx|status[_ ]code|timed out" | \
+                tail -240 || true
             '
             exit 0
           fi
