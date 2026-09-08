@@ -55,6 +55,11 @@ test("canary proves the actual runtime key, claims, scope ceiling, and lifecycle
 });
 
 test("failed cutover restores the legacy runtime and leaves retirement untouched", () => {
+  assert.match(canary, /canary_failure_diagnostics=begin/);
+  assert.match(canary, /docker logs --since 30m brain-prod-agents/);
+  assert.match(canary, /redacted_credential/);
+  assert.match(canary, /redacted_openai_key/);
+  assert.match(canary, /tail -240/);
   assert.match(canary, /failed_restoring_legacy_runtime/);
   assert.match(canary, /BRAIN_AGENTS_AUTH_MODE legacy_jwt/);
   assert.match(canary, /legacy_jwt_revoked=false/);
