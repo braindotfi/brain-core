@@ -441,7 +441,10 @@ const envSchema = z.object({
   /** Dedicated HMAC pepper. Never reuse the commercial API-key pepper. */
   BRAIN_AGENT_API_KEY_PEPPER: optionalNonEmptyString(),
   /** Prefix environment accepted and issued by this deployment. */
-  BRAIN_AGENT_KEY_ENVIRONMENT: z.enum(["test", "live"]).optional(),
+  BRAIN_AGENT_KEY_ENVIRONMENT: z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z.enum(["test", "live"]).optional(),
+  ),
   /** Sole resource indicator and JWT audience for exchanged agent tokens. */
   BRAIN_API_RESOURCE_URL: z.string().url().default("https://api.brain.fi/"),
   /** Coarse IP abuse ceiling. Commercial key and tenant limits are server-owned. */
