@@ -42,6 +42,8 @@ test("canary proves the actual runtime key, claims, scope ceiling, and lifecycle
   assert.match(canary, /raw_read_denial_status=403/);
   assert.match(canary, /\/v1\/raw\/ingest/);
   assert.match(canary, /\/extract/);
+  assert.match(canary, /--data-binary '\{"retry":true\}'/);
+  assert.match(canary, /extraction_retry_mode=fresh_attempt/);
   assert.match(
     canary,
     /state="\$\(docker exec -i brain-prod-postgres psql[\s\S]*FROM extraction_jobs j/,

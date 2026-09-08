@@ -393,12 +393,15 @@ echo "raw_read_denial_status=403"
 
 trigger_status="$(curl -sS --connect-timeout 10 --max-time 90 -o /tmp/agent-canary-trigger-body \
   -w '%{http_code}' -X POST "http://127.0.0.1:3000/v1/raw/${raw_id}/extract" \
-  -H "@${legacy_header_file}")"
+  -H "@${legacy_header_file}" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"retry":true}')"
 rm -f /tmp/agent-canary-trigger-body
 [[ "$trigger_status" == "200" || "$trigger_status" == "202" ]] || {
   echo "extraction_trigger_status=$trigger_status"
   exit 1
 }
+echo "extraction_retry_mode=fresh_attempt"
 echo "extraction_trigger_status=$trigger_status"
 
 parsed_id=""
