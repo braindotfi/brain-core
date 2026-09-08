@@ -108,6 +108,7 @@ jobs:
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-worker-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-worker-env.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-api-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-api-env.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/prepare-agents-auth-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-agents-auth-env.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
@@ -123,6 +124,14 @@ jobs:
               --env '$VM_ENV_FILE' \
               --credentials .env.minio-worker \
               --output .env.worker.prod"
+
+      - name: Prepare isolated agents authentication environment
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/ops/prepare-agents-auth-env.sh \
+              --env '$VM_ENV_FILE' \
+              --credentials .env.agent-key-document-extractor-v1 \
+              --output .env.agents-auth.prod"
 
       - name: Pre-promote required-secret presence check
         # This guard runs before rollback tagging, image pull, migrations, or

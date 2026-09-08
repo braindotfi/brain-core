@@ -47,6 +47,12 @@ jobs:
             echo "env_file_status=missing"
             exit 1
           fi
+          mode="$(grep -E '^BRAIN_AGENTS_AUTH_MODE=' "$VM_ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+          [[ -n "$mode" ]] || mode=legacy_jwt
+          if [[ "$mode" != "legacy_jwt" ]]; then
+            echo "agents_api_token_status=refused_non_legacy_runtime"
+            exit 1
+          fi
           if ! docker inspect -f '{{.State.Running}}' brain-prod-api 2>/dev/null | grep -qx true; then
             echo "api_container_status=not_running"
             exit 1

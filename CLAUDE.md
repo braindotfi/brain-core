@@ -879,7 +879,13 @@ Pending Dmitriy sign-off
   The agents container must be healthy before staging or production deploys
   complete. Its `BRAIN_API_TOKEN` is a golden-tenant, agent-principal JWT with
   only `raw:write`; rotate it without logging the value through
-  `ops-rotate-agents-api-token.yml` before its one-year expiry.
+  `ops-rotate-agents-api-token.yml` before its one-year expiry while
+  `BRAIN_AGENTS_AUTH_MODE=legacy_jwt`. During the staged agent-key migration,
+  VM deployments render `.env.agents-auth.prod` through
+  `scripts/ops/prepare-agents-auth-env.sh`, selecting exactly one runtime
+  credential. The replacement key remains in a separate host-only file. The
+  document extractor canary uses `ops-agent-key-extractor-canary.yml`; its
+  legacy JWT and `/agent-token` remain until every agent is verified.
 - DOCX is a fifth deterministic document type alongside CSV/XLSX/text-layer
   PDF, read via `python-docx` in `extract_text.py`. Both zip-based OOXML
   formats (XLSX, DOCX) share the same pre-parse zip-bomb guard on declared

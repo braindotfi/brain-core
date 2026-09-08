@@ -12,6 +12,9 @@ const sdkExchange = read("clients/sdk/src/agent-api-key.ts");
 const compose = read("docker-compose.prod.yml");
 const developmentCompose = read("docker-compose.yml") + read("docker-compose.dev.yml");
 const terraform = read("infra/main.tf");
+const agentsAuthRenderer = read("scripts/ops/prepare-agents-auth-env.sh");
+const mainWorkflow = read(".github/workflows/main.yml");
+const promoteWorkflow = read(".github/workflows/promote-prod.yml");
 
 function composeService(name) {
   const marker = `\n  ${name}:\n`;
@@ -46,11 +49,22 @@ test("SDK agentApiKey mode is exchange-only and commercial apiKey stays direct",
   assert.match(sdkExchange, /EARLY_REFRESH_SECONDS = 60/);
 });
 
-test("Phase 2 does not cut over either live agents deployment", () => {
+test("Phase 3 VM wiring renders exactly one selected agents credential", () => {
   const agents = composeService("agents");
-  assert.match(agents, /BRAIN_API_TOKEN:/);
-  assert.doesNotMatch(agents, /BRAIN_AGENT_API_KEY:/);
-  assert.doesNotMatch(agents, /BRAIN_AUTH_TOKEN_URL:/);
+  assert.match(agents, /\.env\.agents-auth\.prod/);
+  assert.doesNotMatch(agents, /^\s+BRAIN_API_TOKEN:/m);
+  assert.doesNotMatch(agents, /^\s+BRAIN_AGENT_API_KEY:/m);
+  assert.match(agentsAuthRenderer, /legacy_jwt\)/);
+  assert.match(agentsAuthRenderer, /agent_api_key\)/);
+  assert.match(agentsAuthRenderer, /BRAIN_API_TOKEN=/);
+  assert.match(agentsAuthRenderer, /BRAIN_AGENT_API_KEY=/);
+  assert.match(agentsAuthRenderer, /BRAIN_AUTH_TOKEN_URL=/);
+  assert.match(agentsAuthRenderer, /BRAIN_API_RESOURCE_URL=/);
+  assert.match(mainWorkflow, /prepare-agents-auth-env\.sh/);
+  assert.match(promoteWorkflow, /prepare-agents-auth-env\.sh/);
+
+  // The independent Azure deployment remains on the legacy credential until
+  // it is selected as a later canary. This VM canary does not switch it.
 
   const agentsContainer = terraform.slice(
     terraform.indexOf('name   = "agents"'),
