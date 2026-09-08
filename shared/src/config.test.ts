@@ -83,6 +83,7 @@ describe("parseConfig", () => {
       PLAID_SECRET: "",
       BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME: "",
       BRAIN_AGENT_API_KEY_PEPPER: "",
+      BRAIN_AGENT_KEY_ENVIRONMENT: "",
     });
     expect(cfg.ANTHROPIC_API_KEY).toBeUndefined();
     expect(cfg.OPENAI_API_KEY).toBeUndefined();
@@ -90,6 +91,7 @@ describe("parseConfig", () => {
     expect(cfg.PLAID_SECRET).toBeUndefined();
     expect(cfg.BRAIN_SOURCE_CREDENTIAL_KEY_VAULT_NAME).toBeUndefined();
     expect(cfg.BRAIN_AGENT_API_KEY_PEPPER).toBeUndefined();
+    expect(cfg.BRAIN_AGENT_KEY_ENVIRONMENT).toBeUndefined();
   });
 
   it("parses additive agent-key exchange settings without enabling them by default", () => {
@@ -110,6 +112,14 @@ describe("parseConfig", () => {
     expect(() =>
       parseConfig({ ...MIN_ENV, BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true" }),
     ).toThrowError(/BRAIN_AGENT_API_KEY_PEPPER.*BRAIN_AGENT_KEY_ENVIRONMENT/);
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true",
+        BRAIN_AGENT_API_KEY_PEPPER: "dedicated-agent-pepper",
+        BRAIN_AGENT_KEY_ENVIRONMENT: "",
+      }),
+    ).toThrowError(/BRAIN_AGENT_KEY_ENVIRONMENT/);
     expect(() =>
       parseConfig({
         ...MIN_ENV,
