@@ -12,6 +12,23 @@ This workspace is managed with [`uv`](https://docs.astral.sh/uv/). Tooling is
 configured in `pyproject.toml` (black, ruff, mypy --strict, pytest with 80%
 coverage gate).
 
+## Outbound Brain API authentication
+
+Production accepts one outbound credential mode at a time. The current Phase 2
+deployment remains on `BRAIN_API_TOKEN`. The staged replacement uses:
+
+```text
+BRAIN_AGENT_API_KEY=brain_ak_test_...
+BRAIN_AUTH_TOKEN_URL=https://auth.example/token
+BRAIN_API_RESOURCE_URL=https://api.example/
+```
+
+Agent-key mode performs RFC 8693 exchange before startup completes, keeps the
+five-minute access token in memory, refreshes it 60 seconds early, coalesces
+concurrent refreshes, and retries one request after a 401. It never sends the
+durable agent key to a Brain API resource route. Do not configure both the agent
+key and `BRAIN_API_TOKEN`.
+
 ```bash
 # From this directory:
 uv sync --extra dev            # install into .venv

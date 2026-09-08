@@ -3,23 +3,165 @@
 import asyncio
 import base64
 import json
-import logging
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from brain_agents.jwt_util import jwt_expiry_epoch, jwt_tenant_id
+from brain_agents.jwt_util import jwt_claims
 from brain_agents.service_auth import compute_service_auth_signature_v2
 
-_log = logging.getLogger(__name__)
-
-# Proactively refresh BRAIN_API_TOKEN once it is within this many seconds of
-# its `exp` claim, rather than waiting for it to fail with a 401 (F4). Small
-# relative to server.py's 30-day boot-time warning window -- this is the
-# runtime safety net, not the primary signal an operator should rely on.
-_REFRESH_MARGIN_SECONDS = 60 * 60
+_TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
+_AGENT_API_KEY_SUBJECT_TOKEN_TYPE = "urn:brain:params:oauth:token-type:agent-api-key"
+_ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+_ACCESS_TOKEN_MAX_TTL_SECONDS = 300
+_EARLY_REFRESH_SECONDS = 60
+_CLOCK_SKEW_SECONDS = 5
 _HTTP_UNAUTHORIZED = 401
+
+
+class AgentTokenExchangeError(RuntimeError):
+    """An agent key could not be exchanged for a valid access token."""
+
+
+@dataclass(frozen=True)
+class _CachedAccessToken:
+    value: str
+    expires_at: int
+
+
+class AgentTokenManager:
+    """Exchange one durable agent key and cache only short-lived JWTs in memory."""
+
+    def __init__(
+        self,
+        *,
+        agent_api_key: str,
+        token_url: str,
+        resource: str,
+        scope: str,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        self._agent_api_key = agent_api_key
+        self._token_url = token_url
+        self._resource = resource
+        self._scope = scope
+        self._now = now
+        self._cached: _CachedAccessToken | None = None
+        self._exchange_task: asyncio.Task[_CachedAccessToken] | None = None
+
+    async def start(self) -> None:
+        """Fail boot closed unless the initial exchange returns a valid token."""
+        await self.get_access_token()
+
+    async def get_access_token(self) -> str:
+        cached = self._cached
+        if cached is not None and cached.expires_at - self._now() > _EARLY_REFRESH_SECONDS:
+            return cached.value
+        return (await self._exchange_singleflight()).value
+
+    async def refresh_after_unauthorized(self, failed_token: str) -> str:
+        cached = self._cached
+        if (
+            cached is not None
+            and cached.value != failed_token
+            and cached.expires_at - self._now() > _EARLY_REFRESH_SECONDS
+        ):
+            return cached.value
+        return (await self._exchange_singleflight()).value
+
+    async def _exchange_singleflight(self) -> _CachedAccessToken:
+        task = self._exchange_task
+        if task is None:
+            task = asyncio.create_task(self._exchange())
+            self._exchange_task = task
+
+            def clear(completed: asyncio.Task[_CachedAccessToken]) -> None:
+                if self._exchange_task is completed:
+                    self._exchange_task = None
+
+            task.add_done_callback(clear)
+        return await asyncio.shield(task)
+
+    async def _exchange(self) -> _CachedAccessToken:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    self._token_url,
+                    data={
+                        "grant_type": _TOKEN_EXCHANGE_GRANT_TYPE,
+                        "subject_token": self._agent_api_key,
+                        "subject_token_type": _AGENT_API_KEY_SUBJECT_TOKEN_TYPE,
+                        "requested_token_type": _ACCESS_TOKEN_TYPE,
+                        "resource": self._resource,
+                        "scope": self._scope,
+                    },
+                    headers={"Accept": "application/json"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AgentTokenExchangeError("agent API key exchange failed") from exc
+
+        if not isinstance(payload, dict):
+            raise AgentTokenExchangeError("agent API key exchange returned an invalid response")
+        token = payload.get("access_token")
+        expires_in = payload.get("expires_in")
+        response_scope = payload.get("scope")
+        if (
+            not isinstance(token, str)
+            or token == ""
+            or payload.get("token_type") != "Bearer"
+            or payload.get("issued_token_type") != _ACCESS_TOKEN_TYPE
+            or not isinstance(expires_in, int)
+            or isinstance(expires_in, bool)
+            or expires_in <= 0
+            or expires_in > _ACCESS_TOKEN_MAX_TTL_SECONDS
+            or response_scope != self._scope
+            or "refresh_token" in payload
+        ):
+            raise AgentTokenExchangeError("agent API key exchange returned an invalid response")
+
+        claims = jwt_claims(token)
+        now = int(self._now())
+        if claims is None:
+            raise AgentTokenExchangeError("agent API key exchange returned an invalid access token")
+        exp = claims.get("exp")
+        iat = claims.get("iat")
+        scopes = claims.get("scopes")
+        if (
+            not isinstance(exp, int)
+            or isinstance(exp, bool)
+            or not isinstance(iat, int)
+            or isinstance(iat, bool)
+            or exp <= now
+            or exp <= iat
+            or iat > now + _CLOCK_SKEW_SECONDS
+            or exp - iat > _ACCESS_TOKEN_MAX_TTL_SECONDS
+            or exp > now + _ACCESS_TOKEN_MAX_TTL_SECONDS + _CLOCK_SKEW_SECONDS
+            or claims.get("aud") != self._resource
+            or not isinstance(claims.get("iss"), str)
+            or claims.get("iss") == ""
+            or claims.get("principal_type") != "agent"
+            or not isinstance(claims.get("sub"), str)
+            or not str(claims["sub"]).startswith("agent_")
+            or not isinstance(claims.get("tenant_id"), str)
+            or not str(claims["tenant_id"]).startswith("tnt_")
+            or not isinstance(claims.get("credential_id"), str)
+            or not str(claims["credential_id"]).startswith("agkey_")
+            or not isinstance(claims.get("jti"), str)
+            or not str(claims["jti"]).startswith("token_")
+            or not isinstance(scopes, list)
+            or not all(isinstance(value, str) for value in scopes)
+            or scopes != self._scope.split()
+        ):
+            raise AgentTokenExchangeError("agent API key exchange returned an invalid access token")
+
+        cached = _CachedAccessToken(value=token, expires_at=min(exp, now + expires_in))
+        self._cached = cached
+        return cached
 
 
 class TenantBindingUnavailableError(RuntimeError):
@@ -39,16 +181,36 @@ class BrainApiClient:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str = "",
         service_secret: str = "",
-        platform_service_secret: str = "",
+        *,
+        agent_api_key: str = "",
+        auth_token_url: str = "",
+        api_resource: str = "https://api.brain.fi/",
+        agent_scope: str = "raw:write",
     ) -> None:
+        if (token != "") == (agent_api_key != ""):
+            raise ValueError("configure exactly one of token or agent_api_key")
+        if agent_api_key != "" and auth_token_url == "":
+            raise ValueError("auth_token_url is required with agent_api_key")
         self._base_url = base_url.rstrip("/")
-        self._token = token
+        self._static_token = token
         self._service_secret = service_secret
-        # F4: return-or-rotate token refresh. See _refresh_token.
-        self._platform_service_secret = platform_service_secret
-        self._refresh_lock = asyncio.Lock()
+        self._agent_tokens = (
+            AgentTokenManager(
+                agent_api_key=agent_api_key,
+                token_url=auth_token_url,
+                resource=api_resource,
+                scope=agent_scope,
+            )
+            if agent_api_key != ""
+            else None
+        )
+
+    async def start(self) -> None:
+        """Perform the initial agent-key exchange before the service is healthy."""
+        if self._agent_tokens is not None:
+            await self._agent_tokens.start()
 
     def _service_auth_headers(self, tenant_id: str | None, body_bytes: bytes) -> dict[str, str]:
         """X-Brain-Write-Tenant + X-Brain-Service-Timestamp + X-Brain-Service-Auth
@@ -70,65 +232,43 @@ class BrainApiClient:
             ),
         }
 
-    def _refresh_configured(self) -> bool:
-        return self._platform_service_secret != ""
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        body_bytes: bytes | None = None,
+        extra_headers: dict[str, str] | None = None,
+        params: dict[str, str | int | float | bool | None] | None = None,
+    ) -> httpx.Response:
+        """Send with a current token and retry once after a key-mode 401."""
 
-    async def _maybe_refresh_before_call(self) -> None:
-        """Proactively refresh self._token when it is expired or close to it.
+        token = (
+            await self._agent_tokens.get_access_token()
+            if self._agent_tokens is not None
+            else self._static_token
+        )
 
-        No-op when refresh isn't configured (back-compat: the static token
-        is used forever, matching pre-F4 behavior) or when the current
-        token isn't a readable JWT (nothing to judge expiry from).
-        """
-        if not self._refresh_configured():
-            return
-        exp = jwt_expiry_epoch(self._token)
-        if exp is not None and exp - time.time() > _REFRESH_MARGIN_SECONDS:
-            return
-        await self._refresh_token()
+        async def _attempt(access_token: str) -> httpx.Response:
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                **(extra_headers or {}),
+            }
+            if body_bytes is not None:
+                headers["Content-Type"] = "application/json"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                return await client.request(
+                    method,
+                    f"{self._base_url}{path}",
+                    content=body_bytes,
+                    headers=headers,
+                    params=params,
+                )
 
-    async def _refresh_token(self) -> bool:
-        """Mint-or-return a live agent token for self._token's own tenant via
-        the return-or-rotate POST /v1/tenants/{tenant_id}/agent-token route,
-        and swap it in.
-
-        Returns True on a successful swap, False on any reason it could not
-        (not configured, unreadable token, non-2xx response, unexpected
-        response shape) -- a refresh failure never raises, so it degrades to
-        "keep using the token we have" rather than crashing an in-flight
-        request. It is still logged loudly (never silent) so an operator can
-        see refresh is broken instead of only ever seeing the downstream 401.
-        """
-        if not self._refresh_configured():
-            return False
-        tenant_id = jwt_tenant_id(self._token)
-        if tenant_id is None:
-            _log.warning(
-                "BRAIN_API_TOKEN refresh skipped: current token is not a "
-                "readable JWT, so its tenant cannot be determined."
-            )
-            return False
-        async with self._refresh_lock:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        f"{self._base_url}/v1/tenants/{tenant_id}/agent-token",
-                        json={},
-                        headers={
-                            "X-Platform-Service-Auth": self._platform_service_secret,
-                            "Content-Type": "application/json",
-                        },
-                    )
-                resp.raise_for_status()
-                new_token = resp.json().get("token")
-            except (httpx.HTTPError, ValueError) as exc:
-                _log.warning("BRAIN_API_TOKEN refresh request failed: %s", exc)
-                return False
-            if isinstance(new_token, str) and new_token != "":
-                self._token = new_token
-                return True
-            _log.warning("BRAIN_API_TOKEN refresh response carried no usable token")
-            return False
+        response = await _attempt(token)
+        if response.status_code == _HTTP_UNAUTHORIZED and self._agent_tokens is not None:
+            token = await self._agent_tokens.refresh_after_unauthorized(token)
+            response = await _attempt(token)
+        return response
 
     async def _post(
         self,
@@ -136,30 +276,7 @@ class BrainApiClient:
         body_bytes: bytes,
         extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        """POST body_bytes with a fresh Authorization header.
-
-        Proactively refreshes first (F4); if the attempt still 401's and
-        refresh is configured, refreshes once more and retries exactly once
-        -- the proactive check covers the common case, this covers the token
-        expiring in the gap between the check and the request landing.
-        """
-
-        async def _attempt() -> httpx.Response:
-            headers = {
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-                **(extra_headers or {}),
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                return await client.post(
-                    f"{self._base_url}{path}", content=body_bytes, headers=headers
-                )
-
-        await self._maybe_refresh_before_call()
-        resp = await _attempt()
-        if resp.status_code == _HTTP_UNAUTHORIZED and await self._refresh_token():
-            resp = await _attempt()
-        return resp
+        return await self._request("POST", path, body_bytes, extra_headers)
 
     async def propose(
         self, action: dict[str, Any], agent_id: str, tenant_id: str
@@ -203,26 +320,23 @@ class BrainApiClient:
         is tenant-scoped through the JWT; tenant_id here is informational
         (logged with the scan result).
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                f"{self._base_url}/v1/ledger/transactions",
-                params={"limit": limit},
-                headers={
-                    "Authorization": f"Bearer {self._token}",
-                    "X-Brain-Tenant": tenant_id,
-                },
-            )
-            resp.raise_for_status()
-            payload: dict[str, Any] = resp.json()
-            # GET /v1/ledger/transactions returns { transactions: [...] }
-            # (services/ledger/src/routes/index.ts). Older / alternate handlers
-            # used `items` or `data`; keep both as fallbacks so a future route
-            # rename does not silently turn the scheduler into a no-op.
-            items = payload.get(
-                "transactions",
-                payload.get("items", payload.get("data", [])),
-            )
-            return list(items) if isinstance(items, list) else []
+        resp = await self._request(
+            "GET",
+            "/v1/ledger/transactions",
+            extra_headers={"X-Brain-Tenant": tenant_id},
+            params={"limit": limit},
+        )
+        resp.raise_for_status()
+        payload: dict[str, Any] = resp.json()
+        # GET /v1/ledger/transactions returns { transactions: [...] }
+        # (services/ledger/src/routes/index.ts). Older / alternate handlers
+        # used `items` or `data`; keep both as fallbacks so a future route
+        # rename does not silently turn the scheduler into a no-op.
+        items = payload.get(
+            "transactions",
+            payload.get("items", payload.get("data", [])),
+        )
+        return list(items) if isinstance(items, list) else []
 
     async def post_parsed(
         self,
@@ -288,12 +402,7 @@ class BrainApiClient:
         else:
             json_body["body"] = body
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{self._base_url}/v1/raw/ingest",
-                json=json_body,
-                headers={"Authorization": f"Bearer {self._token}"},
-            )
-            resp.raise_for_status()
-            result: dict[str, Any] = resp.json()
-            return result
+        resp = await self._post("/v1/raw/ingest", json.dumps(json_body).encode("utf-8"))
+        resp.raise_for_status()
+        result: dict[str, Any] = resp.json()
+        return result

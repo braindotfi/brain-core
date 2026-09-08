@@ -6,6 +6,7 @@ that means every scheduled scan saw an empty list and silently skipped.
 These tests pin the real response shape so the bug cannot recur.
 """
 
+import asyncio
 import base64
 import json
 import time
@@ -15,7 +16,12 @@ import httpx
 import pytest
 import respx
 
-from brain_agents.client import BrainApiClient, TenantBindingUnavailableError
+from brain_agents.client import (
+    AgentTokenExchangeError,
+    AgentTokenManager,
+    BrainApiClient,
+    TenantBindingUnavailableError,
+)
 from brain_agents.service_auth import compute_service_auth_signature_v2
 
 BASE = "http://localhost:3001"
@@ -23,16 +29,50 @@ TOKEN = "test-token"
 TENANT = "tnt_01TESTAAAAAAAAAAAAAAAAAA"
 
 
-def _jwt(exp: int, tenant_id: str = TENANT) -> str:
-    """Build a structurally valid JWT carrying `exp` and `tenant_id` claims.
-    The signature is never verified by this code path (jwt_util.py reads
-    claims only), so a placeholder is enough."""
+TOKEN_URL = "http://localhost:3003/token"
+RESOURCE = "https://api.brain.fi/"
+AGENT_KEY = "brain_ak_test_agkey_01TEST_secret"  # gitleaks:allow
+
+
+def _agent_jwt(
+    *,
+    now: int,
+    suffix: str = "1",
+    expires_in: int = 300,
+    audience: str = RESOURCE,
+) -> str:
+    """Build the exchange claim shape; API verification remains authoritative."""
     payload = (
-        base64.urlsafe_b64encode(json.dumps({"exp": exp, "tenant_id": tenant_id}).encode())
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "iss": "https://auth.brain.fi",
+                    "aud": audience,
+                    "sub": "agent_01TESTAAAAAAAAAAAAAAAA",
+                    "tenant_id": TENANT,
+                    "principal_type": "agent",
+                    "credential_id": "agkey_01TESTAAAAAAAAAAAAAA",
+                    "scopes": ["raw:write"],
+                    "iat": now,
+                    "exp": now + expires_in,
+                    "jti": f"token_{suffix}",
+                }
+            ).encode()
+        )
         .decode()
         .rstrip("=")
     )
     return f"header.{payload}.signature"
+
+
+def _exchange_response(token: str, *, expires_in: int = 300) -> dict[str, object]:
+    return {
+        "access_token": token,
+        "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "token_type": "Bearer",
+        "expires_in": expires_in,
+        "scope": "raw:write",
+    }
 
 
 async def test_list_recent_transactions_reads_the_ledger_response_shape() -> None:
@@ -330,20 +370,19 @@ async def test_post_parsed_omits_tenant_headers_when_no_service_secret_configure
 
 
 # ---------------------------------------------------------------------------
-# RFC F4: BRAIN_API_TOKEN refresh
+# Agent API key exchange
 # ---------------------------------------------------------------------------
 
 
-async def test_post_parsed_proactively_refreshes_a_near_expiry_token() -> None:
-    """A token inside the refresh margin of its exp claim is swapped for a
-    fresh one BEFORE the call is made, rather than waiting to fail with a
-    401 first."""
-    old_token = _jwt(int(time.time()) + 60)  # inside the 1h refresh margin
-    new_token = _jwt(int(time.time()) + 30 * 86400)
+async def test_start_exchanges_exact_rfc_8693_form_and_caches_token() -> None:
+    now = int(time.time())
+    token = _agent_jwt(now=now)
+    seen_form: dict[str, str] = {}
     seen_auth: list[str] = []
 
-    def refresh_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"token": new_token})
+    def exchange_handler(request: httpx.Request) -> httpx.Response:
+        seen_form.update(dict(httpx.QueryParams(request.content.decode())))
+        return httpx.Response(200, json=_exchange_response(token))
 
     def parsed_handler(request: httpx.Request) -> httpx.Response:
         seen_auth.append(request.headers.get("authorization", ""))
@@ -351,57 +390,169 @@ async def test_post_parsed_proactively_refreshes_a_near_expiry_token() -> None:
 
     raw_id = "raw_01TESTFFFFFFFFFFFFFFFFFF"
     with respx.mock() as mock:
-        mock.post(f"{BASE}/v1/tenants/{TENANT}/agent-token").mock(side_effect=refresh_handler)
+        exchange = mock.post(TOKEN_URL).mock(side_effect=exchange_handler)
         mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=parsed_handler)
-        client = BrainApiClient(BASE, old_token, platform_service_secret="platform-secret")
+        client = BrainApiClient(
+            BASE,
+            agent_api_key=AGENT_KEY,
+            auth_token_url=TOKEN_URL,
+            api_resource=RESOURCE,
+        )
+        await client.start()
         await client.post_parsed(
             raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
         )
 
-    assert seen_auth == [f"Bearer {new_token}"]
+    assert exchange.call_count == 1
+    assert seen_auth == [f"Bearer {token}"]
+    assert seen_form == {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": AGENT_KEY,
+        "subject_token_type": "urn:brain:params:oauth:token-type:agent-api-key",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "resource": RESOURCE,
+        "scope": "raw:write",
+    }
 
 
-async def test_post_parsed_retries_once_after_401_when_refresh_configured() -> None:
-    """A token that isn't near expiry yet but still 401's (already expired
-    server-side, or revoked) is retried exactly once after a refresh."""
-    live_token = _jwt(int(time.time()) + 30 * 86400)
-    new_token = _jwt(int(time.time()) + 31 * 86400)  # distinct exp so the two JWTs differ
+async def test_post_parsed_retries_exactly_once_after_401_in_agent_key_mode() -> None:
+    now = int(time.time())
+    first_token = _agent_jwt(now=now, suffix="first")
+    second_token = _agent_jwt(now=now, suffix="second")
     attempts: list[str] = []
+    exchanged = [first_token, second_token]
 
-    def refresh_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"token": new_token})
+    def exchange_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_exchange_response(exchanged.pop(0)))
 
     def parsed_handler(request: httpx.Request) -> httpx.Response:
         auth = request.headers.get("authorization", "")
         attempts.append(auth)
-        if auth == f"Bearer {live_token}":
+        if auth == f"Bearer {first_token}":
             return httpx.Response(401, json={"error": "expired"})
         return httpx.Response(201, json={"id": "prs_01TEST"})
 
     raw_id = "raw_01TESTGGGGGGGGGGGGGGGGGG"
     with respx.mock() as mock:
-        mock.post(f"{BASE}/v1/tenants/{TENANT}/agent-token").mock(side_effect=refresh_handler)
+        exchange = mock.post(TOKEN_URL).mock(side_effect=exchange_handler)
         mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").mock(side_effect=parsed_handler)
-        client = BrainApiClient(BASE, live_token, platform_service_secret="platform-secret")
+        client = BrainApiClient(BASE, agent_api_key=AGENT_KEY, auth_token_url=TOKEN_URL)
         result = await client.post_parsed(
             raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
         )
 
-    assert attempts == [f"Bearer {live_token}", f"Bearer {new_token}"]
+    assert exchange.call_count == 2
+    assert attempts == [f"Bearer {first_token}", f"Bearer {second_token}"]
     assert result["id"] == "prs_01TEST"
 
 
-async def test_post_parsed_401_propagates_when_refresh_not_configured() -> None:
-    """Back-compat: without platform_service_secret, a 401 behaves exactly as
-    before this change -- no refresh attempt, no retry."""
+async def test_static_token_401_behavior_is_unchanged() -> None:
     raw_id = "raw_01TESTHHHHHHHHHHHHHHHHHH"
     with respx.mock() as mock:
-        mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").respond(401, json={"error": "expired"})
+        route = mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").respond(401, json={"error": "expired"})
         client = BrainApiClient(BASE, TOKEN)
         with pytest.raises(httpx.HTTPStatusError):
             await client.post_parsed(
                 raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
             )
+    assert route.call_count == 1
+
+
+async def test_agent_key_401_is_not_retried_more_than_once() -> None:
+    now = int(time.time())
+    exchanged = [
+        _agent_jwt(now=now, suffix="first"),
+        _agent_jwt(now=now, suffix="second"),
+    ]
+    raw_id = "raw_01TESTIIIIIIIIIIIIIIIIII"
+    with respx.mock() as mock:
+        exchange = mock.post(TOKEN_URL).mock(
+            side_effect=lambda request: httpx.Response(
+                200, json=_exchange_response(exchanged.pop(0))
+            )
+        )
+        route = mock.post(f"{BASE}/v1/raw/{raw_id}/parsed").respond(401, json={"error": "denied"})
+        client = BrainApiClient(BASE, agent_api_key=AGENT_KEY, auth_token_url=TOKEN_URL)
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.post_parsed(
+                raw_id=raw_id, parser="doc_obligation_v1", parser_version="1.0.0", extracted={}
+            )
+    assert exchange.call_count == 2
+    assert route.call_count == 2
+
+
+async def test_early_refresh_and_singleflight_coalesce_concurrent_calls() -> None:
+    clock = [1_800_000_000]
+    first = _agent_jwt(now=clock[0], suffix="first")
+    second = _agent_jwt(now=clock[0] + 241, suffix="second")
+    exchanged = [first, second]
+    release_second = asyncio.Event()
+
+    async def exchange_handler(request: httpx.Request) -> httpx.Response:
+        token = exchanged.pop(0)
+        if token == second:
+            await release_second.wait()
+        return httpx.Response(200, json=_exchange_response(token))
+
+    manager = AgentTokenManager(
+        agent_api_key=AGENT_KEY,
+        token_url=TOKEN_URL,
+        resource=RESOURCE,
+        scope="raw:write",
+        now=lambda: float(clock[0]),
+    )
+    with respx.mock() as mock:
+        exchange = mock.post(TOKEN_URL).mock(side_effect=exchange_handler)
+        assert await manager.get_access_token() == first
+        clock[0] += 241
+        calls = [asyncio.create_task(manager.get_access_token()) for _ in range(8)]
+        await asyncio.sleep(0)
+        release_second.set()
+        assert await asyncio.gather(*calls) == [second] * 8
+    assert exchange.call_count == 2
+
+
+async def test_exchange_rejects_invalid_claims_without_caching() -> None:
+    now = int(time.time())
+    wrong_audience = _agent_jwt(now=now, audience="https://wrong.example/")
+    with respx.mock() as mock:
+        route = mock.post(TOKEN_URL).respond(200, json=_exchange_response(wrong_audience))
+        manager = AgentTokenManager(
+            agent_api_key=AGENT_KEY,
+            token_url=TOKEN_URL,
+            resource=RESOURCE,
+            scope="raw:write",
+        )
+        with pytest.raises(AgentTokenExchangeError):
+            await manager.start()
+        with pytest.raises(AgentTokenExchangeError):
+            await manager.get_access_token()
+    assert route.call_count == 2
+
+
+async def test_exchange_rejects_refresh_tokens() -> None:
+    now = int(time.time())
+    payload = _exchange_response(_agent_jwt(now=now))
+    payload["refresh_token"] = "must-not-be-issued"
+    with respx.mock() as mock:
+        mock.post(TOKEN_URL).respond(200, json=payload)
+        manager = AgentTokenManager(
+            agent_api_key=AGENT_KEY,
+            token_url=TOKEN_URL,
+            resource=RESOURCE,
+            scope="raw:write",
+        )
+        with pytest.raises(AgentTokenExchangeError):
+            await manager.start()
+
+
+def test_client_requires_one_unambiguous_credential_mode() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        BrainApiClient(BASE)
+    with pytest.raises(ValueError, match="exactly one"):
+        BrainApiClient(BASE, TOKEN, agent_api_key=AGENT_KEY, auth_token_url=TOKEN_URL)
+    with pytest.raises(ValueError, match="auth_token_url"):
+        BrainApiClient(BASE, agent_api_key=AGENT_KEY)
 
 
 @pytest.mark.parametrize("status", [400, 404, 500])

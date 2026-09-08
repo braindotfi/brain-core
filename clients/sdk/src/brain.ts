@@ -99,10 +99,10 @@ export function resolveBaseUrl(options: Pick<BrainOptions, "environment" | "base
  * compounds follow in subsequent PRs. See clients/sdk/README.md for
  * status.
  *
- * `new Brain(...)` requires a `token` or `apiKey` up front because almost
- * every resource here needs one. The few genuinely public routes (signup,
- * login, SIWX, and the public reference catalog) are reachable before you
- * hold a credential via the separate `Brain.public(...)` entry point.
+ * `new Brain(...)` requires exactly one `token`, `apiKey`, or `agentApiKey`
+ * because almost every resource here needs a credential. The few genuinely
+ * public routes (signup, login, SIWX, and the public reference catalog) are
+ * reachable via the separate `Brain.public(...)` entry point.
  */
 export class Brain {
   readonly http: BrainHttpClient;
@@ -138,18 +138,18 @@ export class Brain {
   readonly reference: ReferenceResource;
   private readonly _token: string | undefined;
   private readonly _apiKey: string | undefined;
+  private readonly _agentApiKey: string | undefined;
   private readonly _fetch: typeof globalThis.fetch;
   private readonly compounds: CompoundsResource;
 
   constructor(options: BrainOptions) {
     const hasToken = typeof options.token === "string" && options.token.length > 0;
     const hasApiKey = typeof options.apiKey === "string" && options.apiKey.length > 0;
-    if (hasToken === hasApiKey) {
-      throw new Error(
-        hasToken
-          ? "Brain: pass exactly one of `token` or `apiKey`, not both"
-          : "Brain: exactly one of `token` or `apiKey` is required (pass a JWT string as `token`, or a `brain_sk_...` key as `apiKey`)",
-      );
+    const hasAgentApiKey =
+      typeof options.agentApiKey === "string" && options.agentApiKey.length > 0;
+    const credentialCount = Number(hasToken) + Number(hasApiKey) + Number(hasAgentApiKey);
+    if (credentialCount !== 1) {
+      throw new Error("Brain: exactly one of `token`, `apiKey`, or `agentApiKey` is required");
     }
     const fetch = options.fetch ?? globalThis.fetch;
     if (typeof fetch !== "function") {
@@ -159,6 +159,7 @@ export class Brain {
     this.defaultTenantId = options.defaultTenantId;
     this._token = options.token;
     this._apiKey = options.apiKey;
+    this._agentApiKey = options.agentApiKey;
     this._fetch = fetch;
     this.http = createBrainHttpClient({ ...options, baseUrl: this.baseUrl, fetch });
     this.accounts = new AccountsResource(this.http);
@@ -248,7 +249,7 @@ export class Brain {
   }
 
   getMaskedToken(): string {
-    const value = this._token ?? this._apiKey ?? "";
+    const value = this._token ?? this._apiKey ?? this._agentApiKey ?? "";
     return value.length > 11 ? `${value.slice(0, 11)}***` : "***";
   }
 
@@ -258,6 +259,11 @@ export class Brain {
 
   getFetch(): typeof globalThis.fetch {
     return this._fetch;
+  }
+
+  /** Exchange and validate an agent key during application boot. */
+  async ready(): Promise<void> {
+    await this.http.ready();
   }
 
   /**
