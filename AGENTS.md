@@ -145,7 +145,15 @@ Staging and production deploys also require `brain-prod-agents` to become
 healthy after recreation. The external document extractor writes parsed rows
 with a golden-tenant agent JWT carrying only `raw:write`; rotate its one-year
 `BRAIN_API_TOKEN` through `ops-rotate-agents-api-token.yml` without printing
-the credential.
+the credential while `BRAIN_AGENTS_AUTH_MODE=legacy_jwt`.
+
+During the staged agent-key migration, VM deployments render
+`.env.agents-auth.prod` through `scripts/ops/prepare-agents-auth-env.sh` so the
+agents container receives exactly one of the legacy JWT or the scoped agent API
+key. The replacement key remains in a separate host-only credential file and
+must not enter the shared API or worker environment source. The document
+extractor canary runs through `ops-agent-key-extractor-canary.yml`; do not revoke
+the legacy JWT or retire `/agent-token` until every remaining agent is verified.
 
 Supply-chain CI runs on every pull request and main push: `pnpm audit` and
 tfsec fail on high or critical findings, CodeQL uses security-extended queries

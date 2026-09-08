@@ -147,6 +147,43 @@ test("requires every agent-key exchange binding only when exchange is enabled", 
   );
 });
 
+test("requires only the credential selected for the agents auth environment", () => {
+  const compose = "services:\n  agents:\n    env_file: [.env.agents-auth.prod]\n";
+  withFiles(
+    {
+      compose,
+      env: "BRAIN_AGENTS_AUTH_MODE=agent_api_key\nCORS_ALLOWED_ORIGINS=https://app.brain.fi\n",
+    },
+    (composePath, envPath) => {
+      assert.throws(
+        () => run(composePath, envPath),
+        (error) => {
+          assert.match(error.stderr, /missing secret: BRAIN_AUTH_TOKEN_URL/);
+          assert.match(error.stderr, /missing secret: BRAIN_API_RESOURCE_URL/);
+          assert.doesNotMatch(error.stderr, /BRAIN_API_TOKEN/);
+          return true;
+        },
+      );
+    },
+  );
+  withFiles(
+    {
+      compose,
+      env: [
+        "BRAIN_AGENTS_AUTH_MODE=agent_api_key",
+        "BRAIN_AGENT_API_KEY=brain_ak_live_example",
+        "BRAIN_AUTH_TOKEN_URL=http://auth:3000/token",
+        "BRAIN_API_RESOURCE_URL=https://api.brain.fi/",
+        "CORS_ALLOWED_ORIGINS=https://app.brain.fi",
+        "",
+      ].join("\n"),
+    },
+    (composePath, envPath) => {
+      assert.match(run(composePath, envPath), /required compose and boot-fence secrets present: 2/);
+    },
+  );
+});
+
 test("requires the canonical action handoff secret when an approval surface is enabled", () => {
   withFiles(
     {

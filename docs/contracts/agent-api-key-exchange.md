@@ -89,6 +89,23 @@ retry rules. Server applications call `await brain.ready()` during boot. The
 default token endpoint is `https://auth.brain.fi/token`; `tokenUrl`, `resource`,
 and `agentScope` can be overridden for self-hosted or narrowed deployments.
 
-Phase 2 deliberately leaves production Compose and Terraform on
-`BRAIN_API_TOKEN`. Phase 3 must issue and verify each agent key before changing
-that wiring or revoking any current JWT.
+Phase 3 uses `BRAIN_AGENTS_AUTH_MODE` to select one VM extraction-agent
+credential. `scripts/ops/prepare-agents-auth-env.sh` renders a host-only file
+containing only the selected runtime variables. The legacy JWT stays in the
+shared host secret file for rollback until every agent class is migrated, while
+the replacement key stays in its own mode-0600 credential file so it cannot
+flow into API or worker environments derived from the shared file.
+
+The document extractor is the first canary. Its gated workflow must compare the
+pre-cutover token from the running container with the host source without
+printing either, derive the actual tenant and agent binding from that runtime
+token, issue the fixed `document_extractor_v1` profile, and recreate only the
+agents service. Verification must then prove that the running container has no
+`BRAIN_API_TOKEN`, exchange its actual key, validate the exact claims and
+five-minute ceiling, confirm a forbidden `raw:read`, and complete a real ingest,
+extract, parsed-write, and projection lifecycle. A failed cutover restores
+legacy mode automatically.
+
+Terraform and tenant-bound BFF agents remain on their legacy credentials during
+this canary. No production-agent token is revoked and `/agent-token` remains
+active until each later migration is independently confirmed.

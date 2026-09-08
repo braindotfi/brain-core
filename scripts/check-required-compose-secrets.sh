@@ -104,6 +104,23 @@ if is_enabled BRAIN_AGENT_KEY_EXCHANGE_ENABLED; then
   add_requirement BRAIN_AGENT_KEY_ENVIRONMENT
   add_requirement BRAIN_PLATFORM_SERVICE_SECRET
 fi
+if grep -q '\.env\.agents-auth\.prod' "$compose_file"; then
+  agents_auth_mode="$(value_for BRAIN_AGENTS_AUTH_MODE)"
+  [[ -n "$agents_auth_mode" ]] || agents_auth_mode="legacy_jwt"
+  case "$agents_auth_mode" in
+    legacy_jwt)
+      add_requirement BRAIN_API_TOKEN
+      ;;
+    agent_api_key)
+      add_requirement BRAIN_AUTH_TOKEN_URL
+      add_requirement BRAIN_API_RESOURCE_URL
+      ;;
+    *)
+      echo "invalid value: BRAIN_AGENTS_AUTH_MODE" >&2
+      exit 1
+      ;;
+  esac
+fi
 if is_enabled BRAIN_SERVICE_TOKEN_ENABLED; then
   add_requirement BRAIN_SERVICE_TOKEN_SECRET
 fi

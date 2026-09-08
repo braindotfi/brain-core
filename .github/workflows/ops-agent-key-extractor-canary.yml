@@ -1,0 +1,101 @@
+name: ops-agent-key-extractor-canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment whose document extractor will be cut over."
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      sha:
+        description: "Exact deployed commit SHA to verify and exercise."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: cut over and verify ${{ inputs.target }} document extractor canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.target == 'production' && 'production' || 'staging' }}
+    concurrency:
+      group: ${{ inputs.target == 'production' && 'promote-prod' || 'deploy-staging-refs/heads/main' }}
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+      VM_HOST: ${{ inputs.target == 'production' && secrets.VM_HOST || secrets.VM_HOST_STAGING }}
+      VM_SSH_KEY: ${{ inputs.target == 'production' && secrets.VM_SSH_KEY || secrets.VM_SSH_KEY_STAGING }}
+      VM_ENV_FILE: ${{ inputs.target == 'production' && '.env.prod' || '.env.staging' }}
+      COMPOSE_PROJECT: ${{ inputs.target == 'production' && 'brain-prod' || 'brain-staging' }}
+      AGENT_KEY_ENVIRONMENT: ${{ inputs.target == 'production' && 'live' || 'test' }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Validate exact merged SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$EXPECTED_SHA" origin/main
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+
+      - name: Materialize one core-owned PDF fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_dir="$RUNNER_TEMP/brain-agent-key-canary-fixture"
+          node scripts/ops/write-staging-document-smoke-fixtures.mjs --output-dir "$fixture_dir"
+          echo "FIXTURE_PATH=$fixture_dir/form_1120_2025.pdf" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy exact-SHA canary assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_script="/tmp/agent-key-canary-${{ github.run_id }}.sh"
+          remote_fixture="/tmp/agent-key-canary-${{ github.run_id }}.pdf"
+          scp -i ~/.ssh/id_deploy scripts/ops/cutover-document-extractor-agent-key.sh \
+            "azureuser@$VM_HOST:$remote_script"
+          scp -i ~/.ssh/id_deploy "$FIXTURE_PATH" "azureuser@$VM_HOST:$remote_fixture"
+          echo "REMOTE_SCRIPT=$remote_script" >> "$GITHUB_ENV"
+          echo "REMOTE_FIXTURE=$remote_fixture" >> "$GITHUB_ENV"
+
+      - name: Cut over one agent and independently verify runtime exchange
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             EXPECTED_SHA='$EXPECTED_SHA' \
+             VM_ENV_FILE='$VM_ENV_FILE' \
+             COMPOSE_PROJECT='$COMPOSE_PROJECT' \
+             AGENT_KEY_ENVIRONMENT='$AGENT_KEY_ENVIRONMENT' \
+             FIXTURE_PATH='$REMOTE_FIXTURE' \
+             bash '$REMOTE_SCRIPT'; rc=\$?; rm -f '$REMOTE_SCRIPT' '$REMOTE_FIXTURE'; exit \$rc"
+
+      - name: Clean up SSH key
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy

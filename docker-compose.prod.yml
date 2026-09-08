@@ -655,14 +655,18 @@ services:
   # them anyway. The env var list below is read off
   # services/agents/brain_agents/config.py (pydantic Settings) and the
   # auth.py / server.py os.environ.get() calls. OPENAI_API_KEY,
-  # BRAIN_API_TOKEN, and BRAIN_AGENTS_INBOUND_SECRET are compose-required as
-  # well as boot-fenced in server.py, matching the pattern used for every
-  # other compose-required secret in this file.
+  # BRAIN_AGENTS_INBOUND_SECRET is compose-required and boot-fenced in
+  # server.py. The outbound Brain credential comes from a generated host-only
+  # file containing either BRAIN_API_TOKEN or BRAIN_AGENT_API_KEY plus its
+  # exchange settings, never both.
   agents:
     profiles: ["agents"]
     image: brain-agents:${BRAIN_AGENTS_IMAGE_TAG:-prod}
     container_name: brain-prod-agents
     restart: unless-stopped
+    env_file:
+      - path: .env.agents-auth.prod
+        required: true
     environment:
       BRAIN_ENV: production
       NODE_ENV: production
@@ -670,7 +674,6 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required in production}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_OCR_MODEL: ${OPENAI_OCR_MODEL:-gpt-4o}
-      BRAIN_API_TOKEN: ${BRAIN_API_TOKEN:?BRAIN_API_TOKEN is required in production}
       BRAIN_AGENTS_INBOUND_SECRET: ${BRAIN_AGENTS_INBOUND_SECRET:?BRAIN_AGENTS_INBOUND_SECRET is required in production}
       # Anomaly autopilot scheduler: off unless BRAIN_ANOMALY_SCAN_TENANTS is set.
       BRAIN_ANOMALY_SCAN_INTERVAL_SECONDS: ${BRAIN_ANOMALY_SCAN_INTERVAL_SECONDS:-3600}
