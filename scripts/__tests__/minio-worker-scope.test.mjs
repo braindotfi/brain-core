@@ -62,7 +62,14 @@ test("managed worker setup applies the exact approved policy", () => {
     ],
     Resource: ["arn:aws:s3:::brain-artifacts/*"],
   });
-  assert.doesNotMatch(JSON.stringify(POLICY), /s3:\*|s3:DeleteObject"|s3:PutObjectTagging/);
+  assert.deepEqual(statements[2], {
+    Sid: "VersionTargetedDelete",
+    Effect: "Allow",
+    Action: ["s3:DeleteObject"],
+    Resource: ["arn:aws:s3:::brain-artifacts/*"],
+    Condition: { StringNotEquals: { "s3:versionid": "" } },
+  });
+  assert.doesNotMatch(JSON.stringify(POLICY), /s3:\*|s3:PutObjectTagging/);
 });
 
 test("worker env renderer removes root and source credential names", () => {
