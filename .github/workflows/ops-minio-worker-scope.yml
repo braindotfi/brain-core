@@ -1,0 +1,122 @@
+name: ops-minio-worker-scope
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact deployed commit SHA to verify."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify production MinIO worker scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: prod-read-only-diagnostics
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - name: Validate exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy lifecycle verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy scripts/ops/verify-minio-worker-lifecycle.mjs \
+            "azureuser@$VM_HOST:/tmp/verify-minio-worker-lifecycle-${{ github.run_id }}.mjs"
+
+      - name: Verify identity and scoped lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "EXPECTED_SHA='$EXPECTED_SHA' RUN_ID='${{ github.run_id }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          env_file=.env.prod
+          credential_file=.env.minio-worker
+          worker_env_file=.env.worker.prod
+          verifier="/tmp/verify-minio-worker-lifecycle-${RUN_ID}.mjs"
+          trap 'rm -f "$verifier"' EXIT
+          for file in "$env_file" "$credential_file" "$worker_env_file"; do
+            [[ -f "$file" ]] || { echo "required_file_status=${file}:missing"; exit 1; }
+          done
+
+          set -a
+          . "./$env_file"
+          . "./$credential_file"
+          set +a
+          [[ "$MINIO_WORKER_ACCESS_KEY_ID" == "brain-worker" ]]
+          [[ "$MINIO_WORKER_ACCESS_KEY_ID" != "$MINIO_ROOT_USER" ]]
+          [[ "$MINIO_WORKER_SECRET_ACCESS_KEY" != "$MINIO_ROOT_PASSWORD" ]]
+
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          compose="docker compose -p brain-prod --env-file $env_file $compose_files"
+          api_sha="$($compose exec -T api printenv GIT_SHA | tr -d '\r')"
+          worker_sha="$($compose exec -T worker printenv GIT_SHA | tr -d '\r')"
+          echo "api_git_sha=$api_sha"
+          echo "worker_git_sha=$worker_sha"
+          [[ "$api_sha" == "$EXPECTED_SHA" ]]
+          [[ "$worker_sha" == "$EXPECTED_SHA" ]]
+
+          $compose exec -T worker /bin/sh -c '
+            test "$S3_ACCESS_KEY_ID" = "brain-worker"
+            test -z "${MINIO_ROOT_USER+x}"
+            test -z "${MINIO_ROOT_PASSWORD+x}"
+            test -z "${MINIO_WORKER_ACCESS_KEY_ID+x}"
+            test -z "${MINIO_WORKER_SECRET_ACCESS_KEY+x}"
+          '
+          echo "worker_effective_identity=brain-worker"
+          echo "worker_root_environment=absent"
+
+          docker run --rm --network brain-prod_default \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+            --entrypoint /bin/sh minio/mc:RELEASE.2024-10-08T09-37-26Z -c '
+              set -eu
+              mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+              info="$(mc admin user info local brain-worker)"
+              printf "%s\n" "$info" | grep -Eq "Status:[[:space:]]+enabled"
+              printf "%s\n" "$info" | grep -Eq "PolicyName:[[:space:]]+brain-worker-artifacts-v1"
+            '
+          echo "worker_managed_user_status=enabled"
+          echo "worker_policy=brain-worker-artifacts-v1"
+
+          $compose run --rm --no-deps \
+            -e EXPECTED_SHA="$EXPECTED_SHA" \
+            -v "$verifier:/app/shared/verify-minio-worker-lifecycle.mjs:ro" \
+            worker node /app/shared/verify-minio-worker-lifecycle.mjs
+          REMOTE
+
+      - name: Clean up SSH key
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy

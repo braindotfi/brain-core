@@ -232,6 +232,26 @@ jobs:
       - name: Build workspace packages
         run: pnpm run build
 
+      - name: Start scoped MinIO policy fixture
+        run: |
+          root_secret="$(openssl rand -hex 32)"
+          worker_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$root_secret"
+          echo "::add-mask::$worker_secret"
+          {
+            echo "MINIO_ROOT_USER=minio-ci-root"
+            echo "MINIO_ROOT_PASSWORD=$root_secret"
+            echo "MINIO_WORKER_ACCESS_KEY_ID=brain-worker"
+            echo "MINIO_WORKER_SECRET_ACCESS_KEY=$worker_secret"
+            echo "MINIO_WORKER_POLICY_ENDPOINT=http://127.0.0.1:9000"
+            echo "MINIO_WORKER_POLICY_INTEGRATION=true"
+          } >> "$GITHUB_ENV"
+          export MINIO_ROOT_USER=minio-ci-root
+          export MINIO_ROOT_PASSWORD="$root_secret"
+          export MINIO_WORKER_ACCESS_KEY_ID=brain-worker
+          export MINIO_WORKER_SECRET_ACCESS_KEY="$worker_secret"
+          bash scripts/ci/start-minio-worker-policy-test.sh
+
       - name: Migrate
         # The root build excludes tools/*, so build the migrate CLI before use.
         run: |

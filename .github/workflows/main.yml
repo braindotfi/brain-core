@@ -162,10 +162,31 @@ jobs:
             -v brain_auth_audit_writer_password="brain_auth_audit_writer" \
             -f infra/db-roles.sql
       - run: pnpm run test:coverage
+      - name: Start scoped MinIO policy fixture
+        run: |
+          root_secret="$(openssl rand -hex 32)"
+          worker_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$root_secret"
+          echo "::add-mask::$worker_secret"
+          {
+            echo "MINIO_ROOT_USER=minio-ci-root"
+            echo "MINIO_ROOT_PASSWORD=$root_secret"
+            echo "MINIO_WORKER_ACCESS_KEY_ID=brain-worker"
+            echo "MINIO_WORKER_SECRET_ACCESS_KEY=$worker_secret"
+            echo "MINIO_WORKER_POLICY_ENDPOINT=http://127.0.0.1:9000"
+            echo "MINIO_WORKER_POLICY_INTEGRATION=true"
+          } >> "$GITHUB_ENV"
+          export MINIO_ROOT_USER=minio-ci-root
+          export MINIO_ROOT_PASSWORD="$root_secret"
+          export MINIO_WORKER_ACCESS_KEY_ID=brain-worker
+          export MINIO_WORKER_SECRET_ACCESS_KEY="$worker_secret"
+          bash scripts/ci/start-minio-worker-policy-test.sh
       - name: Integration tests
         # `--if-present` must precede the script name; after it, pnpm forwards it
         # to vitest, which dies with `CACError: Unknown option --ifPresent`.
         run: pnpm -r --filter='./services/**' --filter='!./services/agents' run --if-present test:integration
+      - name: Shared MinIO integration tests
+        run: pnpm -C shared run test:integration
       - name: Invariants DB-integration tests (P0.2)
         run: pnpm -C tests/invariants run test:integration
       - name: Adversarial safety tests (P1.1)
@@ -358,10 +379,12 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
+            'mkdir -p ~/brain-core/infra/minio ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy infra/minio/brain-worker-artifacts-v1.json "azureuser@$VM_HOST:~/brain-core/infra/minio/brain-worker-artifacts-v1.json"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-worker-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-worker-env.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
@@ -418,6 +441,14 @@ jobs:
           rm -f "$tmp" "$script_tmp"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && python3 '$remote_script' '$VM_ENV_FILE' '$remote_tmp'; rc=\$?; rm -f '$remote_script' '$remote_tmp'; exit \$rc"
+
+      - name: Prepare scoped MinIO worker environment
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/ops/prepare-minio-worker-env.sh \
+              --env '$VM_ENV_FILE' \
+              --credentials .env.minio-worker \
+              --output .env.worker.prod"
 
       - name: Pre-promote required-secret presence check
         # Run after the staging API-key setup above because it may add the
@@ -529,6 +560,13 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d --no-build --no-recreate --no-deps postgres redis minio minio-setup caddy"
+
+      - name: Reconcile scoped MinIO worker identity
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE -f docker-compose.prod.yml -f docker-compose.caddy.yml \
+               run --rm --no-deps minio-worker-setup"
 
       # No Caddy reload step here. Staging's Caddyfile is host-only and never
       # shipped by this job (see the comment above the sync step), so there is

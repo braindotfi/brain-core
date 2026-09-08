@@ -1202,14 +1202,23 @@ role already existed, but the historical VM env files had never received its
 password. Before a promote that adds a compose-required secret, run a
 pre-promote required-secret presence check for both environments.
 
-MinIO root credentials are also consumed by the API and worker as their
-S3-compatible object-store credentials. If `.env.staging` or `.env.prod`
-changes either `MINIO_ROOT_USER` or `MINIO_ROOT_PASSWORD`, run the
-production-gated `ops-reconcile-minio-credentials.yml` workflow for that
-environment before accepting uploads. It recreates MinIO with the configured
-credentials, verifies bucket access through `minio-setup`, and proves the real
-`/v1/raw/ingest` path with an ephemeral demo tenant. Recreating API or worker
-alone does not update MinIO's running root credentials.
+The production worker uses the managed MinIO user `brain-worker` with the
+`brain-worker-artifacts-v1` policy, never the MinIO root credential. Host-only
+`MINIO_WORKER_ACCESS_KEY_ID` and `MINIO_WORKER_SECRET_ACCESS_KEY` live in
+`.env.minio-worker`. `scripts/ops/prepare-minio-worker-env.sh` renders
+`.env.worker.prod` without any root or credential-source variable before every
+staging or production recreate. The worker policy permits only object reads,
+writes, version listing, version deletion, and legal-hold inspection or change
+inside `brain-artifacts`. API and surface-gateway root-backed object-store
+access remains a separately tracked follow-up.
+
+If `.env.staging` or `.env.prod` changes either `MINIO_ROOT_USER` or
+`MINIO_ROOT_PASSWORD`, run the production-gated
+`ops-reconcile-minio-credentials.yml` workflow for that environment before
+accepting uploads. It recreates MinIO with the configured credentials, verifies
+bucket access through `minio-setup`, and proves the real `/v1/raw/ingest` path
+with an ephemeral demo tenant. Recreating API or worker alone does not update
+MinIO's running root credentials.
 
 Every staging deploy and production promote runs
 `scripts/check-required-compose-secrets.sh` on the VM after syncing compose

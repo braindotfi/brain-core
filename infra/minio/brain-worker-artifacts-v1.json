@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListArtifactVersions",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucketVersions"],
+      "Resource": ["arn:aws:s3:::brain-artifacts"]
+    },
+    {
+      "Sid": "WorkerArtifactLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObjectVersion",
+        "s3:GetObjectLegalHold",
+        "s3:PutObjectLegalHold"
+      ],
+      "Resource": ["arn:aws:s3:::brain-artifacts/*"]
+    }
+  ]
+}

@@ -94,7 +94,7 @@ jobs:
       - name: Sync compose and bind-mounted host files to VM
         run: |
           ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
-            'mkdir -p ~/brain-core/infra ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
+            'mkdir -p ~/brain-core/infra/minio ~/brain-core/tools/postgres-init ~/brain-core/scripts/ops'
           scp -i ~/.ssh/id_deploy docker-compose.prod.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.prod.yml"
           if [ -f docker-compose.caddy.yml ]; then
             scp -i ~/.ssh/id_deploy docker-compose.caddy.yml "azureuser@$VM_HOST:~/brain-core/docker-compose.caddy.yml"
@@ -103,9 +103,19 @@ jobs:
             scp -i ~/.ssh/id_deploy Caddyfile "azureuser@$VM_HOST:~/brain-core/Caddyfile"
           fi
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
+          scp -i ~/.ssh/id_deploy infra/minio/brain-worker-artifacts-v1.json "azureuser@$VM_HOST:~/brain-core/infra/minio/brain-worker-artifacts-v1.json"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-worker-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-worker-env.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
+
+      - name: Prepare scoped MinIO worker environment
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/ops/prepare-minio-worker-env.sh \
+              --env '$VM_ENV_FILE' \
+              --credentials .env.minio-worker \
+              --output .env.worker.prod"
 
       - name: Pre-promote required-secret presence check
         # This guard runs before rollback tagging, image pull, migrations, or
@@ -186,6 +196,15 @@ jobs:
                echo \"\$services\" | grep -qx \"\$service\" && up_services=\"\$up_services \$service\"; \
              done; \
              [ -n \"\$up_services\" ] && \$compose up -d --no-build --no-recreate \$up_services"
+
+      - name: Reconcile scoped MinIO worker identity
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && \
+             compose_files='-f docker-compose.prod.yml'; \
+             [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files \
+               run --rm --no-deps minio-worker-setup"
 
       # `auth` is now the single JWKS source for api/worker/surface-gateway
       # (Phase 4, OAUTH-AS-PLAN.md section 8), and it boots behind five
