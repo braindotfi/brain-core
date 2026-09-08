@@ -307,7 +307,7 @@ jobs:
           SERVICE_VERSION=$(git describe --tags --always --match 'v*')
           docker build --build-arg GIT_SHA=${{ github.sha }} --build-arg SERVICE_VERSION="$SERVICE_VERSION" -t ghcr.io/braindotfi/brain-core:${{ github.sha }} -f Dockerfile .
           docker push ghcr.io/braindotfi/brain-core:${{ github.sha }}
-          docker build -t ghcr.io/braindotfi/brain-agents:${{ github.sha }} -f services/agents/Dockerfile services/agents
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t ghcr.io/braindotfi/brain-agents:${{ github.sha }} -f services/agents/Dockerfile services/agents
           docker push ghcr.io/braindotfi/brain-agents:${{ github.sha }}
 
   container_scan:
@@ -660,12 +660,17 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" '
             set -euo pipefail
+            expected="${{ github.sha }}"
+            actual=""
             for _ in $(seq 1 18); do
               status="$(docker inspect --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" brain-prod-agents 2>/dev/null || true)"
-              [ "$status" = "healthy" ] && exit 0
+              if [ "$status" = "healthy" ]; then
+                actual="$(docker exec brain-prod-agents printenv GIT_SHA 2>/dev/null || true)"
+                [ "$actual" = "$expected" ] && exit 0
+              fi
               sleep 5
             done
-            echo "brain-prod-agents did not become healthy"
+            echo "brain-prod-agents did not become healthy on expected commit $expected (status: $status, commit: $actual)"
             docker logs --tail=200 brain-prod-agents >&2 || true
             exit 1
           '
