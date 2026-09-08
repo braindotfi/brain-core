@@ -4,7 +4,7 @@
 #
 #   ./scripts/dev.sh                 # base stack (infra + migrate + api)
 #   ./scripts/dev.sh --profile libs  # + cross-package hot reload (tsc -b --watch)
-#   ./scripts/dev.sh --profile agents# + Python agents (needs OPENAI_API_KEY + BRAIN_API_TOKEN)
+#   ./scripts/dev.sh --profile agents # + Python agents (needs OPENAI_API_KEY plus one Brain credential)
 #
 # Any extra args are forwarded to `docker compose up`.
 set -euo pipefail

@@ -187,8 +187,8 @@ async def run_document_extract(
                 status_code=424,
                 detail=(
                     "brain api rejected the parsed write with "
-                    f"{exc.response.status_code}; the agent BRAIN_API_TOKEN is "
-                    "invalid, expired, or missing raw:write"
+                    f"{exc.response.status_code}; the agent credential is invalid, "
+                    "expired, or missing raw:write"
                 ),
             ) from exc
         raise

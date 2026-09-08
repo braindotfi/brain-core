@@ -15,6 +15,13 @@ export {
 } from "./client.js";
 
 export {
+  AgentTokenExchangeError,
+  AgentTokenManager,
+  DEFAULT_AGENT_TOKEN_URL,
+  type AgentTokenManagerOptions,
+} from "./agent-api-key.js";
+
+export {
   BrainAPIError,
   PolicyApprovalRequiredError,
   PolicyRejectedError,

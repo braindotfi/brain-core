@@ -72,7 +72,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       BRAIN_API_BASE_URL: ${BRAIN_API_BASE_URL:-http://host.docker.internal:3001}
-      BRAIN_API_TOKEN: ${BRAIN_API_TOKEN}
+      BRAIN_API_TOKEN: ${BRAIN_API_TOKEN:-}
+      BRAIN_AGENT_API_KEY: ${BRAIN_AGENT_API_KEY:-}
+      BRAIN_AUTH_TOKEN_URL: ${BRAIN_AUTH_TOKEN_URL:-http://host.docker.internal:3003/token}
+      BRAIN_API_RESOURCE_URL: ${BRAIN_API_RESOURCE_URL:-https://api.brain.fi/}
     healthcheck:
       test:
         [

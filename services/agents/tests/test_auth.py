@@ -13,7 +13,7 @@ from brain_agents.deps import AppDeps
 from brain_agents.document_extractor.agent import DocumentExtractorAgent
 from brain_agents.plaid_extractor.agent import PlaidExtractorAgent
 from brain_agents.reconciliation.agent import ReconciliationAgent
-from brain_agents.server import create_app
+from brain_agents.server import _assert_runtime_credentials_configured, create_app
 
 SECRET = "test-shared-secret"
 
@@ -164,8 +164,48 @@ def test_missing_runtime_credentials_fails_at_boot_when_live_wired(
     monkeypatch.setenv("BRAIN_ENV", "production")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    monkeypatch.delenv("BRAIN_AGENT_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         create_app()
+
+
+def test_runtime_credentials_accept_legacy_token_during_phase2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    monkeypatch.setenv("BRAIN_API_TOKEN", "legacy-jwt")
+    monkeypatch.delenv("BRAIN_AGENT_API_KEY", raising=False)
+    monkeypatch.delenv("BRAIN_AUTH_TOKEN_URL", raising=False)
+    _assert_runtime_credentials_configured()
+
+
+def test_runtime_credentials_accept_agent_key_with_token_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    monkeypatch.setenv("BRAIN_AGENT_API_KEY", "brain_ak_live_test")
+    monkeypatch.setenv("BRAIN_AUTH_TOKEN_URL", "http://auth:3000/token")
+    _assert_runtime_credentials_configured()
+
+
+def test_runtime_credentials_reject_ambiguous_or_incomplete_agent_key_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRAIN_ENV", "production")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test")
+    monkeypatch.setenv("BRAIN_API_TOKEN", "legacy-jwt")
+    monkeypatch.setenv("BRAIN_AGENT_API_KEY", "brain_ak_live_test")
+    monkeypatch.setenv("BRAIN_AUTH_TOKEN_URL", "http://auth:3000/token")
+    with pytest.raises(RuntimeError, match="Exactly one"):
+        _assert_runtime_credentials_configured()
+
+    monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    monkeypatch.delenv("BRAIN_AUTH_TOKEN_URL", raising=False)
+    with pytest.raises(RuntimeError, match="BRAIN_AUTH_TOKEN_URL"):
+        _assert_runtime_credentials_configured()
 
 
 def test_runtime_credentials_fence_skipped_when_deps_injected(
@@ -177,6 +217,7 @@ def test_runtime_credentials_fence_skipped_when_deps_injected(
     monkeypatch.setenv("BRAIN_ENV", "production")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("BRAIN_API_TOKEN", raising=False)
+    monkeypatch.delenv("BRAIN_AGENT_API_KEY", raising=False)
     # Should NOT raise — deps are injected.
     app = create_app(deps=_deps())
     assert app is not None

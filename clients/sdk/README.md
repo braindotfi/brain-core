@@ -89,7 +89,8 @@ pnpm run demo:reset
 
 ### Authentication
 
-Pass exactly one of `apiKey` or `token`. Passing both, or neither, throws.
+Pass exactly one of `apiKey`, `agentApiKey`, or `token`. Passing more than one,
+or none, throws.
 
 **`apiKey` (recommended)**. A long-lived Brain API key (`brain_sk_...`),
 issued for a tenant. The SDK sends it directly as
@@ -100,6 +101,25 @@ import { Brain } from "@brainfinance/sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 ```
+
+**`agentApiKey`**. A durable exchange-only agent credential (`brain_ak_...`).
+The SDK never sends it to API resource routes. It exchanges the key for a
+five-minute, audience-restricted JWT, caches that JWT in memory, refreshes 60
+seconds early, coalesces concurrent refreshes, and retries one request after a 401. Server applications should make exchange failure a boot failure:
+
+```typescript
+const brain = new Brain({
+  agentApiKey: process.env.BRAIN_AGENT_API_KEY!,
+  tokenUrl: process.env.BRAIN_AUTH_TOKEN_URL,
+  agentScope: "raw:write",
+});
+await brain.ready();
+```
+
+`tokenUrl` defaults to `https://auth.brain.fi/token`. Set `tokenUrl` and, when
+the resource origin differs from `baseUrl`, `resource` for self-hosted
+deployments. `agentScope` is optional and can only narrow the server-owned key
+profile.
 
 **`token`**. A static JWT (e.g. from `brain.dev/demo/token` or your own
 auth flow). Sent as-is on every request:
@@ -232,8 +252,10 @@ const http = createBrainHttpClient({
 const { data, error } = await http.GET("/audit/anchor/latest");
 ```
 
-`createBrainHttpClient` accepts `apiKey` in place of `token` too, with the
-same lazy-exchange behavior described above.
+`createBrainHttpClient` accepts `apiKey` or `agentApiKey` in place of `token`.
+Commercial `apiKey` remains direct bearer authentication. In `agentApiKey`
+mode, call `await http.ready()` during boot; requests also perform the exchange
+lazily if the explicit boot check is omitted.
 
 The client is fully typed against the OpenAPI spec. Path, query, body, and
 response shapes are inferred, there is no hand-written type surface to drift.

@@ -244,7 +244,7 @@ async def test_run_maps_upstream_auth_rejection_to_424(
     )
 
     assert resp.status_code == 424
-    assert "BRAIN_API_TOKEN" in resp.json()["detail"]
+    assert "agent credential" in resp.json()["detail"]
 
 
 async def test_run_leaves_non_auth_upstream_failures_alone(

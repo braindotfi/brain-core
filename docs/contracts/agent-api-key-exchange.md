@@ -1,8 +1,10 @@
 # Agent API Key Exchange
 
-This contract defines the additive Phase 1 machine authentication path. It does
-not change commercial `brain_sk_*` authentication, current long-lived agent
-JWTs, or `POST /v1/tenants/{tenantId}/agent-token`.
+This contract defines the additive machine authentication path. Phase 1 added
+issuance and exchange infrastructure. Phase 2 adds client support without
+changing production credential wiring. Commercial `brain_sk_*` authentication,
+current long-lived agent JWTs, and
+`POST /v1/tenants/{tenantId}/agent-token` remain active until Phase 3.
 
 ## Credential model
 
@@ -62,3 +64,31 @@ id plus source IP, and malformed requests by source IP.
 is configured by `BRAIN_API_RESOURCE_URL`. With the feature disabled, issuance
 routes are absent and the token endpoint returns `unsupported_grant_type` for
 the exchange grant.
+
+## Phase 2 client contract
+
+`brain-agents` accepts exactly one outbound credential mode:
+
+- legacy `BRAIN_API_TOKEN`, retained only so Phase 2 can deploy without a live
+  cutover
+- `BRAIN_AGENT_API_KEY` plus `BRAIN_AUTH_TOKEN_URL`, for the Phase 3 staged
+  migration
+
+Agent-key mode exchanges during service startup and prevents the health endpoint
+from becoming ready if exchange or returned-claim validation fails. The access
+token remains in memory only. It refreshes 60 seconds before expiry, concurrent
+refreshes share one exchange, and a resource request that receives 401 is
+retried exactly once with a newly exchanged token. All outbound GET and POST
+paths use this behavior. The old platform service secret and `/agent-token`
+refresh path are not part of the new client.
+
+The TypeScript SDK keeps `apiKey` as direct commercial `brain_sk_*` bearer
+authentication. Its new, mutually exclusive `agentApiKey` option uses RFC 8693
+exchange and the same memory-only cache, early refresh, single-flight, and one
+retry rules. Server applications call `await brain.ready()` during boot. The
+default token endpoint is `https://auth.brain.fi/token`; `tokenUrl`, `resource`,
+and `agentScope` can be overridden for self-hosted or narrowed deployments.
+
+Phase 2 deliberately leaves production Compose and Terraform on
+`BRAIN_API_TOKEN`. Phase 3 must issue and verify each agent key before changing
+that wiring or revoking any current JWT.

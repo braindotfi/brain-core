@@ -54,24 +54,26 @@ def _assert_inbound_auth_configured() -> None:
 def _assert_runtime_credentials_configured() -> None:
     """Fail at boot in production when the agents' outbound credentials are unset.
 
-    OPENAI_API_KEY backs every reasoning call and BRAIN_API_TOKEN authenticates
-    the agents to the Brain API. Both default to "" (see config.Settings); a
-    deploy that forgets them would boot, report healthy, then fail every actual
-    run. Surface the misconfiguration at process start instead. Honors the same
-    production gate as the inbound-secret fence (dev/test boot unaffected).
+    Phase 2 accepts the currently deployed JWT or the replacement agent key,
+    never both. Phase 3 changes deployment wiring only after staged verification.
     """
     if not _is_production():
         return
-    missing = [
-        name for name in ("OPENAI_API_KEY", "BRAIN_API_TOKEN") if os.environ.get(name, "") == ""
-    ]
-    if missing:
+    if os.environ.get("OPENAI_API_KEY", "") == "":
         raise RuntimeError(
-            f"{', '.join(missing)} required in BRAIN_ENV=production. "
-            "OPENAI_API_KEY backs every reasoning call; BRAIN_API_TOKEN "
-            "authenticates the agents to the Brain API. Refusing to start so "
-            "the orchestrator surfaces the misconfiguration rather than failing "
-            "every request at runtime."
+            "OPENAI_API_KEY is required in BRAIN_ENV=production. Refusing to start "
+            "so the orchestrator surfaces the misconfiguration."
+        )
+    has_legacy_token = os.environ.get("BRAIN_API_TOKEN", "") != ""
+    has_agent_key = os.environ.get("BRAIN_AGENT_API_KEY", "") != ""
+    if has_legacy_token == has_agent_key:
+        raise RuntimeError(
+            "Exactly one of BRAIN_AGENT_API_KEY or BRAIN_API_TOKEN is required in "
+            "BRAIN_ENV=production."
+        )
+    if has_agent_key and os.environ.get("BRAIN_AUTH_TOKEN_URL", "") == "":
+        raise RuntimeError(
+            "BRAIN_AUTH_TOKEN_URL is required with BRAIN_AGENT_API_KEY in BRAIN_ENV=production."
         )
 
 
@@ -142,8 +144,11 @@ def create_app(deps: AppDeps | None = None) -> FastAPI:
                 settings.brain_api_base_url,
                 settings.brain_api_token,
                 settings.brain_agents_inbound_secret,
-                settings.brain_platform_service_secret,
+                agent_api_key=settings.brain_agent_api_key,
+                auth_token_url=settings.brain_auth_token_url,
+                api_resource=settings.brain_api_resource_url,
             )
+            await brain_client.start()
             anomaly_agent = AnomalyAgent(openai_client, settings.openai_model)
             app.state.deps = AppDeps(
                 brain_client=brain_client,
