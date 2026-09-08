@@ -236,8 +236,10 @@ jobs:
         run: |
           root_secret="$(openssl rand -hex 32)"
           worker_secret="$(openssl rand -hex 32)"
+          api_secret="$(openssl rand -hex 32)"
           echo "::add-mask::$root_secret"
           echo "::add-mask::$worker_secret"
+          echo "::add-mask::$api_secret"
           {
             echo "MINIO_ROOT_USER=minio-ci-root"
             echo "MINIO_ROOT_PASSWORD=$root_secret"
@@ -245,11 +247,17 @@ jobs:
             echo "MINIO_WORKER_SECRET_ACCESS_KEY=$worker_secret"
             echo "MINIO_WORKER_POLICY_ENDPOINT=http://127.0.0.1:9000"
             echo "MINIO_WORKER_POLICY_INTEGRATION=true"
+            echo "MINIO_API_ACCESS_KEY_ID=brain-api"
+            echo "MINIO_API_SECRET_ACCESS_KEY=$api_secret"
+            echo "MINIO_API_POLICY_ENDPOINT=http://127.0.0.1:9000"
+            echo "MINIO_API_POLICY_INTEGRATION=true"
           } >> "$GITHUB_ENV"
           export MINIO_ROOT_USER=minio-ci-root
           export MINIO_ROOT_PASSWORD="$root_secret"
           export MINIO_WORKER_ACCESS_KEY_ID=brain-worker
           export MINIO_WORKER_SECRET_ACCESS_KEY="$worker_secret"
+          export MINIO_API_ACCESS_KEY_ID=brain-api
+          export MINIO_API_SECRET_ACCESS_KEY="$api_secret"
           bash scripts/ci/start-minio-worker-policy-test.sh
 
       - name: Migrate

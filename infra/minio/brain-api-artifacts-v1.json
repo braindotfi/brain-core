@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ApiArtifactAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": ["arn:aws:s3:::brain-artifacts/*"]
+    }
+  ]
+}

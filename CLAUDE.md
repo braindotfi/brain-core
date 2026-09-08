@@ -1209,8 +1209,16 @@ The production worker uses the managed MinIO user `brain-worker` with the
 `.env.worker.prod` without any root or credential-source variable before every
 staging or production recreate. The worker policy permits only object reads,
 writes, version listing, version deletion, and legal-hold inspection or change
-inside `brain-artifacts`. API and surface-gateway root-backed object-store
-access remains a separately tracked follow-up.
+inside `brain-artifacts`.
+
+The production API uses the managed MinIO user `brain-api` with the
+`brain-api-artifacts-v1` policy, never the MinIO root credential. Host-only
+`MINIO_API_ACCESS_KEY_ID` and `MINIO_API_SECRET_ACCESS_KEY` live in
+`.env.minio-api`. `scripts/ops/prepare-minio-api-env.sh` renders `.env.api.prod`
+without any root or credential-source variable before every staging or
+production recreate. The API policy permits only object reads, writes, legal
+hold changes, and tagging inside `brain-artifacts`. The surface gateway has no
+object-store call path and receives no MinIO or S3 credential.
 
 If `.env.staging` or `.env.prod` changes either `MINIO_ROOT_USER` or
 `MINIO_ROOT_PASSWORD`, run the production-gated

@@ -29,11 +29,7 @@ test("worker receives only the rendered scoped S3 credential", () => {
   assert.doesNotMatch(worker, /MINIO_ROOT_USER|MINIO_ROOT_PASSWORD/);
   assert.doesNotMatch(common, /S3_ACCESS_KEY_ID|S3_SECRET_ACCESS_KEY/);
 
-  for (const name of ["api", "surface-gateway"]) {
-    const service = serviceBlock(name);
-    assert.match(service, /S3_ACCESS_KEY_ID: \$\{MINIO_ROOT_USER:\?/);
-    assert.match(service, /S3_SECRET_ACCESS_KEY: \$\{MINIO_ROOT_PASSWORD:\?/);
-  }
+  assert.doesNotMatch(worker, /MINIO_API_ACCESS_KEY_ID|MINIO_API_SECRET_ACCESS_KEY/);
 });
 
 test("managed worker setup applies the exact approved policy", () => {
@@ -83,6 +79,8 @@ test("worker env renderer removes root and source credential names", () => {
       [
         "MINIO_ROOT_USER=root-user",
         "MINIO_ROOT_PASSWORD=root-secret",
+        "MINIO_API_ACCESS_KEY_ID=brain-api",
+        "MINIO_API_SECRET_ACCESS_KEY=api-secret",
         "S3_ACCESS_KEY_ID=old-access",
         "S3_SECRET_ACCESS_KEY=old-secret",
         "BRAIN_SESSION_KEY=session-secret",
@@ -103,7 +101,10 @@ test("worker env renderer removes root and source credential names", () => {
     assert.match(rendered, /BRAIN_SESSION_KEY=session-secret/);
     assert.match(rendered, /S3_ACCESS_KEY_ID=brain-worker/);
     assert.match(rendered, /S3_SECRET_ACCESS_KEY=[0-9a-f]{64}/);
-    assert.doesNotMatch(rendered, /MINIO_ROOT_|MINIO_WORKER_|old-access|old-secret|root-secret/);
+    assert.doesNotMatch(
+      rendered,
+      /MINIO_ROOT_|MINIO_API_|MINIO_WORKER_|old-access|old-secret|root-secret|api-secret/,
+    );
     assert.match(credentialText, /^MINIO_WORKER_ACCESS_KEY_ID=brain-worker$/m);
     assert.match(credentialText, /^MINIO_WORKER_SECRET_ACCESS_KEY=[0-9a-f]{64}$/m);
     assert.equal(statSync(credentials).mode & 0o777, 0o600);
@@ -143,8 +144,8 @@ test("worker env renderer refuses an unexpected managed access key", () => {
 test("deploy workflows prepare and reconcile the scoped identity before worker recreate", () => {
   for (const path of [".github/workflows/main.yml", ".github/workflows/promote-prod.yml"]) {
     const workflow = readFileSync(join(ROOT, path), "utf8");
-    const prepareAt = workflow.indexOf("Prepare scoped MinIO worker environment");
-    const reconcileAt = workflow.indexOf("Reconcile scoped MinIO worker identity");
+    const prepareAt = workflow.indexOf("Prepare scoped MinIO API and worker environments");
+    const reconcileAt = workflow.indexOf("Reconcile scoped MinIO API and worker identities");
     const recreateAt = workflow.indexOf("Recreate api/worker/agents/surface-gateway on VM");
     assert.ok(prepareAt > 0, `${path} must prepare the worker env`);
     assert.ok(reconcileAt > prepareAt, `${path} must reconcile after preparing credentials`);

@@ -104,13 +104,20 @@ jobs:
           fi
           scp -i ~/.ssh/id_deploy infra/db-roles.sql "azureuser@$VM_HOST:~/brain-core/infra/db-roles.sql"
           scp -i ~/.ssh/id_deploy infra/minio/brain-worker-artifacts-v1.json "azureuser@$VM_HOST:~/brain-core/infra/minio/brain-worker-artifacts-v1.json"
+          scp -i ~/.ssh/id_deploy infra/minio/brain-api-artifacts-v1.json "azureuser@$VM_HOST:~/brain-core/infra/minio/brain-api-artifacts-v1.json"
           scp -i ~/.ssh/id_deploy scripts/check-required-compose-secrets.sh "azureuser@$VM_HOST:~/brain-core/scripts/check-required-compose-secrets.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-worker-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-worker-env.sh"
+          scp -i ~/.ssh/id_deploy scripts/ops/prepare-minio-api-env.sh "azureuser@$VM_HOST:~/brain-core/scripts/ops/prepare-minio-api-env.sh"
           scp -i ~/.ssh/id_deploy scripts/ops/repair-policy-content-hash.mjs "azureuser@$VM_HOST:~/brain-core/scripts/ops/repair-policy-content-hash.mjs"
           scp -i ~/.ssh/id_deploy -r tools/postgres-init/. "azureuser@$VM_HOST:~/brain-core/tools/postgres-init/"
 
-      - name: Prepare scoped MinIO worker environment
+      - name: Prepare scoped MinIO API and worker environments
         run: |
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && bash scripts/ops/prepare-minio-api-env.sh \
+              --env '$VM_ENV_FILE' \
+              --credentials .env.minio-api \
+              --output .env.api.prod"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && bash scripts/ops/prepare-minio-worker-env.sh \
               --env '$VM_ENV_FILE' \
@@ -197,12 +204,14 @@ jobs:
              done; \
              [ -n \"\$up_services\" ] && \$compose up -d --no-build --no-recreate \$up_services"
 
-      - name: Reconcile scoped MinIO worker identity
+      - name: Reconcile scoped MinIO API and worker identities
         run: |
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
             "cd ~/brain-core && \
              compose_files='-f docker-compose.prod.yml'; \
              [ -f docker-compose.caddy.yml ] && compose_files=\"\$compose_files -f docker-compose.caddy.yml\"; \
+             docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files \
+               run --rm --no-deps minio-api-setup && \
              docker compose -p $COMPOSE_PROJECT --env-file $VM_ENV_FILE \$compose_files \
                run --rm --no-deps minio-worker-setup"
 

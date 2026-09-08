@@ -1,0 +1,152 @@
+name: ops-minio-api-surface-scope
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Exact deployed commit SHA to verify."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify production MinIO API and surface scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: prod-read-only-diagnostics
+      cancel-in-progress: false
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - name: Validate exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy lifecycle verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_deploy scripts/ops/verify-minio-api-lifecycle.mjs \
+            "azureuser@$VM_HOST:/tmp/verify-minio-api-lifecycle-${{ github.run_id }}.mjs"
+
+      - name: Verify identities and scoped lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "EXPECTED_SHA='$EXPECTED_SHA' RUN_ID='${{ github.run_id }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd ~/brain-core
+          env_file=.env.prod
+          credential_file=.env.minio-api
+          api_env_file=.env.api.prod
+          verifier="/tmp/verify-minio-api-lifecycle-${RUN_ID}.mjs"
+          prefix="tnt_api_verify_${RUN_ID}/"
+          cleanup_prefix() {
+            docker run --rm --network brain-prod_default \
+              -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD -e VERIFY_PREFIX="$prefix" \
+              --entrypoint /bin/sh minio/mc:RELEASE.2024-10-08T09-37-26Z -c '
+                set -eu
+                mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+                mc rm --recursive --force --versions "local/brain-artifacts/$VERIFY_PREFIX" >/dev/null
+                test -z "$(mc ls --recursive --versions "local/brain-artifacts/$VERIFY_PREFIX")"
+              '
+          }
+          trap 'cleanup_prefix; rm -f "$verifier"' EXIT
+          for file in "$env_file" "$credential_file" "$api_env_file"; do
+            [[ -f "$file" ]] || { echo "required_file_status=${file}:missing"; exit 1; }
+          done
+
+          set -a
+          . "./$env_file"
+          . "./$credential_file"
+          set +a
+          [[ "$MINIO_API_ACCESS_KEY_ID" == "brain-api" ]]
+          [[ "$MINIO_API_ACCESS_KEY_ID" != "$MINIO_ROOT_USER" ]]
+          [[ "$MINIO_API_SECRET_ACCESS_KEY" != "$MINIO_ROOT_PASSWORD" ]]
+
+          compose_files='-f docker-compose.prod.yml'
+          [[ -f docker-compose.caddy.yml ]] && compose_files="$compose_files -f docker-compose.caddy.yml"
+          compose="docker compose -p brain-prod --env-file $env_file $compose_files"
+          api_sha="$($compose exec -T api printenv GIT_SHA | tr -d '\r')"
+          worker_sha="$($compose exec -T worker printenv GIT_SHA | tr -d '\r')"
+          surface_sha="$($compose exec -T surface-gateway printenv GIT_SHA | tr -d '\r')"
+          echo "api_git_sha=$api_sha"
+          echo "worker_git_sha=$worker_sha"
+          echo "surface_gateway_git_sha=$surface_sha"
+          [[ "$api_sha" == "$EXPECTED_SHA" ]]
+          [[ "$worker_sha" == "$EXPECTED_SHA" ]]
+          [[ "$surface_sha" == "$EXPECTED_SHA" ]]
+
+          $compose exec -T api /bin/sh -c '
+            test "$S3_ACCESS_KEY_ID" = "brain-api"
+            test -z "${MINIO_ROOT_USER+x}"
+            test -z "${MINIO_ROOT_PASSWORD+x}"
+            test -z "${MINIO_API_ACCESS_KEY_ID+x}"
+            test -z "${MINIO_API_SECRET_ACCESS_KEY+x}"
+            test -z "${MINIO_WORKER_ACCESS_KEY_ID+x}"
+            test -z "${MINIO_WORKER_SECRET_ACCESS_KEY+x}"
+          '
+          echo "api_effective_identity=brain-api"
+          echo "api_root_environment=absent"
+
+          $compose exec -T surface-gateway /bin/sh -c '
+            test -z "${S3_ACCESS_KEY_ID+x}"
+            test -z "${S3_SECRET_ACCESS_KEY+x}"
+            test -z "${MINIO_ROOT_USER+x}"
+            test -z "${MINIO_ROOT_PASSWORD+x}"
+            test -z "${MINIO_API_ACCESS_KEY_ID+x}"
+            test -z "${MINIO_API_SECRET_ACCESS_KEY+x}"
+            test -z "${MINIO_WORKER_ACCESS_KEY_ID+x}"
+            test -z "${MINIO_WORKER_SECRET_ACCESS_KEY+x}"
+          '
+          echo "surface_object_store_identity=absent"
+
+          docker run --rm --network brain-prod_default \
+            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+            --entrypoint /bin/sh minio/mc:RELEASE.2024-10-08T09-37-26Z -c '
+              set -eu
+              mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+              info="$(mc admin user info local brain-api)"
+              printf "%s\n" "$info" | grep -Eq "Status:[[:space:]]+enabled"
+              printf "%s\n" "$info" | grep -Eq "PolicyName:[[:space:]]+brain-api-artifacts-v1"
+            '
+          echo "api_managed_user_status=enabled"
+          echo "api_policy=brain-api-artifacts-v1"
+
+          cleanup_prefix
+          $compose run --rm --no-deps \
+            -e EXPECTED_SHA="$EXPECTED_SHA" \
+            -e VERIFY_PREFIX="$prefix" \
+            -v "$verifier:/app/shared/verify-minio-api-lifecycle.mjs:ro" \
+            api node /app/shared/verify-minio-api-lifecycle.mjs
+          REMOTE
+
+      - name: Clean up SSH key
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy

@@ -31,6 +31,7 @@
 #   postgres healthy → migrate (owner role, creates tables) completed
 #                     → db-roles (creates the app roles, FORCE RLS) completed
 #   minio up → minio-setup (creates the bucket) completed
+#            → minio-api-setup (reconciles the API identity) completed
 #   all of the above + redis healthy → api
 #
 # Connection URLs are composed from passwords supplied via compose interpolation
@@ -161,10 +162,47 @@ services:
         echo "bucket $$BLOB_CONTAINER ready"
     restart: "no"
 
+  # Reconcile the API's managed MinIO user and exact bucket policy before the
+  # API starts. The API receives only the managed credential from a separate
+  # host-only env file.
+  minio-api-setup:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    container_name: brain-prod-minio-api-setup
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env.minio-api
+        required: true
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
+      BLOB_CONTAINER: ${BLOB_CONTAINER:-brain-artifacts}
+    volumes:
+      - ./infra/minio/brain-api-artifacts-v1.json:/policies/brain-api-artifacts-v1.json:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do
+          echo "waiting for minio..."; sleep 2;
+        done
+        test "$$BLOB_CONTAINER" = "brain-artifacts"
+        test "$$MINIO_API_ACCESS_KEY_ID" = "brain-api"
+        test -n "$$MINIO_API_SECRET_ACCESS_KEY"
+        test "$$MINIO_API_ACCESS_KEY_ID" != "$$MINIO_ROOT_USER"
+        test "$$MINIO_API_SECRET_ACCESS_KEY" != "$$MINIO_ROOT_PASSWORD"
+        mc admin policy create local brain-api-artifacts-v1 /policies/brain-api-artifacts-v1.json
+        mc admin user add local "$$MINIO_API_ACCESS_KEY_ID" "$$MINIO_API_SECRET_ACCESS_KEY"
+        mc admin policy attach local brain-api-artifacts-v1 --user "$$MINIO_API_ACCESS_KEY_ID"
+        mc admin user enable local "$$MINIO_API_ACCESS_KEY_ID"
+        echo "managed API identity ready"
+    restart: "no"
+
   # Reconcile the worker's managed MinIO user and exact bucket policy before
   # any worker starts. The worker receives only the managed credential from a
-  # separate host-only env file. Root access remains explicit on the API and
-  # surface gateway until the follow-up scope reduction is approved.
+  # separate host-only env file.
   minio-worker-setup:
     image: minio/mc:RELEASE.2024-10-08T09-37-26Z
     container_name: brain-prod-minio-worker-setup
@@ -422,14 +460,17 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
+    # Generated from the production env by prepare-minio-api-env.sh. It
+    # preserves API settings, maps only the scoped credential to S3 names,
+    # and removes every MinIO credential-source variable.
     # Operator-supplied secrets (C-series): AUTH_SIGN_KEY,
     # BRAIN_SESSION_KEY, BASE_RPC_URL, BRAIN_ONCHAIN_SMART_ACCOUNT,
     # AUDIT_PUBLISHER_KEY, AUDIT_ANCHOR_ADDRESS, contract addresses,
     # OPENAI_API_KEY, etc. See .env.prod.example. (AUTH_JWKS_URL/ISSUER/AUDIENCE
     # are set below -- they point at the in-network auth service.)
     env_file:
-      - path: ${BRAIN_ENV_FILE:-.env.prod}
-        required: false
+      - path: .env.api.prod
+        required: true
     environment:
       <<: *brain-common-env
       SERVICE_NAME: brain-api
@@ -438,10 +479,6 @@ services:
       # pools its routes use are provided — never the worker-only DB credentials.
       BRAIN_HTTP_ENABLED: "true"
       BRAIN_WORKERS: none
-      # Item 5 scopes the worker first. API root-backed object-store access is
-      # tracked separately and remains explicit here until its own cutover.
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
       BRAIN_WIKI_DB_URL: postgres://brain_wiki_reader:${BRAIN_WIKI_DB_PASSWORD:?BRAIN_WIKI_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_MCP_READER_DB_URL: postgres://brain_mcp_reader:${BRAIN_MCP_READER_DB_PASSWORD:?BRAIN_MCP_READER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
@@ -460,7 +497,7 @@ services:
         condition: service_completed_successfully
       db-roles:
         condition: service_completed_successfully
-      minio-setup:
+      minio-api-setup:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -552,10 +589,6 @@ services:
     environment:
       <<: *brain-common-env
       SERVICE_NAME: brain-surface-gateway
-      # Root-backed object-store access remains explicit pending the scoped
-      # API and surface-gateway follow-up tracked after item 5.
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required in production}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required in production}
       BRAIN_SURFACE_GATEWAY_DB_URL: postgres://brain_surface_gateway:${BRAIN_SURFACE_GATEWAY_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL: postgres://brain_surface_audit_writer:${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
