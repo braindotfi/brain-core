@@ -31,6 +31,7 @@ function baseOpts(): Omit<BuildRawAppOptions, "logger"> {
       issuer: "https://auth.brain.fi",
       audience: "brain-api",
       clockToleranceSeconds: 5,
+      legacyAgentJwtNotAfter: undefined,
     }),
     idempotencyStore: new InMemoryIdempotencyStore(),
     plaidVerify: { keyResolver: async () => ({}) as never },

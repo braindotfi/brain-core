@@ -72,6 +72,7 @@ let jwtVerifyOpts: {
   issuer: string;
   audience: string;
   clockToleranceSeconds: number;
+  legacyAgentJwtNotAfter: Date | undefined;
 };
 
 function scopedPool(url: string, schema: string): Pool {
@@ -291,6 +292,7 @@ DESCRIBE(
         issuer: ISSUER,
         audience: AUDIENCE,
         clockToleranceSeconds: 5,
+        legacyAgentJwtNotAfter: undefined,
       };
       const jwksSignKey = await generateSignKeyJwk();
 

@@ -4,7 +4,8 @@ This contract defines the additive machine authentication path. Phase 1 added
 issuance and exchange infrastructure. Phase 2 adds client support without
 changing production credential wiring. Commercial `brain_sk_*` authentication,
 current long-lived agent JWTs, and
-`POST /v1/tenants/{tenantId}/agent-token` remain active until Phase 3.
+`POST /v1/tenants/{tenantId}/agent-token` remain active only before the fixed
+legacy cutoff described below.
 
 ## Credential model
 
@@ -51,6 +52,17 @@ Exchanged JWTs:
 - use the bound agent as `sub` and `principal_type=agent`
 - carry the tenant and server-owned scopes
 - carry `credential_id=agkey_*` for audit attribution
+
+## Legacy JWT cutoff
+
+`LEGACY_AGENT_JWT_NOT_AFTER` is required in production and must equal
+`2026-09-16T23:59:59Z`. Production boot fails if it is missing or different.
+At and after this instant, the shared Brain JWT verifier rejects every agent
+JWT that lacks `credential_id`. The same boundary disables
+`POST /v1/tenants/{tenantId}/agent-token` before any tenant lookup, token read,
+mint, revocation, or audit write. User and API-partner JWTs are unaffected, and
+credential-bound agent JWTs remain accepted subject to their normal signature,
+audience, expiry, scope, and revocation checks.
 
 Malformed, unknown, expired, revoked, environment-mismatched, scope-tampered,
 or inactive credentials fail with a generic token-endpoint error. Secret values

@@ -129,6 +129,7 @@ export async function buildHarness(): Promise<Harness | null> {
     issuer: "https://auth.brain.fi",
     audience: "brain-api",
     clockToleranceSeconds: 5,
+    legacyAgentJwtNotAfter: undefined,
   });
   // Monkey-patch verify to use the local key. Keeps the harness hermetic.
   verifier.verify = async (token) =>
@@ -137,6 +138,7 @@ export async function buildHarness(): Promise<Harness | null> {
       issuer: "https://auth.brain.fi",
       audience: "brain-api",
       clockToleranceSeconds: 5,
+      legacyAgentJwtNotAfter: undefined,
     });
 
   const blob = new MemoryBlobAdapter();

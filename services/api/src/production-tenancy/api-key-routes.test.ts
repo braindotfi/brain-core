@@ -352,6 +352,7 @@ async function buildApp(
       issuer: ISSUER,
       audience: AUDIENCE,
       clockToleranceSeconds: 5,
+      legacyAgentJwtNotAfter: undefined,
     }),
     apiKeyAuthenticator: buildApiKeyAuthenticator({
       pool,

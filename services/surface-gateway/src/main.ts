@@ -45,6 +45,10 @@ async function main(): Promise<void> {
     issuer: cfg.AUTH_ISSUER,
     audience: cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
+    legacyAgentJwtNotAfter:
+      cfg.LEGACY_AGENT_JWT_NOT_AFTER === undefined
+        ? undefined
+        : new Date(cfg.LEGACY_AGENT_JWT_NOT_AFTER),
   });
 
   const surfacePool = createPool({

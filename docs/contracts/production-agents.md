@@ -64,6 +64,11 @@ That shared constant is the only source of truth for the minted scope list.
 `POST /v1/tenants/{tenant_id}/agent-token` is authenticated by the platform service
 credential with required scope `tenant:agent-mint`.
 
+The route exists only for the bounded migration window. At and after
+`2026-09-16T23:59:59Z`, it returns 410 before reading or mutating tenant,
+agent-token, revocation, or audit state. The shared JWT verifier rejects every
+agent JWT without `credential_id` at the same instant.
+
 The endpoint is production-only:
 
 - It returns `404 tenant_not_found` when the tenant does not exist.
@@ -90,6 +95,8 @@ Production tenants use the production tenant routes instead:
 
 - `POST /v1/tenants` creates the tenant's initial `BFF Service Agent` and agent token.
 - `POST /v1/tenants/{tenant_id}/agent-token` returns or rotates that production agent token.
+
+The second route is available only before the fixed legacy cutoff above.
 
 These paths are mutually exclusive by `tenant.kind`. The sandbox service-token path creates
 or reuses `kind = "demo"` tenants. The production agent path requires `kind = "production"`.

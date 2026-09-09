@@ -311,7 +311,9 @@ export interface paths {
          *     token id and mint a replacement. The token is a
          *     `principal_type=agent` JWT using the shared service-token propose-only
          *     scope set. It cannot approve, execute, sign, administer, or resolve as
-         *     a member.
+         *     a member. This route is disabled at
+         *     `2026-09-16T23:59:59Z`; at and after that instant it returns 410 and
+         *     cannot return or mint a legacy agent JWT.
          */
         post: operations["mintProductionAgentToken"];
         delete?: never;
@@ -6132,6 +6134,15 @@ export interface operations {
             };
             /** @description Tenant does not exist. Error code `tenant_not_found`. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Legacy agent JWT minting has ended. Error code `auth_token_invalid`, details.reason `legacy_agent_jwt_cutoff_reached`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

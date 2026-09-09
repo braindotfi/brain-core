@@ -247,6 +247,8 @@ async function build(
       expiresAt: Date;
     }) => Promise<void>;
     demoSeeder?: ProductionTenantDemoSeeder;
+    legacyAgentJwtNotAfter?: Date;
+    now?: () => Date;
   } = {},
 ) {
   const app = Fastify({ logger: false });
@@ -265,6 +267,8 @@ async function build(
     resolverPool: resolver as never,
     audit: audit as never,
     signer: signer as never,
+    legacyAgentJwtNotAfter: opts.legacyAgentJwtNotAfter,
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
     platformSecret,
     ...(opts.deliverSetPasswordEmail !== undefined
       ? { deliverSetPasswordEmail: opts.deliverSetPasswordEmail }
@@ -287,6 +291,7 @@ async function buildWithJwt(
       issuer: ISSUER,
       audience: AUDIENCE,
       clockToleranceSeconds: 5,
+      legacyAgentJwtNotAfter: undefined,
       revocation,
     }),
   });
@@ -305,6 +310,7 @@ async function buildWithJwt(
     audit: audit as never,
     signer,
     revocation,
+    legacyAgentJwtNotAfter: undefined,
     platformSecret,
   });
   await registerMemberRoutes(app, { pool: appDb.pool as never, audit: audit as never });
@@ -684,6 +690,42 @@ describe("production tenancy routes", () => {
       const secondBody = second.json();
       expect(secondBody.token_id).toBe(firstBody.token_id);
       expect(appDb.productionAgentTokens.size).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    { label: "immediately before", offsetMs: -1, status: 201 },
+    { label: "exactly at", offsetMs: 0, status: 410 },
+    { label: "after", offsetMs: 1, status: 410 },
+  ])("disables legacy agent-token minting $label the cutoff", async (entry) => {
+    const cutoff = new Date("2026-09-16T23:59:59.000Z");
+    const { app, appDb, signer, audit } = await build({
+      legacyAgentJwtNotAfter: cutoff,
+      now: () => new Date(cutoff.getTime() + entry.offsetMs),
+    });
+    const tenantId = newTenantId();
+    appDb.tenants.set(tenantId, "production");
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/agent-token`,
+        headers: { "x-platform-service-auth": platformSecret },
+      });
+      expect(response.statusCode).toBe(entry.status);
+      if (entry.status === 410) {
+        expect(response.json().error).toMatchObject({
+          code: "auth_token_invalid",
+          details: {
+            reason: "legacy_agent_jwt_cutoff_reached",
+            not_after: "2026-09-16T23:59:59.000Z",
+          },
+        });
+        expect(appDb.productionAgentTokens.size).toBe(0);
+        expect(signer.sign).not.toHaveBeenCalled();
+        expect(audit.emit).not.toHaveBeenCalled();
+      }
     } finally {
       await app.close();
     }

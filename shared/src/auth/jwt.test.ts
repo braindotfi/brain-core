@@ -35,6 +35,7 @@ const BASE_OPTS = {
   issuer: "https://auth.brain.fi",
   audience: "brain-api",
   clockToleranceSeconds: 5,
+  legacyAgentJwtNotAfter: undefined,
 };
 
 describe("projectPrincipal", () => {
@@ -192,6 +193,56 @@ describe("verifyWithKey", () => {
       expect(isBrainError(err)).toBe(true);
       if (isBrainError(err)) expect(err.code).toBe("auth_token_invalid");
     }
+  });
+
+  it.each([
+    { label: "immediately before", offsetMs: -1, accepted: true },
+    { label: "exactly at", offsetMs: 0, accepted: false },
+    { label: "after", offsetMs: 1, accepted: false },
+  ])("enforces the legacy agent JWT cutoff $label the boundary", async (entry) => {
+    const { sign, getKey } = await makeKeyed();
+    const cutoff = new Date(Date.now() + 30_000);
+    const token = await sign({
+      sub: newAgentId(),
+      tenant_id: newTenantId(),
+      principal_type: "agent",
+      scopes: ["raw:write"],
+    });
+    const verification = verifyWithKey(token, async () => getKey(), {
+      ...BASE_OPTS,
+      legacyAgentJwtNotAfter: cutoff,
+      now: () => new Date(cutoff.getTime() + entry.offsetMs),
+    });
+
+    if (entry.accepted) {
+      await expect(verification).resolves.toMatchObject({ type: "agent" });
+    } else {
+      await expect(verification).rejects.toMatchObject({
+        code: "auth_token_invalid",
+        details: { reason: "legacy_agent_jwt_cutoff_reached" },
+      });
+    }
+  });
+
+  it("accepts credential-bound agent JWTs after the legacy cutoff", async () => {
+    const { sign, getKey } = await makeKeyed();
+    const cutoff = new Date(Date.now() - 1_000);
+    const credentialId = newAgentApiKeyId();
+    const token = await sign({
+      sub: newAgentId(),
+      tenant_id: newTenantId(),
+      principal_type: "agent",
+      scopes: ["raw:write"],
+      credential_id: credentialId,
+    });
+
+    await expect(
+      verifyWithKey(token, async () => getKey(), {
+        ...BASE_OPTS,
+        legacyAgentJwtNotAfter: cutoff,
+        now: () => new Date(cutoff.getTime() + 1),
+      }),
+    ).resolves.toMatchObject({ type: "agent", credentialId });
   });
 });
 

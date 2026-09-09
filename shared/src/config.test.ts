@@ -4,6 +4,7 @@ import {
   assertProductionInfraSecretsSafe,
   loadConfig,
   parseConfig,
+  REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER,
 } from "./config.js";
 
 const MIN_ENV = {
@@ -28,6 +29,7 @@ describe("parseConfig", () => {
     expect(cfg.REQUEST_BODY_LIMIT_BYTES).toBe(52_428_800);
     expect(cfg.AUTH_ISSUER).toBe("https://auth.brain.fi");
     expect(cfg.AUTH_CLOCK_TOLERANCE_SECONDS).toBe(5);
+    expect(cfg.LEGACY_AGENT_JWT_NOT_AFTER).toBeUndefined();
     expect(cfg.BRAIN_TRUST_GATE_ENABLED).toBe(false);
     expect(cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED).toBe(false);
     expect(cfg.BRAIN_API_RESOURCE_URL).toBe("https://api.brain.fi/");
@@ -139,6 +141,29 @@ describe("parseConfig", () => {
     ).toThrowError(/must not reuse BRAIN_API_KEY_PEPPER/);
   });
 
+  it("requires the reviewed legacy-agent JWT cutoff exactly in production", () => {
+    const productionEnv = {
+      ...MIN_ENV,
+      NODE_ENV: "production",
+      DATABASE_URL: "postgres://brain_app:strong-app-pass@localhost:5432/brain",
+    } as const;
+
+    expect(() => parseConfig(productionEnv)).toThrowError(/LEGACY_AGENT_JWT_NOT_AFTER/);
+    expect(() =>
+      parseConfig({
+        ...productionEnv,
+        LEGACY_AGENT_JWT_NOT_AFTER: "2026-09-17T23:59:59Z",
+      }),
+    ).toThrowError(/must be set to 2026-09-16T23:59:59Z/);
+
+    expect(
+      parseConfig({
+        ...productionEnv,
+        LEGACY_AGENT_JWT_NOT_AFTER: REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER,
+      }).LEGACY_AGENT_JWT_NOT_AFTER,
+    ).toBe(REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER);
+  });
+
   it("accepts optional OTLP endpoint and omits when absent", () => {
     const with_otlp = parseConfig({
       ...MIN_ENV,
@@ -227,7 +252,12 @@ describe("assertProductionInfraSecretsSafe", () => {
 
   it("is enforced by parseConfig during production boot", () => {
     expect(() =>
-      parseConfig({ ...MIN_ENV, NODE_ENV: "production", DATABASE_URL: MIN_ENV.DATABASE_URL }),
+      parseConfig({
+        ...MIN_ENV,
+        NODE_ENV: "production",
+        DATABASE_URL: MIN_ENV.DATABASE_URL,
+        LEGACY_AGENT_JWT_NOT_AFTER: REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER,
+      }),
     ).toThrow(/DATABASE_URL password/);
 
     const warn = vi.fn();
