@@ -11,6 +11,14 @@ const entityBackfill = readFileSync(
   resolve(process.cwd(), "../audit/migrations/0023_robotmoney_default_entity_backfill.sql"),
   "utf8",
 );
+const legacyEntityPreflight = readFileSync(
+  resolve(process.cwd(), "../audit/migrations/0022_unclassified_robotmoney_backfill_preflight.sql"),
+  "utf8",
+);
+const legacyEntityCleanup = readFileSync(
+  resolve(process.cwd(), "../audit/migrations/0024_unclassified_robotmoney_backfill_cleanup.sql"),
+  "utf8",
+);
 const shadowMigration = readFileSync(
   resolve(process.cwd(), "migrations/0040_commercial_shadow_observations.sql"),
   "utf8",
@@ -61,6 +69,15 @@ describe("RFC 0011 Phase 1 commercial tier schema", () => {
     expect(entityBackfill).toContain("without a recoverable business name");
     expect(entityBackfill).toContain("INSERT INTO robotmoney_entities");
     expect(entityBackfill).not.toContain("robotmoney_free_v1");
+  });
+
+  it("quarantines unclassified legacy tenants without inventing a legal name", () => {
+    expect(legacyEntityPreflight).toContain("robotmoney_entity_backfill_deferred_tenants");
+    expect(legacyEntityPreflight).toContain("business_name IS NULL");
+    expect(legacyEntityCleanup).toContain("legal_name = NULL");
+    expect(legacyEntityCleanup).toContain("state = 'draft'");
+    expect(legacyEntityCleanup).toContain("business_name = NULL");
+    expect(legacyEntityCleanup).toContain("DROP TABLE robotmoney_entity_backfill_deferred_tenants");
   });
 
   it("makes the minimum 30-day shadow period structurally observe-only", () => {
