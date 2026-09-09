@@ -37,7 +37,13 @@ test("canary proves the actual runtime key, claims, scope ceiling, and lifecycle
   assert.match(canary, /AGENT_KEY_ENVIRONMENT" == "test/);
   assert.match(canary, /staging_fixture_binding=created_or_preserved/);
   assert.match(canary, /production_runtime_binding=created_or_preserved/);
-  assert.match(canary, /tenants WHERE id = :'tenant_id' AND kind = 'production'/);
+  assert.match(canary, /kind = 'production'/);
+  assert.match(
+    canary,
+    /kind = 'demo' AND id = 'tnt_00000000010000000000000000'/,
+  );
+  assert.doesNotMatch(canary, /UPDATE tenants SET kind/);
+  assert.doesNotMatch(canary, /\\quit 1/);
   assert.match(canary, /ON CONFLICT \(id\) DO NOTHING/);
   assert.match(canary, /agent_database_binding_status=active_internal/);
   assert.match(canary, /role = 'document_extractor'/);
