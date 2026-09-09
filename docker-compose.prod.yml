@@ -54,6 +54,7 @@ x-brain-common-env: &brain-common-env
   AUTH_JWKS_URL: http://auth:3000/.well-known/jwks.json
   AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.brain.fi}
   AUTH_AUDIENCE: ${AUTH_AUDIENCE:-brain-api}
+  LEGACY_AGENT_JWT_NOT_AFTER: "2026-09-16T23:59:59Z"
   DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}@postgres:5432/brain
   DATABASE_SSL: disable
   REDIS_URL: redis://redis:6379
@@ -333,6 +334,7 @@ services:
     command: ["node", "services/api/dist/usage/entitlement-operator-cli.js"]
     environment:
       NODE_ENV: production
+      LEGACY_AGENT_JWT_NOT_AFTER: "2026-09-16T23:59:59Z"
       DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:?BRAIN_PRIVILEGED_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_AUDIT_DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}@postgres:5432/brain
       DATABASE_SSL: disable
@@ -383,6 +385,7 @@ services:
       - "127.0.0.1:3003:3000"
     environment:
       NODE_ENV: production
+      LEGACY_AGENT_JWT_NOT_AFTER: "2026-09-16T23:59:59Z"
       PORT: "3000"
       SERVICE_NAME: brain-auth
       # DATABASE_URL and REDIS_URL below remain placeholders: loadConfig()

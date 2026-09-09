@@ -56,6 +56,8 @@ export interface ProductionTenancyRoutesDeps {
   audit: AuditEmitter;
   signer: JwtSigner;
   revocation?: RevocationStore;
+  legacyAgentJwtNotAfter: Date | undefined;
+  now?: () => Date;
   platformSecret?: string;
   smartAccount?: string;
   /**
@@ -428,6 +430,7 @@ export async function registerProductionTenancyRoutes(
     { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
     async (request, reply) => {
       assertPlatformCredential(request, deps.platformSecret, "tenant:agent-mint");
+      assertLegacyAgentJwtMintingEnabled(deps.legacyAgentJwtNotAfter, deps.now?.() ?? new Date());
       const { tenantId } = request.params as { tenantId: string };
       const body = request.body as { rotate?: unknown } | undefined;
       const rotate = body?.rotate === true;
@@ -737,6 +740,18 @@ async function setDemoProvisioningState(
   if (changed.rowCount !== 1) {
     throw brainError("internal_server_error", "durable demo provisioning state transition failed", {
       details: { tenant_id: tenantId, from, to },
+    });
+  }
+}
+
+export function assertLegacyAgentJwtMintingEnabled(notAfter: Date | undefined, now: Date): void {
+  if (notAfter !== undefined && now.getTime() >= notAfter.getTime()) {
+    throw brainError("auth_token_invalid", "legacy agent JWT minting has ended", {
+      statusOverride: 410,
+      details: {
+        reason: "legacy_agent_jwt_cutoff_reached",
+        not_after: notAfter.toISOString(),
+      },
     });
   }
 }

@@ -454,6 +454,7 @@ locals {
     BRAIN_ONCHAIN_MIN_PRIORITY_FEE_GWEI = var.onchain_min_priority_fee_gwei
 
     AUTH_AUDIENCE                       = "brain-api"
+    LEGACY_AGENT_JWT_NOT_AFTER          = "2026-09-16T23:59:59Z"
     BRAIN_AGENT_WINDOW_LOOKBACK_SECONDS = "86400"
     WIKI_EMBED_MODEL                    = "text-embedding-3-small"
     WIKI_LLM_MODEL                      = "gpt-4o-mini"

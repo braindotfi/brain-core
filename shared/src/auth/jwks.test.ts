@@ -11,6 +11,7 @@ const OPTS = {
   issuer: "https://auth.brain.fi",
   audience: "brain-api",
   clockToleranceSeconds: 5,
+  legacyAgentJwtNotAfter: undefined,
 };
 
 function principal(): Principal {

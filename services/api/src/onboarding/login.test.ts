@@ -109,6 +109,7 @@ describe("POST /auth/login — RFC 0002 Phase B", () => {
         issuer: ISSUER,
         audience: AUDIENCE,
         clockToleranceSeconds: 5,
+        legacyAgentJwtNotAfter: undefined,
       }),
     });
     const audit = new InMemoryAuditEmitter();
@@ -184,6 +185,7 @@ describe("POST /auth/login — RFC 0002 Phase B", () => {
         issuer: ISSUER,
         audience: AUDIENCE,
         clockToleranceSeconds: 5,
+        legacyAgentJwtNotAfter: undefined,
       }),
     });
     const audit = new InMemoryAuditEmitter();

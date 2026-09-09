@@ -105,8 +105,10 @@ mint member-resolvable user tokens, and it must reject tenant.kind = "production
 Production tenants have their own agent path, governed by
 `docs/contracts/production-agents.md`: POST /v1/tenants creates the initial production BFF
 service agent and token, and POST /v1/tenants/{tenant_id}/agent-token returns or rotates that
-agent token. These paths are mutually exclusive by tenant.kind. The production path for human
-sessions remains POST /v1/sessions.
+agent token only before `2026-09-16T23:59:59Z`. At and after that boundary,
+legacy agent JWTs without `credential_id` are rejected and the agent-token
+route returns 410. These paths are mutually exclusive by tenant.kind. The
+production path for human sessions remains POST /v1/sessions.
 
 ## Invariants (pinned by tests)
 

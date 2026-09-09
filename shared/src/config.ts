@@ -12,6 +12,8 @@
 
 import { z } from "zod";
 
+export const REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER = "2026-09-16T23:59:59Z";
+
 /**
  * Optional non-empty string env var that tolerates empty values as "absent".
  *
@@ -239,6 +241,14 @@ const envSchema = z.object({
   AUTH_AUDIENCE: z.string().default("brain-api"),
   /** Acceptable clock skew when verifying exp/iat. Keep small. */
   AUTH_CLOCK_TOLERANCE_SECONDS: z.coerce.number().int().nonnegative().default(5),
+  /**
+   * Absolute cutoff for legacy agent JWTs that lack credential_id. Production
+   * must set the reviewed value exactly; development and test may omit it.
+   */
+  LEGACY_AGENT_JWT_NOT_AFTER: z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z.string().datetime({ offset: true }).optional(),
+  ),
   /**
    * Shared platform BFF credential for production tenant creation, session
    * exchange, and invite consumption. Routes compare it in constant time.
@@ -1038,6 +1048,16 @@ export function parseConfig(
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid Brain configuration:\n${issues}`);
+  }
+  if (
+    result.data.NODE_ENV === "production" &&
+    result.data.LEGACY_AGENT_JWT_NOT_AFTER !== REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: LEGACY_AGENT_JWT_NOT_AFTER must be set to " +
+        REQUIRED_LEGACY_AGENT_JWT_NOT_AFTER +
+        " in production",
+    );
   }
   if (
     result.data.BRAIN_AGENT_KEY_EXCHANGE_ENABLED &&

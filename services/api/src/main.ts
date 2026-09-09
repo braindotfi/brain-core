@@ -671,6 +671,10 @@ async function main(): Promise<void> {
       ? [cfg.AUTH_AUDIENCE, cfg.BRAIN_API_RESOURCE_URL]
       : cfg.AUTH_AUDIENCE,
     clockToleranceSeconds: cfg.AUTH_CLOCK_TOLERANCE_SECONDS,
+    legacyAgentJwtNotAfter:
+      cfg.LEGACY_AGENT_JWT_NOT_AFTER === undefined
+        ? undefined
+        : new Date(cfg.LEGACY_AGENT_JWT_NOT_AFTER),
     revocation: revocationStore,
   });
 
@@ -2607,6 +2611,10 @@ async function main(): Promise<void> {
             audit,
             signer: siwxSigner,
             revocation: revocationStore,
+            legacyAgentJwtNotAfter:
+              cfg.LEGACY_AGENT_JWT_NOT_AFTER === undefined
+                ? undefined
+                : new Date(cfg.LEGACY_AGENT_JWT_NOT_AFTER),
             ...(cfg.BRAIN_PLATFORM_SERVICE_SECRET !== undefined
               ? { platformSecret: cfg.BRAIN_PLATFORM_SERVICE_SECRET }
               : {}),

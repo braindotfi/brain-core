@@ -39,6 +39,10 @@ export interface VerifyOptions {
   clockToleranceSeconds: number;
   /** Optional revocation check. Supply for production; omit only in tests. */
   revocation?: RevocationStore;
+  /** Reject agent JWTs without credential_id at or after this instant. */
+  legacyAgentJwtNotAfter: Date | undefined;
+  /** Injectable wall clock for exact-boundary tests. */
+  now?: () => Date;
 }
 
 export class JwtVerifier {
@@ -88,6 +92,20 @@ export async function verifyWithKey(
   }
 
   const principal = projectPrincipal(payload);
+
+  if (
+    principal.type === "agent" &&
+    principal.credentialId === undefined &&
+    opts.legacyAgentJwtNotAfter !== undefined &&
+    (opts.now?.() ?? new Date()).getTime() >= opts.legacyAgentJwtNotAfter.getTime()
+  ) {
+    throw brainError("auth_token_invalid", "legacy agent JWT acceptance has ended", {
+      details: {
+        reason: "legacy_agent_jwt_cutoff_reached",
+        not_after: opts.legacyAgentJwtNotAfter.toISOString(),
+      },
+    });
+  }
 
   if (opts.revocation !== undefined) {
     const revoked = await opts.revocation.isRevoked(principal.tokenId);
