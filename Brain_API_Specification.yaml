@@ -1350,6 +1350,52 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /tenants/{id}/provenance:
+    get:
+      tags: [Tenancy]
+      summary: Read authoritative tenant provisioning provenance
+      description: |
+        Read-only platform route gated by `X-Platform-Service-Auth` with the
+        `tenant:agent-mint` operational scope. Returns the server-owned tenant
+        classification fields exactly as stored. Explicit null means the legacy
+        tenant is unclassified and callers must not interpret it as customer or
+        non-demo data.
+      operationId: getTenantProvenance
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        - name: X-Platform-Service-Auth
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Authoritative tenant provenance
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [tenant_id, kind, provisioning_state, data_profile, access_stage]
+                properties:
+                  tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+                  kind: { type: string, enum: [production, demo] }
+                  provisioning_state:
+                    type: [string, "null"]
+                    enum: [provisioning, ready_demo, seed_failed, archived, null]
+                  data_profile:
+                    type: [string, "null"]
+                    enum: [synthetic_brightline_v1, customer, null]
+                  access_stage:
+                    type: [string, "null"]
+                    enum: [demo, production_review, production, null]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /sessions:
     post:
       tags: [Tenancy]

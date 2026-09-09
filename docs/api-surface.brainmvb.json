@@ -307,6 +307,27 @@
           "openapi": "documented:/tenants"
         },
         {
+          "method": "GET",
+          "path": "/v1/tenants/{id}/provenance",
+          "auth": "X-Platform-Service-Auth",
+          "required_scope": "tenant:agent-mint",
+          "enforcement": "shared_secret_header",
+          "request_shape": "path { id }",
+          "response_shape": "200 { tenant_id, kind, provisioning_state, data_profile, access_stage } with explicit nulls",
+          "example_request": {
+            "path": "/v1/tenants/tnt_example/provenance",
+            "headers": { "X-Platform-Service-Auth": "<secret>" }
+          },
+          "example_response": {
+            "tenant_id": "tnt_example",
+            "kind": "production",
+            "provisioning_state": null,
+            "data_profile": "customer",
+            "access_stage": "production"
+          },
+          "openapi": "documented:/tenants/{id}/provenance"
+        },
+        {
           "method": "POST",
           "path": "/v1/orgs/{orgId}/tenants",
           "auth": "X-Platform-Service-Auth",

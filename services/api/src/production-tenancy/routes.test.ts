@@ -47,8 +47,8 @@ interface ProductionAgentTokenRow {
 
 interface DemoProvisioningState {
   provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | null;
-  data_profile: "synthetic_brightline_v1" | "customer";
-  access_stage: "demo" | "production";
+  data_profile: "synthetic_brightline_v1" | "customer" | null;
+  access_stage: "demo" | "production_review" | "production" | null;
 }
 
 function memberRow(overrides: Record<string, unknown> = {}) {
@@ -128,6 +128,18 @@ function appPool(
           constraint: "idx_member_identity_links_platform_external_ref_unique",
         });
         return Promise.reject(err);
+      }
+      if (sql.includes("id AS tenant_id") && sql.includes("provisioning_state")) {
+        const [tenantId] = values as [string];
+        const kind = tenants.get(tenantId);
+        const state = tenantStates.get(tenantId);
+        if (kind === undefined || state === undefined) {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        return Promise.resolve({
+          rows: [{ tenant_id: tenantId, kind, ...state }],
+          rowCount: 1,
+        });
       }
       if (sql.includes("SELECT kind FROM tenants WHERE id = $1")) {
         const [tenantId] = values as [string];
@@ -312,6 +324,75 @@ async function buildWithJwt(
 }
 
 describe("production tenancy routes", () => {
+  it.each([
+    {
+      label: "ordinary production",
+      kind: "production" as const,
+      state: {
+        provisioning_state: null,
+        data_profile: "customer" as const,
+        access_stage: "production" as const,
+      },
+    },
+    {
+      label: "synthetic demo",
+      kind: "production" as const,
+      state: {
+        provisioning_state: "ready_demo" as const,
+        data_profile: "synthetic_brightline_v1" as const,
+        access_stage: "demo" as const,
+      },
+    },
+    {
+      label: "unclassified legacy",
+      kind: "production" as const,
+      state: {
+        provisioning_state: null,
+        data_profile: null,
+        access_stage: null,
+      },
+    },
+  ])("returns authoritative $label tenant provenance with explicit nulls", async (entry) => {
+    const { app, appDb } = await build();
+    const tenantId = newTenantId();
+    appDb.tenants.set(tenantId, entry.kind);
+    appDb.tenantStates.set(tenantId, entry.state);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/provenance`,
+        headers: { "x-platform-service-auth": platformSecret },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ tenant_id: tenantId, kind: entry.kind, ...entry.state });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns 404 for unknown tenant provenance and rejects missing platform auth", async () => {
+    const { app } = await build();
+    const tenantId = newTenantId();
+    try {
+      const unauthenticated = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/provenance`,
+      });
+      expect(unauthenticated.statusCode).toBe(401);
+      expect(unauthenticated.json().error.code).toBe("auth_token_invalid");
+
+      const missing = await app.inject({
+        method: "GET",
+        url: `/tenants/${tenantId}/provenance`,
+        headers: { "x-platform-service-auth": platformSecret },
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().error.code).toBe("tenant_not_found");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("creates a production tenant with one bootstrap admin, member session, and propose-only agent", async () => {
     const { app, appDb, signer } = await build();
     try {

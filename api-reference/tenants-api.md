@@ -1,7 +1,33 @@
 # Tenants
 
-Endpoints that operate on a tenant as a whole. Today there is one: the
-GDPR right-to-erasure deletion.
+Endpoints that operate on a tenant as a whole.
+
+### Read Tenant Provisioning Provenance
+
+```http
+GET /v1/tenants/{id}/provenance
+X-Platform-Service-Auth: <platform service secret>
+```
+
+This platform-only, read-only endpoint returns brain-core's server-owned tenant
+classification. Every response includes all fields. A `null` value means the
+legacy tenant is unclassified; it must never be treated as proof of customer or
+non-demo data.
+
+```json
+{
+  "tenant_id": "tnt_...",
+  "kind": "production",
+  "provisioning_state": null,
+  "data_profile": "customer",
+  "access_stage": "production"
+}
+```
+
+Trusted synthetic provisioning reports `data_profile` as
+`synthetic_brightline_v1` and `access_stage` as `demo`. The endpoint does not
+derive or expose a binary `demo_seed` field. An unknown tenant returns
+`404 tenant_not_found`.
 
 ### Delete a Tenant (GDPR Right-to-Erasure)
 

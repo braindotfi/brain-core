@@ -320,6 +320,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenants/{id}/provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read authoritative tenant provisioning provenance
+         * @description Read-only platform route gated by `X-Platform-Service-Auth` with the
+         *     `tenant:agent-mint` operational scope. Returns the server-owned tenant
+         *     classification fields exactly as stored. Explicit null means the legacy
+         *     tenant is unclassified and callers must not interpret it as customer or
+         *     non-demo data.
+         */
+        get: operations["getTenantProvenance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions": {
         parameters: {
             query?: never;
@@ -6140,6 +6164,43 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    getTenantProvenance: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Platform-Service-Auth": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authoritative tenant provenance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tenant_id: string;
+                        /** @enum {string} */
+                        kind: "production" | "demo";
+                        /** @enum {string|null} */
+                        provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
+                        /** @enum {string|null} */
+                        data_profile: "synthetic_brightline_v1" | "customer" | null;
+                        /** @enum {string|null} */
+                        access_stage: "demo" | "production_review" | "production" | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     createSession: {

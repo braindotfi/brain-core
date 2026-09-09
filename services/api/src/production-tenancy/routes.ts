@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import {
   brainError,
   hashToken,
+  isBrainId,
   isValidScope,
   newSecretToken,
   newTenantId,
@@ -139,6 +140,14 @@ interface InviteRow {
 
 interface TenantKindRow {
   kind: "production" | "demo";
+}
+
+interface TenantProvenanceRow {
+  tenant_id: string;
+  kind: "production" | "demo";
+  provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
+  data_profile: "synthetic_brightline_v1" | "customer" | null;
+  access_stage: "demo" | "production_review" | "production" | null;
 }
 
 export async function registerProductionTenancyRoutes(
@@ -381,6 +390,37 @@ export async function registerProductionTenancyRoutes(
     "/orgs/:orgId/tenants",
     { config: { skipAuth: true, rateLimit: { max: 20, timeWindow: "1 minute" } } },
     createProductionTenant,
+  );
+
+  app.get(
+    "/tenants/:tenantId/provenance",
+    { config: { skipAuth: true, rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request) => {
+      assertPlatformCredential(request, deps.platformSecret, "tenant:agent-mint");
+      const { tenantId } = request.params as { tenantId: string };
+      if (!isBrainId(tenantId, "tnt")) {
+        throw brainError("request_params_invalid", "malformed tenant id");
+      }
+      const tenant = await withTenantScope(deps.pool, tenantId, async (client) => {
+        const result = await client.query<TenantProvenanceRow>(
+          `SELECT id AS tenant_id, kind, provisioning_state, data_profile, access_stage
+             FROM tenants
+            WHERE id = $1`,
+          [tenantId],
+        );
+        return result.rows[0] ?? null;
+      });
+      if (tenant === null) {
+        throw brainError("tenant_not_found", "tenant does not exist", { statusOverride: 404 });
+      }
+      return {
+        tenant_id: tenant.tenant_id,
+        kind: tenant.kind,
+        provisioning_state: tenant.provisioning_state ?? null,
+        data_profile: tenant.data_profile ?? null,
+        access_stage: tenant.access_stage ?? null,
+      };
+    },
   );
 
   app.post(
