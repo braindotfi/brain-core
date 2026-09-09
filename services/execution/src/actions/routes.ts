@@ -28,10 +28,10 @@ import {
   type ServiceCallContext,
 } from "@brain/shared";
 import type { PaymentIntentService } from "../payment-intents/PaymentIntentService.js";
+import { requirePaymentIntentApproveScope } from "../payment-intents/approve-scope.js";
 import { paymentIntentToAction, type ActionStatus } from "./mapper.js";
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
-const SCOPE_APPROVE: Scope = "payment_intent:approve";
 const SCOPE_EXECUTE: Scope = "payment_intent:execute";
 const SCOPE_READ: Scope = "execution:read";
 const SCOPE_ADMIN: Scope = "execution:admin";
@@ -226,7 +226,7 @@ export async function registerActionRoutes(
       reply,
     ) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed action id");
       }
@@ -252,7 +252,7 @@ export async function registerActionRoutes(
       reply,
     ) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed action id");
       }

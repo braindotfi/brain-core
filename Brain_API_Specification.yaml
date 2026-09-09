@@ -88,6 +88,8 @@ tags:
     description: Platform administration (tenant-level operations)
   - name: Auth
     description: Self-serve onboarding & human (owner) authentication (RFC 0002). Public, rate-limited; available only when BRAIN_SELF_SERVE_SIGNUP is enabled.
+  - name: Authorization
+    description: Side-effect-free capability probes for authenticated callers.
   - name: Docs
     description: Public, read-only API documentation surface — the interactive reference UI and the raw OpenAPI contract it renders.
   - name: Reference
@@ -1078,6 +1080,28 @@ paths:
           content:
             text/html:
               schema: { type: string }
+
+  /authz/probes/payment-intent-approve:
+    get:
+      tags: [Authorization]
+      summary: Probe payment-intent approval scope without domain access
+      description: |
+        Requires `payment_intent:approve`. Returns 204 when the authenticated
+        principal holds the scope, or 403 `auth_scope_insufficient` when it
+        does not. This route performs no resource-id lookup, database lookup,
+        policy evaluation, audit event, outbox operation, or rail call. Normal
+        request access logs and security telemetry still apply. A successful
+        probe confirms only the scope grant; the real approval route also
+        enforces member, domain, amount, payee, and dual-control rules.
+      operationId: probePaymentIntentApproveAuthorization
+      responses:
+        '204':
+          description: The authenticated principal holds `payment_intent:approve`. No content is returned.
+        '403':
+          description: Missing `payment_intent:approve`. Error code `auth_scope_insufficient`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   #############################################################################
   # TENANCY: production tenant creation, sessions, invites

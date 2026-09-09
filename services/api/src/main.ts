@@ -188,6 +188,7 @@ import {
   registerMemberRoutes,
   registerActionRoutes,
   registerPaymentIntentRoutes,
+  registerAuthorizationProbeRoutes,
   registerProposalReadRoutes,
   ApprovalService,
   ActorResolver,
@@ -2397,6 +2398,7 @@ async function main(): Promise<void> {
           recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
         });
         await v1.register(async (child) => {
+          await registerAuthorizationProbeRoutes(child);
           await registerActionRoutes(child, piService);
           await registerPaymentIntentRoutes(child, piService, invoiceShortcut, (ctx, id) =>
             getPaymentIntentAgent(pool, ctx, id),

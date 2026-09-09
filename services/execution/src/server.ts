@@ -17,6 +17,7 @@ import { registerProposalReadRoutes } from "./proposals/routes.js";
 import { registerEvidenceResolveRoutes } from "./evidence/routes.js";
 import { OutboxService } from "./outbox/OutboxService.js";
 import type { ExecutionDeps } from "./deps.js";
+import { registerAuthorizationProbeRoutes } from "./authz/probes.js";
 
 export interface BuildExecutionAppOptions {
   deps: ExecutionDeps;
@@ -75,6 +76,7 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
   });
 
   app.get("/health", { config: { skipAuth: true } }, async () => ({ ok: true }));
+  await registerAuthorizationProbeRoutes(app);
 
   // Stage-6 routes: /execution/* (proposals, executions, agents, legacy /execution/mcp ping stub).
   await registerExecutionRoutes(app, opts.deps);
