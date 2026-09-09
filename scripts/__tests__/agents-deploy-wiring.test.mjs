@@ -108,6 +108,8 @@ test("main workflow builds app and agents images before deployment", () => {
   );
   assert.match(deployStagingJob, /brain-agents:prod-rollback-\$ts/);
   assert.match(promoteProductionJob, /brain-agents:prod-rollback-\$ts/);
+  assert.match(deployStagingJob, /docker image prune -af --filter until=1h/);
+  assert.match(promoteProductionJob, /docker image prune -af --filter until=24h/);
   assert.match(workflow, /tools\/migrate\/dist\/cli\.js up/);
   assert.match(promoteWorkflow, /https:\/\/api\.brain\.fi\/health/);
   assert.match(workflow, /last_commit.*expected/s);
