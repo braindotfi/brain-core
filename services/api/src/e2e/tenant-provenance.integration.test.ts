@@ -71,6 +71,7 @@ suite("tenant provenance route (requires DATABASE_URL)", () => {
       resolverPool: pool,
       audit: { emit: async () => ({ id: "evt_unused" }) } as never,
       signer: { sign: async () => "unused" } as never,
+      legacyAgentJwtNotAfter: undefined,
       platformSecret: PLATFORM_SECRET,
     });
   }, 60_000);
