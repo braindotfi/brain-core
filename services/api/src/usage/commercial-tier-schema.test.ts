@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  resolve(process.cwd(), "migrations/0029_self_serve_commercial_tiers.sql"),
+  resolve(process.cwd(), "migrations/0039_self_serve_commercial_tiers.sql"),
   "utf8",
 );
 const main = readFileSync(resolve(process.cwd(), "src/main.ts"), "utf8");
@@ -12,7 +12,7 @@ const entityBackfill = readFileSync(
   "utf8",
 );
 const shadowMigration = readFileSync(
-  resolve(process.cwd(), "migrations/0030_commercial_shadow_observations.sql"),
+  resolve(process.cwd(), "migrations/0040_commercial_shadow_observations.sql"),
   "utf8",
 );
 

@@ -2632,27 +2632,29 @@ async function main(): Promise<void> {
             demoSeeder: ({ tenantId, actor }) => seedBrainSaasDemo(pool, audit, tenantId, actor),
           }),
         );
-        const graduationVerificationService = new GraduationVerificationService(
-          new PostgresGraduationVerificationRepository(pool),
-          buildPendingComplianceGraduationVerifier(),
-          audit,
-        );
-        const graduationProvisioningService = new UnpaidGraduationService(
-          new PostgresGraduationProvisioningStore(
-            pool,
-            process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
-              "0x0000000000000000000000000000000000000000",
-          ),
-          siwxSigner,
-          audit,
-        );
-        await v1.register(async (child) =>
-          registerGraduationRoutes(child, {
-            pool,
-            service: graduationVerificationService,
-            provisioning: graduationProvisioningService,
-          }),
-        );
+        if (cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED) {
+          const graduationVerificationService = new GraduationVerificationService(
+            new PostgresGraduationVerificationRepository(pool),
+            buildPendingComplianceGraduationVerifier(),
+            audit,
+          );
+          const graduationProvisioningService = new UnpaidGraduationService(
+            new PostgresGraduationProvisioningStore(
+              pool,
+              process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
+                "0x0000000000000000000000000000000000000000",
+            ),
+            siwxSigner,
+            audit,
+          );
+          await v1.register(async (child) =>
+            registerGraduationRoutes(child, {
+              pool,
+              service: graduationVerificationService,
+              provisioning: graduationProvisioningService,
+            }),
+          );
+        }
         if (cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED) {
           const commercialTierService = new CommercialTierService(pool, audit);
           await v1.register(async (child) =>

@@ -94,7 +94,7 @@ function parseBusinessProfile(value: unknown): GraduationBusinessProfile {
     "business_profile.business_email",
     320,
   ).toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(businessEmail)) {
+  if (!isStructurallyValidEmail(businessEmail)) {
     throw brainError("request_body_invalid", "business_profile.business_email is invalid");
   }
   const registrationCountry = requiredString(
@@ -128,6 +128,16 @@ function parseBusinessProfile(value: unknown): GraduationBusinessProfile {
       "business_profile.expected_monthly_requests",
     ),
   };
+}
+
+function isStructurallyValidEmail(value: string): boolean {
+  if (value.includes(" ") || value.includes("\t") || value.includes("\n") || value.includes("\r")) {
+    return false;
+  }
+  const at = value.indexOf("@");
+  if (at <= 0 || at !== value.lastIndexOf("@") || at === value.length - 1) return false;
+  const labels = value.slice(at + 1).split(".");
+  return labels.length >= 2 && labels.every((label) => label.length > 0);
 }
 
 function requiredString(value: unknown, field: string, max: number): string {

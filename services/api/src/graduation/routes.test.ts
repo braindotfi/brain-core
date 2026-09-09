@@ -94,6 +94,23 @@ describe("graduation routes", () => {
         payload: profileBody({ website: "http://brightline.example" }),
       });
       expect(insecureWebsite.statusCode).toBe(400);
+
+      for (const businessEmail of [
+        "missing-at.example",
+        "two@@brightline.example",
+        "owner@brightline",
+        "owner@.example",
+        "owner@brightline.example.",
+        "owner name@brightline.example",
+      ]) {
+        const invalidEmail = await app.inject({
+          method: "POST",
+          url: `/tenants/${tenantId}/graduation/verification`,
+          headers: { "idempotency-key": `graduation-email-${businessEmail.length}` },
+          payload: profileBody({ business_email: businessEmail }),
+        });
+        expect(invalidEmail.statusCode).toBe(400);
+      }
       expect(submit).not.toHaveBeenCalled();
     } finally {
       await app.close();

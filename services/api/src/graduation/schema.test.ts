@@ -3,12 +3,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  resolve(process.cwd(), "migrations/0027_tenant_graduation_verification.sql"),
+  resolve(process.cwd(), "migrations/0037_tenant_graduation_verification.sql"),
   "utf8",
 );
 const repository = readFileSync(resolve(process.cwd(), "src/graduation/repository.ts"), "utf8");
 const phase2Migration = readFileSync(
-  resolve(process.cwd(), "migrations/0028_tenant_graduation_provisioning.sql"),
+  resolve(process.cwd(), "migrations/0038_tenant_graduation_provisioning.sql"),
   "utf8",
 );
 const provisioningRepository = readFileSync(
@@ -16,9 +16,10 @@ const provisioningRepository = readFileSync(
   "utf8",
 );
 const memberForeignKeys = readFileSync(
-  resolve(process.cwd(), "../execution/migrations/0035_tenant_graduation_member_foreign_keys.sql"),
+  resolve(process.cwd(), "../execution/migrations/0037_tenant_graduation_member_foreign_keys.sql"),
   "utf8",
 );
+const main = readFileSync(resolve(process.cwd(), "src/main.ts"), "utf8");
 
 describe("RFC 0010 Phase 1 graduation schema", () => {
   it.each([
@@ -52,11 +53,15 @@ describe("RFC 0010 Phase 1 graduation schema", () => {
 
   it("defers member references until the execution service has created members", () => {
     expect(migration).not.toContain("REFERENCES members");
-    expect(memberForeignKeys).toContain(
-      "tenant_graduation_requests_initiated_by_member_fk",
-    );
+    expect(memberForeignKeys).toContain("tenant_graduation_requests_initiated_by_member_fk");
     expect(memberForeignKeys).toContain("tenant_graduation_evidence_submitted_by_member_fk");
     expect(memberForeignKeys).toContain("REFERENCES members(tenant_id, id)");
+  });
+
+  it("keeps every graduation route behind its default-off feature gate", () => {
+    expect(main).toMatch(
+      /if \(cfg\.BRAIN_PRODUCTION_GRADUATION_ENABLED\) \{[\s\S]+registerGraduationRoutes/,
+    );
   });
 });
 

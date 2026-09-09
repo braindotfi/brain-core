@@ -1,8 +1,8 @@
 # RFC 0009. Stripe subscriptions and commercial invoicing
 
-- **Status:** Implementation in progress. Phase 1 disabled contract foundation
-  closed on 2026-09-03. Phase 2 observe-only work has begun.
-  No Stripe credential, provider call, payment, or activation exists.
+- **Status:** Proposed. Phase 1 disabled contract foundation is implemented in
+  PR #773 but is not closed until that PR merges. Phase 2 has not begun. No
+  Stripe credential, provider call, payment, or activation exists.
 - **Date:** 2026-09-03
 - **Affects:** RobotMoney base-tier subscriptions, outcome-fee invoicing,
   money-movement fee invoicing, billing accounts, Stripe customer and

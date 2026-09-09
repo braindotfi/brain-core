@@ -196,10 +196,7 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
            provisioning_state, data_profile, access_stage, business_name
          ) VALUES ($1, 'production', FALSE, 'self_serve', 'onchain', NULL, 'customer', 'production', $2)
          ON CONFLICT (id) DO NOTHING`,
-        [
-          reservation.destinationTenantId,
-          reservation.copiedFields.business.legal_business_name,
-        ],
+        [reservation.destinationTenantId, reservation.copiedFields.business.legal_business_name],
       );
       await assertDestinationClassification(client, reservation.destinationTenantId);
       await client.query(

@@ -34,6 +34,7 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED).toBe(false);
     expect(cfg.BRAIN_API_RESOURCE_URL).toBe("https://api.brain.fi/");
     expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(false);
+    expect(cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED).toBe(false);
     expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(false);
     expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(false);
     expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(false);
@@ -48,6 +49,7 @@ describe("parseConfig", () => {
     const cfg = parseConfig({
       ...MIN_ENV,
       BRAIN_COMMERCIAL_CATALOG_ENABLED: "true",
+      BRAIN_PRODUCTION_GRADUATION_ENABLED: "true",
       BRAIN_COMMERCIAL_SHADOW_ENABLED: "true",
       BRAIN_ENTITY_SCOPE_ENABLED: "true",
       BRAIN_AGENT_CAPACITY_ENABLED: "true",
@@ -58,6 +60,7 @@ describe("parseConfig", () => {
       BRAIN_MOVEMENT_FEES_ENABLED: "true",
     });
     expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(true);
+    expect(cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED).toBe(true);
     expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(true);
     expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(true);
     expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(true);

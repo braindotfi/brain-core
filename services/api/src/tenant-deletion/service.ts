@@ -181,6 +181,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   // ---- Commercial foundation (RFCs 0009, 0011, and 0012) ----
   // Reservation and adjustment rows reference their period or counter row.
   // Rows referencing RobotMoney entities must be deleted before the entity.
+  { table: "commercial_shadow_observations", column: "tenant_id" },
   { table: "api_usage_allowance_reservations", column: "tenant_id" },
   { table: "api_usage_allowance_counters", column: "tenant_id" },
   { table: "commercial_execution_reservations", column: "tenant_id" },

@@ -472,6 +472,11 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default(false),
+  /** Exposes production-graduation verification and provisioning routes. */
+  BRAIN_PRODUCTION_GRADUATION_ENABLED: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .default(false),
   /** Records counterfactual commercial decisions without changing request behavior. */
   BRAIN_COMMERCIAL_SHADOW_ENABLED: z
     .enum(["true", "false"])

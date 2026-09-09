@@ -1,8 +1,8 @@
 # RFC 0012. x402 API and MCP usage payments
 
-- **Status:** Implementation in progress. Phase 1 disabled interfaces and
-  evidence schema closed on 2026-09-03. No Coinbase credential, payment, or
-  activation exists.
+- **Status:** Proposed. Phase 1 disabled interfaces and evidence schema are
+  implemented in PR #773 but are not closed until that PR merges. No Coinbase
+  credential, payment, or activation exists.
 - **Date:** 2026-09-03
 - **Affects:** API and MCP gateways, standalone and overage calls, RFC 0008
   request metering and entitlements, RobotMoney commercial catalog, USDC

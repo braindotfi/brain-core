@@ -1,8 +1,11 @@
 # RFC 0010. Self-serve production graduation
 
-- **Status:** In progress. Phase 1 verification is implemented; unpaid Phase 2
-  graduation is implemented behind the verification approval gate. Paid
-  graduation remains blocked on RFC 0009.
+- **Status:** Proposed. Phase 1 verification and unpaid Phase 2 graduation are
+  implemented in PR #773 behind the default-off
+  `BRAIN_PRODUCTION_GRADUATION_ENABLED` gate. They are not active. Paid
+  graduation remains blocked on RFC 0009 and the dormant agent credential
+  response must be reconciled with the RFC 8693 exchange flow before this gate
+  can be enabled.
 - **Date:** 2026-09-02
 - **Affects:** Signup, tenant provisioning, production tenancy, business
   verification, risk review, Stripe subscription setup, Raw ingestion, API

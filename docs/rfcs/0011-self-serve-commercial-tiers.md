@@ -1,11 +1,10 @@
 # RFC 0011. RobotMoney self-serve commercial tiers
 
-- **Status:** Implementation in progress. Phase 1 disabled contract foundation
-  closed on 2026-09-03. Phase 2 observe-only work has begun, but its minimum
-  30-day clock is not active until the reviewed shadow configuration is
-  deployed.
-  The earlier placeholder catalog remains superseded, and no commercial
-  feature or customer-visible behavior is enabled.
+- **Status:** Proposed. Phase 1 disabled contract foundation is implemented in
+  PR #773 but is not closed until that PR merges. Phase 2 has not begun and its
+  minimum 30-day clock is not active. The earlier placeholder catalog remains
+  superseded, and no commercial feature or customer-visible behavior is
+  enabled.
 - **Date:** 2026-09-03
 - **Affects:** RobotMoney catalog, tenant and billing-account entitlements,
   Stripe base subscriptions, x402 API and MCP overage, agent and entity limits,

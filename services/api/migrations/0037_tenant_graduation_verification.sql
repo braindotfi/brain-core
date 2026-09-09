@@ -146,7 +146,7 @@ COMMENT ON TABLE tenant_graduation_assessments IS
 COMMENT ON TABLE tenant_graduation_review_decisions IS
   'Append-only manual-review decisions. No member-session mutation route is granted.';
 
--- Cross-service member foreign keys are installed by execution migration 0035.
+-- Cross-service member foreign keys are installed by execution migration 0037.
 -- The global migrator applies every api migration before execution creates
 -- members, so declaring those references here breaks a fresh database.
 
