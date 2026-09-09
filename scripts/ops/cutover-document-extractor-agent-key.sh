@@ -134,7 +134,9 @@ claims="$(printf '%s' "$legacy_token" | "${compose[@]}" exec -T api node -e '
     try {
       const part = value.trim().split(".")[1];
       const body = JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
-      if (!/^tnt_/.test(body.tenant_id ?? "") || !/^agent_/.test(body.sub ?? "")) process.exit(1);
+      if (!/^tnt_/.test(body.tenant_id ?? "") || !/^agent_/.test(body.sub ?? "") ||
+          body.principal_type !== "agent" || JSON.stringify(body.scopes) !== JSON.stringify(["raw:write"]) ||
+          !Number.isInteger(body.exp) || body.exp <= Math.floor(Date.now() / 1000)) process.exit(1);
       process.stdout.write(`${body.tenant_id}\t${body.sub}`);
     } catch { process.exit(1); }
   });
@@ -161,6 +163,29 @@ ON CONFLICT (id) DO NOTHING;
 COMMIT;
 SQL
   echo "staging_fixture_binding=created_or_preserved"
+else
+  docker exec -i brain-prod-postgres psql -X -v ON_ERROR_STOP=1 -U brain -d brain \
+    -v tenant_id="$tenant_id" -v agent_id="$agent_id" <<'SQL' >/dev/null
+BEGIN;
+SELECT EXISTS (
+  SELECT 1 FROM tenants WHERE id = :'tenant_id' AND kind = 'production'
+) AS eligible_tenant \gset
+\if :eligible_tenant
+INSERT INTO agents (id, tenant_id, kind, role, display_name, state, registered_at)
+SELECT
+  :'agent_id', :'tenant_id', 'internal', 'document_extractor',
+  'Document Extractor', 'active', now()
+WHERE EXISTS (
+  SELECT 1 FROM tenants WHERE id = :'tenant_id' AND kind = 'production'
+)
+ON CONFLICT (id) DO NOTHING;
+\else
+\echo 'production extractor tenant binding is missing or ineligible'
+\quit 1
+\endif
+COMMIT;
+SQL
+  echo "production_runtime_binding=created_or_preserved"
 fi
 
 binding="$(docker exec -i brain-prod-postgres psql -X -At -U brain -d brain \
@@ -170,7 +195,7 @@ SELECT
   (EXISTS (
     SELECT 1 FROM agents
      WHERE id = :'agent_id' AND tenant_id = :'tenant_id'
-       AND kind = 'internal' AND state = 'active'
+       AND kind = 'internal' AND role = 'document_extractor' AND state = 'active'
   ))::int;
 SQL
 )"
