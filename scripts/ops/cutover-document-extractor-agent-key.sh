@@ -134,9 +134,12 @@ claims="$(printf '%s' "$legacy_token" | "${compose[@]}" exec -T api node -e '
     try {
       const part = value.trim().split(".")[1];
       const body = JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+      const scopes = body.scopes;
       if (!/^tnt_/.test(body.tenant_id ?? "") || !/^agent_/.test(body.sub ?? "") ||
-          body.principal_type !== "agent" || JSON.stringify(body.scopes) !== JSON.stringify(["raw:write"]) ||
+          body.principal_type !== "agent" || !Array.isArray(scopes) ||
+          !scopes.every(scope => typeof scope === "string") || !scopes.includes("raw:write") ||
           !Number.isInteger(body.exp) || body.exp <= Math.floor(Date.now() / 1000)) process.exit(1);
+      process.stderr.write(`legacy_claim_scope_set=${[...scopes].sort().join(",")}\n`);
       process.stdout.write(`${body.tenant_id}\t${body.sub}`);
     } catch { process.exit(1); }
   });

@@ -31,6 +31,9 @@ test("canary is exact-SHA gated and migrates only the document extractor", () =>
 test("canary proves the actual runtime key, claims, scope ceiling, and lifecycle", () => {
   assert.match(canary, /printenv BRAIN_API_TOKEN/);
   assert.match(canary, /legacy_runtime_source_match=true/);
+  assert.match(canary, /body\.principal_type !== "agent"/);
+  assert.match(canary, /scopes\.includes\("raw:write"\)/);
+  assert.match(canary, /legacy_claim_scope_set=/);
   assert.match(canary, /AGENT_KEY_ENVIRONMENT" == "test/);
   assert.match(canary, /staging_fixture_binding=created_or_preserved/);
   assert.match(canary, /production_runtime_binding=created_or_preserved/);
