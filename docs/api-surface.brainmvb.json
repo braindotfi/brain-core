@@ -1715,6 +1715,18 @@
           "openapi": "documented:/payment-intents/{id}"
         },
         {
+          "method": "GET",
+          "path": "/v1/authz/probes/payment-intent-approve",
+          "auth": "bearer",
+          "required_scope": "payment_intent:approve",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "none",
+          "response_shape": "204 empty body or 403 auth_scope_insufficient",
+          "example_request": "GET /v1/authz/probes/payment-intent-approve",
+          "example_response": null,
+          "openapi": "documented:/authz/probes/payment-intent-approve"
+        },
+        {
           "method": "POST",
           "path": "/v1/payment-intents/{id}/approve",
           "auth": "bearer user",

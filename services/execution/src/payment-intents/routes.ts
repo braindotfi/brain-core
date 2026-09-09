@@ -22,6 +22,7 @@ import type { PaymentIntentService } from "./PaymentIntentService.js";
 import { isExecutablePaymentIntentActionType } from "./action-types.js";
 import type { ResolvedInvoiceShortcut } from "./invoice-shortcut.js";
 import type { ProposalAgentRef } from "../proposals/read-model.js";
+import { requirePaymentIntentApproveScope } from "./approve-scope.js";
 
 /** P0.5: resolves the `pay_invoice` shortcut into a full create payload. */
 export type InvoiceShortcutResolver = (
@@ -35,7 +36,6 @@ export type PaymentIntentAgentResolver = (
 ) => Promise<ProposalAgentRef | null>;
 
 const SCOPE_PROPOSE: Scope = "payment_intent:propose";
-const SCOPE_APPROVE: Scope = "payment_intent:approve";
 const SCOPE_EXECUTE: Scope = "payment_intent:execute";
 const SCOPE_READ: Scope = "execution:read";
 const SCOPE_ADMIN: Scope = "execution:admin";
@@ -247,7 +247,7 @@ export async function registerPaymentIntentRoutes(
       reply,
     ) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed payment_intent id");
       }
@@ -269,7 +269,7 @@ export async function registerPaymentIntentRoutes(
       reply,
     ) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed payment_intent id");
       }
@@ -299,7 +299,7 @@ export async function registerPaymentIntentRoutes(
     "/payment-intents/:id/pause",
     async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed payment_intent id");
       }
@@ -313,7 +313,7 @@ export async function registerPaymentIntentRoutes(
     "/payment-intents/:id/resume",
     async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
       const ctx = assertCtx(request);
-      requireScope(request.principal!.scopes, SCOPE_APPROVE);
+      requirePaymentIntentApproveScope(request.principal!.scopes);
       if (!isBrainId(request.params.id, "pi")) {
         throw brainError("request_params_invalid", "malformed payment_intent id");
       }

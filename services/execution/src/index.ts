@@ -158,6 +158,11 @@ export {
 export { registerExecutionRoutes } from "./routes.js";
 export { registerActionRoutes } from "./actions/routes.js";
 export { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
+export {
+  PAYMENT_INTENT_APPROVE_SCOPE,
+  requirePaymentIntentApproveScope,
+} from "./payment-intents/approve-scope.js";
+export { registerAuthorizationProbeRoutes } from "./authz/probes.js";
 export type {
   InvoiceShortcutResolver,
   PaymentIntentAgentResolver,

@@ -236,6 +236,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/authz/probes/payment-intent-approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Probe payment-intent approval scope without domain access
+         * @description Requires `payment_intent:approve`. Returns 204 when the authenticated
+         *     principal holds the scope, or 403 `auth_scope_insufficient` when it
+         *     does not. This route performs no resource-id lookup, database lookup,
+         *     policy evaluation, audit event, outbox operation, or rail call. Normal
+         *     request access logs and security telemetry still apply. A successful
+         *     probe confirms only the scope grant; the real approval route also
+         *     enforces member, domain, amount, payee, and dual-control rules.
+         */
+        get: operations["probePaymentIntentApproveAuthorization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tenants": {
         parameters: {
             query?: never;
@@ -5860,6 +5886,33 @@ export interface operations {
              *     `tenant_id` does not match the authenticated tenant. Error code
              *     `auth_scope_insufficient` or `auth_tenant_mismatch`.
              */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    probePaymentIntentApproveAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The authenticated principal holds `payment_intent:approve`. No content is returned. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing `payment_intent:approve`. Error code `auth_scope_insufficient`. */
             403: {
                 headers: {
                     [name: string]: unknown;
