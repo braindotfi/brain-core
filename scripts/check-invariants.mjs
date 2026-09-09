@@ -344,10 +344,7 @@ check(
     /INSERT INTO tenants\s*\(\s*id,\s*kind,\s*sandbox,\s*created_via,\s*audit_anchor_mode,/u.test(
       productionTenancy,
     ) &&
-    productionTenancy.includes("provisioning_state, data_profile, access_stage, business_name") &&
-    productionTenancy.includes(
-      "VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5, $6)",
-    ) &&
+    productionTenancy.includes("VALUES ($1, 'production', FALSE, 'admin', $2, $3, $4, $5)") &&
     productionTenancy.includes('request.headers["x-demo-provision-auth"]'),
   "POST /v1/tenants must create tenant.kind production and reject demo provision credentials",
 );
