@@ -86,6 +86,11 @@ test("inspect avoids readonly assignment failures and reports commercial and rol
   assert.match(control, /production_api_key_redis_state[^\n]+healthy[^\n]+false/);
   assert.match(control, /production_api_scoped_minio_state[^\n]+healthy[^\n]+false/);
   assert.match(control, /production_api_key_inspection=failed/);
+  assert.match(control, /postgres_psql\(\)/);
+  assert.match(control, /export PGPASSWORD="\$POSTGRES_PASSWORD"/);
+  assert.match(control, /postgres_psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain/);
+  assert.doesNotMatch(control, /docker exec "\$POSTGRES_CONTAINER" psql/);
+  assert.doesNotMatch(control, /echo[^\n]+POSTGRES_PASSWORD/);
 });
 
 test("acceptance exercises live reads, denial, metering, lifecycle, cleanup, and redaction", () => {
