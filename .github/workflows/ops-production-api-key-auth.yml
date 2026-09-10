@@ -1,0 +1,174 @@
+name: ops-production-api-key-auth
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Fixed production API-key authentication operation."
+        required: true
+        type: choice
+        options:
+          - inspect
+          - enable
+          - disable
+      confirmation:
+        description: "Type the exact confirmation string for the selected action."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    name: ${{ inputs.action }} production API-key authentication
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      ACTION: ${{ inputs.action }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      REMOTE_DIR: /tmp/brain-api-key-auth-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Validate the fixed action confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$ACTION" in
+            inspect) expected="INSPECT_PRODUCTION_API_KEY_AUTH" ;;
+            enable) expected="ENABLE_PRODUCTION_API_KEY_AUTH" ;;
+            disable) expected="DISABLE_PRODUCTION_API_KEY_AUTH" ;;
+            *) echo "unsupported fixed action" >&2; exit 2 ;;
+          esac
+          if [[ "$CONFIRMATION" != "$expected" ]]; then
+            echo "confirmation does not match the selected fixed action" >&2
+            exit 1
+          fi
+          echo "production_api_key_request_validated=$ACTION"
+
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Transfer the reviewed operator programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "install -d -m 700 '$REMOTE_DIR'"
+          scp -i ~/.ssh/id_deploy \
+            scripts/ops/assert-true-production.sh \
+            scripts/check-required-compose-secrets.sh \
+            scripts/ops/prepare-minio-api-env.sh \
+            scripts/ops/production-api-key-auth-control.sh \
+            scripts/ops/production_api_key_acceptance.py \
+            scripts/ops/observe-production-api-key-auth.py \
+            "azureuser@$VM_HOST:$REMOTE_DIR/"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "chmod 700 '$REMOTE_DIR/'*.sh '$REMOTE_DIR/'*.py"
+
+      - name: Inspect the fixed production target
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' inspect"
+
+      - name: Enable with the protected production pepper
+        id: enable
+        if: inputs.action == 'enable'
+        shell: bash
+        env:
+          BRAIN_API_KEY_PEPPER_PRODUCTION: ${{ secrets.BRAIN_API_KEY_PEPPER_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BRAIN_API_KEY_PEPPER_PRODUCTION" ]]; then
+            echo "protected production pepper is missing" >&2
+            exit 1
+          fi
+          patch_file="$(mktemp)"
+          trap 'rm -f "$patch_file"' EXIT
+          chmod 600 "$patch_file"
+          {
+            printf '%s\n' 'BRAIN_API_KEY_AUTH_ENABLED=true'
+            printf 'BRAIN_API_KEY_PEPPER=%s\n' "$BRAIN_API_KEY_PEPPER_PRODUCTION"
+            printf '%s\n' 'BRAIN_EDGE_RATE_LIMIT=100000'
+            printf '%s\n' 'BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS=2000'
+          } > "$patch_file"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "install -m 600 /dev/null '$REMOTE_DIR/enable.patch'"
+          scp -i ~/.ssh/id_deploy "$patch_file" \
+            "azureuser@$VM_HOST:$REMOTE_DIR/enable.patch"
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "chmod 600 '$REMOTE_DIR/enable.patch' && \
+             trap 'rm -f \"$REMOTE_DIR/enable.patch\"' EXIT && \
+             bash '$REMOTE_DIR/production-api-key-auth-control.sh' enable '$REMOTE_DIR/enable.patch' && \
+             install -m 600 /dev/null '$REMOTE_DIR/enabled-by-workflow'"
+
+      - name: Disable while preserving the pepper
+        if: inputs.action == 'disable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' disable"
+
+      - name: Run disposable live-key acceptance
+        if: inputs.action == 'enable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "python3 '$REMOTE_DIR/production_api_key_acceptance.py' \
+               --env-file ~/brain-core/.env.api.prod \
+               --health-url https://api.brain.fi/health \
+               --evidence-file '$REMOTE_DIR/acceptance-evidence.json'"
+
+      - name: Observe production for 30 minutes
+        if: inputs.action == 'enable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "python3 '$REMOTE_DIR/observe-production-api-key-auth.py' \
+               --evidence-file '$REMOTE_DIR/acceptance-evidence.json'"
+
+      - name: Verify public health
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 10 https://api.brain.fi/health
+
+      - name: Disable after an enablement failure
+        if: failure() && inputs.action == 'enable' && steps.enable.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' disable"
+
+      - name: Remove transient operator files
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f ~/.ssh/id_deploy ]]; then
+            ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+              "find '$REMOTE_DIR' -type f -exec chmod 600 {} + 2>/dev/null || true; \
+               rm -rf -- '$REMOTE_DIR'" || true
+          fi
+          rm -f ~/.ssh/id_deploy
