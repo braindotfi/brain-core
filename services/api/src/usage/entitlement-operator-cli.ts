@@ -1,6 +1,10 @@
 import { Pool } from "pg";
 import { PostgresAuditEmitter, withTenantScope } from "@brain/shared";
-import { applyEntitlementChange, emitEntitlementChangeAudit } from "./entitlement-operator.js";
+import {
+  applyEntitlementChange,
+  assertEntitlementOperatorRole,
+  emitEntitlementChangeAudit,
+} from "./entitlement-operator.js";
 
 type Flags = Record<string, string>;
 
@@ -17,7 +21,7 @@ async function main(): Promise<void> {
   const privilegedPool = new Pool({ connectionString: privilegedUrl });
   const auditPool = new Pool({ connectionString: auditUrl });
   try {
-    await assertRole(privilegedPool, "brain_privileged", true);
+    await assertEntitlementOperatorRole(privilegedPool);
     await assertRole(auditPool, "brain_app", false);
     if (command === "inspect") {
       const result = await inspectEntitlement(

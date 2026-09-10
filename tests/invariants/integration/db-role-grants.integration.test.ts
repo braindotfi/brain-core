@@ -16,7 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
 const DB_URL = process.env.DATABASE_URL;
@@ -48,6 +48,15 @@ function repoRoot(): string {
 let pool: Pool;
 let isSuper = false;
 
+const roleModelSql = readFileSync(`${repoRoot()}/infra/db-roles.sql`, "utf8").replace(
+  /LOGIN PASSWORD :'[^']+'/g,
+  "LOGIN",
+);
+
+async function applyRealRoleModel(client: PoolClient): Promise<void> {
+  await client.query(roleModelSql);
+}
+
 // Positive ("can") + negative ("cannot") matrix per role, derived from the
 // worker footprints (services/api/src/main.ts wiring) — independent of how the
 // grants are spelled in db-roles.sql.
@@ -56,6 +65,16 @@ const MATRIX: ReadonlyArray<{
   can: ReadonlyArray<[string, string]>;
   cannot: ReadonlyArray<[string, string]>;
 }> = [
+  {
+    role: "brain_privileged",
+    can: [["api_keys", "SELECT"]],
+    cannot: [
+      ["api_keys", "INSERT"],
+      ["api_keys", "UPDATE"],
+      ["api_keys", "DELETE"],
+      ["api_keys", "TRUNCATE"],
+    ],
+  },
   {
     role: "brain_raw_worker",
     can: [
@@ -197,15 +216,11 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
     try {
       await applyAll(client, migrations, { appliedBy: "db-role-grants-test" });
       // Apply the REAL role model under the same advisory lock so it cannot race
-      // a parallel test file's migration DDL. Strip the psql :'var' password
-      // placeholders (SET ROLE needs no password; we never change real ones).
-      const sql = readFileSync(`${repoRoot()}/infra/db-roles.sql`, "utf8").replace(
-        /LOGIN PASSWORD :'[^']+'/g,
-        "LOGIN",
-      );
+      // a parallel test file's migration DDL. Password placeholders were
+      // stripped above because SET ROLE needs no password.
       await client.query("SELECT pg_advisory_lock(hashtext('brain_migrations'))");
       try {
-        await client.query(sql);
+        await applyRealRoleModel(client);
       } finally {
         await client.query("SELECT pg_advisory_unlock(hashtext('brain_migrations'))");
       }
@@ -247,6 +262,75 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
       }
     });
   }
+
+  it("self-heals stale brain_privileged api_keys grants and is idempotent", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public " +
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO brain_privileged",
+      );
+      await client.query(
+        "GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON api_keys TO brain_privileged",
+      );
+      for (const privilege of ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] as const) {
+        const stale = await client.query<{ has: boolean }>(
+          "SELECT has_table_privilege('brain_privileged', 'api_keys', $1) AS has",
+          [privilege],
+        );
+        expect(stale.rows[0]?.has, `stale ${privilege} grant fixture was not installed`).toBe(true);
+      }
+
+      await applyRealRoleModel(client);
+
+      await client.query("DROP TABLE IF EXISTS brain_privileged_default_acl_probe");
+      await client.query("CREATE TABLE brain_privileged_default_acl_probe (id INTEGER)");
+      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"] as const) {
+        const inherited = await client.query<{ has: boolean }>(
+          "SELECT has_table_privilege(" +
+            "'brain_privileged', 'brain_privileged_default_acl_probe', $1) AS has",
+          [privilege],
+        );
+        expect(inherited.rows[0]?.has, `default ACL retained ${privilege}`).toBe(false);
+      }
+
+      await client.query("SET ROLE brain_privileged");
+      await expect(client.query("SELECT count(*) FROM api_keys")).resolves.toBeDefined();
+      const deniedStatements = [
+        ["insert", "INSERT INTO api_keys DEFAULT VALUES"],
+        ["update", "UPDATE api_keys SET name = name WHERE false"],
+        ["delete", "DELETE FROM api_keys WHERE false"],
+        ["truncate", "TRUNCATE api_keys"],
+      ] as const;
+      for (const [name, sql] of deniedStatements) {
+        await client.query(`SAVEPOINT denied_${name}`);
+        await expect(client.query(sql)).rejects.toMatchObject({ code: "42501" });
+        await client.query(`ROLLBACK TO SAVEPOINT denied_${name}`);
+        await client.query(`RELEASE SAVEPOINT denied_${name}`);
+      }
+      await client.query("RESET ROLE");
+
+      await applyRealRoleModel(client);
+      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"] as const) {
+        const result = await client.query<{ has: boolean }>(
+          "SELECT has_table_privilege('brain_privileged', 'api_keys', $1) AS has",
+          [privilege],
+        );
+        expect(result.rows[0]?.has, `unexpected ${privilege} after second apply`).toBe(
+          privilege === "SELECT",
+        );
+      }
+    } finally {
+      await client.query("RESET ROLE").catch(() => undefined);
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  });
 
   it("no runtime role can delete or truncate audit anchors", async (ctx) => {
     if (!isSuper) {

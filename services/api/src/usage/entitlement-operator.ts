@@ -38,6 +38,41 @@ export interface EntitlementChange {
   reason: string;
 }
 
+interface EntitlementOperatorRoleState {
+  current_user: string;
+  rolbypassrls: boolean;
+  api_keys_insert: boolean;
+  api_keys_update: boolean;
+  api_keys_delete: boolean;
+  api_keys_truncate: boolean;
+}
+
+export async function assertEntitlementOperatorRole(pool: Pool): Promise<void> {
+  const { rows } = await pool.query<EntitlementOperatorRoleState>(
+    `SELECT current_user, rolbypassrls,
+            has_table_privilege(current_user, 'public.api_keys', 'INSERT') AS api_keys_insert,
+            has_table_privilege(current_user, 'public.api_keys', 'UPDATE') AS api_keys_update,
+            has_table_privilege(current_user, 'public.api_keys', 'DELETE') AS api_keys_delete,
+            has_table_privilege(current_user, 'public.api_keys', 'TRUNCATE') AS api_keys_truncate
+       FROM pg_roles
+      WHERE rolname = current_user`,
+  );
+  const role = rows[0];
+  if (role?.current_user !== "brain_privileged" || role.rolbypassrls !== true) {
+    throw new Error("database role must be brain_privileged with rolbypassrls=true");
+  }
+  for (const [privilege, held] of [
+    ["INSERT", role.api_keys_insert],
+    ["UPDATE", role.api_keys_update],
+    ["DELETE", role.api_keys_delete],
+    ["TRUNCATE", role.api_keys_truncate],
+  ] as const) {
+    if (held) {
+      throw new Error(`brain_privileged must not have ${privilege} on public.api_keys`);
+    }
+  }
+}
+
 /**
  * Operator-only mutation. The caller must use the protected brain_privileged
  * connection. There is deliberately no member or public HTTP route to this
