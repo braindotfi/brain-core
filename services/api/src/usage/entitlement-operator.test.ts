@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryAuditEmitter } from "@brain/shared";
-import { applyEntitlementChange, emitEntitlementChangeAudit } from "./entitlement-operator.js";
+import {
+  applyEntitlementChange,
+  assertEntitlementOperatorRole,
+  emitEntitlementChangeAudit,
+} from "./entitlement-operator.js";
 
 const operatorActor = ["github", "sanket"].join(":");
 
@@ -83,6 +87,49 @@ const base = {
 };
 
 describe("entitlement operator control plane", () => {
+  it("accepts brain_privileged only when api_keys is read-only", async () => {
+    const pool = {
+      query: async () => ({
+        rows: [
+          {
+            current_user: "brain_privileged",
+            rolbypassrls: true,
+            api_keys_insert: false,
+            api_keys_update: false,
+            api_keys_delete: false,
+            api_keys_truncate: false,
+          },
+        ],
+      }),
+    } as never;
+
+    await expect(assertEntitlementOperatorRole(pool)).resolves.toBeUndefined();
+  });
+
+  it.each(["insert", "update", "delete", "truncate"] as const)(
+    "fails closed when brain_privileged holds %s on api_keys",
+    async (privilege) => {
+      const pool = {
+        query: async () => ({
+          rows: [
+            {
+              current_user: "brain_privileged",
+              rolbypassrls: true,
+              api_keys_insert: privilege === "insert",
+              api_keys_update: privilege === "update",
+              api_keys_delete: privilege === "delete",
+              api_keys_truncate: privilege === "truncate",
+            },
+          ],
+        }),
+      } as never;
+
+      await expect(assertEntitlementOperatorRole(pool)).rejects.toThrow(
+        `brain_privileged must not have ${privilege.toUpperCase()} on public.api_keys`,
+      );
+    },
+  );
+
   it("changes a tier and appends same-transaction immutable evidence", async () => {
     const { pool, queries } = operatorPool();
     const change = await applyEntitlementChange(pool, {

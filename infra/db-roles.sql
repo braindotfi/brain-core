@@ -122,6 +122,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO brain_app, brain_privileged;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO brain_app;
+-- Removing a role from a later GRANT does not erase default ACLs already
+-- stored by Postgres. Clear the historical brain_privileged default so newly
+-- created tables never inherit broad access from an earlier role-model apply.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM brain_privileged;
 
 -- brain_privileged: deploy-time seed one-shot and audit verifier fallback only.
 -- It is BYPASSRLS but not a live API runtime role. Keep the table footprint
@@ -476,7 +481,12 @@ GRANT SELECT ON api_metering_policies, api_usage_daily_rollups,
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON api_metering_policies,
   api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,
   api_billing_adjustments, api_entitlement_change_log FROM brain_app;
-GRANT SELECT ON api_metering_policies, api_request_meter_events, api_keys,
+-- api_keys is read-only to the protected operator. Reset the complete table
+-- ACL on every apply so grants inherited from the historical default ACL are
+-- removed from existing databases before restoring the single required grant.
+REVOKE ALL PRIVILEGES ON api_keys FROM brain_privileged;
+GRANT SELECT ON api_keys TO brain_privileged;
+GRANT SELECT ON api_metering_policies, api_request_meter_events,
   api_rate_limit_tiers, tenant_api_entitlements, api_key_rate_limit_overrides,
   api_usage_daily_rollups, api_usage_reconciliation_runs, api_billing_periods,
   api_billing_adjustments, api_entitlement_change_log,
@@ -619,6 +629,24 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- Fail closed if the protected operator role ever regains mutation or other
+-- non-read privileges on commercial API keys. The long-running API does not
+-- load brain_privileged, so this final db-roles postcondition is its boot
+-- boundary.
+DO $$
+BEGIN
+  IF NOT has_table_privilege('brain_privileged', 'public.api_keys', 'SELECT')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'INSERT')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'UPDATE')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'DELETE')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'TRUNCATE')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'REFERENCES')
+     OR has_table_privilege('brain_privileged', 'public.api_keys', 'TRIGGER') THEN
+    RAISE EXCEPTION
+      'brain_privileged must have SELECT only on public.api_keys';
+  END IF;
+END $$;
 
 -- Deploy wiring (env): request-path services connect with brain_app via
 -- DATABASE_URL; the Wiki projection connects with brain_wiki_reader via

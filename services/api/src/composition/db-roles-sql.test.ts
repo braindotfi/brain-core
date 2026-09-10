@@ -83,6 +83,28 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain("GRANT SELECT, INSERT ON audit_integrity_findings TO brain_privileged");
   });
 
+  it("self-heals brain_privileged to SELECT-only access on api_keys", () => {
+    expect(SQL).toContain(
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA public\n" +
+        "  REVOKE ALL PRIVILEGES ON TABLES FROM brain_privileged;",
+    );
+    expect(SQL).toMatch(
+      /REVOKE ALL PRIVILEGES ON api_keys FROM brain_privileged;\s+GRANT SELECT ON api_keys TO brain_privileged;/,
+    );
+    const postcondition = SQL.match(
+      /IF NOT has_table_privilege\('brain_privileged', 'public\.api_keys', 'SELECT'\)([\s\S]*?)END IF;/,
+    );
+    expect(postcondition).not.toBeNull();
+    for (const privilege of ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]) {
+      expect(postcondition?.[1]).toContain(
+        `has_table_privilege('brain_privileged', 'public.api_keys', '${privilege}')`,
+      );
+    }
+    expect(postcondition?.[1]).toContain(
+      "RAISE EXCEPTION\n      'brain_privileged must have SELECT only on public.api_keys'",
+    );
+  });
+
   it("scopes each worker role to its layer", () => {
     expect(SQL).toMatch(/GRANT SELECT, INSERT, UPDATE ON %s TO brain_raw_worker/);
     expect(SQL).toContain("GRANT SELECT ON canonical_projection_log TO brain_raw_worker");
