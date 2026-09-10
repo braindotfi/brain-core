@@ -37,7 +37,7 @@ fi
 
 cd ~/brain-core
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
+env API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
   bash "$script_dir/assert-true-production.sh"
 
 if [[ ! -f "$VM_ENV_FILE" || -L "$VM_ENV_FILE" \
@@ -89,6 +89,69 @@ print(json.dumps({"event": "production_api_key_env_states", "file": label, "vari
 PY
 }
 
+report_commercial_flag_states() {
+  local path="$1"
+  local label="$2"
+  python3 - "$path" "$label" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+path = Path(sys.argv[1])
+label = sys.argv[2]
+keys = (
+    "BRAIN_COMMERCIAL_CATALOG_ENABLED",
+    "BRAIN_PRODUCTION_GRADUATION_ENABLED",
+    "BRAIN_COMMERCIAL_SHADOW_ENABLED",
+    "BRAIN_ENTITY_SCOPE_ENABLED",
+    "BRAIN_AGENT_CAPACITY_ENABLED",
+    "BRAIN_EXECUTION_LIMITS_ENABLED",
+    "BRAIN_STRIPE_BILLING_ENABLED",
+    "BRAIN_X402_PAYMENTS_ENABLED",
+    "BRAIN_OUTCOME_FEES_ENABLED",
+    "BRAIN_MOVEMENT_FEES_ENABLED",
+)
+states = {}
+passed = True
+lines = path.read_text().splitlines()
+for key in keys:
+    values = [
+        line.split("=", 1)[1].strip().strip("\"'").lower()
+        for line in lines
+        if not line.lstrip().startswith("#")
+        and "=" in line
+        and line.split("=", 1)[0].strip() == key
+    ]
+    if not values:
+        state = "absent-default-false"
+        enabled = False
+    elif values[-1] == "false":
+        state = "present-false"
+        enabled = False
+    elif values[-1] == "true":
+        state = "present-true"
+        enabled = True
+        passed = False
+    else:
+        state = "present-invalid"
+        enabled = None
+        passed = False
+    states[key] = {
+        "state": state,
+        "enabled": enabled,
+        "active_occurrences": len(values),
+    }
+print(json.dumps({
+    "event": "production_commercial_flag_states",
+    "file": label,
+    "flags": states,
+    "all_effectively_false": passed,
+}, sort_keys=True))
+if not passed:
+    raise SystemExit("commercial feature flags are not all effectively false")
+PY
+}
+
 require_scoped_api_credential() {
   python3 - "$VM_ENV_FILE" "$API_MINIO_CREDENTIAL_FILE" <<'PY'
 from pathlib import Path
@@ -120,20 +183,73 @@ PY
 report_runtime_state() {
   docker exec "$API_CONTAINER" node -e '
 const enabled = (process.env.BRAIN_API_KEY_AUTH_ENABLED ?? "false").toLowerCase() === "true";
+const commercialKeys = [
+  "BRAIN_COMMERCIAL_CATALOG_ENABLED",
+  "BRAIN_PRODUCTION_GRADUATION_ENABLED",
+  "BRAIN_COMMERCIAL_SHADOW_ENABLED",
+  "BRAIN_ENTITY_SCOPE_ENABLED",
+  "BRAIN_AGENT_CAPACITY_ENABLED",
+  "BRAIN_EXECUTION_LIMITS_ENABLED",
+  "BRAIN_STRIPE_BILLING_ENABLED",
+  "BRAIN_X402_PAYMENTS_ENABLED",
+  "BRAIN_OUTCOME_FEES_ENABLED",
+  "BRAIN_MOVEMENT_FEES_ENABLED",
+];
+const commercialFlags = Object.fromEntries(commercialKeys.map((key) => [
+  key,
+  {
+    present: Object.hasOwn(process.env, key),
+    enabled: (process.env[key] ?? "false").toLowerCase() === "true",
+  },
+]));
+const commercialFlagsAllFalse = Object.values(commercialFlags).every(({ enabled: value }) => !value);
 process.stdout.write(JSON.stringify({
   event: "production_api_key_runtime_state",
   enabled,
   pepper_present: Boolean(process.env.BRAIN_API_KEY_PEPPER),
   edge_rate_limit_present: Boolean(process.env.BRAIN_EDGE_RATE_LIMIT),
   timeout_present: Boolean(process.env.BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS),
+  commercial_flags: commercialFlags,
+  commercial_flags_all_false: commercialFlagsAllFalse,
   git_sha: process.env.GIT_SHA ?? null,
 }) + "\n");
+process.exit(commercialFlagsAllFalse ? 0 : 1);
 '
 }
 
 report_database_state() {
   docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
+WITH role_grants AS (
+  SELECT role_name,
+         has_table_privilege(role_name, 'public.api_keys', 'SELECT') AS can_select,
+         has_table_privilege(role_name, 'public.api_keys', 'INSERT') AS can_insert,
+         has_table_privilege(role_name, 'public.api_keys', 'UPDATE') AS can_update,
+         has_table_privilege(role_name, 'public.api_keys', 'DELETE') AS can_delete,
+         has_table_privilege(role_name, 'public.api_keys', 'TRUNCATE') AS can_truncate
+    FROM (VALUES
+      ('brain_app'), ('brain_privileged'), ('brain_wiki_reader'),
+      ('brain_mcp_reader'), ('brain_raw_worker'), ('brain_canonical_projector'),
+      ('brain_ledger_projector'), ('brain_execution_worker'),
+      ('brain_audit_verifier'), ('brain_audit_publisher'), ('brain_resolver'),
+      ('brain_tenant_deletion'), ('brain_surface_gateway'),
+      ('brain_surface_audit_writer'), ('brain_auth'), ('brain_auth_audit_writer')
+    ) roles(role_name)
+), role_contract AS (
+  SELECT bool_and(
+    CASE
+      WHEN role_name = 'brain_app' THEN
+        can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
+      WHEN role_name IN ('brain_privileged', 'brain_wiki_reader', 'brain_resolver') THEN
+        can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+      WHEN role_name = 'brain_tenant_deletion' THEN
+        can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
+      ELSE
+        NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+    END
+  ) AS matches
+  FROM role_grants
+)
 SELECT json_build_object(
   'event', 'production_api_key_database_state',
   'api_keys_table_present', to_regclass('public.api_keys') IS NOT NULL,
@@ -156,7 +272,21 @@ SELECT json_build_object(
   'tenant_policy_count', (
     SELECT count(*) FROM pg_policies
      WHERE schemaname = 'public' AND tablename = 'api_keys'
-  )
+  ),
+  'role_grants', (
+    SELECT json_object_agg(
+      role_name,
+      json_build_object(
+        'select', can_select,
+        'insert', can_insert,
+        'update', can_update,
+        'delete', can_delete,
+        'truncate', can_truncate
+      ) ORDER BY role_name
+    )
+    FROM role_grants
+  ),
+  'role_grants_match', (SELECT matches FROM role_contract)
 )::text;
 COMMIT;
 SQL
@@ -165,6 +295,36 @@ SQL
 require_database_state() {
   state="$(docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
+WITH role_grants AS (
+  SELECT role_name,
+         has_table_privilege(role_name, 'public.api_keys', 'SELECT') AS can_select,
+         has_table_privilege(role_name, 'public.api_keys', 'INSERT') AS can_insert,
+         has_table_privilege(role_name, 'public.api_keys', 'UPDATE') AS can_update,
+         has_table_privilege(role_name, 'public.api_keys', 'DELETE') AS can_delete,
+         has_table_privilege(role_name, 'public.api_keys', 'TRUNCATE') AS can_truncate
+    FROM (VALUES
+      ('brain_app'), ('brain_privileged'), ('brain_wiki_reader'),
+      ('brain_mcp_reader'), ('brain_raw_worker'), ('brain_canonical_projector'),
+      ('brain_ledger_projector'), ('brain_execution_worker'),
+      ('brain_audit_verifier'), ('brain_audit_publisher'), ('brain_resolver'),
+      ('brain_tenant_deletion'), ('brain_surface_gateway'),
+      ('brain_surface_audit_writer'), ('brain_auth'), ('brain_auth_audit_writer')
+    ) roles(role_name)
+), role_contract AS (
+  SELECT bool_and(
+    CASE
+      WHEN role_name = 'brain_app' THEN
+        can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
+      WHEN role_name IN ('brain_privileged', 'brain_wiki_reader', 'brain_resolver') THEN
+        can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+      WHEN role_name = 'brain_tenant_deletion' THEN
+        can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
+      ELSE
+        NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+    END
+  ) AS matches
+  FROM role_grants
+)
 SELECT (
   to_regclass('public.api_keys') IS NOT NULL
   AND (SELECT count(*) = 8 FROM information_schema.columns
@@ -177,6 +337,7 @@ SELECT (
   AND COALESCE((SELECT relforcerowsecurity FROM pg_class WHERE oid = to_regclass('public.api_keys')), FALSE)
   AND (SELECT count(*) FROM pg_policies
         WHERE schemaname = 'public' AND tablename = 'api_keys') >= 1
+  AND (SELECT matches FROM role_contract)
 )::text;
 COMMIT;
 SQL
@@ -192,6 +353,8 @@ require_redis() {
 inspect() {
   report_env_states "$VM_ENV_FILE" source
   report_env_states "$API_ENV_FILE" api-runtime
+  report_commercial_flag_states "$VM_ENV_FILE" source
+  report_commercial_flag_states "$API_ENV_FILE" api-runtime
   report_runtime_state
   report_database_state
   require_database_state
@@ -349,7 +512,7 @@ process.stdout.write(JSON.stringify({
 }) + "\n");
 process.exit(ok ? 0 : 1);
 '
-  API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
+  env API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
     bash "$script_dir/assert-true-production.sh"
 }
 
@@ -392,7 +555,7 @@ PY
       && render_api_env \
       && recreate_api \
       && wait_for_api "$previous_enabled" \
-      && API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
+      && env API_BASE="$API_BASE" VM_ENV_FILE="$VM_ENV_FILE" \
         bash "$script_dir/assert-true-production.sh"
     rollback_rc=$?
     set -e
