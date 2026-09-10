@@ -1,7 +1,8 @@
 # VM production API-key authentication enablement scope
 
-Status: scoped only. This document does not authorize a production environment
-change, service recreation, API-key issuance, or feature-flag flip.
+Status: implementation ready for review. No workflow action has been dispatched,
+and no production host environment file, service, tenant, or API key has been
+changed.
 
 Target: the current VM production stack at `api.brain.fi`, using the
 host-managed `~/brain-core/.env.prod` file and Docker Compose project
@@ -13,12 +14,15 @@ are outside this scope.
 Enabling `BRAIN_API_KEY_AUTH_ENABLED` on the current production VM is a guarded
 host environment-file update, not a Terraform or infrastructure change.
 
-The production API service loads `.env.prod` through `docker-compose.prod.yml`.
-The production promotion workflow explicitly leaves that file on the host. The
-API reads the flag, pepper, and per-key rate-limit settings at process startup.
-It mounts API-key authentication and key lifecycle routes only when the flag is
-true, and it refuses to boot when the flag is true without a non-empty
-`BRAIN_API_KEY_PEPPER`.
+The production promotion workflow explicitly leaves `.env.prod` on the host.
+After the MinIO credential-scope migration, the API service loads the derived
+`.env.api.prod`, which contains the source settings plus only the managed
+`brain-api` object-store credential. The control workflow must therefore update
+`.env.prod`, regenerate `.env.api.prod` through the existing fixed renderer, and
+then recreate the API. The API reads the flag, pepper, and per-key rate-limit
+settings at process startup. It mounts API-key authentication and key lifecycle
+routes only when the flag is true, and it refuses to boot when the flag is true
+without a non-empty `BRAIN_API_KEY_PEPPER`.
 
 The existing staging VM establishes the operational pattern. Its deploy job
 atomically upserts these four settings into `.env.staging`, preserves a dated
@@ -73,17 +77,17 @@ Terraform resource is read by this VM runtime path.
 
 ### Secret inventory boundary
 
-The GitHub API confirms that the visible repository secret inventory contains
-`BRAIN_API_KEY_PEPPER_STAGING` and no production API-key pepper. It also confirms
-that the protected `production` environment has required reviewers and no
-environment-scoped secret visible to the current credential.
+On 2026-09-10, a new 48-byte cryptographically random value was streamed directly
+into the protected `production` GitHub environment as
+`BRAIN_API_KEY_PEPPER_PRODUCTION`. The value was not printed, placed on a command
+line, or retained locally. The GitHub environment now names Damon (`damonnam`) as
+its sole required reviewer, per the approved control model.
 
-The current credential cannot inspect organization-level Actions secrets. It is
-therefore unverified whether an organization secret with an equivalent purpose
-exists or is shared with this repository. The workflow implementation must
-require the exact `BRAIN_API_KEY_PEPPER_PRODUCTION` secret and fail closed when
-it is absent. This scope does not claim that every possible GitHub secret store
-has been inventoried.
+The environment inventory exposes only the secret name and update time, not its
+value. The current credential cannot inspect organization-level Actions secrets,
+so this scope does not claim that every possible GitHub secret store has been
+inventoried. The workflow requires the exact environment secret and fails closed
+when it is absent.
 
 ## Required workflow
 
@@ -91,6 +95,10 @@ Add a production-only `workflow_dispatch` workflow modelled on
 `ops-cors-allowed-origins.yml`. The implementation should expose a fixed action
 choice of `inspect`, `enable`, or `disable`. It must not accept a host, env-file,
 compose-project, command, pepper, or rate-limit input.
+
+The fixed confirmations are `INSPECT_PRODUCTION_API_KEY_AUTH`,
+`ENABLE_PRODUCTION_API_KEY_AUTH`, and `DISABLE_PRODUCTION_API_KEY_AUTH`. A
+confirmation for one action cannot authorize either of the other actions.
 
 Fixed workflow boundaries:
 
@@ -102,6 +110,7 @@ Fixed workflow boundaries:
 | SSH key            | repository secret `VM_SSH_KEY` |
 | Remote directory   | `~/brain-core`                 |
 | Environment file   | `.env.prod`                    |
+| API runtime file   | `.env.api.prod`                |
 | Compose project    | `brain-prod`                   |
 | API base           | `https://api.brain.fi`         |
 | API service        | `api` only                     |
@@ -120,10 +129,9 @@ pepper. Replacing the pepper immediately invalidates every issued key. Any
 future rotation therefore requires a separate migration or an explicit
 all-keys revocation plan.
 
-Store the new secret in the protected `production` GitHub environment where
-possible, not as a broadly available repository secret. Verify that both
-required production reviewers can approve the workflow but cannot retrieve the
-secret value from logs or artifacts.
+Store the new secret in the protected `production` GitHub environment, not as a
+broadly available repository secret. Damon is the sole required production
+reviewer and cannot retrieve the secret value from logs or artifacts.
 
 ### Inspect and preflight
 
@@ -138,7 +146,8 @@ Before any write, the workflow must:
    local primary Postgres endpoint, and the expected database.
 4. Require `.env.prod` to exist, be a regular file, and not be a symlink.
 5. Report only whether each of the four API-key variable names is absent,
-   present-empty, or present-nonempty. Never print values.
+   present-empty, or present-nonempty in both the source and derived API files.
+   Never print values.
 6. Read the running API container's parsed boolean for
    `BRAIN_API_KEY_AUTH_ENABLED` and whether the pepper is nonempty, returning
    booleans only.
@@ -149,6 +158,8 @@ Before any write, the workflow must:
    Redis dependency.
 9. Confirm the selected production pepper secret is nonempty before creating a
    patch file.
+10. Confirm `.env.minio-api` contains the managed `brain-api` identity with a
+    non-root secret before allowing the derived API environment to be rendered.
 
 `inspect` stops here. It performs no writes and no container recreation.
 
@@ -168,16 +179,18 @@ After the inspect gates and a production approval:
    handler. Do not upload either file as an artifact.
 5. Run `scripts/check-required-compose-secrets.sh` against
    `docker-compose.prod.yml` and `.env.prod` before recreation.
-6. If the guard fails, restore the backup atomically and stop without recreating
+6. Regenerate `.env.api.prod` with `prepare-minio-api-env.sh` only after proving
+   the existing managed MinIO credential is present and non-root-backed.
+7. If either guard fails, restore the backup atomically and stop without recreating
    any service.
-7. Recreate only `api` with the existing Compose files, `--no-deps`,
+8. Recreate only `api` with the existing Compose files, `--no-deps`,
    `--no-build`, and `--force-recreate`. Auth, worker, agents, surface-gateway,
    Postgres, Redis, and MinIO do not need recreation for this API-only setting.
-8. Prove the API container is running the same commit as public `/health`, has
+9. Prove the API container is running the same commit as public `/health`, has
    `NODE_ENV=production`, has the parsed flag set to true, and sees a nonempty
    pepper. Report booleans only.
-9. Run the acceptance sequence below. Any failure triggers the disable rollback
-   procedure.
+10. Run the acceptance sequence below. Any failure triggers the disable rollback
+    procedure.
 
 ### Live acceptance sequence
 
@@ -191,16 +204,20 @@ presenter tenant or a customer tenant. It must:
 
 1. Create the disposable tenant through the existing platform-authenticated
    production tenancy route.
-2. Issue one `brain_sk_test_` key with only the currently approved commercial
-   read scopes. This flag workflow must not request `raw:read` or `raw:write`;
-   that scope-policy change is independent.
+2. Issue one `brain_sk_live_` key with exactly `ledger:read`, `audit:read`, and
+   `governance:read`. This flag workflow must not request `raw:read` or
+   `raw:write`; that scope-policy change is independent.
 3. Call `GET /v1/ledger/accounts` with the key and receive 200.
-4. Call one permitted audit or governance read route and receive 200.
-5. Verify key-attributed request-meter usage appears for the exact key id.
-6. Rotate the key, prove the old key receives `auth_invalid_key`, and prove the
-   replacement key works.
-7. Revoke the replacement key and prove it receives `auth_invalid_key`.
-8. Delete the disposable tenant through the tenant deletion API, confirm the
+4. Call both a permitted audit read route and a permitted governance read route
+   and receive 200 from each.
+5. Call the non-mutating payment approval authorization probe and receive 403
+   `auth_scope_insufficient`.
+6. Verify key-attributed request-meter usage appears for the exact key id and
+   includes the three commercial read operations.
+7. Rotate the key, prove the old key receives `auth_invalid_key`, repeat the
+   full read and denial checks, and confirm metering for the replacement id.
+8. Revoke the replacement key and prove it receives `auth_invalid_key`.
+9. Delete the disposable tenant through the tenant deletion API, confirm the
    tenant row is gone, and retain only the intended immutable deletion audit
    history.
 
@@ -219,16 +236,20 @@ For the first observation window, record:
 
 - API restart count and health commit;
 - rates of `auth_invalid_key`, `auth_scope_insufficient`, and `rate_limited`;
-- key issue, rotate, revoke, and use audit counts;
+- key issue, rotate, and revoke audit counts plus key-attributed metered use;
 - Redis errors from the API-key limiter;
 - route 4xx and 5xx rates for the key lifecycle and commercial read endpoints;
-- confirmation that no `brain_sk_live_` key or disallowed scope was issued as
-  part of acceptance; and
+- confirmation that only the expected disposable `brain_sk_live_` lineage was
+  issued and that it carried no disallowed scope; and
 - confirmation that key secrets and the pepper do not appear in logs or
   workflow artifacts.
 
-An operator should explicitly close the observation window. A green health
-endpoint alone is not sufficient.
+The enable action runs a fixed 30-minute observation with 30-second health,
+container, and Redis samples. It also summarizes redacted API log counters,
+checks the preserved lifecycle and deletion audit evidence, and proves the
+disposable tenant and key rows are gone. Any failed acceptance or observation
+gate invokes the reviewed disable path. A green health endpoint alone is not
+sufficient.
 
 ## Rollback
 
@@ -281,15 +302,16 @@ dispatching this workflow must not imply approval of synthetic Raw access.
 - [x] Defined production identity, secret-presence, database, Redis, lifecycle,
       monitoring, and rollback gates.
 - [x] Kept Container Apps and Azure staging work outside scope.
+- [x] Set Damon as the sole required reviewer for the protected production
+      environment.
+- [x] Provisioned `BRAIN_API_KEY_PEPPER_PRODUCTION` without exposing its value.
+- [x] Implemented the fixed `inspect`, `enable`, and `disable` workflow actions.
+- [x] Implemented cleanup-safe disposable live-key acceptance.
+- [x] Implemented the fixed 30-minute monitored observation window.
+- [x] Added structural workflow and operator-program regression tests.
 
-### Pending approval and implementation
+### Pending separate execution approval
 
-- [ ] Approve the production-only workflow design and secret ownership.
-- [ ] Create `BRAIN_API_KEY_PEPPER_PRODUCTION` in the protected production
-      environment without exposing its value.
-- [ ] Implement the fixed `inspect`, `enable`, and `disable` workflow actions.
-- [ ] Implement the cleanup-safe production acceptance wrapper.
-- [ ] Add workflow contract and acceptance-script regression tests.
 - [ ] Review the production plan and rollback procedure.
 - [ ] Dispatch `inspect` and review its redacted evidence.
 - [ ] Make and record the independent go or no-go decision.
