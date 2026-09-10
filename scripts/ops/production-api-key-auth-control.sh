@@ -221,8 +221,15 @@ process.exit(commercialFlagsAllFalse ? 0 : 1);
 '
 }
 
+postgres_psql() {
+  docker exec "$POSTGRES_CONTAINER" sh -ceu '
+export PGPASSWORD="$POSTGRES_PASSWORD"
+exec psql "$@"
+' sh "$@"
+}
+
 report_database_state() {
-  docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
+  postgres_psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
 WITH role_names(role_name) AS (
   VALUES
@@ -301,7 +308,7 @@ SQL
 }
 
 require_database_state() {
-  state="$(docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
+  state="$(postgres_psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
 WITH role_names(role_name) AS (
   VALUES
