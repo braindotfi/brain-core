@@ -63,6 +63,21 @@ test("control script is production-bound, atomic, API-only, and preserves pepper
   assert.match(workflow, /--env-file ~\/brain-core\/\.env\.api\.prod/);
 });
 
+test("inspect avoids readonly assignment failures and reports commercial and role state", () => {
+  assert.doesNotMatch(control, /(?:^|\n)\s*API_BASE="\$API_BASE" VM_ENV_FILE="\$VM_ENV_FILE"/);
+  assert.match(control, /env API_BASE="\$API_BASE" VM_ENV_FILE="\$VM_ENV_FILE"/);
+  assert.match(control, /production_commercial_flag_states/);
+  assert.match(control, /BRAIN_PRODUCTION_GRADUATION_ENABLED/);
+  assert.match(control, /BRAIN_COMMERCIAL_CATALOG_ENABLED/);
+  assert.match(control, /BRAIN_STRIPE_BILLING_ENABLED/);
+  assert.match(control, /BRAIN_X402_PAYMENTS_ENABLED/);
+  assert.match(control, /commercial_flags_all_false/);
+  assert.match(control, /has_table_privilege\(role_name, 'public\.api_keys', 'SELECT'\)/);
+  assert.match(control, /role_grants_match/);
+  assert.match(control, /role_name = 'brain_app'/);
+  assert.match(control, /role_name = 'brain_tenant_deletion'/);
+});
+
 test("acceptance exercises live reads, denial, metering, lifecycle, cleanup, and redaction", () => {
   assert.match(acceptance, /"environment": "live"/);
   assert.match(acceptance, /brain_sk_live_/);
