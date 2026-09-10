@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -15,6 +16,8 @@ const observation = readFileSync(
   join(root, "scripts/ops/observe-production-api-key-auth.py"),
   "utf8",
 );
+const pepperValidatorPath = join(root, "scripts/ops/validate-api-key-enable-patch.py");
+const pepperValidator = readFileSync(pepperValidatorPath, "utf8");
 
 test("production API-key workflow exposes only fixed actions and exact confirmations", () => {
   assert.match(workflow, /action:\n\s+description:[\s\S]*?type: choice/);
@@ -39,7 +42,81 @@ test("enablement transports the protected pepper only in mode-0600 files", () =>
   assert.match(workflow, /chmod 600 '\$REMOTE_DIR\/enable\.patch'/);
   assert.match(workflow, /trap 'rm -f \\"\$REMOTE_DIR\/enable\.patch\\"' EXIT/);
   assert.match(control, /patch_mode_not_0600/);
-  assert.match(control, /len\(pepper\) < 64/);
+  assert.match(workflow, /scripts\/ops\/validate-api-key-enable-patch\.py/);
+  assert.match(control, /validate-api-key-enable-patch\.py/);
+  assert.doesNotMatch(control, /len\(pepper\) < 64/);
+  assert.match(pepperValidator, /MINIMUM_PEPPER_BYTES = 32/);
+  assert.match(pepperValidator, /base64\.b64decode/);
+  assert.match(pepperValidator, /bytes\.fromhex/);
+});
+
+test("pepper validator measures decoded bytes across supported encodings", () => {
+  const directory = mkdtempSync(join(tmpdir(), "brain-pepper-validator-"));
+  const patchPath = join(directory, "enable.patch");
+  const run = (pepper) => {
+    writeFileSync(
+      patchPath,
+      [
+        "BRAIN_API_KEY_AUTH_ENABLED=true",
+        `BRAIN_API_KEY_PEPPER=${pepper}`,
+        "BRAIN_EDGE_RATE_LIMIT=100000",
+        "BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS=2000",
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    chmodSync(patchPath, 0o600);
+    return spawnSync("python3", [pepperValidatorPath, patchPath], {
+      cwd: root,
+      encoding: "utf8",
+    });
+  };
+
+  try {
+    const cases = [
+      { encoding: "hex", pepper: Buffer.alloc(32, 0xab).toString("hex"), bytes: 32 },
+      { encoding: "base64", pepper: Buffer.alloc(32, 0xff).toString("base64"), bytes: 32 },
+      {
+        encoding: "base64url",
+        pepper: Buffer.alloc(32, 0xfb).toString("base64url"),
+        bytes: 32,
+      },
+      {
+        encoding: "base64",
+        pepper: Buffer.from(Array.from({ length: 48 }, (_, index) => index)).toString("base64"),
+        bytes: 48,
+      },
+    ];
+    for (const testCase of cases) {
+      const result = run(testCase.pepper);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.includes(testCase.pepper), false);
+      assert.deepEqual(JSON.parse(result.stdout), {
+        decoded_bytes: testCase.bytes,
+        encoding: testCase.encoding,
+        event: "production_api_key_pepper_entropy_validation",
+        minimum_bytes: 32,
+        passed: true,
+      });
+    }
+
+    for (const pepper of [
+      Buffer.alloc(31, 0xab).toString("hex"),
+      Buffer.alloc(31, 0xff).toString("base64"),
+      Buffer.alloc(31, 0xfb).toString("base64url"),
+    ]) {
+      const result = run(pepper);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /decodes to fewer than 32 bytes/);
+      assert.equal(result.stderr.includes(pepper), false);
+    }
+
+    const invalid = run("not an encoded pepper value");
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /not valid hex, Base64, or Base64URL/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("control script is production-bound, atomic, API-only, and preserves pepper on disable", () => {
@@ -156,6 +233,7 @@ test("operator programs parse cleanly", () => {
   assert.equal(shell.status, 0, shell.stderr);
 
   for (const file of [
+    "scripts/ops/validate-api-key-enable-patch.py",
     "scripts/ops/production_api_key_acceptance.py",
     "scripts/ops/observe-production-api-key-auth.py",
   ]) {

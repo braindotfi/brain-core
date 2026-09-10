@@ -123,6 +123,10 @@ Create an environment-specific protected secret named
 transport it into `.env.prod`, but must never print it, pass it on a process
 command line, persist it in a workflow artifact, or expose it in a plan.
 
+The enablement validator strictly decodes hexadecimal, Base64, or Base64URL,
+with or without Base64 padding, and requires at least 32 decoded bytes. It does
+not use encoded character count as a proxy for secret strength.
+
 This secret is durable key-verification material, not a routinely rotated
 credential. `api_keys.hashed_secret` is derived from the plaintext key and the
 pepper. Replacing the pepper immediately invalidates every issued key. Any
