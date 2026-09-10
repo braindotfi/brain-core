@@ -87,10 +87,27 @@ test("inspect avoids readonly assignment failures and reports commercial and rol
   assert.match(control, /production_api_scoped_minio_state[^\n]+healthy[^\n]+false/);
   assert.match(control, /production_api_key_inspection=failed/);
   assert.match(control, /postgres_psql\(\)/);
-  assert.match(control, /export PGPASSWORD="\$POSTGRES_PASSWORD"/);
+  assert.match(control, /docker exec -i "\$POSTGRES_CONTAINER" psql "\$@"/);
   assert.match(control, /postgres_psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain/);
   assert.doesNotMatch(control, /docker exec "\$POSTGRES_CONTAINER" psql/);
   assert.doesNotMatch(control, /echo[^\n]+POSTGRES_PASSWORD/);
+  assert.match(control, /production_api_key_pepper_reconciliation/);
+  assert.match(control, /protected_matches_all_active/);
+  assert.match(control, /rotation_would_change_active_pepper/);
+  assert.match(control, /hmac\.compare_digest/);
+  assert.match(control, /active_non_revoked_commercial_keys/);
+  assert.match(control, /active_non_revoked_live_keys/);
+  assert.match(control, /active_non_revoked_sandbox_keys/);
+  assert.doesNotMatch(control, /print\([^\n]*protected[^\n]*\)/);
+  assert.match(
+    workflow,
+    /Inspect the fixed production target[\s\S]*secrets\.BRAIN_API_KEY_PEPPER_PRODUCTION/,
+  );
+  assert.match(workflow, /install -m 600 \/dev\/null '\$REMOTE_DIR\/protected-pepper'/);
+  assert.match(
+    workflow,
+    /production-api-key-auth-control\.sh' inspect '\$REMOTE_DIR\/protected-pepper'/,
+  );
 });
 
 test("acceptance exercises live reads, denial, metering, lifecycle, cleanup, and redaction", () => {

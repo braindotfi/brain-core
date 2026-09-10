@@ -12,7 +12,7 @@ readonly POSTGRES_CONTAINER="brain-prod-postgres"
 readonly REDIS_CONTAINER="brain-prod-redis"
 
 usage() {
-  echo "Usage: $0 inspect|enable|disable [mode-0600-enable-patch]" >&2
+  echo "Usage: $0 inspect|enable|disable [mode-0600-pepper-or-enable-patch]" >&2
 }
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -26,11 +26,7 @@ case "$action" in
   inspect|enable|disable) ;;
   *) usage; exit 2 ;;
 esac
-if [[ "$action" == "enable" && -z "$patch_file" ]]; then
-  usage
-  exit 2
-fi
-if [[ "$action" != "enable" && -n "$patch_file" ]]; then
+if [[ -z "$patch_file" ]]; then
   usage
   exit 2
 fi
@@ -222,10 +218,72 @@ process.exit(commercialFlagsAllFalse ? 0 : 1);
 }
 
 postgres_psql() {
-  docker exec "$POSTGRES_CONTAINER" sh -ceu '
-export PGPASSWORD="$POSTGRES_PASSWORD"
-exec psql "$@"
-' sh "$@"
+  docker exec -i "$POSTGRES_CONTAINER" psql "$@"
+}
+
+report_pepper_reconciliation() {
+  if [[ ! -f "$patch_file" || -L "$patch_file" \
+    || "$(stat -c '%a' "$patch_file")" != "600" ]]; then
+    echo '{"event":"production_api_key_pepper_reconciliation","protected_secret_present":null,"active_sources_consistent":null,"protected_matches_all_active":null,"healthy":false}'
+    return 1
+  fi
+  python3 - "$patch_file" "$VM_ENV_FILE" "$API_ENV_FILE" "$API_CONTAINER" <<'PY'
+from pathlib import Path
+import hmac
+import json
+import subprocess
+import sys
+
+candidate_path, source_path, api_path, container = sys.argv[1:]
+
+def env_value(path, key):
+    value = None
+    for line in Path(path).read_text().splitlines():
+        if line.lstrip().startswith("#") or "=" not in line:
+            continue
+        name, candidate = line.split("=", 1)
+        if name.strip() == key:
+            value = candidate.strip().strip("\"'")
+    return value
+
+candidate_text = Path(candidate_path).read_text()
+protected = env_value(candidate_path, "BRAIN_API_KEY_PEPPER")
+if protected is None:
+    protected = candidate_text.rstrip("\r\n")
+source = env_value(source_path, "BRAIN_API_KEY_PEPPER")
+api_file = env_value(api_path, "BRAIN_API_KEY_PEPPER")
+runtime_lines = json.loads(subprocess.run(
+    ["docker", "inspect", "--format", "{{json .Config.Env}}", container],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout)
+runtime = None
+for line in runtime_lines:
+    if line.startswith("BRAIN_API_KEY_PEPPER="):
+        runtime = line.split("=", 1)[1]
+
+active = (source, api_file, runtime)
+present = tuple(bool(value) for value in active)
+consistent = all(present) and hmac.compare_digest(source, api_file) and hmac.compare_digest(source, runtime)
+matches = tuple(bool(protected) and bool(value) and hmac.compare_digest(protected, value) for value in active)
+print(json.dumps({
+    "event": "production_api_key_pepper_reconciliation",
+    "protected_secret_present": bool(protected),
+    "source_present": present[0],
+    "api_file_present": present[1],
+    "runtime_present": present[2],
+    "active_sources_consistent": consistent,
+    "protected_matches_source": matches[0],
+    "protected_matches_api_file": matches[1],
+    "protected_matches_runtime": matches[2],
+    "protected_matches_all_active": all(matches),
+    "rotation_would_change_active_pepper": not all(matches),
+    "healthy": bool(protected) and consistent and all(matches),
+}, sort_keys=True))
+if not protected or not consistent:
+    raise SystemExit("pepper reconciliation prerequisites failed")
+PY
 }
 
 report_database_state() {
@@ -286,6 +344,28 @@ SELECT json_build_object(
   'tenant_policy_count', (
     SELECT count(*) FROM pg_policies
      WHERE schemaname = 'public' AND tablename = 'api_keys'
+  ),
+  'active_non_revoked_commercial_keys', (
+    SELECT count(*) FROM api_keys
+     WHERE revoked_at IS NULL
+       AND key_prefix IN ('brain_sk_test_', 'brain_sk_live_')
+  ),
+  'active_non_revoked_live_keys', (
+    SELECT count(*) FROM api_keys
+     WHERE revoked_at IS NULL
+       AND environment = 'live'
+       AND key_prefix = 'brain_sk_live_'
+  ),
+  'active_non_revoked_sandbox_keys', (
+    SELECT count(*) FROM api_keys
+     WHERE revoked_at IS NULL
+       AND environment = 'sandbox'
+       AND key_prefix = 'brain_sk_test_'
+  ),
+  'active_non_revoked_tenants', (
+    SELECT count(DISTINCT tenant_id) FROM api_keys
+     WHERE revoked_at IS NULL
+       AND key_prefix IN ('brain_sk_test_', 'brain_sk_live_')
   ),
   'role_grants', (
     SELECT json_object_agg(
@@ -381,6 +461,7 @@ inspect() {
   if ! report_commercial_flag_states "$VM_ENV_FILE" source; then passed=false; fi
   if ! report_commercial_flag_states "$API_ENV_FILE" api-runtime; then passed=false; fi
   if ! report_runtime_state; then passed=false; fi
+  if ! report_pepper_reconciliation; then passed=false; fi
   if ! report_database_state; then passed=false; fi
   if ! require_database_state; then passed=false; fi
   if ! require_redis; then passed=false; fi

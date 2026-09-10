@@ -82,10 +82,25 @@ jobs:
 
       - name: Inspect the fixed production target
         shell: bash
+        env:
+          BRAIN_API_KEY_PEPPER_PRODUCTION: ${{ secrets.BRAIN_API_KEY_PEPPER_PRODUCTION }}
         run: |
           set -euo pipefail
+          if [[ -z "$BRAIN_API_KEY_PEPPER_PRODUCTION" ]]; then
+            echo "protected production pepper is missing" >&2
+            exit 1
+          fi
+          pepper_file="$(mktemp)"
+          trap 'rm -f "$pepper_file"' EXIT
+          chmod 600 "$pepper_file"
+          printf '%s' "$BRAIN_API_KEY_PEPPER_PRODUCTION" > "$pepper_file"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "install -m 600 /dev/null '$REMOTE_DIR/protected-pepper'"
+          scp -i ~/.ssh/id_deploy "$pepper_file" \
+            "azureuser@$VM_HOST:$REMOTE_DIR/protected-pepper"
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' inspect"
+            "chmod 600 '$REMOTE_DIR/protected-pepper' && \
+             bash '$REMOTE_DIR/production-api-key-auth-control.sh' inspect '$REMOTE_DIR/protected-pepper'"
 
       - name: Enable with the protected production pepper
         id: enable
@@ -124,7 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
-            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' disable"
+            "bash '$REMOTE_DIR/production-api-key-auth-control.sh' disable '$REMOTE_DIR/protected-pepper'"
 
       - name: Run disposable live-key acceptance
         if: inputs.action == 'enable'
