@@ -72,10 +72,20 @@ test("inspect avoids readonly assignment failures and reports commercial and rol
   assert.match(control, /BRAIN_STRIPE_BILLING_ENABLED/);
   assert.match(control, /BRAIN_X402_PAYMENTS_ENABLED/);
   assert.match(control, /commercial_flags_all_false/);
-  assert.match(control, /has_table_privilege\(role_name, 'public\.api_keys', 'SELECT'\)/);
+  assert.match(
+    control,
+    /has_table_privilege\(pg_roles\.oid, to_regclass\('public\.api_keys'\), 'SELECT'\)/,
+  );
+  assert.match(control, /LEFT JOIN pg_roles ON pg_roles\.rolname = role_names\.role_name/);
+  assert.match(control, /'present', role_present/);
   assert.match(control, /role_grants_match/);
   assert.match(control, /role_name = 'brain_app'/);
   assert.match(control, /role_name = 'brain_tenant_deletion'/);
+  assert.match(control, /if ! report_database_state; then passed=false; fi/);
+  assert.match(control, /if ! require_redis; then passed=false; fi/);
+  assert.match(control, /production_api_key_redis_state[^\n]+healthy[^\n]+false/);
+  assert.match(control, /production_api_scoped_minio_state[^\n]+healthy[^\n]+false/);
+  assert.match(control, /production_api_key_inspection=failed/);
 });
 
 test("acceptance exercises live reads, denial, metering, lifecycle, cleanup, and redaction", () => {

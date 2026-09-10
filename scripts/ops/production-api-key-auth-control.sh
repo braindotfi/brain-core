@@ -153,7 +153,7 @@ PY
 }
 
 require_scoped_api_credential() {
-  python3 - "$VM_ENV_FILE" "$API_MINIO_CREDENTIAL_FILE" <<'PY'
+  if ! python3 - "$VM_ENV_FILE" "$API_MINIO_CREDENTIAL_FILE" <<'PY'
 from pathlib import Path
 import stat
 import sys
@@ -177,6 +177,10 @@ secret = credential.get("MINIO_API_SECRET_ACCESS_KEY", "")
 if not secret or secret == source.get("MINIO_ROOT_PASSWORD"):
     raise SystemExit("scoped API MinIO secret is missing or root-backed")
 PY
+  then
+    echo '{"event":"production_api_scoped_minio_state","identity":null,"root_backed":null,"healthy":false}'
+    return 1
+  fi
   echo '{"event":"production_api_scoped_minio_state","identity":"brain-api","root_backed":false}'
 }
 
@@ -220,32 +224,35 @@ process.exit(commercialFlagsAllFalse ? 0 : 1);
 report_database_state() {
   docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
-WITH role_grants AS (
-  SELECT role_name,
-         has_table_privilege(role_name, 'public.api_keys', 'SELECT') AS can_select,
-         has_table_privilege(role_name, 'public.api_keys', 'INSERT') AS can_insert,
-         has_table_privilege(role_name, 'public.api_keys', 'UPDATE') AS can_update,
-         has_table_privilege(role_name, 'public.api_keys', 'DELETE') AS can_delete,
-         has_table_privilege(role_name, 'public.api_keys', 'TRUNCATE') AS can_truncate
-    FROM (VALUES
+WITH role_names(role_name) AS (
+  VALUES
       ('brain_app'), ('brain_privileged'), ('brain_wiki_reader'),
       ('brain_mcp_reader'), ('brain_raw_worker'), ('brain_canonical_projector'),
       ('brain_ledger_projector'), ('brain_execution_worker'),
       ('brain_audit_verifier'), ('brain_audit_publisher'), ('brain_resolver'),
       ('brain_tenant_deletion'), ('brain_surface_gateway'),
       ('brain_surface_audit_writer'), ('brain_auth'), ('brain_auth_audit_writer')
-    ) roles(role_name)
+), role_grants AS (
+  SELECT role_names.role_name,
+         pg_roles.oid IS NOT NULL AS role_present,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'SELECT'), FALSE) AS can_select,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'INSERT'), FALSE) AS can_insert,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'UPDATE'), FALSE) AS can_update,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'DELETE'), FALSE) AS can_delete,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'TRUNCATE'), FALSE) AS can_truncate
+    FROM role_names
+    LEFT JOIN pg_roles ON pg_roles.rolname = role_names.role_name
 ), role_contract AS (
   SELECT bool_and(
     CASE
       WHEN role_name = 'brain_app' THEN
-        can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
+        role_present AND can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
       WHEN role_name IN ('brain_privileged', 'brain_wiki_reader', 'brain_resolver') THEN
-        can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+        role_present AND can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
       WHEN role_name = 'brain_tenant_deletion' THEN
-        can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
+        role_present AND can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
       ELSE
-        NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+        role_present AND NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
     END
   ) AS matches
   FROM role_grants
@@ -277,6 +284,7 @@ SELECT json_build_object(
     SELECT json_object_agg(
       role_name,
       json_build_object(
+        'present', role_present,
         'select', can_select,
         'insert', can_insert,
         'update', can_update,
@@ -295,32 +303,35 @@ SQL
 require_database_state() {
   state="$(docker exec "$POSTGRES_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
 BEGIN TRANSACTION READ ONLY;
-WITH role_grants AS (
-  SELECT role_name,
-         has_table_privilege(role_name, 'public.api_keys', 'SELECT') AS can_select,
-         has_table_privilege(role_name, 'public.api_keys', 'INSERT') AS can_insert,
-         has_table_privilege(role_name, 'public.api_keys', 'UPDATE') AS can_update,
-         has_table_privilege(role_name, 'public.api_keys', 'DELETE') AS can_delete,
-         has_table_privilege(role_name, 'public.api_keys', 'TRUNCATE') AS can_truncate
-    FROM (VALUES
+WITH role_names(role_name) AS (
+  VALUES
       ('brain_app'), ('brain_privileged'), ('brain_wiki_reader'),
       ('brain_mcp_reader'), ('brain_raw_worker'), ('brain_canonical_projector'),
       ('brain_ledger_projector'), ('brain_execution_worker'),
       ('brain_audit_verifier'), ('brain_audit_publisher'), ('brain_resolver'),
       ('brain_tenant_deletion'), ('brain_surface_gateway'),
       ('brain_surface_audit_writer'), ('brain_auth'), ('brain_auth_audit_writer')
-    ) roles(role_name)
+), role_grants AS (
+  SELECT role_names.role_name,
+         pg_roles.oid IS NOT NULL AS role_present,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'SELECT'), FALSE) AS can_select,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'INSERT'), FALSE) AS can_insert,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'UPDATE'), FALSE) AS can_update,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'DELETE'), FALSE) AS can_delete,
+         COALESCE(has_table_privilege(pg_roles.oid, to_regclass('public.api_keys'), 'TRUNCATE'), FALSE) AS can_truncate
+    FROM role_names
+    LEFT JOIN pg_roles ON pg_roles.rolname = role_names.role_name
 ), role_contract AS (
   SELECT bool_and(
     CASE
       WHEN role_name = 'brain_app' THEN
-        can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
+        role_present AND can_select AND can_insert AND can_update AND can_delete AND NOT can_truncate
       WHEN role_name IN ('brain_privileged', 'brain_wiki_reader', 'brain_resolver') THEN
-        can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+        role_present AND can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
       WHEN role_name = 'brain_tenant_deletion' THEN
-        can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
+        role_present AND can_select AND NOT can_insert AND NOT can_update AND can_delete AND NOT can_truncate
       ELSE
-        NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
+        role_present AND NOT can_select AND NOT can_insert AND NOT can_update AND NOT can_delete AND NOT can_truncate
     END
   ) AS matches
   FROM role_grants
@@ -346,20 +357,31 @@ SQL
 }
 
 require_redis() {
-  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli ping | tr -d '\r[:space:]')" == "PONG" ]]
-  echo '{"event":"production_api_key_redis_state","healthy":true}'
+  local response
+  if response="$(docker exec "$REDIS_CONTAINER" redis-cli ping 2>/dev/null)" \
+    && [[ "$(printf '%s' "$response" | tr -d '\r[:space:]')" == "PONG" ]]; then
+    echo '{"event":"production_api_key_redis_state","healthy":true}'
+    return 0
+  fi
+  echo '{"event":"production_api_key_redis_state","healthy":false}'
+  return 1
 }
 
 inspect() {
+  local passed=true
   report_env_states "$VM_ENV_FILE" source
   report_env_states "$API_ENV_FILE" api-runtime
-  report_commercial_flag_states "$VM_ENV_FILE" source
-  report_commercial_flag_states "$API_ENV_FILE" api-runtime
-  report_runtime_state
-  report_database_state
-  require_database_state
-  require_redis
-  require_scoped_api_credential
+  if ! report_commercial_flag_states "$VM_ENV_FILE" source; then passed=false; fi
+  if ! report_commercial_flag_states "$API_ENV_FILE" api-runtime; then passed=false; fi
+  if ! report_runtime_state; then passed=false; fi
+  if ! report_database_state; then passed=false; fi
+  if ! require_database_state; then passed=false; fi
+  if ! require_redis; then passed=false; fi
+  if ! require_scoped_api_credential; then passed=false; fi
+  if [[ "$passed" != "true" ]]; then
+    echo "production_api_key_inspection=failed" >&2
+    return 1
+  fi
   echo "production_api_key_inspection=passed"
 }
 
