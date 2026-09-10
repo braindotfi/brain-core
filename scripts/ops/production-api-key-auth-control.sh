@@ -483,33 +483,7 @@ validate_enable_patch() {
     echo "production_api_key_control_failed=patch_mode_not_0600" >&2
     exit 1
   fi
-  python3 - "$patch_file" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-expected = {
-    "BRAIN_API_KEY_AUTH_ENABLED": "true",
-    "BRAIN_EDGE_RATE_LIMIT": "100000",
-    "BRAIN_API_KEY_RATE_LIMIT_TIMEOUT_MS": "2000",
-}
-values = {}
-for line in path.read_text().splitlines():
-    if not line or line.startswith("#") or "=" not in line:
-        raise SystemExit("enable patch contains an invalid line")
-    key, value = line.split("=", 1)
-    if key in values:
-        raise SystemExit("enable patch contains duplicate variables")
-    values[key] = value
-if set(values) != set(expected) | {"BRAIN_API_KEY_PEPPER"}:
-    raise SystemExit("enable patch variable set is not fixed")
-if any(values[key] != value for key, value in expected.items()):
-    raise SystemExit("enable patch fixed values do not match")
-pepper = values["BRAIN_API_KEY_PEPPER"]
-if len(pepper) < 64 or re.fullmatch(r"[A-Za-z0-9_-]+", pepper) is None:
-    raise SystemExit("production pepper does not meet the 32-byte encoded minimum")
-PY
+  python3 "$script_dir/validate-api-key-enable-patch.py" "$patch_file"
 }
 
 atomic_upsert() {

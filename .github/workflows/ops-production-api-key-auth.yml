@@ -74,6 +74,7 @@ jobs:
             scripts/check-required-compose-secrets.sh \
             scripts/ops/prepare-minio-api-env.sh \
             scripts/ops/production-api-key-auth-control.sh \
+            scripts/ops/validate-api-key-enable-patch.py \
             scripts/ops/production_api_key_acceptance.py \
             scripts/ops/observe-production-api-key-auth.py \
             "azureuser@$VM_HOST:$REMOTE_DIR/"
