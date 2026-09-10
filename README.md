@@ -1,24 +1,24 @@
 ---
-description: Your AI finance department.  Powered by a financial brain for AI agents.
+description: Your own AI finance team that manages your money.
 ---
 
-# Welcome to Brain 🧠
+# Welcome to RobotMoney
 
-Brain is the memory and intelligence layer for autonomous finance. It gives AI agents the context, financial intelligence, and rules to run an entire finance department for businesses. You point Brain at a business's existing financial sources (banks, ERP, invoicing tools, on-chain wallets, etc.) and you get back a continuously updated, policy-aware record that humans and autonomous software can both read, reason over, and act on safely.
+RobotMoney gives businesses the tools to open agentic bank accounts, build autonomous AI finance teams, and automate how they manage money. You point RobotMoney at a business's existing financial sources (banks, ERP, invoicing tools, on-chain wallets, etc.) and you get back a continuously updated, policy-aware record that humans and autonomous software can both read, reason over, and act on safely.
 
-Brain holds neither funds nor rail access. It sits between an account holder and their financial world as the structured intelligence layer: ingest, normalize, remember, govern, execute, prove.
+RobotMoney holds neither funds nor rail access. It sits between an account holder and their financial world as the structured intelligence layer: ingest, normalize, remember, govern, execute, prove.
 
-## How Brain Is Organized
+## How RobotMoney Is Organized
 
-Brain is a layered protocol; information flows up and control flows down.
+RobotMoney is a layered protocol; information flows up and control flows down.
 
 <table><thead><tr><th width="200">Layer</th><th>Job</th></tr></thead><tbody><tr><td>Raw</td><td>Lossless ingestion from any authorized source</td></tr><tr><td>Ledger</td><td>Deterministic normalization into immutable financial truth</td></tr><tr><td>Wiki</td><td>Continuously updated memory and natural-language Q and A</td></tr><tr><td>Policy</td><td>Plain-English rules compiled to deterministic guards</td></tr><tr><td>Agent</td><td>Internal and external agents proposing actions in scope</td></tr><tr><td>Audit</td><td>Per-tenant Merkle tree anchored on Base L2</td></tr></tbody></table>
 
 Reads are grounded in evidence, writes emit audit events, and any financial action has to pass a deterministic pre-execution gate before it leaves the system. Nothing executes outside that gate.
 
-## What Brain Is Not
+## What RobotMoney Is Not
 
-Brain is not a bank, a custodian, an accounting tool, an agent marketplace, or a generic assistant. Funds and custody belong to the account holder. Brain reads, reasons, governs, and proves; it does not own the assets it operates on.
+RobotMoney is not a bank, a custodian, an accounting tool, an agent marketplace, or a generic assistant. Funds and custody belong to the account holder. RobotMoney reads, reasons, governs, and proves; it does not own the assets it operates on.
 
 ## A First Integration
 
@@ -43,7 +43,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 
 <table data-view="cards"><thead><tr><th></th><th></th><th data-type="content-ref"></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><strong>Quickstart</strong></td><td>Five minutes from <code>npm install</code> to a working integration.</td><td><a href="introduction/quickstart.md">quickstart.md</a></td><td></td></tr><tr><td><strong>Build</strong></td><td>Task-shaped guides. The patterns most apps need in their first hour.</td><td><a href="build/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>Concepts</strong></td><td>The mental model. Memory, policy, agents, proof.</td><td><a href="concepts/overview.md">overview.md</a></td><td></td></tr><tr><td><strong>Protocol</strong></td><td>The deep stack. Six layers, smart contracts, on-chain anchoring.</td><td><a href="protocol/overview.md">overview.md</a></td><td></td></tr></tbody></table>
 
-## Who Brain Is For
+## Who RobotMoney Is For
 
 | You're building                    | You use Brain to                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------------------- |
@@ -51,7 +51,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 | An autonomous agent for a business | Give it grounded memory, scoped permissions, and a provable audit trail          |
 | A fintech embedding into an ERP    | Ship policy-gated actions on top of existing customer data, no schema rewrites   |
 | A treasury or operations dashboard | Query the tenant's full money picture in natural language or structured calls    |
-| An external agent marketplace      | Plug into Brain's MCP surface. Same primitives, same audit semantics             |
+| An external agent marketplace      | Plug into RobotMoney's MCP surface. Same primitives, same audit semantics        |
 
 ## What You Can Build
 
@@ -63,7 +63,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 | An external agent integration | Plug into any MCP-compatible runtime; full read and propose surface                 |
 | A compliance trail            | Every read, every decision, every action, exportable as a tamper-evident log        |
 
-## What Brain Handles for You
+## What RobotMoney Handles for You
 
 | You don't write                          | Because Brain handles                                                        |
 | ---------------------------------------- | ---------------------------------------------------------------------------- |
@@ -75,7 +75,7 @@ That covers most of what a typical integration touches; no on-chain knowledge is
 
 ## Integration Surfaces
 
-Brain exposes four surfaces. Pick whichever matches your stack. They share the same data, the same policy, and the same audit log.
+RobotMoney exposes four surfaces. Pick whichever matches your stack. They share the same data, the same policy, and the same audit log.
 
 | Surface         | Best for                                                  | Reference                                      |
 | --------------- | --------------------------------------------------------- | ---------------------------------------------- |
@@ -103,8 +103,8 @@ The full SDK surface (`brain.accounts`, `brain.transactions`, `brain.payments`, 
 
 ## Next Steps
 
-- Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
-- Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
-- Integrate an external agent: [MCP server](mcp-server/overview.md).
-- Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
-- Review the safety model: [SECURITY.md](SECURITY.md). The §6 gate, layer boundaries, audit verification, and threat model.
+* Build it: [Quickstart](introduction/quickstart.md), then the [task-shaped guides](build/overview.md).
+* Understand it: [Concepts](concepts/overview.md), then [Protocol](protocol/overview.md).
+* Integrate an external agent: [MCP server](mcp-server/overview.md).
+* Verify a payment on-chain: [Smart contracts](smart-contracts/overview.md) and [BrainAuditAnchor](smart-contracts/brainauditanchor.md).
+* Review the safety model: [SECURITY.md](SECURITY.md). The §6 gate, layer boundaries, audit verification, and threat model.

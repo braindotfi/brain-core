@@ -2,7 +2,7 @@
 
 ### What It Is
 
-The Wiki layer is the contextual knowledge surface in Brain's stack. It sits between the Ledger (canonical state) and the Agent (execution), and gives agents the meaning they need to act intelligently on financial data.
+The Wiki layer is the contextual knowledge surface in RobotMoney's stack. It sits between the Ledger (canonical state) and the Agent (execution), and gives agents the meaning they need to act intelligently on financial data.
 
 Think of it as Wikipedia for an autonomous financial system, except every article cites a primary source in the Ledger or Raw layer.
 
@@ -36,19 +36,19 @@ RAG and graphs are useful tools, but they are retrieval systems, not systems of 
 
 The shorthand:
 
-- RAG sounds right
-- Graph connects right
-- Wiki _is_ right
+* RAG sounds right
+* Graph connects right
+* Wiki _is_ right
 
-### How Wiki Fits in Brain
+### How Wiki Fits in RobotMoney
 
-Wiki is one of six layers in the Brain stack:
+Wiki is one of six layers in the RobotMoney stack:
 
-- **Raw** ingests signals
-- **Ledger** maintains canonical state
-- **Wiki** provides semantic context, grounded in Ledger
-- **Policy** defines what agents are allowed to do
-- **Agent** executes within policy, using Wiki to understand context
-- **Audit** records every action with cryptographic provenance
+* **Raw** ingests signals
+* **Ledger** maintains canonical state
+* **Wiki** provides semantic context, grounded in Ledger
+* **Policy** defines what agents are allowed to do
+* **Agent** executes within policy, using Wiki to understand context
+* **Audit** records every action with cryptographic provenance
 
-Wiki is what makes Brain agents knowledgeable. Ledger is what makes them correct. Policy is what makes them safe. Audit is what makes them accountable. Together, they are what makes autonomous financial action trustworthy.
+Wiki is what makes RobotMoney agents knowledgeable. Ledger is what makes them correct. Policy is what makes them safe. Audit is what makes them accountable. Together, they are what makes autonomous financial action trustworthy.
