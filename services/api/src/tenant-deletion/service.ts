@@ -257,6 +257,7 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // that tenant ineligible for ordinary deletion.
   "commercial_shadow_contracts",
   "commercial_shadow_observations",
+  "commercial_shadow_state_transitions",
   "mcp_transport_tool_observations",
   "mcp_tool_meter_events",
   "mcp_meter_persistence_failure_events",

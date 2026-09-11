@@ -6368,7 +6368,7 @@ export interface operations {
                         /** @enum {string|null} */
                         provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
                         /** @enum {string|null} */
-                        data_profile: "synthetic_brightline_v1" | "customer" | null;
+                        data_profile: "synthetic_brightline_v1" | "customer" | "internal_commercial_shadow_v1" | null;
                         /** @enum {string|null} */
                         access_stage: "demo" | "production_review" | "production" | null;
                     };

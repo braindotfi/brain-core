@@ -111,6 +111,7 @@ export class CommercialShadowRepository {
            ) AS mcp_run ON TRUE
           WHERE contract.tenant_id = $1
             AND contract.shadow_period_id = $2
+            AND period.state = 'running'
             AND period.completed_at IS NULL`,
         [input.tenantId, input.shadowPeriodId],
       );

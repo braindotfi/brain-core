@@ -1,0 +1,309 @@
+name: ops-commercial-shadow
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options: [inspect, start, pause, stop, complete]
+      approved_sha:
+        description: "Exact 40-character production SHA."
+        required: true
+        type: string
+      reason:
+        description: "Reviewed operator reason, 10 to 240 characters."
+        required: true
+        type: string
+      confirmation:
+        description: "Exact action confirmation string documented in the workflow."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    name: ${{ inputs.action }} internal commercial shadow
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.approved_sha }}
+
+      - name: Validate fixed command boundary
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          REASON: ${{ inputs.reason }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          action = os.environ["ACTION"]
+          expected = {
+              "inspect": "INSPECT_INTERNAL_COMMERCIAL_SHADOW_2026_10",
+              "start": "START_INTERNAL_COMMERCIAL_SHADOW_2026_10",
+              "pause": "PAUSE_INTERNAL_COMMERCIAL_SHADOW_2026_10",
+              "stop": "STOP_INTERNAL_COMMERCIAL_SHADOW_2026_10",
+              "complete": "COMPLETE_INTERNAL_COMMERCIAL_SHADOW_2026_10",
+          }
+          if action not in expected or os.environ["CONFIRMATION"] != expected[action]:
+              raise SystemExit("confirmation does not match the fixed action boundary")
+          if not re.fullmatch(r"[0-9a-f]{40}", os.environ["APPROVED_SHA"]):
+              raise SystemExit("approved_sha must be 40 lowercase hex characters")
+          reason = os.environ["REASON"]
+          if not 10 <= len(reason) <= 240 or "\n" in reason or "\r" in reason:
+              raise SystemExit("reason must be 10 to 240 characters on one line")
+          PY
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Confirm true production and exact deployed SHA
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && API_BASE=https://api.brain.fi VM_ENV_FILE=.env.prod bash scripts/ops/assert-true-production.sh >/dev/null && curl -fsS https://api.brain.fi/health" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+          if [ "$remote_sha" != "$APPROVED_SHA" ]; then
+            echo "deployed SHA does not match approved SHA" >&2
+            exit 1
+          fi
+          echo "true_production=true"
+          echo "deployed_sha_matches=true"
+
+      - name: Confirm Phase 4 scheduler readiness for start
+        if: inputs.action == 'start'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          systemctl is-enabled --quiet brain-commercial-shadow-daily.timer
+          systemctl is-active --quiet brain-commercial-shadow-daily.timer
+          next_run=$(systemctl show brain-commercial-shadow-daily.timer --property=NextElapseUSecRealtime --value)
+          [ -n "$next_run" ] && [ "$next_run" != n/a ]
+          docker exec -i brain-prod-api node - <<'NODE'
+          const disabled = [
+            "BRAIN_COMMERCIAL_CATALOG_ENABLED",
+            "BRAIN_ENTITY_SCOPE_ENABLED",
+            "BRAIN_AGENT_CAPACITY_ENABLED",
+            "BRAIN_EXECUTION_LIMITS_ENABLED",
+            "BRAIN_STRIPE_BILLING_ENABLED",
+            "BRAIN_X402_PAYMENTS_ENABLED",
+            "BRAIN_OUTCOME_FEES_ENABLED",
+            "BRAIN_MOVEMENT_FEES_ENABLED",
+            "BRAIN_PRODUCTION_GRADUATION_ENABLED",
+            "BRAIN_COMMERCIAL_SHADOW_ENABLED",
+          ];
+          const safe = disabled.every((key) => (process.env[key] ?? "false") === "false");
+          process.exit(safe && process.env.BRAIN_API_KEY_AUTH_ENABLED === "true"
+            && Boolean(process.env.BRAIN_API_KEY_PEPPER) ? 0 : 1);
+          NODE
+          docker exec -i brain-prod-auth node - <<'NODE'
+          process.exit(process.env.BRAIN_AGENT_KEY_EXCHANGE_ENABLED === "true"
+            && process.env.BRAIN_AGENT_KEY_ENVIRONMENT === "live"
+            && Boolean(process.env.BRAIN_AGENT_API_KEY_PEPPER) ? 0 : 1);
+          NODE
+          REMOTE
+          echo "scheduler_unit_enabled=true"
+          echo "scheduler_unit_active=true"
+          echo "scheduler_next_run_present=true"
+          echo "commercial_billing_flags_disabled=true"
+          echo "api_key_auth_ready=true"
+          echo "agent_key_exchange_ready=true"
+
+      - name: Run guarded operator
+        id: operator
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          ACTOR: github:${{ github.actor }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          remote_command="/tmp/commercial-shadow-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("commercial-shadow-command.json", "w", encoding="utf-8") as handle:
+              json.dump({
+                  "action": os.environ["ACTION"],
+                  "approved_sha": os.environ["APPROVED_SHA"],
+                  "actor": os.environ["ACTOR"],
+                  "reason": os.environ["REASON"],
+              }, handle)
+          os.chmod("commercial-shadow-command.json", 0o600)
+          PY
+          scp -i ~/.ssh/id_deploy commercial-shadow-command.json "azureuser@$VM_HOST:$remote_command"
+          result=$(ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && python3 - '$remote_command'" <<'PY'
+          import json
+          import os
+          import pathlib
+          import stat
+          import subprocess
+          import sys
+
+          command_path = pathlib.Path(sys.argv[1])
+          try:
+              command = json.loads(command_path.read_text())
+              action = command["action"]
+              compose = [
+                  "docker", "compose", "-p", "brain-prod", "--env-file", ".env.prod",
+                  "-f", "docker-compose.prod.yml", "--profile", "ops", "run", "--rm",
+                  "--no-deps",
+              ]
+              if action == "start":
+                  output = pathlib.Path(".commercial-shadow-secrets")
+                  if output.exists() and output.is_symlink():
+                      raise SystemExit("credential directory must not be a symlink")
+                  output.mkdir(mode=0o700, exist_ok=True)
+                  os.chmod(output, 0o700)
+                  if stat.S_IMODE(output.stat().st_mode) != 0o700:
+                      raise SystemExit("credential directory must be mode 0700")
+                  compose.extend(["-v", f"{output.resolve()}:/run/brain-commercial-shadow"])
+              compose.extend([
+                  "entitlement-operator", "node",
+                  "services/api/dist/commercial/shadow-operator-cli.js", action,
+              ])
+              if action != "inspect":
+                  compose.extend([
+                      "--approved-sha", command["approved_sha"],
+                      "--actor", command["actor"], "--reason", command["reason"],
+                  ])
+              if action == "start":
+                  compose.extend(["--credential-output-dir", "/run/brain-commercial-shadow"])
+              completed = subprocess.run(compose, check=True, capture_output=True, text=True)
+              print(completed.stdout.strip())
+          finally:
+              command_path.unlink(missing_ok=True)
+          PY
+          )
+          printf '%s\n' "$result"
+          tenant_id=$(printf '%s\n' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tenant_id", ""))')
+          if [ -n "$tenant_id" ]; then echo "tenant_id=$tenant_id" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Apply runtime state after a successful mutation
+        if: inputs.action != 'inspect'
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          TENANT_ID: ${{ steps.operator.outputs.tenant_id }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          ACTOR: github:${{ github.actor }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" \
+            "cd ~/brain-core && ACTION='$ACTION' TENANT_ID='$TENANT_ID' APPROVED_SHA='$APPROVED_SHA' ACTOR='$ACTOR' python3 -" <<'PY'
+          import os
+          import pathlib
+          import shutil
+          import subprocess
+          import time
+
+          action = os.environ["ACTION"]
+          tenant_id = os.environ["TENANT_ID"]
+          approved_sha = os.environ["APPROVED_SHA"]
+          actor = os.environ["ACTOR"]
+          enabled = action == "start"
+          if enabled and not tenant_id.startswith("tnt_"):
+              raise SystemExit("start did not return a tenant id")
+          paths = [pathlib.Path(".env.prod"), pathlib.Path(".env.api.prod")]
+          backups = []
+          for path in paths:
+              if path.is_symlink() or not path.is_file():
+                  raise SystemExit(f"unsafe production env file: {path}")
+              backup = path.with_name(path.name + ".pre-shadow")
+              shutil.copy2(path, backup, follow_symlinks=False)
+              os.chown(backup, path.stat().st_uid, path.stat().st_gid)
+              backups.append((path, backup))
+          compose = ["docker", "compose", "-p", "brain-prod", "--env-file", ".env.prod", "-f", "docker-compose.prod.yml"]
+          try:
+              for path, _ in backups:
+                  lines = path.read_text().splitlines()
+                  updates = {
+                      "BRAIN_COMMERCIAL_SHADOW_ENABLED": "true" if enabled else "false",
+                      "BRAIN_COMMERCIAL_SHADOW_TENANT_ID": tenant_id if enabled else "",
+                  }
+                  kept = [line for line in lines if line.split("=", 1)[0].strip() not in updates]
+                  kept.extend(f"{key}={value}" for key, value in updates.items())
+                  temporary = path.with_name(path.name + ".shadow.tmp")
+                  temporary.write_text("\n".join(kept) + "\n")
+                  os.chmod(temporary, path.stat().st_mode & 0o777)
+                  os.chown(temporary, path.stat().st_uid, path.stat().st_gid)
+                  os.replace(temporary, path)
+              subprocess.run(["bash", "scripts/check-required-compose-secrets.sh", "--compose", "docker-compose.prod.yml", "--env", ".env.prod"], check=True)
+              subprocess.run(compose + ["up", "-d", "--no-deps", "--no-build", "--force-recreate", "api"], check=True)
+              for _ in range(20):
+                  health = subprocess.run(["curl", "-fsS", "https://api.brain.fi/health"], capture_output=True, text=True)
+                  runtime = subprocess.run([
+                      "docker", "exec", "brain-prod-api", "node", "-e",
+                      "const ok=process.env.GIT_SHA===process.argv[1]&&"
+                      "process.env.BRAIN_COMMERCIAL_SHADOW_ENABLED===process.argv[2]&&"
+                      "process.env.BRAIN_COMMERCIAL_SHADOW_TENANT_ID===process.argv[3];"
+                      "process.exit(ok?0:1)", approved_sha, "true" if enabled else "false",
+                      tenant_id if enabled else "",
+                  ])
+                  if health.returncode == 0 and runtime.returncode == 0:
+                      break
+                  time.sleep(3)
+              else:
+                  raise RuntimeError("API health or runtime shadow state verification failed")
+          except Exception:
+              for path, backup in backups:
+                  os.replace(backup, path)
+              subprocess.run(compose + ["up", "-d", "--no-deps", "--no-build", "--force-recreate", "api"], check=False)
+              if action == "start":
+                  pause = compose + [
+                      "--profile", "ops", "run", "--rm", "--no-deps",
+                      "entitlement-operator", "node",
+                      "services/api/dist/commercial/shadow-operator-cli.js", "pause",
+                      "--approved-sha", approved_sha, "--actor", actor,
+                      "--reason", "Automatic pause because API runtime activation failed",
+                  ]
+                  subprocess.run(pause, check=False)
+              raise
+          finally:
+              for _, backup in backups:
+                  backup.unlink(missing_ok=True)
+          PY
+
+      - name: Verify resulting state
+        if: always() && steps.operator.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml --profile ops run --rm --no-deps entitlement-operator node services/api/dist/commercial/shadow-operator-cli.js inspect"
+
+      - name: Remove local command material
+        if: always()
+        shell: bash
+        run: rm -f commercial-shadow-command.json ~/.ssh/id_deploy

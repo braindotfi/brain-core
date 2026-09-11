@@ -87,7 +87,7 @@ interface ApiKeyRow {
 
 interface TenantApiKeyState {
   provisioning_state: "provisioning" | "ready_demo" | "seed_failed" | "archived" | null;
-  data_profile: "synthetic_brightline_v1" | "customer" | null;
+  data_profile: "synthetic_brightline_v1" | "customer" | "internal_commercial_shadow_v1" | null;
   access_stage: "demo" | "production_review" | "production" | null;
 }
 

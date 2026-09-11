@@ -550,6 +550,131 @@ GRANT SELECT ON commercial_shadow_contracts, commercial_shadow_observations,
 GRANT INSERT ON commercial_shadow_observations,
   mcp_usage_reconciliation_runs TO brain_privileged;
 GRANT INSERT, UPDATE, DELETE ON mcp_usage_daily_rollups TO brain_privileged;
+
+-- RFC 0011 Phase 3 shadow control plane. Lifecycle mutations stay behind
+-- narrow SECURITY DEFINER functions. Runtime roles have no visibility into
+-- scheduler state and no ability to forge or erase transition evidence.
+REVOKE ALL PRIVILEGES ON commercial_shadow_periods,
+  commercial_shadow_scheduler_heartbeats,
+  commercial_shadow_state_transitions
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT ON commercial_shadow_periods,
+  commercial_shadow_scheduler_heartbeats,
+  commercial_shadow_state_transitions TO brain_privileged;
+GRANT SELECT ON commercial_shadow_periods TO brain_app;
+REVOKE ALL ON FUNCTION start_internal_commercial_shadow(
+  TEXT,TEXT,TEXT,JSONB,BYTEA,TEXT,BYTEA,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT
+) FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION transition_internal_commercial_shadow(TEXT,TEXT,TEXT,TEXT,TEXT)
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION assert_internal_commercial_shadow_zero_billing(TEXT)
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION inspect_internal_commercial_shadow() FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT EXECUTE ON FUNCTION start_internal_commercial_shadow(
+  TEXT,TEXT,TEXT,JSONB,BYTEA,TEXT,BYTEA,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT
+) TO brain_privileged;
+GRANT EXECUTE ON FUNCTION transition_internal_commercial_shadow(TEXT,TEXT,TEXT,TEXT,TEXT)
+  TO brain_privileged;
+GRANT EXECUTE ON FUNCTION inspect_internal_commercial_shadow() TO brain_privileged;
+
+DO $$
+DECLARE
+  runtime_role TEXT;
+  operator_table TEXT;
+BEGIN
+  FOREACH operator_table IN ARRAY ARRAY[
+    'commercial_shadow_periods', 'commercial_shadow_scheduler_heartbeats',
+    'commercial_shadow_state_transitions'
+  ] LOOP
+    IF NOT has_table_privilege(
+      'brain_privileged', 'public.' || operator_table, 'SELECT'
+    ) OR has_table_privilege(
+      'brain_privileged', 'public.' || operator_table,
+      'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    ) THEN
+      RAISE EXCEPTION
+        'brain_privileged commercial shadow table privileges are invalid on %',
+        operator_table;
+    END IF;
+  END LOOP;
+  IF NOT has_function_privilege(
+       'brain_privileged',
+       'public.start_internal_commercial_shadow(text,text,text,jsonb,bytea,text,bytea,text,text,text,text,text,text,text,text,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.inspect_internal_commercial_shadow()',
+       'EXECUTE'
+     )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.transition_internal_commercial_shadow(text,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR has_function_privilege(
+       'brain_privileged',
+       'public.assert_internal_commercial_shadow_zero_billing(text)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'commercial shadow operator privileges are invalid';
+  END IF;
+  FOREACH runtime_role IN ARRAY ARRAY[
+    'brain_app', 'brain_wiki_reader', 'brain_mcp_reader', 'brain_raw_worker',
+    'brain_canonical_projector', 'brain_ledger_projector',
+    'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
+    'brain_resolver', 'brain_tenant_deletion', 'brain_surface_gateway',
+    'brain_surface_audit_writer', 'brain_auth', 'brain_auth_audit_writer'
+  ] LOOP
+    IF has_table_privilege(
+      runtime_role, 'public.commercial_shadow_scheduler_heartbeats',
+      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    ) OR has_table_privilege(runtime_role, 'public.commercial_shadow_state_transitions', 'SELECT')
+       OR has_table_privilege(runtime_role, 'public.commercial_shadow_state_transitions', 'INSERT')
+       OR has_table_privilege(runtime_role, 'public.commercial_shadow_state_transitions', 'UPDATE')
+       OR has_table_privilege(runtime_role, 'public.commercial_shadow_state_transitions', 'DELETE')
+       OR has_table_privilege(runtime_role, 'public.commercial_shadow_state_transitions', 'TRUNCATE')
+       OR has_function_privilege(
+      runtime_role, 'public.inspect_internal_commercial_shadow()', 'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.start_internal_commercial_shadow(text,text,text,jsonb,bytea,text,bytea,text,text,text,text,text,text,text,text,text,text,text,text)',
+      'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.transition_internal_commercial_shadow(text,text,text,text,text)',
+      'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.assert_internal_commercial_shadow_zero_billing(text)',
+      'EXECUTE'
+    ) THEN
+      RAISE EXCEPTION 'runtime role % has commercial shadow operator privileges', runtime_role;
+    END IF;
+  END LOOP;
+END $$;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

@@ -69,6 +69,7 @@ export class PostgresMcpShadowMetering implements McpShadowMetering {
             WHERE contract.tenant_id = $1
               AND contract.environment = $8
               AND period.started_at <= $7
+              AND period.state = 'running'
               AND period.completed_at IS NULL
          ), inserted AS (
            INSERT INTO mcp_transport_tool_observations (

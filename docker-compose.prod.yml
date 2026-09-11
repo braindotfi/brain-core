@@ -337,6 +337,8 @@ services:
       LEGACY_AGENT_JWT_NOT_AFTER: "2026-09-16T23:59:59Z"
       DATABASE_URL: postgres://brain_privileged:${BRAIN_PRIVILEGED_DB_PASSWORD:?BRAIN_PRIVILEGED_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_AUDIT_DATABASE_URL: postgres://brain_app:${BRAIN_APP_DB_PASSWORD:?BRAIN_APP_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_API_KEY_PEPPER: ${BRAIN_API_KEY_PEPPER:?BRAIN_API_KEY_PEPPER is required in production}
+      BRAIN_AGENT_API_KEY_PEPPER: ${BRAIN_AGENT_API_KEY_PEPPER:?BRAIN_AGENT_API_KEY_PEPPER is required in production}
       DATABASE_SSL: disable
     depends_on:
       db-roles:

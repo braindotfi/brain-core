@@ -104,6 +104,7 @@ secrets/
 localstack-data/
 postgres-data/
 redis-data/
+.commercial-shadow-secrets/
 
 # Logs
 logs/

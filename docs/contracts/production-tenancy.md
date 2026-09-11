@@ -46,6 +46,11 @@ succeeds. A failed seeder records `seed_failed`. Existing tenants are classified
 as unknown because the old schema cannot prove their origin and receive no
 Raw-key eligibility by migration.
 
+The protected RFC 0011 shadow operator is the sole writer of
+`data_profile='internal_commercial_shadow_v1'`. It pairs that marker with
+`access_stage='production'` on the dedicated internal commercial shadow tenant.
+This marker does not qualify for the synthetic-demo Raw-key exception.
+
 Tenant API keys universally permit only `ledger:read`, `audit:read`, and
 `governance:read`. The sole Raw exception is a sandbox `brain_sk_test_` key on a
 tenant that still has all three trusted markers: `ready_demo`,
