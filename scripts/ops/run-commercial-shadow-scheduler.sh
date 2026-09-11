@@ -10,9 +10,10 @@ fi
 
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 cd "$repo_dir"
-deployed_sha=$(git rev-parse HEAD)
+deployed_sha=$(curl -fsS https://api.brain.fi/health | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["commit"])')
 [[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]] || {
-  echo "deployed checkout does not resolve to an exact SHA" >&2
+  echo "production health does not report an exact deployed SHA" >&2
   exit 1
 }
 
