@@ -599,6 +599,55 @@ GRANT EXECUTE ON FUNCTION transition_internal_commercial_shadow(TEXT,TEXT,TEXT,T
   TO brain_privileged;
 GRANT EXECUTE ON FUNCTION inspect_internal_commercial_shadow() TO brain_privileged;
 
+-- RFC 0011 Phase 4 daily shadow operations. Final run evidence is read-only to
+-- the operator role. Heartbeat refresh and evidence insertion are available
+-- only through validating SECURITY DEFINER functions.
+REVOKE ALL PRIVILEGES ON commercial_shadow_daily_runs
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT ON commercial_shadow_daily_runs TO brain_privileged;
+REVOKE ALL ON FUNCTION write_commercial_shadow_scheduler_heartbeat(
+  TEXT,TEXT,TIMESTAMPTZ,TIMESTAMPTZ,TEXT
+) FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION record_internal_commercial_shadow_daily_run(
+  TEXT,TEXT,DATE,TIMESTAMPTZ,TEXT,TIMESTAMPTZ,TIMESTAMPTZ,
+  INTEGER,INTEGER,INTEGER,INTEGER,TEXT,TEXT,TEXT,TEXT,JSONB
+) FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION report_internal_commercial_shadow_day(DATE) FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION require_commercial_shadow_daily_runs_for_completion() FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT EXECUTE ON FUNCTION write_commercial_shadow_scheduler_heartbeat(
+  TEXT,TEXT,TIMESTAMPTZ,TIMESTAMPTZ,TEXT
+) TO brain_privileged;
+GRANT EXECUTE ON FUNCTION record_internal_commercial_shadow_daily_run(
+  TEXT,TEXT,DATE,TIMESTAMPTZ,TEXT,TIMESTAMPTZ,TIMESTAMPTZ,
+  INTEGER,INTEGER,INTEGER,INTEGER,TEXT,TEXT,TEXT,TEXT,JSONB
+) TO brain_privileged;
+GRANT EXECUTE ON FUNCTION report_internal_commercial_shadow_day(DATE)
+  TO brain_privileged;
+
 DO $$
 DECLARE
   runtime_role TEXT;
@@ -606,7 +655,7 @@ DECLARE
 BEGIN
   FOREACH operator_table IN ARRAY ARRAY[
     'commercial_shadow_periods', 'commercial_shadow_scheduler_heartbeats',
-    'commercial_shadow_state_transitions'
+    'commercial_shadow_state_transitions', 'commercial_shadow_daily_runs'
   ] LOOP
     IF NOT has_table_privilege(
       'brain_privileged', 'public.' || operator_table, 'SELECT'
@@ -634,9 +683,29 @@ BEGIN
        'public.transition_internal_commercial_shadow(text,text,text,text,text)',
        'EXECUTE'
      )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.write_commercial_shadow_scheduler_heartbeat(text,text,timestamptz,timestamptz,text)',
+       'EXECUTE'
+     )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.record_internal_commercial_shadow_daily_run(text,text,date,timestamptz,text,timestamptz,timestamptz,integer,integer,integer,integer,text,text,text,text,jsonb)',
+       'EXECUTE'
+     )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.report_internal_commercial_shadow_day(date)',
+       'EXECUTE'
+     )
      OR has_function_privilege(
        'brain_privileged',
        'public.assert_internal_commercial_shadow_zero_billing(text)',
+       'EXECUTE'
+     )
+     OR has_function_privilege(
+       'brain_privileged',
+       'public.require_commercial_shadow_daily_runs_for_completion()',
        'EXECUTE'
      ) THEN
     RAISE EXCEPTION 'commercial shadow operator privileges are invalid';
@@ -669,6 +738,23 @@ BEGIN
     ) OR has_function_privilege(
       runtime_role,
       'public.assert_internal_commercial_shadow_zero_billing(text)',
+      'EXECUTE'
+    ) OR has_table_privilege(
+      runtime_role, 'public.commercial_shadow_daily_runs',
+      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.write_commercial_shadow_scheduler_heartbeat(text,text,timestamptz,timestamptz,text)',
+      'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.record_internal_commercial_shadow_daily_run(text,text,date,timestamptz,text,timestamptz,timestamptz,integer,integer,integer,integer,text,text,text,text,jsonb)',
+      'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role, 'public.report_internal_commercial_shadow_day(date)', 'EXECUTE'
+    ) OR has_function_privilege(
+      runtime_role,
+      'public.require_commercial_shadow_daily_runs_for_completion()',
       'EXECUTE'
     ) THEN
       RAISE EXCEPTION 'runtime role % has commercial shadow operator privileges', runtime_role;

@@ -1,0 +1,14 @@
+[Unit]
+Description=Brain internal commercial shadow daily workload
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=azureuser
+WorkingDirectory=/home/azureuser/brain-core
+ExecStart=/home/azureuser/brain-core/scripts/ops/run-commercial-shadow-scheduler.sh run
+TimeoutStartSec=4h
+NoNewPrivileges=true
+PrivateTmp=true

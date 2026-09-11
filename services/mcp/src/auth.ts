@@ -20,6 +20,7 @@
 import {
   brainError,
   computeAgentScopeHash,
+  PAYMENT_AGENT_SCOPES,
   withTenantScope,
   type Principal,
   type Scope,
@@ -50,6 +51,8 @@ export interface AgentRecord {
    * "tenant_signed" / "onchain_custodial" both still require the
    * BrainMCPAgentRegistry check this file otherwise always ran. */
   attestation_mode: string;
+  tenant_data_profile?: string | null;
+  commercial_shadow_active?: boolean;
 }
 
 export interface OnchainScopeChecker {
@@ -171,6 +174,29 @@ export class McpAuthVerifier implements AuthVerifier {
       });
     }
 
+    // The one internal commercial shadow BFF is intentionally not registered
+    // on-chain. It may use MCP only when its exchanged token is narrowed to
+    // the same read-only ceiling as an unattested reader. The tenant provenance,
+    // active tenant-bound contract, role, zero address, and canonical
+    // payment-role hash make this exception unavailable to every ordinary
+    // tenant and to any broader token.
+    const offchainHexLower = Buffer.from(agent.scope_hash).toString("hex").toLowerCase();
+    const shadowBffHash = computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2).toLowerCase();
+    if (
+      agent.tenant_data_profile === "internal_commercial_shadow_v1" &&
+      agent.commercial_shadow_active === true &&
+      agent.role === "payment" &&
+      agent.onchain_address === "0x0000000000000000000000000000000000000000" &&
+      offchainHexLower === shadowBffHash &&
+      principal.scopes.length > 0 &&
+      principal.scopes.every((scope) => MCP_UNATTESTED_SCOPES.has(scope))
+    ) {
+      return {
+        agent,
+        ctx: { tenantId: principal.tenantId, actor: principal.id },
+      };
+    }
+
     // Tier-1 unattested read-only path (RFC 0002 Phase C, increment 1). Skips
     // the BrainMCPAgentRegistry read below ONLY when all four clauses hold --
     // each closes a distinct bypass, so none may be dropped or merged.
@@ -191,7 +217,6 @@ export class McpAuthVerifier implements AuthVerifier {
       // value that happens to still be stored. Prevents scope carried over
       // from a broader grant from riding the unattested path.
       const canonicalHex = computeAgentScopeHash(roleScopes).slice(2).toLowerCase();
-      const offchainHexLower = Buffer.from(agent.scope_hash).toString("hex").toLowerCase();
       const scopeHashIsCanonical = offchainHexLower === canonicalHex;
       // Clause 4: the JWT actually presented on THIS request must also be
       // fully contained in MCP_UNATTESTED_SCOPES. The registered role can be
@@ -255,8 +280,22 @@ export class McpAuthVerifier implements AuthVerifier {
   private async loadAgent(principal: Principal): Promise<AgentRecord | null> {
     return withTenantScope(this.pool, principal.tenantId, async (c) => {
       const { rows } = await c.query<AgentRecord>(
-        `SELECT id, tenant_id, state, scope_hash, onchain_address, role, attestation_mode
-           FROM agents WHERE id = $1 LIMIT 1`,
+        `SELECT agent.id, agent.tenant_id, agent.state, agent.scope_hash,
+                agent.onchain_address, agent.role, agent.attestation_mode,
+                tenant.data_profile AS tenant_data_profile,
+                EXISTS (
+                  SELECT 1
+                    FROM commercial_shadow_contracts contract
+                    JOIN commercial_shadow_periods period
+                      ON period.id = contract.shadow_period_id
+                   WHERE contract.tenant_id = agent.tenant_id
+                     AND contract.environment = 'live'
+                     AND period.state = 'running'
+                     AND period.completed_at IS NULL
+                ) AS commercial_shadow_active
+           FROM agents agent
+           JOIN tenants tenant ON tenant.id = agent.tenant_id
+          WHERE agent.id = $1 LIMIT 1`,
         [principal.id],
       );
       return rows[0] ?? null;

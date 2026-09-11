@@ -43,6 +43,11 @@ suite("commercial shadow operator database contract", () => {
       transition_execute: boolean;
       inspect_execute: boolean;
       zero_billing_execute: boolean;
+      daily_select: boolean;
+      daily_insert: boolean;
+      heartbeat_execute: boolean;
+      daily_record_execute: boolean;
+      daily_report_execute: boolean;
     }>(
       `SELECT current_user,
               has_table_privilege(current_user, 'commercial_shadow_periods', 'SELECT') AS period_select,
@@ -51,7 +56,12 @@ suite("commercial shadow operator database contract", () => {
               has_function_privilege(current_user, 'start_internal_commercial_shadow(text,text,text,jsonb,bytea,text,bytea,text,text,text,text,text,text,text,text,text,text,text,text)', 'EXECUTE') AS start_execute,
               has_function_privilege(current_user, 'transition_internal_commercial_shadow(text,text,text,text,text)', 'EXECUTE') AS transition_execute,
               has_function_privilege(current_user, 'inspect_internal_commercial_shadow()', 'EXECUTE') AS inspect_execute,
-              has_function_privilege(current_user, 'assert_internal_commercial_shadow_zero_billing(text)', 'EXECUTE') AS zero_billing_execute`,
+              has_function_privilege(current_user, 'assert_internal_commercial_shadow_zero_billing(text)', 'EXECUTE') AS zero_billing_execute,
+              has_table_privilege(current_user, 'commercial_shadow_daily_runs', 'SELECT') AS daily_select,
+              has_table_privilege(current_user, 'commercial_shadow_daily_runs', 'INSERT') AS daily_insert,
+              has_function_privilege(current_user, 'write_commercial_shadow_scheduler_heartbeat(text,text,timestamptz,timestamptz,text)', 'EXECUTE') AS heartbeat_execute,
+              has_function_privilege(current_user, 'record_internal_commercial_shadow_daily_run(text,text,date,timestamptz,text,timestamptz,timestamptz,integer,integer,integer,integer,text,text,text,text,jsonb)', 'EXECUTE') AS daily_record_execute,
+              has_function_privilege(current_user, 'report_internal_commercial_shadow_day(date)', 'EXECUTE') AS daily_report_execute`,
     );
     expect(result.rows[0]).toEqual({
       current_user: "brain_privileged",
@@ -62,6 +72,11 @@ suite("commercial shadow operator database contract", () => {
       transition_execute: true,
       inspect_execute: true,
       zero_billing_execute: false,
+      daily_select: true,
+      daily_insert: false,
+      heartbeat_execute: true,
+      daily_record_execute: true,
+      daily_report_execute: true,
     });
     await expect(inspectCommercialShadow(operatorClient as never)).resolves.toBeDefined();
   });
@@ -98,6 +113,28 @@ suite("commercial shadow operator database contract", () => {
       }),
     ).rejects.toThrow(/scheduler is not healthy/);
     await client.query("ROLLBACK TO SAVEPOINT missing_scheduler");
+  });
+
+  it("accepts only a fresh exact-SHA scheduler heartbeat", async () => {
+    await expect(
+      client.query(
+        `SELECT write_commercial_shadow_scheduler_heartbeat(
+           $1, 'ready', clock_timestamp(), clock_timestamp() + interval '1 hour', $2
+         )`,
+        [approvedSha, "integration-heartbeat"],
+      ),
+    ).resolves.toBeDefined();
+    await client.query("SAVEPOINT invalid_heartbeat");
+    await expect(
+      client.query(
+        `SELECT write_commercial_shadow_scheduler_heartbeat(
+           $1, 'ready', clock_timestamp() - interval '16 minutes',
+           clock_timestamp() + interval '1 hour', $2
+         )`,
+        [approvedSha, "stale-integration-heartbeat"],
+      ),
+    ).rejects.toMatchObject({ code: "22023" });
+    await client.query("ROLLBACK TO SAVEPOINT invalid_heartbeat");
   });
 
   it("provisions and starts only after every tenant-bound precondition exists", async () => {
@@ -155,6 +192,18 @@ suite("commercial shadow operator database contract", () => {
     });
     expect(started.bundle.BRAIN_AGENT_API_KEY).toMatch(/^brain_ak_live_/);
     expect(started.bundle.BRAIN_API_KEY).toMatch(/^brain_sk_live_/);
+
+    const missingDay = await client.query<{ result: Record<string, unknown> }>(
+      `SELECT report_internal_commercial_shadow_day(DATE '2026-10-01') AS result`,
+    );
+    expect(missingDay.rows[0]?.result).toMatchObject({
+      tenant_id: started.bundle.tenant_id,
+      shadow_period_id: started.bundle.shadow_period_id,
+      expected: true,
+      scheduled_state: "running",
+      status: "missing",
+      zero_billing_state: true,
+    });
   });
 
   it("pauses, resumes, stops safely, and completes only with 30 complete days", async () => {
@@ -262,6 +311,31 @@ suite("commercial shadow operator database contract", () => {
               '{}'::jsonb, FALSE, clock_timestamp() - (day * interval '1 day')
          FROM generate_series(1, 30) AS day`,
       [running["tenant_id"], running["shadow_period_id"]],
+    );
+    await client.query(
+      `INSERT INTO commercial_shadow_daily_runs (
+         tenant_id, shadow_period_id, run_date, scheduled_for, deployed_sha,
+         started_at, completed_at, api_expected_requests, api_completed_requests,
+         mcp_expected_requests, mcp_completed_requests, api_reconciliation_run_id,
+         mcp_reconciliation_run_id, observation_id, run_reference, evidence
+       )
+       SELECT $1, $2, run_date,
+              (run_date::timestamp AT TIME ZONE 'UTC') + interval '1 hour 15 minutes',
+              $3,
+              (run_date::timestamp AT TIME ZONE 'UTC') + interval '1 hour 15 minutes',
+              (run_date::timestamp AT TIME ZONE 'UTC') + interval '2 hours 15 minutes',
+              CASE WHEN extract(isodow FROM run_date) IN (6, 7) THEN 500 ELSE 1000 END,
+              CASE WHEN extract(isodow FROM run_date) IN (6, 7) THEN 500 ELSE 1000 END,
+              CASE WHEN extract(isodow FROM run_date) IN (6, 7) THEN 50 ELSE 100 END,
+              CASE WHEN extract(isodow FROM run_date) IN (6, 7) THEN 50 ELSE 100 END,
+              'urr_phase3_complete', 'murr_phase3_complete',
+              'cso_phase3_' || day::text, 'integration-day-' || day::text,
+              '{"enforcement_applied":false}'::jsonb
+         FROM generate_series(1, 30) AS day
+         CROSS JOIN LATERAL (
+           SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date - day AS run_date
+         ) date_for_day`,
+      [running["tenant_id"], running["shadow_period_id"], approvedSha],
     );
     await transitionCommercialShadow(client as never, {
       action: "complete",

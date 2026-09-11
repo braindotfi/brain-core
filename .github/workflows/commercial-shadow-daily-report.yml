@@ -1,0 +1,137 @@
+name: commercial-shadow-daily-report
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      report_date:
+        description: "UTC date in YYYY-MM-DD. Empty means previous UTC day."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    name: Report internal commercial shadow reconciliation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: commercial-shadow-daily-report
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Select report date
+        id: date
+        shell: bash
+        env:
+          REQUESTED_DATE: ${{ inputs.report_date }}
+        run: |
+          set -euo pipefail
+          report_date=${REQUESTED_DATE:-$(date -u -d yesterday +%F)}
+          [[ "$report_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          echo "value=$report_date" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Retrieve durable report
+        id: retrieve
+        continue-on-error: true
+        shell: bash
+        env:
+          REPORT_DATE: ${{ steps.date.outputs.value }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && API_BASE=https://api.brain.fi VM_ENV_FILE=.env.prod bash scripts/ops/assert-true-production.sh >/dev/null && docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml --profile ops run --rm --no-deps entitlement-operator node services/api/dist/commercial/shadow-daily-cli.js report --date '$REPORT_DATE'" \
+            > commercial-shadow-report.json
+          chmod 600 commercial-shadow-report.json
+
+      - name: Validate and summarize report
+        id: validate
+        if: steps.retrieve.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          REPORT_DATE: ${{ steps.date.outputs.value }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("commercial-shadow-report.json", encoding="utf-8") as handle:
+              report = json.load(handle)
+          status = report.get("status")
+          expected = report.get("expected") is True
+          scheduler = report.get("scheduler")
+          zero_billing = report.get("zero_billing_state", True)
+          alert = expected and status != "complete"
+          if expected:
+              daily = report.get("daily_run")
+              alert = alert or not isinstance(scheduler, dict)
+              alert = alert or scheduler.get("state") != "ready"
+              alert = alert or scheduler.get("fresh") is not True
+              alert = alert or zero_billing is not True
+              alert = alert or not isinstance(daily, dict)
+              if isinstance(daily, dict):
+                  api = daily.get("api_reconciliation", {})
+                  mcp = daily.get("mcp_reconciliation", {})
+                  observation = daily.get("observation", {})
+                  alert = alert or api.get("status") != "matched"
+                  alert = alert or mcp.get("status") != "matched"
+                  alert = alert or observation.get("api_evidence_complete") is not True
+                  alert = alert or observation.get("mcp_evidence_complete") is not True
+                  alert = alert or observation.get("enforcement_applied") is not False
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"alert={'true' if alert else 'false'}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"## Commercial shadow report for {os.environ['REPORT_DATE']}\n\n")
+              summary.write("```json\n")
+              summary.write(json.dumps(report, indent=2, sort_keys=True))
+              summary.write("\n```\n")
+          PY
+
+      - name: Upload durable report copy
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: commercial-shadow-report-${{ steps.date.outputs.value }}
+          path: commercial-shadow-report.json
+          retention-days: 40
+
+      - name: Surface missing-run heartbeat alert
+        if: steps.retrieve.outcome != 'success' || steps.validate.outcome != 'success' || steps.validate.outputs.alert == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_DATE: ${{ steps.date.outputs.value }}
+        run: |
+          set -euo pipefail
+          title="Commercial shadow daily run missing or unhealthy: $REPORT_DATE"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" \
+              --body "The scheduled commercial shadow report detected missing or unhealthy durable evidence for $REPORT_DATE. Review this workflow run and pause the shadow if completeness cannot be restored."
+          fi
+          exit 1
+
+      - name: Remove sensitive transport files
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy commercial-shadow-report.json

@@ -15,7 +15,7 @@ vi.mock("@brain/shared", async (importActual) => {
   };
 });
 
-import { withTenantScope } from "@brain/shared";
+import { computeAgentScopeHash, PAYMENT_AGENT_SCOPES, withTenantScope } from "@brain/shared";
 import { McpAuthVerifier, type AgentRecord, type OnchainScopeChecker } from "./auth.js";
 import type { Principal } from "@brain/shared";
 
@@ -98,6 +98,76 @@ describe("McpAuthVerifier", () => {
     const verifier = new McpAuthVerifier(makePool(), makeChecker(SCOPE_HASH_HEX));
     const result = await verifier.verify(principal());
     expect(result.ctx.tenantId).toBe(TENANT);
+  });
+
+  it("allows only the provenance-bound shadow BFF with a narrowed read token", async () => {
+    const checker = makeChecker(null);
+    stubTenantScope(
+      activeAgent({
+        scope_hash: Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex"),
+        onchain_address: "0x0000000000000000000000000000000000000000",
+        tenant_data_profile: "internal_commercial_shadow_v1",
+        commercial_shadow_active: true,
+      }),
+    );
+    const verifier = new McpAuthVerifier(makePool(), checker);
+    const result = await verifier.verify({
+      ...principal(),
+      scopes: ["ledger:read", "wiki:read"],
+    });
+    expect(result.ctx.tenantId).toBe(TENANT);
+    expect(checker.getOnchainScopeHash).not.toHaveBeenCalled();
+  });
+
+  it("does not extend the shadow BFF exception to another tenant provenance", async () => {
+    stubTenantScope(
+      activeAgent({
+        scope_hash: Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex"),
+        onchain_address: "0x0000000000000000000000000000000000000000",
+        tenant_data_profile: null,
+        commercial_shadow_active: true,
+      }),
+    );
+    await expect(
+      new McpAuthVerifier(makePool(), makeChecker(null)).verify({
+        ...principal(),
+        scopes: ["ledger:read", "wiki:read"],
+      }),
+    ).rejects.toMatchObject({ code: "agent_not_registered_onchain" });
+  });
+
+  it("does not extend the shadow BFF exception to a write-capable token", async () => {
+    stubTenantScope(
+      activeAgent({
+        scope_hash: Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex"),
+        onchain_address: "0x0000000000000000000000000000000000000000",
+        tenant_data_profile: "internal_commercial_shadow_v1",
+        commercial_shadow_active: true,
+      }),
+    );
+    await expect(
+      new McpAuthVerifier(makePool(), makeChecker(null)).verify({
+        ...principal(),
+        scopes: ["ledger:read", "payment_intent:propose"],
+      }),
+    ).rejects.toMatchObject({ code: "agent_not_registered_onchain" });
+  });
+
+  it("does not extend the shadow BFF exception outside an active shadow contract", async () => {
+    stubTenantScope(
+      activeAgent({
+        scope_hash: Buffer.from(computeAgentScopeHash(PAYMENT_AGENT_SCOPES).slice(2), "hex"),
+        onchain_address: "0x0000000000000000000000000000000000000000",
+        tenant_data_profile: "internal_commercial_shadow_v1",
+        commercial_shadow_active: false,
+      }),
+    );
+    await expect(
+      new McpAuthVerifier(makePool(), makeChecker(null)).verify({
+        ...principal(),
+        scopes: ["ledger:read", "wiki:read"],
+      }),
+    ).rejects.toMatchObject({ code: "agent_not_registered_onchain" });
   });
 
   it("rejects when agent is not active", async () => {
