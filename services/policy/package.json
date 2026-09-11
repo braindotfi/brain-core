@@ -29,7 +29,7 @@
     "@brain/shared": "workspace:*",
     "fastify": "^5.11.0",
     "pg": "^8.22.0",
-    "viem": "^2.55.11",
+    "viem": "^2.55.16",
     "@noble/hashes": "^1.5.0"
   }
 }
