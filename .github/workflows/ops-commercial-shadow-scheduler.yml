@@ -86,13 +86,46 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          remote_asset_dir="/tmp/brain-commercial-shadow-scheduler-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "install -d -m 0700 '$remote_asset_dir'"
+          scp -i ~/.ssh/id_deploy \
+            infra/systemd/brain-commercial-shadow-daily.service \
+            infra/systemd/brain-commercial-shadow-daily.timer \
+            infra/systemd/brain-commercial-shadow-heartbeat.service \
+            infra/systemd/brain-commercial-shadow-heartbeat.timer \
+            scripts/ops/run-commercial-shadow-scheduler.sh \
+            "azureuser@$VM_HOST:$remote_asset_dir/"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "REMOTE_ASSET_DIR='$remote_asset_dir' bash -s" <<'REMOTE'
           set -euo pipefail
+          cleanup() {
+            rm -f \
+              "$REMOTE_ASSET_DIR/brain-commercial-shadow-daily.service" \
+              "$REMOTE_ASSET_DIR/brain-commercial-shadow-daily.timer" \
+              "$REMOTE_ASSET_DIR/brain-commercial-shadow-heartbeat.service" \
+              "$REMOTE_ASSET_DIR/brain-commercial-shadow-heartbeat.timer" \
+              "$REMOTE_ASSET_DIR/run-commercial-shadow-scheduler.sh"
+            rmdir "$REMOTE_ASSET_DIR" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for asset in \
+            brain-commercial-shadow-daily.service \
+            brain-commercial-shadow-daily.timer \
+            brain-commercial-shadow-heartbeat.service \
+            brain-commercial-shadow-heartbeat.timer \
+            run-commercial-shadow-scheduler.sh; do
+            test -f "$REMOTE_ASSET_DIR/$asset"
+            test ! -L "$REMOTE_ASSET_DIR/$asset"
+          done
           cd ~/brain-core
-          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-daily.service /etc/systemd/system/brain-commercial-shadow-daily.service
-          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-daily.timer /etc/systemd/system/brain-commercial-shadow-daily.timer
-          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-heartbeat.service /etc/systemd/system/brain-commercial-shadow-heartbeat.service
-          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-heartbeat.timer /etc/systemd/system/brain-commercial-shadow-heartbeat.timer
+          install -o azureuser -g azureuser -m 0755 \
+            "$REMOTE_ASSET_DIR/run-commercial-shadow-scheduler.sh" \
+            scripts/ops/run-commercial-shadow-scheduler.sh
+          sudo install -o root -g root -m 0644 "$REMOTE_ASSET_DIR/brain-commercial-shadow-daily.service" /etc/systemd/system/brain-commercial-shadow-daily.service
+          sudo install -o root -g root -m 0644 "$REMOTE_ASSET_DIR/brain-commercial-shadow-daily.timer" /etc/systemd/system/brain-commercial-shadow-daily.timer
+          sudo install -o root -g root -m 0644 "$REMOTE_ASSET_DIR/brain-commercial-shadow-heartbeat.service" /etc/systemd/system/brain-commercial-shadow-heartbeat.service
+          sudo install -o root -g root -m 0644 "$REMOTE_ASSET_DIR/brain-commercial-shadow-heartbeat.timer" /etc/systemd/system/brain-commercial-shadow-heartbeat.timer
           sudo systemctl daemon-reload
           sudo systemctl enable --now brain-commercial-shadow-daily.timer brain-commercial-shadow-heartbeat.timer
           sudo systemctl start brain-commercial-shadow-heartbeat.service

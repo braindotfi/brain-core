@@ -8,20 +8,14 @@ const migration = await readFile(
 );
 const roles = await readFile("infra/db-roles.sql", "utf8");
 const runner = await readFile("scripts/ops/run-commercial-shadow-scheduler.sh", "utf8");
-const dailyTimer = await readFile(
-  "infra/systemd/brain-commercial-shadow-daily.timer",
-  "utf8",
-);
+const dailyTimer = await readFile("infra/systemd/brain-commercial-shadow-daily.timer", "utf8");
 const heartbeatTimer = await readFile(
   "infra/systemd/brain-commercial-shadow-heartbeat.timer",
   "utf8",
 );
 const operator = await readFile(".github/workflows/ops-commercial-shadow-scheduler.yml", "utf8");
 const report = await readFile(".github/workflows/commercial-shadow-daily-report.yml", "utf8");
-const workload = await readFile(
-  "services/api/src/commercial/shadow-daily.ts",
-  "utf8",
-);
+const workload = await readFile("services/api/src/commercial/shadow-daily.ts", "utf8");
 
 test("daily run evidence is tenant-scoped, append-only, and function-gated", () => {
   assert.match(migration, /CREATE TABLE commercial_shadow_daily_runs/);
@@ -58,7 +52,9 @@ test("scheduler has a fixed UTC run and a fresh heartbeat loop", () => {
   assert.match(dailyTimer, /Persistent=true/);
   assert.match(heartbeatTimer, /OnUnitActiveSec=5m/);
   assert.match(runner, /assert-true-production\.sh/);
-  assert.match(runner, /git rev-parse HEAD/);
+  assert.match(runner, /curl -fsS https:\/\/api\.brain\.fi\/health/);
+  assert.match(runner, /json\.load\(sys\.stdin\)\["commit"\]/);
+  assert.doesNotMatch(runner, /git rev-parse HEAD/);
   assert.match(runner, /systemctl is-failed --quiet brain-commercial-shadow-daily\.service/);
   assert.match(runner, /--state "\$heartbeat_state"/);
   assert.match(runner, /:ro/);
@@ -71,6 +67,11 @@ test("scheduler mutations use exact confirmations and production review", () => 
   assert.match(operator, /INSTALL_COMMERCIAL_SHADOW_SCHEDULER/);
   assert.match(operator, /DISABLE_COMMERCIAL_SHADOW_SCHEDULER/);
   assert.match(operator, /ref: \$\{\{ inputs\.approved_sha \}\}/);
+  assert.match(operator, /scp -i ~\/\.ssh\/id_deploy/);
+  assert.match(operator, /scripts\/ops\/run-commercial-shadow-scheduler\.sh/);
+  assert.match(operator, /REMOTE_ASSET_DIR/);
+  assert.match(operator, /install -o azureuser -g azureuser -m 0755/);
+  assert.match(operator, /sudo install -o root -g root -m 0644/);
   assert.match(operator, /systemctl enable --now brain-commercial-shadow-daily\.timer/);
 });
 
