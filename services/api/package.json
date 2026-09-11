@@ -32,7 +32,8 @@
     "audit-outbox": "tsx src/tenant-deletion/audit-outbox-cli.ts",
     "entitlement-operator": "tsx src/usage/entitlement-operator-cli.ts",
     "billing-operator": "tsx src/usage/billing-operator-cli.ts",
-    "commercial-shadow-operator": "tsx src/commercial/shadow-operator-cli.ts"
+    "commercial-shadow-operator": "tsx src/commercial/shadow-operator-cli.ts",
+    "commercial-shadow-daily": "tsx src/commercial/shadow-daily-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

@@ -1,0 +1,136 @@
+name: ops-commercial-shadow-scheduler
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options: [inspect, install, disable]
+      approved_sha:
+        description: "Exact 40-character production SHA."
+        required: true
+        type: string
+      confirmation:
+        description: "Exact action confirmation string documented in the workflow."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scheduler:
+    name: ${{ inputs.action }} commercial shadow scheduler
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.approved_sha }}
+
+      - name: Validate fixed command boundary
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          expected = {
+              "inspect": "INSPECT_COMMERCIAL_SHADOW_SCHEDULER",
+              "install": "INSTALL_COMMERCIAL_SHADOW_SCHEDULER",
+              "disable": "DISABLE_COMMERCIAL_SHADOW_SCHEDULER",
+          }
+          action = os.environ["ACTION"]
+          if action not in expected or os.environ["CONFIRMATION"] != expected[action]:
+              raise SystemExit("confirmation does not match the fixed action boundary")
+          if not re.fullmatch(r"[0-9a-f]{40}", os.environ["APPROVED_SHA"]):
+              raise SystemExit("approved_sha must be 40 lowercase hex characters")
+          PY
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Confirm true production and exact deployed SHA
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && API_BASE=https://api.brain.fi VM_ENV_FILE=.env.prod bash scripts/ops/assert-true-production.sh >/dev/null && curl -fsS https://api.brain.fi/health" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+          test "$remote_sha" = "$APPROVED_SHA"
+
+      - name: Install exact reviewed units
+        if: inputs.action == 'install'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd ~/brain-core
+          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-daily.service /etc/systemd/system/brain-commercial-shadow-daily.service
+          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-daily.timer /etc/systemd/system/brain-commercial-shadow-daily.timer
+          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-heartbeat.service /etc/systemd/system/brain-commercial-shadow-heartbeat.service
+          sudo install -o root -g root -m 0644 infra/systemd/brain-commercial-shadow-heartbeat.timer /etc/systemd/system/brain-commercial-shadow-heartbeat.timer
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now brain-commercial-shadow-daily.timer brain-commercial-shadow-heartbeat.timer
+          sudo systemctl start brain-commercial-shadow-heartbeat.service
+          REMOTE
+
+      - name: Disable scheduler
+        if: inputs.action == 'disable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "sudo systemctl disable --now brain-commercial-shadow-daily.timer brain-commercial-shadow-heartbeat.timer"
+
+      - name: Report scheduler state
+        if: inputs.action != 'disable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          systemctl is-enabled --quiet brain-commercial-shadow-daily.timer
+          systemctl is-active --quiet brain-commercial-shadow-daily.timer
+          systemctl is-enabled --quiet brain-commercial-shadow-heartbeat.timer
+          systemctl is-active --quiet brain-commercial-shadow-heartbeat.timer
+          next_run=$(systemctl show brain-commercial-shadow-daily.timer --property=NextElapseUSecRealtime --value)
+          test -n "$next_run" && test "$next_run" != n/a
+          cd ~/brain-core
+          docker compose -p brain-prod --env-file .env.prod -f docker-compose.prod.yml \
+            --profile ops run --rm --no-deps entitlement-operator node \
+            services/api/dist/commercial/shadow-operator-cli.js inspect
+          echo "daily_timer_enabled=true"
+          echo "daily_timer_active=true"
+          echo "heartbeat_timer_enabled=true"
+          echo "heartbeat_timer_active=true"
+          echo "daily_next_run_present=true"
+          REMOTE
+
+      - name: Remove SSH key
+        if: always()
+        shell: bash
+        run: rm -f ~/.ssh/id_deploy

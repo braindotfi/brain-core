@@ -256,6 +256,7 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // observation evidence. These rows stay with the no-billing fence and make
   // that tenant ineligible for ordinary deletion.
   "commercial_shadow_contracts",
+  "commercial_shadow_daily_runs",
   "commercial_shadow_observations",
   "commercial_shadow_state_transitions",
   "mcp_transport_tool_observations",
