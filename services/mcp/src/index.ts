@@ -22,6 +22,15 @@ export {
   type OnchainScopeChecker,
 } from "./auth.js";
 export { registerMcpRoute, type McpRouteOptions } from "./transport/http.js";
+export {
+  MCP_SHADOW_METERING_POLICY,
+  PostgresMcpShadowMetering,
+  type McpShadowBinding,
+  type McpShadowMetering,
+  type McpToolMeterEvent,
+  type McpToolMeterOutcome,
+  type McpTransportObservation,
+} from "./metering.js";
 export { ALL_TOOLS, findTool, toolDescriptors } from "./tools/registry.js";
 export type { Tool, ToolContext, ToolResult } from "./tools/types.js";
 export { listResources, readResource, parseBrainUri } from "./resources.js";

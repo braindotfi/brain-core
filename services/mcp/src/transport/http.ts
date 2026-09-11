@@ -9,6 +9,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { brainError, type SlidingWindowRateLimiter } from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
+import type { McpShadowBinding, McpShadowMetering, McpToolMeterOutcome } from "../metering.js";
 import { isSupportedProtocolVersion } from "../types.js";
 
 export interface McpRouteOptions {
@@ -33,6 +34,8 @@ export interface McpRouteOptions {
    * begin an OAuth flow. Omit (e.g. in unit tests) to skip the header.
    */
   resourceMetadataUrl?: string;
+  /** Observe and meter tool calls only for the configured shadow tenant. */
+  shadowMetering?: McpShadowMetering;
 }
 
 /**
@@ -77,17 +80,35 @@ export async function registerMcpRoute(
     // Per-tenant rate limit. It runs after auth so an unauthenticated flood
     // cannot poison the limiter, and after the principal type check so only
     // allowed MCP principals consume tenant bucket capacity.
-    if (opts.tenantRateLimiter !== undefined) {
-      const decision = await opts.tenantRateLimiter.hit(`mcp:tenant:${request.principal.tenantId}`);
-      if (!decision.allowed) {
-        throw brainError("rate_limited", "tenant MCP quota exceeded", {
-          details: {
-            tenant_id: request.principal.tenantId,
-            limit: decision.limit,
-            window_count: decision.count,
-          },
-        });
-      }
+    const toolName = requestedToolName(request.body);
+    const occurredAt = new Date();
+    const decision =
+      opts.tenantRateLimiter === undefined
+        ? undefined
+        : await opts.tenantRateLimiter.hit(`mcp:tenant:${request.principal.tenantId}`);
+    const shadowBinding =
+      toolName === null || opts.shadowMetering === undefined
+        ? null
+        : await opts.shadowMetering.observeTransport({
+            requestId: String(request.id),
+            principal: request.principal,
+            toolName,
+            limiterDecision: decision?.allowed ?? true,
+            occurredAt,
+          });
+    if (decision !== undefined && !decision.allowed) {
+      await recordToolSafely(request, opts.shadowMetering, shadowBinding, {
+        statusCode: 429,
+        outcome: "rate_limited",
+        rejectionReason: "rate_limited",
+      });
+      throw brainError("rate_limited", "tenant MCP quota exceeded", {
+        details: {
+          tenant_id: request.principal.tenantId,
+          limit: decision.limit,
+          window_count: decision.count,
+        },
+      });
     }
     // MCP spec (HTTP transport): once a client has completed `initialize`, it
     // MUST send `MCP-Protocol-Version` on subsequent requests. This server is
@@ -105,13 +126,27 @@ export async function registerMcpRoute(
       typeof protocolVersionHeader === "string" &&
       !isSupportedProtocolVersion(protocolVersionHeader)
     ) {
+      await recordToolSafely(request, opts.shadowMetering, shadowBinding, {
+        statusCode: 400,
+        outcome: "client_error",
+        rejectionReason: "unsupported_protocol_version",
+      });
       throw brainError(
         "request_params_invalid",
         `unsupported MCP-Protocol-Version: ${protocolVersionHeader}`,
         { details: { header: protocolVersionHeader } },
       );
     }
-    const response = await server.handle(request.body, request.principal);
+    let response;
+    try {
+      response = await server.handle(request.body, request.principal);
+    } catch (err) {
+      const classified = classifyThrownError(err);
+      await recordToolSafely(request, opts.shadowMetering, shadowBinding, classified);
+      throw err;
+    }
+    const classified = classifyResponse(response);
+    await recordToolSafely(request, opts.shadowMetering, shadowBinding, classified);
     if (response === null) {
       // JSON-RPC notification: the spec forbids a response body. Streamable
       // HTTP's answer is 202 Accepted with nothing in it -- not a 200 with an
@@ -127,4 +162,91 @@ export async function registerMcpRoute(
     reply.status(200);
     return response;
   });
+}
+
+function requestedToolName(payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const value = payload as Record<string, unknown>;
+  if (value.jsonrpc !== "2.0" || value.method !== "tools/call") return null;
+  const params = value.params;
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    return "<unclassified>";
+  }
+  const name = (params as Record<string, unknown>).name;
+  return typeof name === "string" && name.length > 0 ? name : "<unclassified>";
+}
+
+function classifyResponse(response: Awaited<ReturnType<BrainMcpServer["handle"]>>): {
+  statusCode: number;
+  outcome: McpToolMeterOutcome;
+  rejectionReason: string | null;
+} {
+  if (response === null) {
+    return { statusCode: 202, outcome: "client_error", rejectionReason: "notification_unmetered" };
+  }
+  if (!("error" in response)) {
+    return { statusCode: 200, outcome: "success", rejectionReason: null };
+  }
+  if (response.error.code === -32002) {
+    return { statusCode: 200, outcome: "scope_rejected", rejectionReason: "scope_rejected" };
+  }
+  if (response.error.code === -32001 || response.error.code === -32003) {
+    return { statusCode: 200, outcome: "auth_rejected", rejectionReason: "auth_rejected" };
+  }
+  return {
+    statusCode: 200,
+    outcome: response.error.code === -32603 ? "server_error" : "client_error",
+    rejectionReason: "json_rpc_error",
+  };
+}
+
+function classifyThrownError(err: unknown): {
+  statusCode: number;
+  outcome: McpToolMeterOutcome;
+  rejectionReason: string;
+} {
+  const code =
+    typeof err === "object" && err !== null && "code" in err
+      ? String((err as { code: unknown }).code)
+      : "internal_server_error";
+  if (code === "auth_scope_insufficient" || code === "auth_tenant_mismatch") {
+    return { statusCode: 403, outcome: "scope_rejected", rejectionReason: code };
+  }
+  if (code.startsWith("auth_") || code.startsWith("agent_")) {
+    return { statusCode: 401, outcome: "auth_rejected", rejectionReason: code };
+  }
+  return { statusCode: 500, outcome: "server_error", rejectionReason: code };
+}
+
+async function recordToolSafely(
+  request: FastifyRequest,
+  metering: McpShadowMetering | undefined,
+  binding: McpShadowBinding | null,
+  result: {
+    statusCode: number;
+    outcome: McpToolMeterOutcome;
+    rejectionReason: string | null;
+  },
+): Promise<void> {
+  if (metering === undefined || binding === null) return;
+  try {
+    await metering.recordTool({ binding, ...result });
+  } catch (err) {
+    request.log.error(
+      { error_name: errorName(err), request_id: binding.requestId },
+      "MCP shadow meter append failed",
+    );
+    try {
+      await metering.recordMeterFailure(binding);
+    } catch (failureErr) {
+      request.log.error(
+        { error_name: errorName(failureErr), request_id: binding.requestId },
+        "MCP shadow meter failure evidence append failed",
+      );
+    }
+  }
+}
+
+function errorName(value: unknown): string {
+  return value instanceof Error ? value.name : "UnknownError";
 }

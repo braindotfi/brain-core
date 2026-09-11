@@ -13,6 +13,7 @@ import {
   type Principal,
 } from "@brain/shared";
 import type { BrainMcpServer } from "../server.js";
+import type { McpShadowBinding, McpShadowMetering } from "../metering.js";
 import { registerMcpRoute } from "./http.js";
 
 const TENANT_A = "tnt_01TESTAAAAAAAAAAAAAAAAAA";
@@ -68,6 +69,7 @@ async function buildApp(opts: {
   tenantRateLimiter?: InMemorySlidingWindowRateLimiter;
   resourceMetadataUrl?: string;
   server?: BrainMcpServer;
+  shadowMetering?: McpShadowMetering;
 }): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(errorHandlerPlugin);
@@ -77,8 +79,139 @@ async function buildApp(opts: {
     ...(opts.resourceMetadataUrl !== undefined
       ? { resourceMetadataUrl: opts.resourceMetadataUrl }
       : {}),
+    ...(opts.shadowMetering !== undefined ? { shadowMetering: opts.shadowMetering } : {}),
   });
   return app;
+}
+
+describe("registerMcpRoute commercial shadow metering", () => {
+  it("writes transport evidence before a fulfilled tool meter row", async () => {
+    const order: string[] = [];
+    const server = mockServer();
+    vi.mocked(server.handle).mockImplementation(async () => {
+      order.push("handler");
+      return { jsonrpc: "2.0", id: 1, result: { content: [] } };
+    });
+    const metering = fakeShadowMetering(order);
+    const app = await buildApp({ server, shadowMetering: metering });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        payload: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "ledger.accounts.list", arguments: {} },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(order).toEqual(["transport", "handler", "meter"]);
+      expect(metering.recordTool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 200,
+          outcome: "success",
+          rejectionReason: null,
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records a denied limiter decision and a zero-unit rate-limited meter fact", async () => {
+    const limiter = new InMemorySlidingWindowRateLimiter({ windowSeconds: 60, limit: 1 });
+    const metering = fakeShadowMetering([]);
+    const app = await buildApp({ tenantRateLimiter: limiter, shadowMetering: metering });
+    const payload = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "ledger.accounts.list", arguments: {} },
+    };
+    try {
+      expect((await app.inject({ method: "POST", url: "/agents/mcp", payload })).statusCode).toBe(
+        200,
+      );
+      expect((await app.inject({ method: "POST", url: "/agents/mcp", payload })).statusCode).toBe(
+        429,
+      );
+      expect(metering.observeTransport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limiterDecision: false }),
+      );
+      expect(metering.recordTool).toHaveBeenLastCalledWith(
+        expect.objectContaining({ outcome: "rate_limited", statusCode: 429 }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("preserves the tool response and records durable failure evidence if meter append fails", async () => {
+    const metering = fakeShadowMetering([]);
+    vi.mocked(metering.recordTool).mockRejectedValueOnce(new Error("meter unavailable"));
+    const app = await buildApp({ shadowMetering: metering });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        payload: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "ledger.accounts.list", arguments: {} },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(metering.recordMeterFailure).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not observe MCP methods that are not tool calls", async () => {
+    const metering = fakeShadowMetering([]);
+    const app = await buildApp({ shadowMetering: metering });
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/agents/mcp",
+        payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(metering.observeTransport).not.toHaveBeenCalled();
+      expect(metering.recordTool).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+function fakeShadowMetering(order: string[]): McpShadowMetering & {
+  observeTransport: ReturnType<typeof vi.fn>;
+  recordTool: ReturnType<typeof vi.fn>;
+  recordMeterFailure: ReturnType<typeof vi.fn>;
+} {
+  const binding: McpShadowBinding = {
+    tenantId: TENANT_A,
+    shadowPeriodId: "csp_october",
+    environment: "live",
+    requestId: "req_test",
+    principalType: "agent",
+    principalId: AGENT_ID,
+    toolName: "ledger.accounts.list",
+    occurredAt: new Date("2026-10-01T00:00:00Z"),
+  };
+  return {
+    observeTransport: vi.fn(async (event) => {
+      order.push("transport");
+      return { ...binding, requestId: event.requestId, occurredAt: event.occurredAt };
+    }),
+    recordTool: vi.fn(async () => {
+      order.push("meter");
+    }),
+    recordMeterFailure: vi.fn(async () => undefined),
+  };
 }
 
 describe("registerMcpRoute — per-tenant rate limit", () => {

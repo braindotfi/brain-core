@@ -181,7 +181,6 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   // ---- Commercial foundation (RFCs 0009, 0011, and 0012) ----
   // Reservation and adjustment rows reference their period or counter row.
   // Rows referencing RobotMoney entities must be deleted before the entity.
-  { table: "commercial_shadow_observations", column: "tenant_id" },
   { table: "api_usage_allowance_reservations", column: "tenant_id" },
   { table: "api_usage_allowance_counters", column: "tenant_id" },
   { table: "commercial_execution_reservations", column: "tenant_id" },
@@ -253,6 +252,16 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // no-billing fence exists. Retirement requires a later reviewed migration
   // that preserves the exclusion evidence while changing this relationship.
   "commercial_billing_exclusions",
+  // The same internal shadow tenant is bound to immutable API and MCP
+  // observation evidence. These rows stay with the no-billing fence and make
+  // that tenant ineligible for ordinary deletion.
+  "commercial_shadow_contracts",
+  "commercial_shadow_observations",
+  "mcp_transport_tool_observations",
+  "mcp_tool_meter_events",
+  "mcp_meter_persistence_failure_events",
+  "mcp_usage_daily_rollups",
+  "mcp_usage_reconciliation_runs",
   // Codex 307161b P1 #2: integrity findings are forensic records ABOUT the
   // preserved, append-only audit log; they are retained with it, not erased.
   "audit_integrity_findings",

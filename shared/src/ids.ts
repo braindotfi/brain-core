@@ -106,6 +106,8 @@ export const ID_PREFIX = {
   agentApiKey: "agkey",
   apiRequestMeterEvent: "mtr",
   apiUsageReconciliationRun: "urr",
+  mcpToolMeterEvent: "mmtr",
+  mcpUsageReconciliationRun: "murr",
   apiBillingPeriod: "ubp",
   apiBillingAdjustment: "uadj",
   apiEntitlementChange: "echg",
@@ -201,6 +203,9 @@ export const newAgentApiKeyId = (): string => brainId(ID_PREFIX.agentApiKey);
 export const newApiRequestMeterEventId = (): string => brainId(ID_PREFIX.apiRequestMeterEvent);
 export const newApiUsageReconciliationRunId = (): string =>
   brainId(ID_PREFIX.apiUsageReconciliationRun);
+export const newMcpToolMeterEventId = (): string => brainId(ID_PREFIX.mcpToolMeterEvent);
+export const newMcpUsageReconciliationRunId = (): string =>
+  brainId(ID_PREFIX.mcpUsageReconciliationRun);
 export const newApiBillingPeriodId = (): string => brainId(ID_PREFIX.apiBillingPeriod);
 export const newApiBillingAdjustmentId = (): string => brainId(ID_PREFIX.apiBillingAdjustment);
 export const newApiEntitlementChangeId = (): string => brainId(ID_PREFIX.apiEntitlementChange);
