@@ -249,6 +249,10 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The one-time commercial demo retirement commits one tenant at a time.
   // Progress must survive the tenant row so an interrupted run can resume.
   "commercial_demo_retirement_progress",
+  // An internal commercial shadow tenant cannot be deleted while its immutable
+  // no-billing fence exists. Retirement requires a later reviewed migration
+  // that preserves the exclusion evidence while changing this relationship.
+  "commercial_billing_exclusions",
   // Codex 307161b P1 #2: integrity findings are forensic records ABOUT the
   // preserved, append-only audit log; they are retained with it, not erased.
   "audit_integrity_findings",

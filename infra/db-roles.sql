@@ -495,6 +495,30 @@ GRANT SELECT ON api_metering_policies, api_request_meter_events,
 GRANT INSERT, UPDATE, DELETE ON api_usage_daily_rollups TO brain_privileged;
 GRANT INSERT ON api_usage_reconciliation_runs, api_billing_periods,
   api_billing_adjustments, api_entitlement_change_log TO brain_privileged;
+
+-- Internal commercial shadow tenants carry an immutable, database-enforced
+-- billing exclusion. No runtime role can write or erase the marker. The
+-- protected operator may inspect it and may create it only through the narrow
+-- SECURITY DEFINER function, whose clean-start trigger rejects pre-existing
+-- billing or provider state.
+REVOKE ALL PRIVILEGES ON commercial_billing_exclusions
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT ON commercial_billing_exclusions TO brain_privileged;
+REVOKE ALL ON FUNCTION create_internal_commercial_shadow_billing_exclusion(
+  TEXT, TEXT, TEXT
+) FROM
+  brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+  brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+  brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+  brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+  brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT EXECUTE ON FUNCTION create_internal_commercial_shadow_billing_exclusion(
+  TEXT, TEXT, TEXT
+) TO brain_privileged;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,
@@ -646,6 +670,76 @@ BEGIN
     RAISE EXCEPTION
       'brain_privileged must have SELECT only on public.api_keys';
   END IF;
+END $$;
+
+-- The exclusion marker itself is SELECT-only for the protected operator and
+-- completely invisible to every other runtime role. Fail the role application
+-- if a historical grant or future blanket grant widens either boundary.
+DO $$
+DECLARE
+  rolename TEXT;
+  privilege_name TEXT;
+BEGIN
+  IF NOT has_table_privilege(
+    'brain_privileged', 'public.commercial_billing_exclusions', 'SELECT'
+  )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'INSERT'
+     )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'TRUNCATE'
+     )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'REFERENCES'
+     )
+     OR has_table_privilege(
+       'brain_privileged', 'public.commercial_billing_exclusions', 'TRIGGER'
+     )
+     OR NOT has_function_privilege(
+       'brain_privileged',
+       'public.create_internal_commercial_shadow_billing_exclusion(text,text,text)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION
+      'brain_privileged commercial billing exclusion privileges are invalid';
+  END IF;
+
+  FOREACH rolename IN ARRAY ARRAY[
+    'brain_app', 'brain_wiki_reader', 'brain_mcp_reader', 'brain_raw_worker',
+    'brain_canonical_projector', 'brain_ledger_projector',
+    'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
+    'brain_resolver', 'brain_tenant_deletion', 'brain_surface_gateway',
+    'brain_surface_audit_writer', 'brain_auth', 'brain_auth_audit_writer'
+  ] LOOP
+    FOREACH privilege_name IN ARRAY ARRAY[
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+    ] LOOP
+      IF has_table_privilege(
+        rolename, 'public.commercial_billing_exclusions', privilege_name
+      ) THEN
+        RAISE EXCEPTION
+          '% must have no % privilege on commercial billing exclusions',
+          rolename,
+          privilege_name;
+      END IF;
+    END LOOP;
+
+    IF has_function_privilege(
+      rolename,
+      'public.create_internal_commercial_shadow_billing_exclusion(text,text,text)',
+      'EXECUTE'
+    ) THEN
+      RAISE EXCEPTION
+        '% must have no commercial billing exclusion function privilege',
+        rolename;
+    END IF;
+  END LOOP;
 END $$;
 
 -- Deploy wiring (env): request-path services connect with brain_app via

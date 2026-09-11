@@ -200,6 +200,25 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     );
   });
 
+  it("self-heals the immutable commercial billing exclusion boundary", () => {
+    const reset = SQL.match(
+      /REVOKE ALL PRIVILEGES ON commercial_billing_exclusions[\s\S]*?brain_auth_audit_writer;/,
+    );
+    expect(reset).not.toBeNull();
+    for (const role of ALL_RUNTIME_ROLES) {
+      expect(reset?.[0], `${role} missing from exclusion reset`).toContain(role);
+    }
+    expect(SQL).toContain("GRANT SELECT ON commercial_billing_exclusions TO brain_privileged;");
+    expect(SQL).toContain(
+      "GRANT EXECUTE ON FUNCTION create_internal_commercial_shadow_billing_exclusion(\n" +
+        "  TEXT, TEXT, TEXT\n" +
+        ") TO brain_privileged;",
+    );
+    expect(SQL).toContain("brain_privileged commercial billing exclusion privileges are invalid");
+    expect(SQL).toContain("must have no % privilege on commercial billing exclusions");
+    expect(SQL).toContain("must have no commercial billing exclusion function privilege");
+  });
+
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {
     const revoke = SQL.match(/REVOKE UPDATE, DELETE, TRUNCATE ON audit_events\s+FROM[\s\S]*?;/);
     expect(revoke).not.toBeNull();
