@@ -23,6 +23,10 @@ const shadowMigration = readFileSync(
   resolve(process.cwd(), "migrations/0040_commercial_shadow_observations.sql"),
   "utf8",
 );
+const billingExclusionMigration = readFileSync(
+  resolve(process.cwd(), "migrations/0041_commercial_billing_exclusions.sql"),
+  "utf8",
+);
 
 describe("RFC 0011 Phase 1 commercial tier schema", () => {
   it("uses immutable accepted catalog revisions without placeholders", () => {
@@ -85,6 +89,45 @@ describe("RFC 0011 Phase 1 commercial tier schema", () => {
     expect(shadowMigration).toContain("enforcement_applied = FALSE");
     expect(shadowMigration).toContain("catalog_resolution IN ('explicit', 'unresolved')");
     expect(shadowMigration).not.toContain("GRANT UPDATE ON commercial_shadow_observations");
+  });
+
+  it("makes internal commercial shadow billing exclusions immutable", () => {
+    expect(billingExclusionMigration).toContain(
+      "CREATE TABLE IF NOT EXISTS commercial_billing_exclusions",
+    );
+    expect(billingExclusionMigration).toContain("ON DELETE RESTRICT");
+    expect(billingExclusionMigration).toContain(
+      "BEFORE UPDATE OR DELETE ON commercial_billing_exclusions",
+    );
+    expect(billingExclusionMigration).toContain("BEFORE TRUNCATE ON commercial_billing_exclusions");
+    expect(billingExclusionMigration).toContain("commercial billing exclusions are immutable");
+    expect(billingExclusionMigration).toContain(
+      "REVOKE ALL PRIVILEGES ON commercial_billing_exclusions FROM PUBLIC",
+    );
+  });
+
+  it("guards every billing and provider path for excluded tenants", () => {
+    for (const trigger of [
+      "commercial_billing_account_tenants_exclusion_guard",
+      "commercial_stripe_subscriptions_exclusion_guard",
+      "commercial_stripe_events_exclusion_guard",
+      "commercial_charge_facts_exclusion_guard",
+      "x402_payment_operations_exclusion_guard",
+      "commercial_provider_commands_exclusion_guard",
+      "api_billing_adjustments_exclusion_guard",
+      "tenant_commercial_entitlements_exclusion_guard",
+      "api_billing_periods_exclusion_guard",
+    ]) {
+      expect(billingExclusionMigration).toContain(`CREATE TRIGGER ${trigger}`);
+    }
+    expect(billingExclusionMigration).toContain("tenant already has commercial billing state");
+    expect(billingExclusionMigration).toContain("commercial billing is excluded for tenant");
+    expect(billingExclusionMigration).toContain(
+      "create_internal_commercial_shadow_billing_exclusion",
+    );
+    expect(billingExclusionMigration).toContain(
+      "PERFORM 1 FROM tenants WHERE id = NEW.tenant_id FOR UPDATE",
+    );
   });
 
   it("creates every approved contract ledger", () => {

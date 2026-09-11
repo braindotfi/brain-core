@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool, type PoolClient } from "pg";
+import { newTenantId } from "@brain/shared";
 import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.js";
 
 const DB_URL = process.env.DATABASE_URL;
@@ -352,6 +353,311 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
       }
     } finally {
       await client.query("RESET ROLE").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it("enforces immutable commercial billing exclusions at every database path", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    const excludedTenantId = newTenantId();
+    const alreadyBilledTenantId = newTenantId();
+    const billingAccountId = `bill_exclusion_test_${process.pid}`;
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "INSERT INTO tenants (id, kind, sandbox) VALUES ($1, 'production', FALSE), ($2, 'production', FALSE)",
+        [excludedTenantId, alreadyBilledTenantId],
+      );
+
+      await client.query("SET ROLE brain_privileged");
+      await expect(
+        client.query("SELECT create_internal_commercial_shadow_billing_exclusion($1, $2, $3)", [
+          excludedTenantId,
+          "github:billing-shadow-test",
+          "approved internal shadow tenant",
+        ]),
+      ).resolves.toBeDefined();
+      await expect(
+        client.query("SELECT create_internal_commercial_shadow_billing_exclusion($1, $2, $3)", [
+          excludedTenantId,
+          "github:second-actor",
+          "must not rewrite original evidence",
+        ]),
+      ).resolves.toBeDefined();
+      const visible = await client.query<{
+        exclusion_kind: string;
+        created_by: string;
+        reason: string;
+      }>(
+        `SELECT exclusion_kind, created_by, reason
+           FROM commercial_billing_exclusions
+          WHERE tenant_id = $1`,
+        [excludedTenantId],
+      );
+      expect(visible.rows).toEqual([
+        {
+          exclusion_kind: "internal_commercial_shadow",
+          created_by: "github:billing-shadow-test",
+          reason: "approved internal shadow tenant",
+        },
+      ]);
+      await client.query("SAVEPOINT direct_insert_denied");
+      await expect(
+        client.query(
+          `INSERT INTO commercial_billing_exclusions (
+             tenant_id, exclusion_kind, reason, created_by
+           ) VALUES ($1, 'internal_commercial_shadow', 'direct write rejected', 'test')`,
+          [alreadyBilledTenantId],
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK TO SAVEPOINT direct_insert_denied");
+      await client.query("RELEASE SAVEPOINT direct_insert_denied");
+      await client.query("RESET ROLE");
+
+      await client.query(
+        `INSERT INTO tenant_commercial_entitlements (
+           tenant_id, catalog_revision_id, price_revision_id, billing_account_id,
+           lifecycle_status, access_status, source, effective_at
+         ) VALUES (
+           $1, 'robotmoney_growth_v1', NULL, NULL,
+           'active', 'active', 'internal_shadow_test', now()
+         )`,
+        [excludedTenantId],
+      );
+
+      const deniedStatements = [
+        `INSERT INTO commercial_billing_account_tenants (
+           tenant_id, billing_account_id, relationship
+         ) VALUES ($1, 'bill_missing', 'production')`,
+        "INSERT INTO commercial_stripe_subscriptions (id, tenant_id) VALUES ('strsub_denied', $1)",
+        "INSERT INTO commercial_stripe_events (id, tenant_id) VALUES ('stevt_denied', $1)",
+        "INSERT INTO commercial_charge_facts (id, tenant_id) VALUES ('chg_denied', $1)",
+        "INSERT INTO x402_payment_operations (id, tenant_id) VALUES ('xpay_denied', $1)",
+        "INSERT INTO commercial_provider_commands (id, tenant_id) VALUES ('pcmd_denied', $1)",
+        "INSERT INTO api_billing_adjustments (id, tenant_id) VALUES ('adj_denied', $1)",
+        `UPDATE tenant_commercial_entitlements
+            SET billing_account_id = 'bill_missing'
+          WHERE tenant_id = $1`,
+        `INSERT INTO api_billing_periods (id, tenant_id, mode, chargeable_units)
+         VALUES ('ubp_denied', $1, 'billable_closed', 1)`,
+      ] as const;
+      for (const [index, sql] of deniedStatements.entries()) {
+        await client.query(`SAVEPOINT billing_denied_${index}`);
+        await expect(client.query(sql, [excludedTenantId])).rejects.toMatchObject({
+          code: "23514",
+        });
+        await client.query(`ROLLBACK TO SAVEPOINT billing_denied_${index}`);
+        await client.query(`RELEASE SAVEPOINT billing_denied_${index}`);
+      }
+
+      for (const [name, sql] of [
+        ["update", "UPDATE commercial_billing_exclusions SET reason = reason WHERE tenant_id = $1"],
+        ["delete", "DELETE FROM commercial_billing_exclusions WHERE tenant_id = $1"],
+        ["truncate", "TRUNCATE commercial_billing_exclusions"],
+      ] as const) {
+        await client.query(`SAVEPOINT immutable_${name}`);
+        const params = name === "truncate" ? [] : [excludedTenantId];
+        await expect(client.query(sql, params)).rejects.toMatchObject({ code: "55000" });
+        await client.query(`ROLLBACK TO SAVEPOINT immutable_${name}`);
+        await client.query(`RELEASE SAVEPOINT immutable_${name}`);
+      }
+
+      await client.query(
+        `INSERT INTO commercial_billing_accounts (
+           id, status, billing_currency, created_by
+         ) VALUES ($1, 'pending', 'USD', 'integration-test')`,
+        [billingAccountId],
+      );
+      await client.query(
+        `INSERT INTO commercial_billing_account_tenants (
+           tenant_id, billing_account_id, relationship
+         ) VALUES ($1, $2, 'production')`,
+        [alreadyBilledTenantId, billingAccountId],
+      );
+      await client.query("SET ROLE brain_privileged");
+      await client.query("SAVEPOINT dirty_start");
+      await expect(
+        client.query("SELECT create_internal_commercial_shadow_billing_exclusion($1, $2, $3)", [
+          alreadyBilledTenantId,
+          "github:billing-shadow-test",
+          "dirty tenant must fail",
+        ]),
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("ROLLBACK TO SAVEPOINT dirty_start");
+      await client.query("RELEASE SAVEPOINT dirty_start");
+    } finally {
+      await client.query("RESET ROLE").catch(() => undefined);
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it("serializes concurrent exclusion and billing-link creation", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const exclusionClient = await pool.connect();
+    const billingClient = await pool.connect();
+    const excludedFirstTenantId = newTenantId();
+    const billedFirstTenantId = newTenantId();
+    const suffix = `${process.pid}_${Date.now()}`;
+    const excludedFirstAccountId = `bill_race_excluded_${suffix}`;
+    const billedFirstAccountId = `bill_race_billed_${suffix}`;
+    try {
+      await exclusionClient.query(
+        "INSERT INTO tenants (id, kind, sandbox) VALUES ($1, 'production', FALSE), ($2, 'production', FALSE)",
+        [excludedFirstTenantId, billedFirstTenantId],
+      );
+      await exclusionClient.query(
+        `INSERT INTO commercial_billing_accounts (
+           id, status, billing_currency, created_by
+         ) VALUES
+           ($1, 'pending', 'USD', 'integration-test'),
+           ($2, 'pending', 'USD', 'integration-test')`,
+        [excludedFirstAccountId, billedFirstAccountId],
+      );
+
+      await exclusionClient.query("BEGIN");
+      await exclusionClient.query(
+        "SELECT create_internal_commercial_shadow_billing_exclusion($1, $2, $3)",
+        [excludedFirstTenantId, "github:billing-shadow-test", "concurrent exclusion wins"],
+      );
+      await billingClient.query("BEGIN");
+      const billingAttempt = billingClient
+        .query(
+          `INSERT INTO commercial_billing_account_tenants (
+             tenant_id, billing_account_id, relationship
+           ) VALUES ($1, $2, 'production')`,
+          [excludedFirstTenantId, excludedFirstAccountId],
+        )
+        .then(
+          () => "unexpected_success",
+          (error: { code?: string }) => error.code,
+        );
+      await expect(
+        Promise.race([
+          billingAttempt,
+          new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 50)),
+        ]),
+      ).resolves.toBe("waiting");
+      await exclusionClient.query("COMMIT");
+      await expect(billingAttempt).resolves.toBe("23514");
+      await billingClient.query("ROLLBACK");
+
+      await exclusionClient.query("BEGIN");
+      await exclusionClient.query(
+        `INSERT INTO commercial_billing_account_tenants (
+           tenant_id, billing_account_id, relationship
+         ) VALUES ($1, $2, 'production')`,
+        [billedFirstTenantId, billedFirstAccountId],
+      );
+      await billingClient.query("BEGIN");
+      const exclusionAttempt = billingClient
+        .query("SELECT create_internal_commercial_shadow_billing_exclusion($1, $2, $3)", [
+          billedFirstTenantId,
+          "github:billing-shadow-test",
+          "concurrent billing wins",
+        ])
+        .then(
+          () => "unexpected_success",
+          (error: { code?: string }) => error.code,
+        );
+      await expect(
+        Promise.race([
+          exclusionAttempt,
+          new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 50)),
+        ]),
+      ).resolves.toBe("waiting");
+      await exclusionClient.query("COMMIT");
+      await expect(exclusionAttempt).resolves.toBe("23514");
+      await billingClient.query("ROLLBACK");
+    } finally {
+      await exclusionClient.query("ROLLBACK").catch(() => undefined);
+      await billingClient.query("ROLLBACK").catch(() => undefined);
+      try {
+        await exclusionClient.query("SET session_replication_role = replica");
+        await exclusionClient.query(
+          "DELETE FROM commercial_billing_account_tenants WHERE tenant_id = ANY($1::text[])",
+          [[excludedFirstTenantId, billedFirstTenantId]],
+        );
+        await exclusionClient.query(
+          "DELETE FROM commercial_billing_exclusions WHERE tenant_id = ANY($1::text[])",
+          [[excludedFirstTenantId, billedFirstTenantId]],
+        );
+        await exclusionClient.query("DELETE FROM tenants WHERE id = ANY($1::text[])", [
+          [excludedFirstTenantId, billedFirstTenantId],
+        ]);
+        await exclusionClient.query(
+          "DELETE FROM commercial_billing_accounts WHERE id = ANY($1::text[])",
+          [[excludedFirstAccountId, billedFirstAccountId]],
+        );
+      } finally {
+        await exclusionClient.query("SET session_replication_role = origin").catch(() => undefined);
+        exclusionClient.release();
+        billingClient.release();
+      }
+    }
+  });
+
+  it("self-heals stale commercial billing exclusion privileges", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+           ON commercial_billing_exclusions TO brain_privileged`,
+      );
+      await client.query(`GRANT SELECT ON commercial_billing_exclusions TO brain_app`);
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION
+           create_internal_commercial_shadow_billing_exclusion(TEXT, TEXT, TEXT)
+           TO brain_app`,
+      );
+
+      await applyRealRoleModel(client);
+      await applyRealRoleModel(client);
+
+      for (const role of ALL_RUNTIME_ROLES) {
+        for (const privilege of [
+          "SELECT",
+          "INSERT",
+          "UPDATE",
+          "DELETE",
+          "TRUNCATE",
+          "REFERENCES",
+          "TRIGGER",
+        ] as const) {
+          const result = await client.query<{ has: boolean }>(
+            "SELECT has_table_privilege($1, 'commercial_billing_exclusions', $2) AS has",
+            [role, privilege],
+          );
+          expect(result.rows[0]?.has, `${role} unexpected ${privilege}`).toBe(
+            role === "brain_privileged" && privilege === "SELECT",
+          );
+        }
+        const functionPrivilege = await client.query<{ has: boolean }>(
+          `SELECT has_function_privilege(
+             $1,
+             'create_internal_commercial_shadow_billing_exclusion(text,text,text)',
+             'EXECUTE'
+           ) AS has`,
+          [role],
+        );
+        expect(functionPrivilege.rows[0]?.has, `${role} unexpected function access`).toBe(
+          role === "brain_privileged",
+        );
+      }
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
       client.release();
     }
   });
