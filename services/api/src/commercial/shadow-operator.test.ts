@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   PROTECTED_TENANT_IDS,
   SHADOW_API_SCOPES,
+  commitCommercialShadowStart,
   inspectCommercialShadow,
+  prepareCommercialShadowStart,
   startCommercialShadow,
   transitionCommercialShadow,
 } from "./shadow-operator.js";
@@ -87,5 +89,76 @@ describe("commercial shadow operator", () => {
     ).resolves.toMatchObject({ state: "paused" });
     expect(calls[0]?.text).toBe("SELECT inspect_internal_commercial_shadow() AS result");
     expect(calls[1]?.text).toContain("transition_internal_commercial_shadow");
+  });
+
+  it("fails closed on malformed evidence and missing peppers before querying Postgres", () => {
+    const valid = {
+      approvedSha,
+      actor: "github-damon",
+      reason: "Approved internal commercial shadow start",
+      agentApiKeyPepper: "agent-pepper",
+      apiKeyPepper: "api-pepper",
+    };
+    for (const input of [
+      { ...valid, approvedSha: "not-a-sha" },
+      { ...valid, actor: "" },
+      { ...valid, actor: "a".repeat(201) },
+      { ...valid, reason: "too short" },
+      { ...valid, reason: "a".repeat(241) },
+      { ...valid, reason: "approved reason\nwith newline" },
+      { ...valid, agentApiKeyPepper: "" },
+      { ...valid, apiKeyPepper: "" },
+    ]) {
+      expect(() => prepareCommercialShadowStart(input)).toThrow();
+    }
+  });
+
+  it("rejects empty and identifier-drifted database results", async () => {
+    const prepared = prepareCommercialShadowStart({
+      approvedSha,
+      actor: "github-damon",
+      reason: "Approved internal commercial shadow start",
+      agentApiKeyPepper: "agent-pepper",
+      apiKeyPepper: "api-pepper",
+    });
+    const emptyPool = { query: async () => ({ rows: [] }) } as never;
+    await expect(commitCommercialShadowStart(emptyPool, prepared)).rejects.toThrow(
+      "shadow start returned no row",
+    );
+
+    for (const field of [
+      "tenant_id",
+      "shadow_period_id",
+      "agent_id",
+      "agent_key_id",
+      "api_key_id",
+    ] as const) {
+      const row = {
+        tenant_id: prepared.bundle.tenant_id,
+        shadow_period_id: prepared.bundle.shadow_period_id,
+        started_at: "2026-10-01T00:00:00Z",
+        agent_id: prepared.bundle.agent_id,
+        agent_key_id: prepared.bundle.agent_key_id,
+        api_key_id: prepared.bundle.api_key_id,
+      };
+      row[field] = `${row[field]}_drifted`;
+      const driftedPool = { query: async () => ({ rows: [row] }) } as never;
+      await expect(commitCommercialShadowStart(driftedPool, prepared)).rejects.toThrow(
+        "shadow start returned mismatched identifiers",
+      );
+    }
+  });
+
+  it("returns not_started for empty inspection and rejects an empty transition result", async () => {
+    const pool = { query: async () => ({ rows: [] }) } as never;
+    await expect(inspectCommercialShadow(pool)).resolves.toEqual({ state: "not_started" });
+    await expect(
+      transitionCommercialShadow(pool, {
+        action: "stop",
+        approvedSha,
+        actor: "github-damon",
+        reason: "Stop after a controlled operator review",
+      }),
+    ).rejects.toThrow("shadow transition returned no row");
   });
 });

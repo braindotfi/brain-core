@@ -25,6 +25,7 @@ export default defineConfig({
         // The job worker's transaction, least-privilege role, rollback, and
         // tenant-isolation behavior require the DB-backed integration suite.
         "src/tenant-deletion/admin-delete-worker.ts",
+        "src/commercial/shadow-operator-cli.ts",
         "src/usage/billing-operator-cli.ts",
         "src/usage/entitlement-operator-cli.ts",
         "src/auth/siwe.ts",
