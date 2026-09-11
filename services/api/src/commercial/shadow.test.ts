@@ -6,6 +6,8 @@ const scale = {
   maximumEntities: 10,
   maximumAgents: 11,
   executionLimitMinorUnits: 250_000_000n,
+  includedApiUnits: 250_000n,
+  includedMcpUnits: 25_000n,
 };
 
 describe("commercial Phase 2 shadow evaluation", () => {
@@ -18,6 +20,10 @@ describe("commercial Phase 2 shadow evaluation", () => {
         executionSettledMinorUnits: 249_000_000n,
         executionReservedMinorUnits: 1_000_000n,
         executionEvidenceComplete: true,
+        apiUnits: 250_000n,
+        mcpUnits: 25_000n,
+        apiEvidenceComplete: true,
+        mcpEvidenceComplete: true,
       }),
     ).toEqual({
       catalogRevisionId: "robotmoney_scale_v1",
@@ -25,6 +31,8 @@ describe("commercial Phase 2 shadow evaluation", () => {
       entityCapacityResult: "within",
       agentCapacityResult: "within",
       executionLimitResult: "within",
+      apiUnitResult: "within",
+      mcpUnitResult: "within",
       divergenceCodes: [],
       enforcementApplied: false,
     });
@@ -38,11 +46,17 @@ describe("commercial Phase 2 shadow evaluation", () => {
       executionSettledMinorUnits: 250_000_000n,
       executionReservedMinorUnits: 1n,
       executionEvidenceComplete: true,
+      apiUnits: 250_001n,
+      mcpUnits: 25_001n,
+      apiEvidenceComplete: true,
+      mcpEvidenceComplete: true,
     });
     expect(result.divergenceCodes).toEqual([
       "entity_capacity_exceeded",
       "agent_capacity_exceeded",
       "execution_limit_exceeded",
+      "api_unit_allowance_exceeded",
+      "mcp_unit_allowance_exceeded",
     ]);
     expect(result.enforcementApplied).toBe(false);
   });
@@ -56,6 +70,10 @@ describe("commercial Phase 2 shadow evaluation", () => {
         executionSettledMinorUnits: 0n,
         executionReservedMinorUnits: 0n,
         executionEvidenceComplete: true,
+        apiUnits: 0n,
+        mcpUnits: 0n,
+        apiEvidenceComplete: true,
+        mcpEvidenceComplete: true,
       }),
     ).toMatchObject({
       catalogResolution: "unresolved",
@@ -72,10 +90,36 @@ describe("commercial Phase 2 shadow evaluation", () => {
         executionSettledMinorUnits: 0n,
         executionReservedMinorUnits: 0n,
         executionEvidenceComplete: false,
+        apiUnits: 1n,
+        mcpUnits: 1n,
+        apiEvidenceComplete: true,
+        mcpEvidenceComplete: true,
       }),
     ).toMatchObject({
       executionLimitResult: "unresolved",
       divergenceCodes: ["execution_evidence_incomplete"],
+      enforcementApplied: false,
+    });
+  });
+
+  it("marks API and MCP units unresolved when reconciliation evidence is incomplete", () => {
+    expect(
+      evaluateCommercialShadow({
+        catalog: scale,
+        entityCount: 1,
+        countedAgentCount: 1,
+        executionSettledMinorUnits: 0n,
+        executionReservedMinorUnits: 0n,
+        executionEvidenceComplete: true,
+        apiUnits: 100n,
+        mcpUnits: 10n,
+        apiEvidenceComplete: false,
+        mcpEvidenceComplete: false,
+      }),
+    ).toMatchObject({
+      apiUnitResult: "unresolved",
+      mcpUnitResult: "unresolved",
+      divergenceCodes: ["api_usage_evidence_incomplete", "mcp_usage_evidence_incomplete"],
       enforcementApplied: false,
     });
   });

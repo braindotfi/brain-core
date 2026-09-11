@@ -219,6 +219,28 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(SQL).toContain("must have no commercial billing exclusion function privilege");
   });
 
+  it("self-heals the RFC 0011 Phase 2 shadow evidence privileges", () => {
+    const reset = SQL.match(
+      /REVOKE ALL PRIVILEGES ON commercial_shadow_contracts,[\s\S]*?brain_auth_audit_writer;/,
+    );
+    expect(reset).not.toBeNull();
+    for (const role of ALL_RUNTIME_ROLES) {
+      expect(reset?.[0], `${role} missing from shadow evidence reset`).toContain(role);
+    }
+    expect(SQL).toContain(
+      "GRANT INSERT ON commercial_shadow_observations,\n" +
+        "  mcp_transport_tool_observations, mcp_tool_meter_events,\n" +
+        "  mcp_meter_persistence_failure_events TO brain_app;",
+    );
+    expect(SQL).toContain(
+      "GRANT INSERT ON commercial_shadow_observations,\n" +
+        "  mcp_usage_reconciliation_runs TO brain_privileged;",
+    );
+    expect(SQL).toContain(
+      "GRANT INSERT, UPDATE, DELETE ON mcp_usage_daily_rollups TO brain_privileged;",
+    );
+  });
+
   it("keeps audit history immutable to every new role (incl. tenant_deletion)", () => {
     const revoke = SQL.match(/REVOKE UPDATE, DELETE, TRUNCATE ON audit_events\s+FROM[\s\S]*?;/);
     expect(revoke).not.toBeNull();

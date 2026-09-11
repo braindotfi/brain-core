@@ -544,11 +544,17 @@ phase begins.
 - Record every evaluation as counterfactual evidence with
   `enforcement_applied=false`. The schema prevents an observation from claiming
   enforcement occurred.
+- Bind each observation period to one immutable tenant and catalog contract.
+  API and MCP unit results consume only matched reconciliation evidence. MCP
+  completeness compares independent transport observations, append-only meter
+  facts, and meter-derived daily rollups.
 - Do not infer a commercial tier from the legacy API rate-limit tier. Record
   `catalog_revision_unresolved` until an explicit commercial entitlement exists.
 - **Status:** Begun on 2026-09-03. Observe-only contracts, evaluation logic,
   evidence-source projection, and the minimum-30-day review fence are
-  implemented. Production observation remains disabled pending this check-in.
+  implemented. Tenant-bound API and MCP evidence infrastructure is implemented
+  behind the same default-off gate. Production observation remains disabled
+  until the guarded Phase 3 operator creates and starts the approved contract.
 
 ### Phase 3. Read UI and self-serve lifecycle sandbox
 

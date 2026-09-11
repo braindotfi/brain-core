@@ -482,6 +482,14 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default(false),
+  /** Exact tenant whose MCP tool calls may enter the commercial shadow evidence stream. */
+  BRAIN_COMMERCIAL_SHADOW_TENANT_ID: z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z
+      .string()
+      .regex(/^tnt_[0-9A-HJKMNP-TV-Z]{26}$/)
+      .optional(),
+  ),
   BRAIN_ENTITY_SCOPE_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
@@ -1126,6 +1134,15 @@ export function parseConfig(
     throw new Error(
       "Invalid Brain configuration: BRAIN_AGENT_API_KEY_PEPPER must not reuse " +
         "BRAIN_API_KEY_PEPPER",
+    );
+  }
+  if (
+    result.data.BRAIN_COMMERCIAL_SHADOW_ENABLED &&
+    result.data.BRAIN_COMMERCIAL_SHADOW_TENANT_ID === undefined
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_COMMERCIAL_SHADOW_TENANT_ID is required when " +
+        "BRAIN_COMMERCIAL_SHADOW_ENABLED=true",
     );
   }
   assertProductionInfraSecretsSafe(env, options);

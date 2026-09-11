@@ -36,6 +36,7 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(false);
     expect(cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED).toBe(false);
     expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(false);
+    expect(cfg.BRAIN_COMMERCIAL_SHADOW_TENANT_ID).toBeUndefined();
     expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(false);
     expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(false);
     expect(cfg.BRAIN_EXECUTION_LIMITS_ENABLED).toBe(false);
@@ -51,6 +52,7 @@ describe("parseConfig", () => {
       BRAIN_COMMERCIAL_CATALOG_ENABLED: "true",
       BRAIN_PRODUCTION_GRADUATION_ENABLED: "true",
       BRAIN_COMMERCIAL_SHADOW_ENABLED: "true",
+      BRAIN_COMMERCIAL_SHADOW_TENANT_ID: "tnt_01M2B3C4D5E6F7G8H9JKMNPQRS",
       BRAIN_ENTITY_SCOPE_ENABLED: "true",
       BRAIN_AGENT_CAPACITY_ENABLED: "true",
       BRAIN_EXECUTION_LIMITS_ENABLED: "true",
@@ -62,6 +64,7 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_COMMERCIAL_CATALOG_ENABLED).toBe(true);
     expect(cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED).toBe(true);
     expect(cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED).toBe(true);
+    expect(cfg.BRAIN_COMMERCIAL_SHADOW_TENANT_ID).toBe("tnt_01M2B3C4D5E6F7G8H9JKMNPQRS");
     expect(cfg.BRAIN_ENTITY_SCOPE_ENABLED).toBe(true);
     expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(true);
     expect(cfg.BRAIN_EXECUTION_LIMITS_ENABLED).toBe(true);
@@ -69,6 +72,19 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(true);
     expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(true);
     expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(true);
+  });
+
+  it("requires an exact tenant binding when commercial shadow is enabled", () => {
+    expect(() => parseConfig({ ...MIN_ENV, BRAIN_COMMERCIAL_SHADOW_ENABLED: "true" })).toThrow(
+      /BRAIN_COMMERCIAL_SHADOW_TENANT_ID is required/,
+    );
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_COMMERCIAL_SHADOW_ENABLED: "true",
+        BRAIN_COMMERCIAL_SHADOW_TENANT_ID: "not-a-tenant",
+      }),
+    ).toThrow(/BRAIN_COMMERCIAL_SHADOW_TENANT_ID/);
   });
 
   it("rejects missing DATABASE_URL with a helpful message", () => {

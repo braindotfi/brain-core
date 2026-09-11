@@ -519,6 +519,37 @@ REVOKE ALL ON FUNCTION create_internal_commercial_shadow_billing_exclusion(
 GRANT EXECUTE ON FUNCTION create_internal_commercial_shadow_billing_exclusion(
   TEXT, TEXT, TEXT
 ) TO brain_privileged;
+
+-- RFC 0011 Phase 2 shadow evidence. db-roles runs after migrations, so reset
+-- every ACL after the broad brain_app and tenant-deletion grants above. The
+-- request path may append raw transport, logical meter, meter-failure, and
+-- final observation evidence. Only the protected operator may rebuild derived
+-- rollups or append reconciliation runs. Contracts and policy definitions are
+-- created through later narrow operator functions, never direct table grants.
+REVOKE ALL PRIVILEGES ON commercial_shadow_contracts,
+  commercial_shadow_observations, mcp_tool_metering_policies,
+  mcp_transport_tool_observations, mcp_tool_meter_events,
+  mcp_meter_persistence_failure_events, mcp_usage_daily_rollups,
+  mcp_usage_reconciliation_runs
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT ON commercial_shadow_contracts, commercial_shadow_observations,
+  mcp_tool_metering_policies, mcp_transport_tool_observations,
+  mcp_tool_meter_events, mcp_meter_persistence_failure_events,
+  mcp_usage_daily_rollups, mcp_usage_reconciliation_runs TO brain_app;
+GRANT INSERT ON commercial_shadow_observations,
+  mcp_transport_tool_observations, mcp_tool_meter_events,
+  mcp_meter_persistence_failure_events TO brain_app;
+GRANT SELECT ON commercial_shadow_contracts, commercial_shadow_observations,
+  mcp_tool_metering_policies, mcp_transport_tool_observations,
+  mcp_tool_meter_events, mcp_meter_persistence_failure_events,
+  mcp_usage_daily_rollups, mcp_usage_reconciliation_runs TO brain_privileged;
+GRANT INSERT ON commercial_shadow_observations,
+  mcp_usage_reconciliation_runs TO brain_privileged;
+GRANT INSERT, UPDATE, DELETE ON mcp_usage_daily_rollups TO brain_privileged;
 REVOKE INSERT ON audit_events
   FROM brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

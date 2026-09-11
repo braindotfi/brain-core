@@ -5,6 +5,8 @@ export interface CommercialShadowCatalogLimits {
   readonly maximumEntities: number | null;
   readonly maximumAgents: number | null;
   readonly executionLimitMinorUnits: bigint | null;
+  readonly includedApiUnits: bigint | null;
+  readonly includedMcpUnits: bigint | null;
 }
 
 export interface CommercialShadowInput {
@@ -14,6 +16,10 @@ export interface CommercialShadowInput {
   readonly executionSettledMinorUnits: bigint;
   readonly executionReservedMinorUnits: bigint;
   readonly executionEvidenceComplete: boolean;
+  readonly apiUnits: bigint;
+  readonly mcpUnits: bigint;
+  readonly apiEvidenceComplete: boolean;
+  readonly mcpEvidenceComplete: boolean;
 }
 
 export interface CommercialShadowResult {
@@ -22,6 +28,8 @@ export interface CommercialShadowResult {
   readonly entityCapacityResult: CommercialShadowLimitResult;
   readonly agentCapacityResult: CommercialShadowLimitResult;
   readonly executionLimitResult: CommercialShadowLimitResult;
+  readonly apiUnitResult: CommercialShadowLimitResult;
+  readonly mcpUnitResult: CommercialShadowLimitResult;
   readonly divergenceCodes: readonly string[];
   readonly enforcementApplied: false;
 }
@@ -31,6 +39,8 @@ export function evaluateCommercialShadow(input: CommercialShadowInput): Commerci
   assertNonNegativeInteger(input.countedAgentCount, "countedAgentCount");
   assertNonNegativeBigInt(input.executionSettledMinorUnits, "executionSettledMinorUnits");
   assertNonNegativeBigInt(input.executionReservedMinorUnits, "executionReservedMinorUnits");
+  assertNonNegativeBigInt(input.apiUnits, "apiUnits");
+  assertNonNegativeBigInt(input.mcpUnits, "mcpUnits");
 
   if (input.catalog === null) {
     return {
@@ -39,6 +49,8 @@ export function evaluateCommercialShadow(input: CommercialShadowInput): Commerci
       entityCapacityResult: "unresolved",
       agentCapacityResult: "unresolved",
       executionLimitResult: "unresolved",
+      apiUnitResult: "unresolved",
+      mcpUnitResult: "unresolved",
       divergenceCodes: ["catalog_revision_unresolved"],
       enforcementApplied: false,
     };
@@ -52,6 +64,12 @@ export function evaluateCommercialShadow(input: CommercialShadowInput): Commerci
         input.catalog.executionLimitMinorUnits,
       )
     : "unresolved";
+  const apiUnitResult = input.apiEvidenceComplete
+    ? compareUsage(input.apiUnits, input.catalog.includedApiUnits)
+    : "unresolved";
+  const mcpUnitResult = input.mcpEvidenceComplete
+    ? compareUsage(input.mcpUnits, input.catalog.includedMcpUnits)
+    : "unresolved";
   const divergenceCodes: string[] = [];
   if (entityCapacityResult === "over") divergenceCodes.push("entity_capacity_exceeded");
   if (agentCapacityResult === "over") divergenceCodes.push("agent_capacity_exceeded");
@@ -60,6 +78,20 @@ export function evaluateCommercialShadow(input: CommercialShadowInput): Commerci
   } else if (executionLimitResult === "over") {
     divergenceCodes.push("execution_limit_exceeded");
   }
+  if (!input.apiEvidenceComplete) {
+    divergenceCodes.push("api_usage_evidence_incomplete");
+  } else if (apiUnitResult === "unresolved") {
+    divergenceCodes.push("api_unit_allowance_unresolved");
+  } else if (apiUnitResult === "over") {
+    divergenceCodes.push("api_unit_allowance_exceeded");
+  }
+  if (!input.mcpEvidenceComplete) {
+    divergenceCodes.push("mcp_usage_evidence_incomplete");
+  } else if (mcpUnitResult === "unresolved") {
+    divergenceCodes.push("mcp_unit_allowance_unresolved");
+  } else if (mcpUnitResult === "over") {
+    divergenceCodes.push("mcp_unit_allowance_exceeded");
+  }
 
   return {
     catalogRevisionId: input.catalog.catalogRevisionId,
@@ -67,6 +99,8 @@ export function evaluateCommercialShadow(input: CommercialShadowInput): Commerci
     entityCapacityResult,
     agentCapacityResult,
     executionLimitResult,
+    apiUnitResult,
+    mcpUnitResult,
     divergenceCodes,
     enforcementApplied: false,
   };
@@ -92,6 +126,11 @@ function compareCount(value: number, limit: number | null): CommercialShadowLimi
 function compareAmount(value: bigint, limit: bigint | null): CommercialShadowLimitResult {
   if (limit === null) return "within";
   return value > limit ? "over" : "within";
+}
+
+function compareUsage(value: bigint, allowance: bigint | null): CommercialShadowLimitResult {
+  if (allowance === null) return "unresolved";
+  return value > allowance ? "over" : "within";
 }
 
 function assertNonNegativeInteger(value: number, label: string): void {

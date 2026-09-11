@@ -264,7 +264,13 @@ import {
   makeSandboxResolveCounterparty,
 } from "./sandbox/resolvers.js";
 
-import { BrainMcpServer, FakeAuthVerifier, McpAuthVerifier, registerMcpRoute } from "@brain/mcp";
+import {
+  BrainMcpServer,
+  FakeAuthVerifier,
+  McpAuthVerifier,
+  PostgresMcpShadowMetering,
+  registerMcpRoute,
+} from "@brain/mcp";
 import {
   ActionResolver,
   AgentRouter,
@@ -1738,6 +1744,13 @@ async function main(): Promise<void> {
     // Item 17: brain://proofs/{action_id} resource is wired through the shared builder.
     buildProof: proofBuilder,
   });
+  const mcpShadowMetering = cfg.BRAIN_COMMERCIAL_SHADOW_ENABLED
+    ? new PostgresMcpShadowMetering(
+        pool,
+        cfg.BRAIN_COMMERCIAL_SHADOW_TENANT_ID as string,
+        cfg.NODE_ENV === "production" ? "live" : "sandbox",
+      )
+    : undefined;
 
   // -- Agent router (Phase 1) -----------------------------------------
   // Evidence is gathered from the real Ledger + Wiki services (plan A3 / R-26).
@@ -2494,6 +2507,7 @@ async function main(): Promise<void> {
             // RFC 9728 discovery: 401s carry a WWW-Authenticate challenge that
             // points clients at the protected-resource metadata above.
             resourceMetadataUrl: resourceMetadataUrl(cfg.MCP_PUBLIC_RESOURCE_URL),
+            ...(mcpShadowMetering !== undefined ? { shadowMetering: mcpShadowMetering } : {}),
           }),
         );
         // /v1/agents/* — unified agent API surface (Agent Autonomy v3, 1a.6):
