@@ -112,6 +112,7 @@ jobs:
     env:
       DATABASE_URL: postgres://brain:brain@localhost:5432/brain
       DATABASE_URL_TENANT_DELETION: postgres://brain_tenant_deletion:brain_tenant_deletion@localhost:5432/brain
+      DATABASE_URL_SHADOW_OPERATOR: postgres://brain_privileged:brain_privileged@localhost:5432/brain
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v7.0.1

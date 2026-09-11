@@ -132,6 +132,8 @@ export const ID_PREFIX = {
   x402PaymentOperation: "xpay",
   commercialProviderCommand: "pcmd",
   commercialShadowObservation: "cso",
+  commercialShadowPeriod: "csp",
+  commercialShadowTransition: "cst",
   // OAuth 2.1 authorization server (Phase 2a increment 3, OAUTH-AS-PLAN.md
   // section 4). oauth_clients.client_id is minted by scripts/ops/
   // register-oauth-client.ts, not this file's generic prefix; the constant
@@ -241,6 +243,9 @@ export const newCommercialProviderCommandId = (): string =>
   brainId(ID_PREFIX.commercialProviderCommand);
 export const newCommercialShadowObservationId = (): string =>
   brainId(ID_PREFIX.commercialShadowObservation);
+export const newCommercialShadowPeriodId = (): string => brainId(ID_PREFIX.commercialShadowPeriod);
+export const newCommercialShadowTransitionId = (): string =>
+  brainId(ID_PREFIX.commercialShadowTransition);
 export const newTenantExportJobId = (): string => brainId(ID_PREFIX.tenantExportJob);
 export const newTenantDeletionJobId = (): string => brainId(ID_PREFIX.tenantDeletionJob);
 export const newGovernanceReportSnapshotId = (): string =>

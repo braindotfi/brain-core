@@ -73,6 +73,7 @@ export async function reconcileMcpShadowUsage(
           AND contract.environment = $3
           AND period.started_at = $4
           AND $5::timestamptz > period.started_at
+          AND period.state = 'running'
           AND period.completed_at IS NULL`,
       [input.tenantId, input.shadowPeriodId, input.environment, input.periodStart, input.periodEnd],
     );
