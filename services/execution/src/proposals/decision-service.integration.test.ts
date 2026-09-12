@@ -480,9 +480,9 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
            id, owner_id, name, normalized_name, type, aliases, linked_accounts,
            source_ids, evidence_ids, provenance, confidence
          )
-         VALUES ($1, $2, 'Vendor', 'vendor', 'vendor', ARRAY[]::text[], ARRAY[]::text[],
+         VALUES ($1, $2, $3, $3, 'vendor', ARRAY[]::text[], ARRAY[]::text[],
            ARRAY[]::text[], ARRAY[]::text[], 'human_confirmed', 1)`,
-        [counterparty, tenant],
+        [counterparty, tenant, `vendor ${counterparty}`],
       );
       await client.query(
         `INSERT INTO ledger_payment_intents (
