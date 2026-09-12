@@ -5,6 +5,29 @@ model over Ledger payment intents and non-financial agent proposals. The compact
 fields are retained for existing clients. New clients should use `details`,
 `policy`, `presentation`, and `available_decisions` for rich cards.
 
+## Current Decision State
+
+`POST /v1/proposals/decision-states/query` is a read-only bounded batch lookup.
+It requires `execution:read` and accepts between 1 and 100 unique `prop_` or
+`pi_` ids:
+
+```json
+{
+  "proposal_ids": ["prop_...", "pi_..."]
+}
+```
+
+The response preserves request order. A found item always returns its current
+stored status and the authoritative decision receipt fields. A pending proposal
+has null `decision`, `audit_id`, and `decided_at`. A decided proposal returns the
+stored decision, the immutable audit receipt id, and its decision timestamp.
+Unknown and cross-tenant ids are indistinguishable and return `found=false` with
+the remaining fields set to null.
+
+The lookup reads only `proposals` and `ledger_payment_intents`. Decision writes
+copy the receipt onto those authoritative rows. The request path never reads or
+walks `audit_events`.
+
 ## Public Types
 
 The public `type` field is one of:

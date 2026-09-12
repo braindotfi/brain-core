@@ -669,6 +669,14 @@ export class PaymentIntentService implements IPaymentIntentService {
       );
 
       if (authorization.requiresAdditionalApproval) {
+        const decisionAudit = await emitProposalDecisionAudit({
+          audit: this.deps.audit,
+          ctx,
+          intent,
+          actorId: actor.memberId,
+          decision: "approve",
+          status: "awaiting_second_approval",
+        });
         const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
           assertPaymentIntentTransition("pending_approval", "awaiting_second_approval");
           return LedgerPaymentIntents.transition(
@@ -676,9 +684,19 @@ export class PaymentIntentService implements IPaymentIntentService {
             id,
             "pending_approval",
             "awaiting_second_approval",
+            {
+              value: "approve",
+              auditId: decisionAudit.id,
+              decidedAt: decisionAudit.createdAt,
+            },
           );
         });
-        const row = updated ?? (await this.requireIntent(ctx, id));
+        if (updated === null) {
+          throw brainError(
+            "payment_intent_invalid_state",
+            "PaymentIntent moved between approve and authorization",
+          );
+        }
         await this.deps.audit.emit({
           tenantId: ctx.tenantId,
           layer: "agent",
@@ -709,12 +727,24 @@ export class PaymentIntentService implements IPaymentIntentService {
             ...(ctx.requestId !== undefined ? { requestId: ctx.requestId } : {}),
           }).catch(() => undefined);
         }
-        return toRecord(row);
+        return toRecord(updated);
       }
 
+      const decisionAudit = await emitProposalDecisionAudit({
+        audit: this.deps.audit,
+        ctx,
+        intent,
+        actorId: actor.memberId,
+        decision: "approve",
+        status: "approved",
+      });
       const updated = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
         assertPaymentIntentTransition(intent.status as PaymentIntentState, "approved");
-        return LedgerPaymentIntents.transition(c, id, intent.status, "approved");
+        return LedgerPaymentIntents.transition(c, id, intent.status, "approved", {
+          value: "approve",
+          auditId: decisionAudit.id,
+          decidedAt: decisionAudit.createdAt,
+        });
       });
       if (updated === null) {
         throw brainError(
@@ -765,8 +795,20 @@ export class PaymentIntentService implements IPaymentIntentService {
       );
     }
     assertPaymentIntentTransition(intent.status as PaymentIntentState, "rejected");
+    const decisionAudit = await emitProposalDecisionAudit({
+      audit: this.deps.audit,
+      ctx,
+      intent,
+      actorId: ctx.actor,
+      decision: "reject",
+      status: "rejected",
+    });
     const updated = await withTenantScope(this.deps.pool, ctx.tenantId, (c) =>
-      LedgerPaymentIntents.transition(c, id, intent.status, "rejected"),
+      LedgerPaymentIntents.transition(c, id, intent.status, "rejected", {
+        value: "reject",
+        auditId: decisionAudit.id,
+        decidedAt: decisionAudit.createdAt,
+      }),
     );
     if (updated === null) {
       throw brainError("payment_intent_invalid_state", "PaymentIntent moved during reject");
@@ -1655,5 +1697,29 @@ function toRecord(row: PaymentIntentRow): PaymentIntent {
     policy_decision_id: row.policy_decision_id,
     approval_ids: row.approval_ids,
     execution_receipt_ids: row.execution_receipt_ids,
+    decision: row.decision ?? null,
+    decision_audit_id: row.decision_audit_id ?? null,
+    decided_at: row.decided_at?.toISOString() ?? null,
   };
+}
+
+async function emitProposalDecisionAudit(input: {
+  audit: AuditEmitter;
+  ctx: ServiceCallContext;
+  intent: PaymentIntentRow;
+  actorId: string;
+  decision: "approve" | "reject";
+  status: PaymentIntentStatus;
+}) {
+  return input.audit.emit({
+    tenantId: input.ctx.tenantId,
+    layer: "agent",
+    actor: input.actorId,
+    action: "proposal.decided",
+    inputs: { proposal_id: input.intent.id, decision: input.decision },
+    outputs: { status: input.status, payment_intent_id: input.intent.id },
+    beforeState: { id: input.intent.id, status: input.intent.status },
+    afterState: { id: input.intent.id, status: input.status },
+    idempotencyKey: `proposal.decided:${input.intent.id}:${input.decision}:${input.intent.status}`,
+  });
 }

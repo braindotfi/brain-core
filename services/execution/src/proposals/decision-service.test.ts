@@ -47,6 +47,9 @@ function proposal(overrides: Partial<ProposalRow> = {}): ProposalRow {
     status: "pending",
     approvers_signed: [],
     proposal_dedup_key: null,
+    decision: null,
+    decision_audit_id: null,
+    decided_at: null,
     created_at: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   };
@@ -285,6 +288,9 @@ function fakePool(
       if (sql.includes("UPDATE proposals")) {
         order.push("transition");
         proposal.status = values[0] as ProposalRow["status"];
+        proposal.decision = values[3] as NonNullable<ProposalRow["decision"]>;
+        proposal.decision_audit_id = values[4] as string;
+        proposal.decided_at = new Date(values[5] as string);
         return { rows: [proposal], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
@@ -332,6 +338,9 @@ function paymentIntent(status: PaymentIntent["status"]): PaymentIntent {
     policy_decision_id: "pd_01TEST00000000000000000000",
     approval_ids: [],
     execution_receipt_ids: [],
+    decision: null,
+    decision_audit_id: null,
+    decided_at: null,
     source_ids: [],
     evidence_ids: [],
     provenance: "agent_contributed",

@@ -22,6 +22,9 @@ export interface PaymentIntentRow {
   evidence_score: number | null;
   risk_level: "low" | "medium" | "high" | "critical" | null;
   proposal_dedup_key: string | null;
+  decision: "approve" | "reject" | "acknowledge" | "undo" | null;
+  decision_audit_id: string | null;
+  decided_at: Date | null;
   /** x402 settlement recipient (RFC 0001 §6.1); null unless action_type=x402_settle. */
   settlement_pay_to: string | null;
   /** On-chain BrainEscrow id (RFC 0001 §7.6); null unless action_type=escrow_release. */
@@ -189,13 +192,22 @@ export async function transitionPaymentIntent(
   id: string,
   from: string,
   to: string,
+  decision?: {
+    value: "approve" | "reject" | "acknowledge" | "undo";
+    auditId: string;
+    decidedAt: string;
+  },
 ): Promise<PaymentIntentRow | null> {
   const { rows } = await client.query<PaymentIntentRow>(
     `UPDATE ledger_payment_intents
-        SET status = $1, updated_at = now()
+        SET status = $1,
+            updated_at = now(),
+            decision = COALESCE($4, decision),
+            decision_audit_id = COALESCE($5, decision_audit_id),
+            decided_at = COALESCE($6::timestamptz, decided_at)
       WHERE id = $2 AND status = $3
       RETURNING *`,
-    [to, id, from],
+    [to, id, from, decision?.value ?? null, decision?.auditId ?? null, decision?.decidedAt ?? null],
   );
   return rows[0] ?? null;
 }

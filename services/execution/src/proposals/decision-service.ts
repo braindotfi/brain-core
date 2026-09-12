@@ -70,13 +70,11 @@ export class ProposalDecisionService {
       );
     }
     requireScope(ctx.scopes ?? [], SCOPE_APPROVE);
-    let actor: ActorContext;
-    let updated: { status: string };
+    let updated: { status: string; decision_audit_id?: string | null };
     if (decision === "approve") {
       updated = await this.deps.paymentIntents.approve(ctx, paymentIntentId);
-      actor = await this.resolveSessionActor(ctx);
     } else {
-      actor = await this.resolveSessionActor(ctx);
+      const actor = await this.resolveSessionActor(ctx);
       if (beforeStatus === "rejected") {
         return {
           id: paymentIntentId,
@@ -90,24 +88,16 @@ export class ProposalDecisionService {
           payment_intent_id: paymentIntentId,
         };
       }
-      updated = await this.deps.paymentIntents.reject(ctx, paymentIntentId);
+      updated = await this.deps.paymentIntents.reject(
+        { ...ctx, actor: actor.memberId, principalType: "user" },
+        paymentIntentId,
+      );
     }
-    const audit = await this.deps.audit.emit({
-      tenantId: ctx.tenantId,
-      layer: "agent",
-      actor: actor.memberId,
-      action: "proposal.decided",
-      inputs: { proposal_id: paymentIntentId, decision },
-      outputs: { status: updated.status, payment_intent_id: paymentIntentId },
-      beforeState: { id: paymentIntentId, status: beforeStatus },
-      afterState: { id: paymentIntentId, status: updated.status },
-      idempotencyKey: proposalDecisionAuditKey(paymentIntentId, decision, beforeStatus),
-    });
     return {
       id: paymentIntentId,
       decision,
       status: updated.status,
-      audit_id: audit.id,
+      audit_id: updated.decision_audit_id ?? null,
       payment_intent_id: paymentIntentId,
     };
   }
@@ -167,6 +157,9 @@ export class ProposalDecisionService {
         before.id,
         before.status,
         target.status,
+        decision,
+        audit.id,
+        audit.createdAt,
       );
       return {
         id: updated.id,
@@ -320,14 +313,21 @@ async function transitionProposalStatus(
   id: string,
   from: ProposalState,
   to: ProposalState,
+  decision: ProposalDecision,
+  auditId: string,
+  decidedAt: string,
 ): Promise<ProposalRow> {
   const { rows } = await client.query<ProposalRow>(
     `UPDATE proposals
-        SET status = $1
+        SET status = $1,
+            decision = $4,
+            decision_audit_id = $5,
+            decided_at = $6::timestamptz,
+            updated_at = now()
       WHERE id = $2 AND status = $3
         AND tenant_id = current_setting('app.tenant_id', true)
       RETURNING *`,
-    [to, id, from],
+    [to, id, from, decision, auditId, decidedAt],
   );
   const row = rows[0];
   if (row === undefined) {

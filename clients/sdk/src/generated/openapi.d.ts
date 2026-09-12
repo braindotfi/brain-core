@@ -2564,6 +2564,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proposals/decision-states/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read current decision state for a bounded proposal batch
+         * @description Requires `execution:read`. Performs a read-only, tenant-scoped lookup
+         *     against the authoritative proposal and PaymentIntent rows. Results
+         *     preserve request order. Unknown and cross-tenant ids both return
+         *     `found=false`. This route never derives state from audit history.
+         */
+        post: operations["queryProposalDecisionStates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/proposals/{id}": {
         parameters: {
             query?: never;
@@ -4622,6 +4645,25 @@ export interface components {
             /** @description Present when the decision was delegated to the PaymentIntent lifecycle. */
             payment_intent_id: string | null;
         };
+        ProposalDecisionStateQuery: {
+            proposal_ids: string[];
+        };
+        ProposalDecisionStateItem: {
+            proposal_id: string;
+            found: boolean;
+            /** @enum {string|null} */
+            decision_state: "pending" | "decided" | null;
+            status: components["schemas"]["ProposalStatus"] | null;
+            decision: components["schemas"]["ProposalDecision"] | null;
+            /** @description Durable audit receipt copied onto the authoritative proposal row. */
+            audit_id: string | null;
+            /** Format: date-time */
+            decided_at: string | null;
+        };
+        ProposalDecisionStateResponse: {
+            /** @description One result per requested id, in the original request order. */
+            states: components["schemas"]["ProposalDecisionStateItem"][];
+        };
         Proposal: {
             id?: string;
             tenant_id?: string;
@@ -5209,6 +5251,10 @@ export interface components {
             source_account_id: string;
             destination_counterparty_id: string;
             amount: string;
+            decision: components["schemas"]["ProposalDecision"] | null;
+            decision_audit_id: string | null;
+            /** Format: date-time */
+            decided_at: string | null;
             currency: string;
             obligation_id?: string | null;
             invoice_id?: string | null;
@@ -10259,6 +10305,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvidenceResolveResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    queryProposalDecisionStates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposalDecisionStateQuery"];
+            };
+        };
+        responses: {
+            /** @description Current decision states in request order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalDecisionStateResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

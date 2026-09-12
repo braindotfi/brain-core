@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { brainError, requireScope, type Scope, type ServiceCallContext } from "@brain/shared";
 import type { Pool } from "pg";
 import { getProposal, listProposals, parseListProposalsQuery } from "./read-model.js";
+import { parseProposalDecisionStateQuery, queryProposalDecisionStates } from "./decision-state.js";
 import {
   PROPOSAL_DECISIONS,
   ProposalDecisionService,
@@ -59,6 +60,18 @@ export async function registerProposalReadRoutes(
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_READ);
       const result = await listProposals(deps.pool, ctx, parseListProposalsQuery(request.query));
+      reply.status(200);
+      return result;
+    },
+  );
+
+  app.post(
+    "/proposals/decision-states/query",
+    async (request: FastifyRequest<{ Body: unknown }>, reply) => {
+      const ctx = assertCtx(request);
+      requireScope(request.principal!.scopes, SCOPE_READ);
+      const input = parseProposalDecisionStateQuery(request.body);
+      const result = await queryProposalDecisionStates(deps.pool, ctx, input);
       reply.status(200);
       return result;
     },

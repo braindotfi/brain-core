@@ -46,6 +46,9 @@ interface RawProposalFixture {
   agent_display_name: string | null;
   payment_intent_id: string | null;
   action_type: string | null;
+  decision?: "approve" | "reject" | "acknowledge" | "undo" | null;
+  decision_audit_id?: string | null;
+  decided_at?: Date | null;
 }
 
 function principal(tenantId: string, scopes: Scope[] = ["execution:read"]): Principal {
@@ -96,6 +99,9 @@ function proposalRow(input: Partial<RawProposalFixture> & { id: string }): RawPr
     agent_display_name: input.agent_display_name ?? "Vendor Risk Agent",
     payment_intent_id: input.payment_intent_id ?? null,
     action_type: input.action_type ?? null,
+    decision: input.decision ?? null,
+    decision_audit_id: input.decision_audit_id ?? null,
+    decided_at: input.decided_at ?? null,
   };
 }
 
@@ -116,6 +122,9 @@ function paymentIntentRecord(): PaymentIntent {
     policy_decision_id: "pd_01TEST00000000000000000000",
     approval_ids: [],
     execution_receipt_ids: [],
+    decision: null,
+    decision_audit_id: null,
+    decided_at: null,
     source_ids: [],
     evidence_ids: [ENT_RESOLVES],
     provenance: "agent_contributed",
@@ -147,6 +156,22 @@ function fakePool(rowsByTenant: Record<string, RawProposalFixture[]>): Pool {
         const ids = values[0] as string[];
         const visible = wikiEntitiesByTenant[tenant] ?? new Set<string>();
         return { rows: ids.filter((id) => visible.has(id)).map((id) => ({ id })), rowCount: 1 };
+      }
+
+      if (sql.includes("id AS proposal_id") && sql.includes("FROM proposals")) {
+        const ids = values[0] as string[];
+        const rows = (rowsByTenant[tenant] ?? [])
+          .filter((row) => row.source_kind === "proposal" && ids.includes(row.id))
+          .map(decisionStateFixture);
+        return { rows, rowCount: rows.length };
+      }
+
+      if (sql.includes("id AS proposal_id") && sql.includes("FROM ledger_payment_intents")) {
+        const ids = values[0] as string[];
+        const rows = (rowsByTenant[tenant] ?? [])
+          .filter((row) => row.source_kind === "payment_intent" && ids.includes(row.id))
+          .map(decisionStateFixture);
+        return { rows, rowCount: rows.length };
       }
 
       if (sql.includes("ledger_payment_intents") && sql.includes("FROM proposals p")) {
@@ -203,6 +228,16 @@ function compareRows(a: RawProposalFixture, b: RawProposalFixture): number {
 
 function isFixtureId(value: string): boolean {
   return value === PI_ID || value === PROP_1 || value === PROP_2 || value === PROP_3;
+}
+
+function decisionStateFixture(row: RawProposalFixture): Record<string, unknown> {
+  return {
+    proposal_id: row.id,
+    status: row.status,
+    decision: row.decision ?? null,
+    decision_audit_id: row.decision_audit_id ?? null,
+    decided_at: row.decided_at ?? null,
+  };
 }
 
 describe("GET /proposals", () => {
@@ -263,6 +298,64 @@ describe("GET /proposals", () => {
       { kind: "wiki_entity", ref: ENT_RESOLVES, resolvable: true },
       { kind: "wiki_entity", ref: ENT_MISSING, resolvable: true },
       { kind: "unknown", ref: "legacy_ref", resolvable: false },
+    ]);
+    await app.close();
+  });
+});
+
+describe("POST /proposals/decision-states/query", () => {
+  it("requires execution:read before querying proposal state", async () => {
+    const pool = fakePool({ [TENANT_A]: [] });
+    const app = await buildApp(pool, principal(TENANT_A, []));
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/proposals/decision-states/query",
+      payload: { proposal_ids: [PROP_1] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe("auth_scope_insufficient");
+    await app.close();
+  });
+
+  it("returns mixed authoritative states in request order", async () => {
+    const pool = fakePool({
+      [TENANT_A]: [
+        proposalRow({ id: PROP_1 }),
+        proposalRow({
+          id: PI_ID,
+          source_kind: "payment_intent",
+          payment_intent_id: PI_ID,
+          status: "approved",
+          decision: "approve",
+          decision_audit_id: "evt_01H00000000000000000000000",
+          decided_at: new Date("2026-09-13T08:00:00.000Z"),
+        }),
+      ],
+    });
+    const app = await buildApp(pool, principal(TENANT_A));
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/proposals/decision-states/query",
+      payload: { proposal_ids: [PI_ID, PROP_2, PROP_1] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().states).toEqual([
+      expect.objectContaining({
+        proposal_id: PI_ID,
+        found: true,
+        decision_state: "decided",
+        decision: "approve",
+      }),
+      expect.objectContaining({ proposal_id: PROP_2, found: false }),
+      expect.objectContaining({
+        proposal_id: PROP_1,
+        found: true,
+        decision_state: "pending",
+      }),
     ]);
     await app.close();
   });

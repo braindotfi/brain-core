@@ -59,6 +59,9 @@ export interface PaymentIntent extends LedgerCommonFields {
   policy_decision_id: string | null;
   approval_ids: string[];
   execution_receipt_ids: string[];
+  decision: "approve" | "reject" | "acknowledge" | "undo" | null;
+  decision_audit_id: string | null;
+  decided_at: string | null;
   evidence_score?: number | null;
   risk_level?: "low" | "medium" | "high" | "critical" | null;
 }

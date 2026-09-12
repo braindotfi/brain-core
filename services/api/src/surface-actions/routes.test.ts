@@ -224,6 +224,9 @@ function approvedPaymentIntentRow(): PaymentIntentRow {
     confidence: 1,
     evidence_score: null,
     risk_level: null,
+    decision: "approve",
+    decision_audit_id: "aud_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    decided_at: new Date("2026-08-30T00:00:00Z"),
     created_at: new Date("2026-08-30T00:00:00Z"),
     updated_at: new Date("2026-08-30T00:00:00Z"),
   };

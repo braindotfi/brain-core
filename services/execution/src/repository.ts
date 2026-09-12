@@ -27,6 +27,9 @@ export interface ProposalRow {
   status: ProposalState;
   approvers_signed: string[];
   proposal_dedup_key: string | null;
+  decision: "approve" | "reject" | "acknowledge" | "undo" | null;
+  decision_audit_id: string | null;
+  decided_at: Date | null;
   created_at: Date;
 }
 

@@ -1668,6 +1668,34 @@
           "openapi": "documented:/proposals"
         },
         {
+          "method": "POST",
+          "path": "/v1/proposals/decision-states/query",
+          "auth": "bearer",
+          "required_scope": "execution:read",
+          "enforcement": "route_scope_check_enforced",
+          "request_shape": "{ proposal_ids: string[1..100], unique prop_ or pi_ ids }",
+          "response_shape": "200 { states: [{ proposal_id, found, decision_state, status, decision, audit_id, decided_at }] } in request order",
+          "example_request": {
+            "body": {
+              "proposal_ids": ["prop_01H00000000000000000000000"]
+            }
+          },
+          "example_response": {
+            "states": [
+              {
+                "proposal_id": "prop_01H00000000000000000000000",
+                "found": true,
+                "decision_state": "pending",
+                "status": "pending",
+                "decision": null,
+                "audit_id": null,
+                "decided_at": null
+              }
+            ]
+          },
+          "openapi": "documented:/proposals/decision-states/query"
+        },
+        {
           "method": "GET",
           "path": "/v1/proposals/{id}",
           "auth": "bearer",
