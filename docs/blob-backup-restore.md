@@ -26,7 +26,7 @@ redundancy.
 - SSH access to the target VM as `azureuser`.
 - The MinIO root credentials for that environment (`MINIO_ROOT_USER` /
   `MINIO_ROOT_PASSWORD` from `.env.staging` or `.env.prod`).
-- The `mc` (MinIO Client) binary, or use the `minio/mc` image already pinned
+- The `mc` (MinIO Client) binary, or use the `quay.io/minio/mc` image already pinned
   in `docker-compose.prod.yml` so the backup tool matches the pinned server
   version.
 - Enough free disk (or a second bucket/target) to hold a full copy of
@@ -53,7 +53,7 @@ works against the live, running container without stopping it.
    ```bash
    docker run --rm --network container:brain-prod-minio \
      -e MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000" \
-     minio/mc:RELEASE.2024-10-08T09-37-26Z \
+     quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62 \
      mirror --overwrite local/brain-artifacts /backup-destination/brain-artifacts
    ```
 
@@ -78,7 +78,7 @@ holds before trusting the backup:
 ```bash
 docker run --rm --network container:brain-prod-minio \
   -e MC_HOST_local="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000" \
-  minio/mc:RELEASE.2024-10-08T09-37-26Z \
+  quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62 \
   du local/brain-artifacts
 
 # Compare against the destination's own object count/size (`mc du backup/brain-artifacts`
