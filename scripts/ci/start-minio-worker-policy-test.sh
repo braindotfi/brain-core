@@ -14,7 +14,7 @@ docker run -d --name "$container_name" \
   -p 9000:9000 \
   -e MINIO_ROOT_USER \
   -e MINIO_ROOT_PASSWORD \
-  minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+  quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
   server /data >/dev/null
 
 ready=false
@@ -40,7 +40,7 @@ docker run --rm \
   -v "$policy_path:/policy.json:ro" \
   -v "$api_policy_path:/api-policy.json:ro" \
   --entrypoint /bin/sh \
-  minio/mc:RELEASE.2024-10-08T09-37-26Z -c '
+  quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62 -c '
     set -eu
     mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
     mc mb --with-lock --ignore-existing local/brain-artifacts
