@@ -7,6 +7,7 @@ const mainWorkflow = readFileSync(".github/workflows/main.yml", "utf8");
 const codeqlWorkflow = readFileSync(".github/workflows/codeql.yml", "utf8");
 const dependabot = readFileSync(".github/dependabot.yml", "utf8");
 const trivyIgnore = readFileSync(".trivyignore", "utf8");
+const productionDockerfile = readFileSync("Dockerfile", "utf8");
 const agentsDockerfile = readFileSync("services/agents/Dockerfile", "utf8");
 const agentsProject = readFileSync("services/agents/pyproject.toml", "utf8");
 
@@ -105,4 +106,16 @@ test("agents image removes healthcheck-only curl and uses the patched PDF parser
   assert.doesNotMatch(agentsDockerfile, /apt-get install.*curl/s);
   assert.match(agentsDockerfile, /CMD python -c/);
   assert.match(agentsProject, /"pypdf>=6\.15\.0"/);
+});
+
+test("production image installs and verifies the fixed PCRE2 security update", () => {
+  assert.match(productionDockerfile, /ARG LIBPCRE2_VERSION=10\.42-1\+deb12u1/);
+  assert.match(
+    productionDockerfile,
+    /apt-get install -y --no-install-recommends "libpcre2-8-0=\$\{LIBPCRE2_VERSION\}"/,
+  );
+  assert.match(
+    productionDockerfile,
+    /dpkg-query -W -f='\$\{Version\}' libpcre2-8-0\)" = "\$\{LIBPCRE2_VERSION\}"/,
+  );
 });

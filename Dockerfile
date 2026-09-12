@@ -84,6 +84,12 @@ ENV GIT_SHA=$GIT_SHA
 ARG SERVICE_VERSION=0.0.0-dev
 ENV SERVICE_VERSION=$SERVICE_VERSION
 
+ARG LIBPCRE2_VERSION=10.42-1+deb12u1
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends "libpcre2-8-0=${LIBPCRE2_VERSION}" \
+  && test "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" = "${LIBPCRE2_VERSION}" \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@10.34.4 --activate
 
 WORKDIR /app
