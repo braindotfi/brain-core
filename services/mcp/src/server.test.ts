@@ -1712,6 +1712,9 @@ describe("BrainMcpServer.handle — resources/read ledger.payment_intent oracle 
       policy_decision_id: "pd_x",
       approval_ids: [],
       execution_receipt_ids: [],
+      decision: "approve" as const,
+      decision_audit_id: "evt_ABC",
+      decided_at: new Date().toISOString(),
     }));
     const getMissing = vi.fn(async () => null);
 

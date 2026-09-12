@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client, Pool } from "pg";
 import {
@@ -20,6 +21,7 @@ import type { PaymentIntentService } from "../payment-intents/PaymentIntentServi
 import { ActorResolver } from "../members/ActorResolver.js";
 import { PostgresMemberLookup } from "../members/repository.js";
 import { ProposalDecisionService } from "./decision-service.js";
+import { queryProposalDecisionStates } from "./decision-state.js";
 
 const DB_URL = process.env.DATABASE_URL;
 const suite = DB_URL !== undefined && DB_URL !== "" ? describe : describe.skip;
@@ -175,7 +177,12 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     expect(result.audit_id).toEqual(expect.stringMatching(/^evt_/));
 
     const row = await proposalRow(tenantA, notifyProposal);
-    expect(row?.status).toBe("acknowledged");
+    expect(row).toMatchObject({
+      status: "acknowledged",
+      decision: "acknowledge",
+      decision_audit_id: result.audit_id,
+    });
+    expect(row?.decided_at).toBeInstanceOf(Date);
 
     const audit = await auditRow(tenantA, result.audit_id ?? "");
     expect(audit).toMatchObject({
@@ -328,6 +335,73 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     expect(await decisionAuditCount(tenantA, proposal, "approve")).toBe(1);
   });
 
+  it("backfills both authoritative sources and serves them without an audit read", async () => {
+    const historicalProposal = newProposalId();
+    const historicalIntent = newPaymentIntentId();
+    await seedProposal(tenantA, agentA, historicalProposal, "approved", {
+      type: "vendor_risk",
+      mode: "propose",
+    });
+    await seedPaymentIntent(tenantA, agentA, historicalIntent);
+    await withTenantScope(pool, tenantA, (client) =>
+      client.query(`UPDATE ledger_payment_intents SET status = 'rejected' WHERE id = $1`, [
+        historicalIntent,
+      ]),
+    );
+
+    const emitter = new PostgresAuditEmitter(pool);
+    const proposalAudit = await emitter.emit({
+      tenantId: tenantA,
+      layer: "agent",
+      actor: memberA,
+      action: "proposal.decided",
+      inputs: { proposal_id: historicalProposal, decision: "approve" },
+      outputs: { status: "approved" },
+      idempotencyKey: `backfill:${historicalProposal}`,
+    });
+    const intentAudit = await emitter.emit({
+      tenantId: tenantA,
+      layer: "agent",
+      actor: memberA,
+      action: "proposal.decided",
+      inputs: { proposal_id: historicalIntent, decision: "reject" },
+      outputs: { status: "rejected" },
+      idempotencyKey: `backfill:${historicalIntent}`,
+    });
+
+    const executionBackfill = await readFile(
+      new URL("../../migrations/0038_backfill_proposal_decision_state.sql", import.meta.url),
+      "utf8",
+    );
+    const ledgerBackfill = await readFile(
+      new URL(
+        "../../../ledger/migrations/0074_backfill_payment_intent_decision_state.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    await pool.query(executionBackfill);
+    await pool.query(ledgerBackfill);
+
+    const result = await queryProposalDecisionStates(pool, userCtx, {
+      proposal_ids: [historicalIntent, historicalProposal],
+    });
+    expect(result.states).toEqual([
+      expect.objectContaining({
+        proposal_id: historicalIntent,
+        decision_state: "decided",
+        decision: "reject",
+        audit_id: intentAudit.id,
+      }),
+      expect.objectContaining({
+        proposal_id: historicalProposal,
+        decision_state: "decided",
+        decision: "approve",
+        audit_id: proposalAudit.id,
+      }),
+    ]);
+  });
+
   async function seedTenant(tenant: string, member: string, agent: string): Promise<void> {
     await withTenantScope(pool, tenant, async (client) => {
       await client.query(`INSERT INTO tenants (id, kind) VALUES ($1, 'demo')`, [tenant]);
@@ -406,9 +480,9 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
            id, owner_id, name, normalized_name, type, aliases, linked_accounts,
            source_ids, evidence_ids, provenance, confidence
          )
-         VALUES ($1, $2, 'Vendor', 'vendor', 'vendor', ARRAY[]::text[], ARRAY[]::text[],
+         VALUES ($1, $2, $3, $3, 'vendor', ARRAY[]::text[], ARRAY[]::text[],
            ARRAY[]::text[], ARRAY[]::text[], 'human_confirmed', 1)`,
-        [counterparty, tenant],
+        [counterparty, tenant, `vendor ${counterparty}`],
       );
       await client.query(
         `INSERT INTO ledger_payment_intents (
@@ -425,12 +499,24 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     });
   }
 
-  async function proposalRow(tenant: string, proposal: string): Promise<{ status: string } | null> {
+  async function proposalRow(
+    tenant: string,
+    proposal: string,
+  ): Promise<{
+    status: string;
+    decision: string | null;
+    decision_audit_id: string | null;
+    decided_at: Date | null;
+  } | null> {
     return withTenantScope(pool, tenant, async (client) => {
-      const { rows } = await client.query<{ status: string }>(
-        `SELECT status FROM proposals WHERE id = $1`,
-        [proposal],
-      );
+      const { rows } = await client.query<{
+        status: string;
+        decision: string | null;
+        decision_audit_id: string | null;
+        decided_at: Date | null;
+      }>(`SELECT status, decision, decision_audit_id, decided_at FROM proposals WHERE id = $1`, [
+        proposal,
+      ]);
       return rows[0] ?? null;
     });
   }
@@ -506,6 +592,9 @@ function paymentIntentRecord(status: PaymentIntent["status"]): PaymentIntent {
     policy_decision_id: newPolicyDecisionId(),
     approval_ids: [],
     execution_receipt_ids: [],
+    decision: null,
+    decision_audit_id: null,
+    decided_at: null,
     source_ids: [],
     evidence_ids: [],
     provenance: "agent_contributed",
