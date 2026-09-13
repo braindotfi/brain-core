@@ -236,6 +236,11 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
 export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   "audit_events",
   "audit_anchors",
+  // RFC 0012 accounting evidence survives tenant retirement for seven years.
+  // The tenant foreign key is SET NULL while the irreversible tenant digest
+  // continues to bind the retained receipt without retaining tenant metadata.
+  "x402_seller_logical_operations",
+  "x402_seller_receipts",
   // RFC 0003: the blob purge queue must SURVIVE the deletion — a privileged
   // worker drains it after the tenant rows are gone, and the row stands as the
   // on-record proof that Article 17 erasure was enqueued.

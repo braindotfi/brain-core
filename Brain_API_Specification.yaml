@@ -90,6 +90,8 @@ tags:
     description: Self-serve onboarding & human (owner) authentication (RFC 0002). Public, rate-limited; available only when BRAIN_SELF_SERVE_SIGNUP is enabled.
   - name: Authorization
     description: Side-effect-free capability probes for authenticated callers.
+  - name: Commercial
+    description: Default-off commercial billing and x402 current-state surfaces.
   - name: Docs
     description: Public, read-only API documentation surface — the interactive reference UI and the raw OpenAPI contract it renders.
   - name: Reference
@@ -7807,6 +7809,83 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /x402/receipts/{receipt_id}:
+    get:
+      tags: [Commercial]
+      summary: Read current x402 settlement state
+      description: |
+        Requires `ledger:read`. Exchanged `brain_ak_*` agent JWTs are rejected.
+        Reads the authoritative receipt projection without scanning audit events.
+        The route is registered only while the default-off x402 gate is enabled.
+      operationId: getX402Receipt
+      parameters:
+        - name: receipt_id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^x402rcpt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: Current settlement state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/X402Receipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Receipt does not exist. Error code `commercial_x402_receipt_not_found`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /x402/receipts/query:
+    post:
+      tags: [Commercial]
+      summary: Read current state for a bounded receipt set
+      description: |
+        Requires `ledger:read`. Accepts one through one hundred unique receipt
+        ids and performs one authoritative projection query. It never scans
+        audit events or settlement-event history.
+      operationId: queryX402Receipts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [receipt_ids]
+              properties:
+                receipt_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  uniqueItems: true
+                  items: { type: string, pattern: '^x402rcpt_[0-9A-HJKMNP-TV-Z]{26}$' }
+      responses:
+        '200':
+          description: One result in input order for every requested id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [receipts]
+                properties:
+                  receipts:
+                    type: array
+                    items:
+                      type: object
+                      required: [receipt_id, found, receipt]
+                      properties:
+                        receipt_id: { type: string }
+                        found: { type: boolean }
+                        receipt:
+                          anyOf:
+                            - { $ref: '#/components/schemas/X402Receipt' }
+                            - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
 
   securitySchemes:
@@ -7930,6 +8009,47 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    X402Receipt:
+      type: object
+      required:
+        - receipt_id
+        - logical_operation_id
+        - operation_id
+        - operation_class
+        - state
+        - network
+        - asset_contract
+        - amount_atomic
+        - settlement_transaction_hash
+        - refund_transaction_hash
+        - l2_finality
+        - l1_finality
+        - updated_at
+      properties:
+        receipt_id: { type: string }
+        logical_operation_id: { type: string }
+        operation_id: { type: string }
+        operation_class: { type: string, enum: [api, mcp] }
+        state:
+          type: string
+          enum:
+            - verified
+            - settlement_pending
+            - settled
+            - fulfilled
+            - service_failed
+            - refund_pending
+            - refunded
+            - rejected
+        network: { type: string }
+        asset_contract: { type: string }
+        amount_atomic: { type: string, pattern: '^[0-9]+$' }
+        settlement_transaction_hash: { type: [string, 'null'] }
+        refund_transaction_hash: { type: [string, 'null'] }
+        l2_finality: { type: string, enum: [not_checked, sealed, reorged] }
+        l1_finality: { type: string, enum: [not_checked, included, failed] }
+        updated_at: { type: string, format: date-time }
+
 
     AgentApiKey:
       type: object
