@@ -122,7 +122,7 @@ jobs:
           echo "::endgroup::"
           REMOTE
 
-      - name: Run fixed read-only production audit-chain preflight
+      - name: Run production audit-chain integrity preflight
         if: inputs.target == 'production'
         shell: bash
         run: |
@@ -133,15 +133,16 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           docker exec -i brain-prod-postgres psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
+          SET transaction_read_only = on;
           WITH
-          fork_groups AS (
+          fork_groups AS MATERIALIZED (
             SELECT tenant_id, prev_event_hash, count(*)::bigint AS successor_count
               FROM audit_events
              WHERE prev_event_hash IS NOT NULL
              GROUP BY tenant_id, prev_event_hash
             HAVING count(*) > 1
           ),
-          gaps AS (
+          gaps AS MATERIALIZED (
             SELECT event.tenant_id, event.id
               FROM audit_events event
              WHERE event.prev_event_hash IS NOT NULL
@@ -152,16 +153,60 @@ jobs:
                     AND predecessor.event_hash = event.prev_event_hash
                )
           ),
-          tenant_counts AS (
+          tenant_counts AS MATERIALIZED (
             SELECT tenant_id,
                    count(*)::bigint AS event_count,
                    count(*) FILTER (WHERE prev_event_hash IS NULL)::bigint AS genesis_count
               FROM audit_events
              GROUP BY tenant_id
+          ),
+          head_state AS MATERIALIZED (
+            SELECT counts.tenant_id,
+                   counts.event_count,
+                   head.sequence,
+                   head.head_event_id,
+                   head.head_event_hash,
+                   head.tenant_id IS NOT NULL AS head_exists,
+                   referenced.id IS NOT NULL AS head_reference_matches,
+                   NOT EXISTS (
+                     SELECT 1
+                       FROM audit_events successor
+                      WHERE successor.tenant_id = head.tenant_id
+                        AND successor.prev_event_hash = head.head_event_hash
+                   ) AS head_is_tail
+              FROM tenant_counts counts
+              LEFT JOIN audit_chain_heads head ON head.tenant_id = counts.tenant_id
+              LEFT JOIN audit_events referenced
+                ON referenced.tenant_id = head.tenant_id
+               AND referenced.id = head.head_event_id
+               AND referenced.event_hash = head.head_event_hash
+          ),
+          index_state AS MATERIALIZED (
+            SELECT index_class.relname AS index_name,
+                   index_meta.indisunique,
+                   index_meta.indisvalid,
+                   index_meta.indisready,
+                   pg_get_expr(index_meta.indpred, index_meta.indrelid) AS predicate
+              FROM pg_index index_meta
+              JOIN pg_class index_class ON index_class.oid = index_meta.indexrelid
+             WHERE index_class.relname IN (
+               'uq_audit_events_one_genesis_per_tenant',
+               'uq_audit_events_one_successor_per_predecessor'
+             )
+          ),
+          trigger_state AS MATERIALIZED (
+            SELECT trigger.tgenabled,
+                   procedure.proname
+              FROM pg_trigger trigger
+              JOIN pg_proc procedure ON procedure.oid = trigger.tgfoid
+             WHERE trigger.tgrelid = 'audit_events'::regclass
+               AND trigger.tgname = 'audit_events_advance_chain_head'
+               AND NOT trigger.tgisinternal
           )
           SELECT json_build_object(
             'total_events', (SELECT count(*) FROM audit_events),
             'event_tenants', (SELECT count(*) FROM tenant_counts),
+            'chain_heads', (SELECT count(*) FROM audit_chain_heads),
             'fork_groups', (SELECT count(*) FROM fork_groups),
             'forked_successor_rows',
               (SELECT coalesce(sum(successor_count), 0) FROM fork_groups),
@@ -177,7 +222,210 @@ jobs:
                  FROM tenant_counts WHERE genesis_count = 0),
             'multi_genesis_tenants',
               (SELECT coalesce(json_agg(tenant_id ORDER BY tenant_id), '[]'::json)
-                 FROM tenant_counts WHERE genesis_count > 1)
+                 FROM tenant_counts WHERE genesis_count > 1),
+            'missing_head_tenants',
+              (SELECT count(*) FROM head_state WHERE NOT head_exists),
+            'head_reference_mismatches',
+              (SELECT count(*) FROM head_state WHERE NOT head_reference_matches),
+            'head_not_tail_tenants',
+              (SELECT count(*) FROM head_state WHERE NOT head_is_tail),
+            'head_sequence_mismatches',
+              (SELECT count(*) FROM head_state WHERE sequence <> event_count),
+            'orphan_head_rows',
+              (SELECT count(*)
+                 FROM audit_chain_heads head
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM tenant_counts counts WHERE counts.tenant_id = head.tenant_id
+                )),
+            'invalid_head_indexes',
+              (SELECT coalesce(json_agg(index_name ORDER BY index_name), '[]'::json)
+                 FROM index_state
+                WHERE NOT indisunique OR NOT indisvalid OR NOT indisready),
+            'installed_head_indexes',
+              (SELECT coalesce(json_agg(
+                 json_build_object(
+                   'name', index_name,
+                   'unique', indisunique,
+                   'valid', indisvalid,
+                   'ready', indisready,
+                   'predicate', predicate
+                 ) ORDER BY index_name
+               ), '[]'::json) FROM index_state),
+            'chain_head_trigger',
+              (SELECT coalesce(json_agg(json_build_object(
+                 'enabled', tgenabled,
+                 'function', proname
+               )), '[]'::json) FROM trigger_state)
+          );
+
+          RESET transaction_read_only;
+
+          BEGIN;
+          CREATE TEMP TABLE audit_chain_enforcement_results (
+            check_name TEXT PRIMARY KEY,
+            passed BOOLEAN NOT NULL,
+            detail TEXT NOT NULL
+          ) ON COMMIT DROP;
+
+          INSERT INTO audit_events (
+            id, tenant_id, layer, actor, action, inputs, outputs,
+            event_hash, prev_event_hash, created_at
+          ) VALUES (
+            'evt_ops_chain_probe_genesis',
+            'tnt_ops_audit_chain_enforcement_probe',
+            'audit',
+            'agent_ops_preflight',
+            'audit.chain.preflight',
+            '{}'::jsonb,
+            '{}'::jsonb,
+            decode(repeat('11', 32), 'hex'),
+            NULL,
+            clock_timestamp()
+          );
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+                FROM audit_chain_heads
+               WHERE tenant_id = 'tnt_ops_audit_chain_enforcement_probe'
+                 AND head_event_id = 'evt_ops_chain_probe_genesis'
+                 AND head_event_hash = decode(repeat('11', 32), 'hex')
+                 AND sequence = 1
+            ) THEN
+              RAISE EXCEPTION 'authoritative head did not initialize at sequence 1';
+            END IF;
+            INSERT INTO audit_chain_enforcement_results
+              VALUES ('head_initialization', true, 'sequence=1');
+          END $$;
+
+          DO $$
+          DECLARE
+            rejected_by TEXT;
+          BEGIN
+            BEGIN
+              INSERT INTO audit_events (
+                id, tenant_id, layer, actor, action, inputs, outputs,
+                event_hash, prev_event_hash, created_at
+              ) VALUES (
+                'evt_ops_chain_probe_second_genesis',
+                'tnt_ops_audit_chain_enforcement_probe',
+                'audit', 'agent_ops_preflight', 'audit.chain.preflight',
+                '{}'::jsonb, '{}'::jsonb,
+                decode(repeat('22', 32), 'hex'), NULL, clock_timestamp()
+              );
+              RAISE EXCEPTION 'duplicate genesis was accepted';
+            EXCEPTION WHEN unique_violation THEN
+              GET STACKED DIAGNOSTICS rejected_by = CONSTRAINT_NAME;
+              IF rejected_by <> 'uq_audit_events_one_genesis_per_tenant' THEN
+                RAISE;
+              END IF;
+            END;
+            INSERT INTO audit_chain_enforcement_results
+              VALUES ('duplicate_genesis_rejected', true, rejected_by);
+          END $$;
+
+          INSERT INTO audit_events (
+            id, tenant_id, layer, actor, action, inputs, outputs,
+            event_hash, prev_event_hash, created_at
+          ) VALUES (
+            'evt_ops_chain_probe_successor',
+            'tnt_ops_audit_chain_enforcement_probe',
+            'audit',
+            'agent_ops_preflight',
+            'audit.chain.preflight',
+            '{}'::jsonb,
+            '{}'::jsonb,
+            decode(repeat('33', 32), 'hex'),
+            decode(repeat('11', 32), 'hex'),
+            clock_timestamp()
+          );
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+                FROM audit_chain_heads
+               WHERE tenant_id = 'tnt_ops_audit_chain_enforcement_probe'
+                 AND head_event_id = 'evt_ops_chain_probe_successor'
+                 AND head_event_hash = decode(repeat('33', 32), 'hex')
+                 AND sequence = 2
+            ) THEN
+              RAISE EXCEPTION 'authoritative head did not advance to sequence 2';
+            END IF;
+            INSERT INTO audit_chain_enforcement_results
+              VALUES ('head_advancement', true, 'sequence=2');
+          END $$;
+
+          DO $$
+          DECLARE
+            rejected_by TEXT;
+          BEGIN
+            BEGIN
+              INSERT INTO audit_events (
+                id, tenant_id, layer, actor, action, inputs, outputs,
+                event_hash, prev_event_hash, created_at
+              ) VALUES (
+                'evt_ops_chain_probe_second_successor',
+                'tnt_ops_audit_chain_enforcement_probe',
+                'audit', 'agent_ops_preflight', 'audit.chain.preflight',
+                '{}'::jsonb, '{}'::jsonb,
+                decode(repeat('44', 32), 'hex'),
+                decode(repeat('11', 32), 'hex'),
+                clock_timestamp()
+              );
+              RAISE EXCEPTION 'duplicate successor was accepted';
+            EXCEPTION WHEN unique_violation THEN
+              GET STACKED DIAGNOSTICS rejected_by = CONSTRAINT_NAME;
+              IF rejected_by <> 'uq_audit_events_one_successor_per_predecessor' THEN
+                RAISE;
+              END IF;
+            END;
+            INSERT INTO audit_chain_enforcement_results
+              VALUES ('duplicate_successor_rejected', true, rejected_by);
+          END $$;
+
+          DO $$
+          BEGIN
+            BEGIN
+              INSERT INTO audit_events (
+                id, tenant_id, layer, actor, action, inputs, outputs,
+                event_hash, prev_event_hash, created_at
+              ) VALUES (
+                'evt_ops_chain_probe_stale_predecessor',
+                'tnt_ops_audit_chain_enforcement_probe',
+                'audit', 'agent_ops_preflight', 'audit.chain.preflight',
+                '{}'::jsonb, '{}'::jsonb,
+                decode(repeat('55', 32), 'hex'),
+                decode(repeat('66', 32), 'hex'),
+                clock_timestamp()
+              );
+              RAISE EXCEPTION 'stale predecessor was accepted';
+            EXCEPTION WHEN check_violation THEN
+              IF SQLERRM <> 'audit event predecessor does not match authoritative tenant chain head' THEN
+                RAISE;
+              END IF;
+            END;
+            INSERT INTO audit_chain_enforcement_results
+              VALUES ('stale_predecessor_rejected', true, 'authoritative head compare-and-swap');
+          END $$;
+
+          SELECT json_build_object(
+            'enforcement_checks', json_agg(
+              json_build_object('name', check_name, 'passed', passed, 'detail', detail)
+              ORDER BY check_name
+            )
+          )
+            FROM audit_chain_enforcement_results;
+          ROLLBACK;
+
+          SELECT json_build_object(
+            'probe_event_rows_after_rollback',
+              (SELECT count(*) FROM audit_events
+                WHERE tenant_id = 'tnt_ops_audit_chain_enforcement_probe'),
+            'probe_head_rows_after_rollback',
+              (SELECT count(*) FROM audit_chain_heads
+                WHERE tenant_id = 'tnt_ops_audit_chain_enforcement_probe')
           );
           SQL
           REMOTE
