@@ -1741,9 +1741,13 @@ paths:
       summary: Complete an approved unpaid production graduation
       description: |
         Creates a fresh production tenant and bootstrap member, records
-        immutable demo-to-production lineage, and returns new member and agent
-        sessions. It never relabels the demo tenant or copies synthetic data.
-        Only a clear verification assessment can enter this unpaid path.
+        immutable demo-to-production lineage, returns a new member session,
+        and issues a one-time `brain_ak_live_*` BFF credential. The agent
+        credential is exchange-only and must be submitted to the returned RFC
+        8693 token endpoint. It never relabels the demo tenant or copies
+        synthetic data. Only a clear verification assessment can enter this
+        unpaid path. Matching Idempotency-Key retries replay the one-time
+        response for the configured idempotency window.
       operationId: completeUnpaidGraduation
       parameters:
         - name: tenantId
@@ -1759,7 +1763,7 @@ paths:
           description: Fresh production tenant, lineage, and one-time credentials
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema: { $ref: '#/components/schemas/UnpaidGraduationCompletion' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -7967,6 +7971,110 @@ components:
               type: string
               description: Plaintext exchange credential. Returned only in this response.
               pattern: '^brain_ak_(test|live)_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{43}$'
+
+    UnpaidGraduationCompletion:
+      type: object
+      required: [lineage, session, agent]
+      properties:
+        lineage:
+          type: object
+          required:
+            - id
+            - graduation_request_id
+            - source_tenant_id
+            - destination_tenant_id
+            - destination_member_id
+            - graduation_mode
+            - copied_fields
+            - excluded_data_classes
+            - financial_data_copied
+            - created_at
+          properties:
+            id: { type: string }
+            graduation_request_id: { type: string }
+            source_tenant_id: { type: string }
+            destination_tenant_id: { type: string }
+            destination_member_id: { type: string }
+            graduation_mode: { type: string, enum: [unpaid] }
+            copied_fields: { type: object, additionalProperties: true }
+            excluded_data_classes: { type: array, items: { type: string } }
+            financial_data_copied: { type: boolean, enum: [false] }
+            created_at: { type: string, format: date-time }
+        session:
+          type: object
+          required: [token, refresh_token, expires_in]
+          properties:
+            token: { type: string }
+            refresh_token: { type: string }
+            expires_in: { type: integer, enum: [900] }
+        agent:
+          type: object
+          required:
+            - id
+            - credential_id
+            - api_key
+            - profile
+            - environment
+            - scopes
+            - key_prefix
+            - key_last4
+            - expires_at
+            - issued_now
+            - token_exchange
+          properties:
+            id: { type: string, pattern: '^agent_[0-9A-HJKMNP-TV-Z]{26}$' }
+            credential_id: { type: string, pattern: '^agkey_[0-9A-HJKMNP-TV-Z]{26}$' }
+            api_key:
+              type: [string, 'null']
+              description: Plaintext returned on initial issuance and idempotent replay only.
+              pattern: '^brain_ak_live_[0-9A-HJKMNP-TV-Z]{26}_[A-Za-z0-9_-]{43}$'
+            profile: { type: string, enum: [bff_service_v1] }
+            environment: { type: string, enum: [live] }
+            scopes:
+              type: array
+              minItems: 9
+              maxItems: 9
+              uniqueItems: true
+              items:
+                type: string
+                enum:
+                  - ledger:read
+                  - wiki:read
+                  - raw:read
+                  - raw:write
+                  - policy:read
+                  - execution:read
+                  - execution:propose
+                  - payment_intent:propose
+                  - audit:read
+            key_prefix: { type: string, enum: [brain_ak_live_] }
+            key_last4: { type: string, minLength: 4, maxLength: 4 }
+            expires_at: { type: string, format: date-time }
+            issued_now: { type: boolean }
+            token_exchange:
+              type: object
+              required:
+                - token_endpoint
+                - grant_type
+                - subject_token_type
+                - requested_token_type
+                - resource
+                - access_token_expires_in
+                - refresh_token_issued
+              properties:
+                token_endpoint: { type: string, format: uri }
+                grant_type:
+                  type: string
+                  enum: [urn:ietf:params:oauth:grant-type:token-exchange]
+                subject_token_type:
+                  type: string
+                  enum: [urn:brain:params:oauth:token-type:agent-api-key]
+                requested_token_type:
+                  type: string
+                  enum: [urn:ietf:params:oauth:token-type:access_token]
+                resource: { type: string, format: uri }
+                access_token_expires_in: { type: integer, enum: [300] }
+                refresh_token_issued: { type: boolean, enum: [false] }
 
     TenantExportJob:
       type: object

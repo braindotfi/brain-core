@@ -3,24 +3,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { newTenantId, newUserId } from "@brain/shared";
 import type * as BrainShared from "@brain/shared";
 import { PostgresGraduationProvisioningStore } from "./provisioning-repository.js";
+import type { AgentApiKeyRow } from "../production-tenancy/agent-key-store.js";
 import type { DestinationSessionSeed } from "./provisioning.js";
 
 const serviceTokenMocks = vi.hoisted(() => ({
   ensureActiveDefaultPolicy: vi.fn(async () => undefined),
   ensureBffServiceAgent: vi.fn(async () => ({ agentId: "agent_destination", created: true })),
-  findActiveProductionAgentToken: vi.fn(
-    async (): Promise<{
-      tenantId: string;
-      agentId: string;
-      tokenId: string;
-      expiresAt: number;
-    } | null> => null,
+}));
+const agentKeyMocks = vi.hoisted(() => ({
+  findActiveAgentApiKeyByName: vi.fn(
+    async (): Promise<ReturnType<typeof agentKeyRow> | null> => null,
   ),
-  insertProductionAgentToken: vi.fn(async () => ({
-    tenantId: destinationTenantId,
-    agentId: "agent_destination",
-    tokenId: "token_destination",
-    expiresAt: 1_788_328_000,
+  issueAgentApiKey: vi.fn(async () => ({
+    row: agentKeyRow(),
+    secret: "brain_ak_live_one-time-secret",
   })),
 }));
 
@@ -40,6 +36,7 @@ vi.mock("../onboarding/bootstrap-member.js", () => ({
   insertBootstrapAdminMember: vi.fn(async () => undefined),
 }));
 vi.mock("../onboarding/service-token.js", () => serviceTokenMocks);
+vi.mock("../production-tenancy/agent-key-store.js", () => agentKeyMocks);
 
 const sourceTenantId = newTenantId();
 const destinationTenantId = newTenantId();
@@ -50,7 +47,7 @@ const destinationMemberId = newUserId();
 describe("PostgresGraduationProvisioningStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    serviceTokenMocks.findActiveProductionAgentToken.mockResolvedValue(null);
+    agentKeyMocks.findActiveAgentApiKeyByName.mockResolvedValue(null);
   });
 
   it("rejects a missing graduation request", async () => {
@@ -150,31 +147,43 @@ describe("PostgresGraduationProvisioningStore", () => {
     });
   });
 
-  it("provisions a classified destination and reuses an active agent token", async () => {
-    const activeToken = {
-      tenantId: destinationTenantId,
-      agentId: "agent_destination",
-      tokenId: "token_existing",
-      expiresAt: 1_788_328_001,
-    };
-    serviceTokenMocks.findActiveProductionAgentToken.mockResolvedValue(activeToken);
+  it("provisions a classified destination and reuses an active graduation key", async () => {
+    const activeKey = agentKeyRow({ id: "agkey_existing" });
+    agentKeyMocks.findActiveAgentApiKeyByName.mockResolvedValue(activeKey);
     const pool = fakePool([undefined, destinationClassification(), undefined, undefined]);
     await expect(store(pool).provisionDestination(reservation(), session())).resolves.toEqual({
       agentId: "agent_destination",
       agentCreated: true,
-      agentToken: activeToken,
+      agentCredential: expect.objectContaining({
+        credentialId: "agkey_existing",
+        apiKey: null,
+        profile: "bff_service_v1",
+        environment: "live",
+        issuedNow: false,
+      }),
     });
-    expect(serviceTokenMocks.insertProductionAgentToken).not.toHaveBeenCalled();
+    expect(agentKeyMocks.issueAgentApiKey).not.toHaveBeenCalled();
   });
 
-  it("mints an agent token when the destination has none", async () => {
+  it("issues one live BFF agent key when the destination has none", async () => {
     const pool = fakePool([undefined, destinationClassification(), undefined, undefined]);
     const result = await store(pool).provisionDestination(reservation(), session());
-    expect(result.agentToken).toMatchObject({ tokenId: "token_destination" });
-    expect(serviceTokenMocks.insertProductionAgentToken).toHaveBeenCalledWith(
+    expect(result.agentCredential).toMatchObject({
+      credentialId: "agkey_01K123456789ABCDEFGHJKMNPQ",
+      apiKey: "brain_ak_live_one-time-secret",
+      profile: "bff_service_v1",
+      environment: "live",
+      issuedNow: true,
+    });
+    expect(agentKeyMocks.issueAgentApiKey).toHaveBeenCalledWith(
       expect.anything(),
-      destinationTenantId,
-      "agent_destination",
+      expect.objectContaining({
+        tenantId: destinationTenantId,
+        agentId: "agent_destination",
+        profile: "bff_service_v1",
+        environment: "live",
+        pepper: "graduation-agent-pepper",
+      }),
     );
   });
 
@@ -228,7 +237,38 @@ function store(pool: Pool) {
   return new PostgresGraduationProvisioningStore(
     pool,
     "0x0000000000000000000000000000000000000001",
+    "graduation-agent-pepper",
   );
+}
+
+function agentKeyRow(overrides: Partial<AgentApiKeyRow> = {}): AgentApiKeyRow {
+  return {
+    id: "agkey_01K123456789ABCDEFGHJKMNPQ",
+    tenant_id: destinationTenantId,
+    agent_id: "agent_destination",
+    profile: "bff_service_v1" as const,
+    environment: "live" as const,
+    scopes: [
+      "ledger:read",
+      "wiki:read",
+      "raw:read",
+      "raw:write",
+      "policy:read",
+      "execution:read",
+      "execution:propose",
+      "payment_intent:propose",
+      "audit:read",
+    ],
+    key_prefix: "brain_ak_live_",
+    key_last4: "cret",
+    name: "graduation-bff:grad_01K123456789ABCDEFGHJKMNPQ",
+    created_at: "2026-09-13T00:00:00.000Z",
+    last_used_at: null,
+    expires_at: "2026-12-12T00:00:00.000Z",
+    revoked_at: null,
+    rotated_from_id: null,
+    ...overrides,
+  };
 }
 
 function reserveInput() {

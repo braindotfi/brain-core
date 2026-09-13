@@ -20,6 +20,7 @@ const memberForeignKeys = readFileSync(
   "utf8",
 );
 const main = readFileSync(resolve(process.cwd(), "src/main.ts"), "utf8");
+const provisioning = readFileSync(resolve(process.cwd(), "src/graduation/provisioning.ts"), "utf8");
 
 describe("RFC 0010 Phase 1 graduation schema", () => {
   it.each([
@@ -99,5 +100,16 @@ describe("RFC 0010 Phase 2 unpaid graduation schema", () => {
     ]) {
       expect(provisioningRepository).not.toContain(`INSERT INTO ${table}`);
     }
+  });
+
+  it("issues an exchange-only live BFF key and never mints a graduation agent JWT", () => {
+    expect(provisioningRepository).toContain('profile: "bff_service_v1"');
+    expect(provisioningRepository).toContain('environment: "live"');
+    expect(provisioningRepository).toContain("issueAgentApiKey");
+    expect(provisioningRepository).not.toContain("insertProductionAgentToken");
+    expect(provisioning).toContain("TOKEN_EXCHANGE_GRANT_TYPE");
+    expect(provisioning).toContain("AGENT_ACCESS_TOKEN_TTL_SECONDS");
+    expect(provisioning).not.toContain('type: "agent"');
+    expect(provisioning).not.toContain("auth.production_agent_token.minted");
   });
 });

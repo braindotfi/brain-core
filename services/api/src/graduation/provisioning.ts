@@ -1,4 +1,8 @@
 import {
+  ACCESS_TOKEN_REQUESTED_TYPE,
+  AGENT_ACCESS_TOKEN_TTL_SECONDS,
+  AGENT_API_KEY_SUBJECT_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT_TYPE,
   hashToken,
   newSecretToken,
   newTenantId,
@@ -13,7 +17,6 @@ import {
   BOOTSTRAP_APPROVAL_DOMAINS,
   BOOTSTRAP_PER_ITEM_LIMIT_CENTS,
 } from "../onboarding/bootstrap-member.js";
-import { SERVICE_TOKEN_SCOPES, type AgentTokenSeed } from "../onboarding/service-token.js";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -82,9 +85,19 @@ export interface DestinationSessionSeed {
 }
 
 export interface ProvisionedDestination {
-  agentToken: AgentTokenSeed;
   agentId: string;
   agentCreated: boolean;
+  agentCredential: {
+    credentialId: string;
+    apiKey: string | null;
+    profile: "bff_service_v1";
+    environment: "live";
+    scopes: readonly Scope[];
+    keyPrefix: string;
+    keyLast4: string;
+    expiresAt: string;
+    issuedNow: boolean;
+  };
 }
 
 export interface GraduationLineageRecord {
@@ -130,9 +143,24 @@ export interface CompleteUnpaidGraduationResult {
   };
   agent: {
     id: string;
-    token: string;
-    tokenId: string;
-    expiresAt: number;
+    credentialId: string;
+    apiKey: string | null;
+    profile: "bff_service_v1";
+    environment: "live";
+    scopes: readonly Scope[];
+    keyPrefix: string;
+    keyLast4: string;
+    expiresAt: string;
+    issuedNow: boolean;
+    tokenExchange: {
+      tokenEndpoint: string;
+      grantType: typeof TOKEN_EXCHANGE_GRANT_TYPE;
+      subjectTokenType: typeof AGENT_API_KEY_SUBJECT_TOKEN_TYPE;
+      requestedTokenType: typeof ACCESS_TOKEN_REQUESTED_TYPE;
+      resource: string;
+      accessTokenExpiresIn: typeof AGENT_ACCESS_TOKEN_TTL_SECONDS;
+      refreshTokenIssued: false;
+    };
   };
 }
 
@@ -141,6 +169,7 @@ export class UnpaidGraduationService {
     private readonly store: GraduationProvisioningStore,
     private readonly signer: JwtSigner,
     private readonly audit: AuditEmitter,
+    private readonly exchange: { tokenEndpoint: string; resource: string },
   ) {}
 
   public async complete(
@@ -158,24 +187,14 @@ export class UnpaidGraduationService {
     const provisioned = await this.store.provisionDestination(reservation, session);
     const lineage = await this.store.finalize(reservation);
 
-    const [memberToken, agentToken] = await Promise.all([
-      this.signer.sign({
-        id: session.memberId,
-        type: "user",
-        tenantId: session.tenantId,
-        tokenId: session.tokenId,
-        expiresAt: session.expiresAt,
-        scopes: [...session.scopes],
-      }),
-      this.signer.sign({
-        id: provisioned.agentId,
-        type: "agent",
-        tenantId: reservation.destinationTenantId,
-        tokenId: provisioned.agentToken.tokenId,
-        expiresAt: provisioned.agentToken.expiresAt,
-        scopes: SERVICE_TOKEN_SCOPES,
-      }),
-    ]);
+    const memberToken = await this.signer.sign({
+      id: session.memberId,
+      type: "user",
+      tenantId: session.tenantId,
+      tokenId: session.tokenId,
+      expiresAt: session.expiresAt,
+      scopes: [...session.scopes],
+    });
 
     await Promise.all([
       this.audit.emit({
@@ -243,25 +262,31 @@ export class UnpaidGraduationService {
         outcome: "created",
         idempotencyKey: `graduation-bootstrap-member:${reservation.requestId}`,
       }),
-      this.audit.emit({
-        tenantId: reservation.destinationTenantId,
-        layer: "agent",
-        eventType: "system_activity",
-        actor: provisioned.agentId,
-        action: "auth.production_agent_token.minted",
-        inputs: {
-          tenant_created: true,
-          agent_created: provisioned.agentCreated,
-          rotated: false,
-        },
-        outputs: {
-          tenant_id: reservation.destinationTenantId,
-          agent_id: provisioned.agentId,
-          token_id: provisioned.agentToken.tokenId,
-        },
-        outcome: "created",
-        idempotencyKey: `graduation-agent-token:${reservation.requestId}`,
-      }),
+      ...(provisioned.agentCredential.issuedNow
+        ? [
+            this.audit.emit({
+              tenantId: reservation.destinationTenantId,
+              layer: "identity",
+              eventType: "system_activity",
+              actor: provisioned.agentId,
+              action: "auth.agent_api_key.issued",
+              inputs: {
+                tenant_created: true,
+                agent_created: provisioned.agentCreated,
+                profile: provisioned.agentCredential.profile,
+                environment: provisioned.agentCredential.environment,
+              },
+              outputs: {
+                tenant_id: reservation.destinationTenantId,
+                agent_id: provisioned.agentId,
+                credential_id: provisioned.agentCredential.credentialId,
+                expires_at: provisioned.agentCredential.expiresAt,
+              },
+              outcome: "created",
+              idempotencyKey: `graduation-agent-api-key:${reservation.requestId}`,
+            }),
+          ]
+        : []),
     ]);
 
     return {
@@ -273,9 +298,16 @@ export class UnpaidGraduationService {
       },
       agent: {
         id: provisioned.agentId,
-        token: agentToken,
-        tokenId: provisioned.agentToken.tokenId,
-        expiresAt: provisioned.agentToken.expiresAt,
+        ...provisioned.agentCredential,
+        tokenExchange: {
+          tokenEndpoint: this.exchange.tokenEndpoint,
+          grantType: TOKEN_EXCHANGE_GRANT_TYPE,
+          subjectTokenType: AGENT_API_KEY_SUBJECT_TOKEN_TYPE,
+          requestedTokenType: ACCESS_TOKEN_REQUESTED_TYPE,
+          resource: this.exchange.resource,
+          accessTokenExpiresIn: AGENT_ACCESS_TOKEN_TTL_SECONDS,
+          refreshTokenIssued: false,
+        },
       },
     };
   }

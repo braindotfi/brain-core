@@ -1,7 +1,14 @@
 import Fastify, { type FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { errorHandlerPlugin, newTenantId, newUserId, type Principal } from "@brain/shared";
+import {
+  errorHandlerPlugin,
+  BFF_SERVICE_AGENT_SCOPES,
+  InMemoryIdempotencyStore,
+  newTenantId,
+  newUserId,
+  type Principal,
+} from "@brain/shared";
 import type { GraduationRequestRecord } from "./repository.js";
 import { registerGraduationRoutes } from "./routes.js";
 
@@ -152,13 +159,36 @@ describe("graduation routes", () => {
           financial_data_copied: false,
         },
         session: { token: "member-token", refresh_token: "refresh-token" },
-        agent: { id: "agent_destination", token: "agent-token" },
+        agent: {
+          id: "agent_destination",
+          credential_id: "agkey_01K123456789ABCDEFGHJKMNPQ",
+          api_key: "brain_ak_live_one-time-secret",
+          profile: "bff_service_v1",
+          environment: "live",
+          scopes: BFF_SERVICE_AGENT_SCOPES,
+          issued_now: true,
+          token_exchange: {
+            token_endpoint: "https://auth.brain.fi/token",
+            access_token_expires_in: 300,
+            refresh_token_issued: false,
+          },
+        },
       });
       expect(complete).toHaveBeenCalledWith({
         sourceTenantId: tenantId,
         actorMemberId: memberId,
         idempotencyKey: "graduation-complete-1",
       });
+
+      const replay = await app.inject({
+        method: "POST",
+        url: `/tenants/${tenantId}/graduation/complete-unpaid`,
+        headers: { "idempotency-key": "graduation-complete-1" },
+      });
+      expect(replay.statusCode).toBe(201);
+      expect(replay.headers["idempotent-replay"]).toBe("true");
+      expect(replay.json().agent.api_key).toBe("brain_ak_live_one-time-secret");
+      expect(complete).toHaveBeenCalledOnce();
     } finally {
       await app.close();
     }
@@ -178,6 +208,8 @@ async function buildApp(principal: Principal, memberRole: "admin" | "viewer") {
     pool: fakePool(memberRole),
     service: { submit, getCurrent: vi.fn(async () => record) },
     provisioning: { complete },
+    idempotencyStore: new InMemoryIdempotencyStore(),
+    idempotencyTtlSeconds: 86_400,
   });
   return { app, submit, complete };
 }
@@ -291,9 +323,24 @@ function provisioningResult() {
     session: { token: "member-token", refreshToken: "refresh-token", expiresIn: 900 },
     agent: {
       id: "agent_destination",
-      token: "agent-token",
-      tokenId: "token_destination",
-      expiresAt: 1_788_328_000,
+      credentialId: "agkey_01K123456789ABCDEFGHJKMNPQ",
+      apiKey: "brain_ak_live_one-time-secret",
+      profile: "bff_service_v1" as const,
+      environment: "live" as const,
+      scopes: BFF_SERVICE_AGENT_SCOPES,
+      keyPrefix: "brain_ak_live_",
+      keyLast4: "cret",
+      expiresAt: "2026-12-12T00:00:00.000Z",
+      issuedNow: true,
+      tokenExchange: {
+        tokenEndpoint: "https://auth.brain.fi/token",
+        grantType: "urn:ietf:params:oauth:grant-type:token-exchange" as const,
+        subjectTokenType: "urn:brain:params:oauth:token-type:agent-api-key" as const,
+        requestedTokenType: "urn:ietf:params:oauth:token-type:access_token" as const,
+        resource: "https://api.brain.fi/",
+        accessTokenExpiresIn: 300 as const,
+        refreshTokenIssued: false as const,
+      },
     },
   };
 }
