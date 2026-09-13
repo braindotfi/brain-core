@@ -1,10 +1,12 @@
 ---
-description: Five minutes from npm install to a working integration.
+description: Five minutes from npm install to a working read-only integration.
 ---
 
 # Quickstart
 
-By the end of this page, you'll have a working integration that reads a tenant's financial state in natural language, proposes a payment, and pulls a verifiable receipt for what happened. Five minutes.
+By the end of this page, you'll have a working integration that reads a tenant's
+ledger, audit history, and governance state with a commercial API key. Five
+minutes.
 
 {% stepper %}
 {% step %}
@@ -21,11 +23,13 @@ npm install @brainfinance/sdk
 
 ### Get a Key
 
-Sign up at [app.robotmoney.com](https://app.robotmoney.com/), create a tenant, and copy your sandbox API key (`brain_sk_test_...`).
+Sign up at [app.robotmoney.com](https://app.robotmoney.com/), create a tenant,
+and copy your sandbox API key (`brain_sk_test_...`) and tenant id.
 
 ```bash
 # .env
 BRAIN_API_KEY=brain_sk_test_...
+BRAIN_TENANT_ID=tnt_...
 ```
 
 {% hint style="info" %}
@@ -42,64 +46,63 @@ Sandbox uses test credentials and Base Sepolia for on-chain anchoring; no real m
 ### Build
 
 ```typescript
-import { Brain, PolicyApprovalRequiredError } from "@brainfinance/sdk";
+import { Brain, BrainAPIError } from "@brainfinance/sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY!, environment: "sandbox" });
+const tenantId = process.env.BRAIN_TENANT_ID!;
 
-// Read sandbox ledger data.
+// ledger:read
 const accounts = await brain.accounts.list({ limit: 10 });
 console.log(accounts.accounts);
 
-// Ask the tenant's financial brain a question.
-const answer = await brain.ask("acme", "What did we spend on AWS last month?");
-console.log(answer.text);
-console.log(answer.citations);
+const transactions = await brain.transactions.list({ limit: 10 });
+console.log(transactions.transactions);
 
-// Propose a payment.
-let paymentId: string | undefined;
-try {
-  const result = await brain.pay("acme", {
-    action_type: "ach_outbound",
-    source_account_id: "acct_demo_ap",
-    destination_counterparty_id: "cp_demo_vendor",
-    amount: "125.00",
-    currency: "USD",
-    evidence_ids: ["raw_demo_invoice"],
-    idempotencyKey: "quickstart-demo-001",
-  });
-  paymentId = result.intent.id;
-} catch (error) {
-  if (!(error instanceof PolicyApprovalRequiredError)) throw error;
-  paymentId = error.intent.id;
-  if (paymentId) {
-    await brain.approve(paymentId);
-    await brain.payments.execute(paymentId);
-  }
+// audit:read
+const audit = await brain.audit.list({ limit: 10 });
+console.log(audit.events);
+
+// governance:read. This route is available through the typed low-level client.
+const { data, error, response } = await brain.http.GET("/governance/agents", {
+  params: { query: { tenant_id: tenantId, limit: 10 } },
+});
+if (!response.ok || error || !data) {
+  throw new BrainAPIError(response.status, error);
 }
-
-// Pull a verifiable receipt.
-const proof = await brain.proof(paymentId!);
-console.log(proof.anchorTx); // on-chain anchor on Base Sepolia
-console.log(proof.merklePath); // verifiable without trusting Brain
+console.log(data.agents);
 ```
 
-That's it. You just touched all five capabilities of Brain through one client.
+That's it. Every call was read-only and used one of the three scopes currently
+issuable to a commercial API key: `ledger:read`, `audit:read`, or
+`governance:read`.
 {% endstep %}
 
 {% step %}
 
 ### What You Just Built
 
-| Line                     | What Brain did under the hood                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `brain.accounts.list`    | Read normalized ledger accounts through the SDK                                                               |
-| `brain.ask`              | Routed your question to a memory graph, retrieved relevant facts with citations, answered in natural language |
-| `brain.pay`              | Created a PaymentIntent and evaluated it against the tenant's signed policy                                   |
-| `brain.approve`          | Recorded an authenticated member approval when policy required it                                             |
-| `brain.payments.execute` | Enqueued the approved intent for the worker-owned execution path                                              |
-| `brain.proof`            | Pulled a Merkle proof from a tamper-evident log anchored on Base L2                                           |
+| Call                      | Required scope    | What Brain did                           |
+| ------------------------- | ----------------- | ---------------------------------------- |
+| `brain.accounts.list`     | `ledger:read`     | Read normalized ledger accounts          |
+| `brain.transactions.list` | `ledger:read`     | Read normalized ledger transactions      |
+| `brain.audit.list`        | `audit:read`      | Read tenant-attributed audit evidence    |
+| `GET /governance/agents`  | `governance:read` | Read the tenant's registered agent state |
 
-You'll meet each of these underneath as you go deeper. For now, they're just five methods on one client.
+A `brain_sk_*` key cannot call Wiki, create or decide proposals, approve a
+payment, or execute money movement. Those surfaces require a member session or
+an exchanged, server-scoped agent credential. Do not widen a commercial key to
+make those examples work.
+
+The repository includes an executable version with configuration checks and a
+nonzero exit status on failure:
+
+```bash
+BRAIN_API_KEY=brain_sk_test_... \
+BRAIN_TENANT_ID=tnt_... \
+BRAIN_BASE_URL=https://staging-api.brain.fi/v1 \
+pnpm -C clients/sdk exec tsx examples/commercial-read-only.ts
+```
+
 {% endstep %}
 {% endstepper %}
 
