@@ -305,12 +305,8 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
   });
 
   it("grants both append-only audit-writer roles SELECT and INSERT, never UPDATE/DELETE/TRUNCATE (finding 1)", () => {
-    // PostgresAuditEmitter.emit reads the hash-chain predecessor
-    // (SELECT event_hash ... LIMIT 1) before every insert. INSERT-only on
-    // either writer role 42501s that read on every emit -- verified live
-    // against brain_auth_audit_writer. Append-only is enforced by the
-    // REVOKE UPDATE, DELETE, TRUNCATE assertion below, not by omitting
-    // SELECT.
+    // PostgresAuditEmitter.emit performs an idempotency lookup before an
+    // insert. INSERT-only on either writer role breaks replay-safe emits.
     for (const role of ["brain_surface_audit_writer", "brain_auth_audit_writer"] as const) {
       expect(SQL, `${role} missing SELECT, INSERT ON audit_events`).toContain(
         `GRANT SELECT, INSERT ON audit_events TO ${role};`,
@@ -323,6 +319,21 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     expect(revoke).not.toBeNull();
     expect(revoke?.[0]).toContain("brain_surface_audit_writer");
     expect(revoke?.[0]).toContain("brain_auth_audit_writer");
+  });
+
+  it("limits authoritative audit-chain head access to writer columns", () => {
+    const reset = SQL.match(/REVOKE ALL ON audit_chain_heads\s+FROM[\s\S]*?;/);
+    expect(reset).not.toBeNull();
+    for (const role of ALL_RUNTIME_ROLES) {
+      expect(reset?.[0], `${role} not reset on audit_chain_heads`).toContain(role);
+    }
+    expect(SQL).toContain(
+      "GRANT SELECT (tenant_id, head_event_hash), INSERT (tenant_id)\n" +
+        "  ON audit_chain_heads\n" +
+        "  TO brain_app, brain_surface_audit_writer, brain_auth_audit_writer;",
+    );
+    expect(SQL).not.toMatch(/GRANT[^;]*UPDATE[^;]*ON audit_chain_heads/);
+    expect(SQL).not.toMatch(/GRANT[^;]*DELETE[^;]*ON audit_chain_heads/);
   });
 
   it("limits tenant deletion to read-only integrity finding evidence", () => {

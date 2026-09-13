@@ -236,6 +236,9 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
 export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   "audit_events",
   "audit_anchors",
+  // The authoritative head is retained with the audit chain so retirement
+  // cannot discard its terminal sequence and integrity pointer.
+  "audit_chain_heads",
   // RFC 0012 accounting evidence survives tenant retirement for seven years.
   // The tenant foreign key is SET NULL while the irreversible tenant digest
   // continues to bind the retained receipt without retaining tenant metadata.
@@ -394,9 +397,9 @@ export class TenantDeletionService {
       deletedOutputs = {
         total_rows_deleted: totalRows,
         per_table_counts: deletedRows,
-        // Explicit non-deletion: audit_events + audit_anchors preserved under the
-        // GDPR legitimate-interest carveout (financial integrity).
-        preserved: ["audit_events", "audit_anchors"],
+        // Explicit non-deletion: audit events, anchors, and the authoritative
+        // head are preserved under the GDPR legitimate-interest carveout.
+        preserved: ["audit_events", "audit_anchors", "audit_chain_heads"],
         // Blob bytes are NOT removed by this transaction (§3 Layer-1 immutability).
         blob_artifact_count: blobUrisPendingPurge.length,
         blob_uris_pending_purge: blobUrisPendingPurge,

@@ -318,11 +318,10 @@ GRANT SELECT, INSERT, UPDATE ON approvals TO brain_surface_gateway;
 -- audit pool. It intentionally has no grants on surface, ledger, approval, or
 -- outbox tables. Append-only means no mutation of EXISTING rows (the REVOKE
 -- UPDATE, DELETE, TRUNCATE below still applies), not blind writes:
--- PostgresAuditEmitter.emit (shared/src/audit/emitter.ts) reads the
--- hash-chain predecessor (`SELECT event_hash FROM audit_events ... LIMIT 1`)
--- before every insert, so SELECT is structurally required or every emit
--- raises 42501 permission denied. Verified live: INSERT-only broke every
--- emit from this role. Do not "harden" this back to INSERT-only.
+-- PostgresAuditEmitter.emit (shared/src/audit/emitter.ts) reads an existing
+-- row for idempotent replay before an insert, so SELECT is structurally
+-- required or replay-safe emits raise 42501 permission denied. Verified live:
+-- INSERT-only broke emits from this role. Do not narrow this to INSERT-only.
 GRANT SELECT, INSERT ON audit_events TO brain_surface_audit_writer;
 
 -- brain_auth: the OAuth authorization server core (Phase 2a, OAUTH-AS-PLAN.md
@@ -354,12 +353,10 @@ COMMENT ON ROLE brain_auth IS
 -- brain_auth_audit_writer: append-only audit events for the authorization
 -- server's audit pool, mirroring brain_surface_audit_writer. Required, not
 -- optional: brain_privileged deliberately cannot insert audit_events, so
--- every writer needs its own narrow role. SELECT is required alongside
--- INSERT for the same reason as brain_surface_audit_writer above: the
--- hash-chain predecessor read in PostgresAuditEmitter.emit 42501s without it,
--- turning every /login, /set-password, and /forgot-password audit emit into
--- a 500 (finding 1). Append-only is enforced by the REVOKE UPDATE, DELETE,
--- TRUNCATE below, not by withholding SELECT.
+-- every writer needs its own narrow role. SELECT is required alongside INSERT
+-- for the same idempotent-replay reason as brain_surface_audit_writer above.
+-- Append-only is enforced by the REVOKE UPDATE, DELETE, TRUNCATE below, not by
+-- withholding SELECT.
 GRANT SELECT, INSERT ON audit_events TO brain_auth_audit_writer;
 
 -- brain_tenant_deletion: GDPR Article 17 erasure (route-gated) + blob-purge
@@ -412,6 +409,24 @@ GRANT SELECT, INSERT, UPDATE ON commercial_demo_retirement_progress
 -- Includes the §4 roles: brain_tenant_deletion's broad RLS-table DELETE would
 -- otherwise cover audit_events (it is RLS-scoped), which must stay preserved;
 -- the audit verifier/publisher keep their SELECT (only mutation is stripped).
+REVOKE ALL ON audit_chain_heads
+  FROM brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+GRANT SELECT (tenant_id, head_event_hash), INSERT (tenant_id)
+  ON audit_chain_heads
+  TO brain_app, brain_surface_audit_writer, brain_auth_audit_writer;
+REVOKE ALL ON FUNCTION advance_audit_chain_head()
+  FROM PUBLIC, brain_app, brain_privileged, brain_wiki_reader,
+       brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer;
+
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events
   FROM brain_app, brain_privileged, brain_wiki_reader,
        brain_mcp_reader,

@@ -150,14 +150,17 @@ suite(
       const c = await adminPool.connect();
       try {
         await c.query(`SET search_path TO ${schema}, public`);
+        let previousHash: Buffer | null = null;
         for (let i = 0; i < n; i++) {
           const id = `evt_${createHash("sha1").update(`${tenant}:${tag}:${i}`).digest("hex").slice(0, 26)}`;
           const hash = createHash("sha256").update(`${tenant}:${tag}:${i}`).digest();
           await c.query(
-            `INSERT INTO audit_events (id, tenant_id, layer, actor, action, event_hash)
-           VALUES ($1, $2, 'audit', 'user_seed', 'seed.event', $3)`,
-            [id, tenant, hash],
+            `INSERT INTO audit_events
+               (id, tenant_id, layer, actor, action, event_hash, prev_event_hash)
+             VALUES ($1, $2, 'audit', 'user_seed', 'seed.event', $3, $4)`,
+            [id, tenant, hash, previousHash],
           );
+          previousHash = hash;
         }
       } finally {
         c.release();

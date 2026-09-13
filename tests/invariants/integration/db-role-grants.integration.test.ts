@@ -357,6 +357,41 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
     }
   });
 
+  it("only audit writers receive narrow audit-chain head columns", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const writers = new Set(["brain_app", "brain_surface_audit_writer", "brain_auth_audit_writer"]);
+    const client = await pool.connect();
+    try {
+      for (const role of ALL_RUNTIME_ROLES) {
+        for (const [column, privilege] of [
+          ["tenant_id", "SELECT"],
+          ["head_event_hash", "SELECT"],
+          ["tenant_id", "INSERT"],
+        ] as const) {
+          const { rows } = await client.query<{ has: boolean }>(
+            "SELECT has_column_privilege($1, 'audit_chain_heads', $2, $3) AS has",
+            [role, column, privilege],
+          );
+          expect(rows[0]?.has, `${role} ${privilege} ${column}`).toBe(writers.has(role));
+        }
+        for (const privilege of ["UPDATE", "DELETE", "TRUNCATE"] as const) {
+          const { rows } = await client.query<{ has: boolean }>(
+            "SELECT has_table_privilege($1, 'audit_chain_heads', $2) AS has",
+            [role, privilege],
+          );
+          expect(rows[0]?.has, `${role} must not hold ${privilege} on audit_chain_heads`).toBe(
+            false,
+          );
+        }
+      }
+    } finally {
+      client.release();
+    }
+  });
+
   it("enforces immutable commercial billing exclusions at every database path", async (ctx) => {
     if (!isSuper) {
       ctx.skip();
