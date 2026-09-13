@@ -108,10 +108,10 @@ Approved production direction and activation progression:
    and incident-response review.
 4. Enable Base mainnet only through a separately approved production gate.
 
-The sandbox receiving address provisioned for review is
-`0x5e22088C527e2C112dbe47ceADca94db9Aa19497` on Base Sepolia. It is unfunded,
-is not configured in any runtime, has handled no traffic, and requires Damon's
-explicit approval before testing. No mainnet wallet was created.
+Phase 1 provisions no receiving address or wallet. Any address recorded by an
+earlier draft was illustrative only and is not approved, controlled, or valid
+for testing. Sepolia wallet provisioning starts in Phase 2 only after separate
+review. No mainnet wallet exists.
 
 Approved custody mechanics: use a dedicated environment-specific receiving
 address backed by an HSM or managed key service, keep the online balance below
