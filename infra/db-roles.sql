@@ -1067,8 +1067,63 @@ BEGIN
      OR NOT has_table_privilege(
        'brain_x402_seller_worker', 'public.x402_seller_receipts', 'INSERT'
      )
-     OR NOT has_table_privilege(
+     OR has_table_privilege(
        'brain_x402_seller_worker', 'public.x402_seller_receipts', 'UPDATE'
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM unnest(ARRAY[
+           'state', 'payer_address', 'settlement_tx_hash', 'refund_tx_hash',
+           'l2_finality', 'l1_finality', 'version', 'updated_at'
+         ]) AS allowed(column_name)
+        WHERE NOT has_column_privilege(
+          'brain_x402_seller_worker',
+          'public.x402_seller_receipts',
+          allowed.column_name,
+          'UPDATE'
+        )
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'x402_seller_receipts'
+          AND column_name <> ALL (ARRAY[
+            'state', 'payer_address', 'settlement_tx_hash', 'refund_tx_hash',
+            'l2_finality', 'l1_finality', 'version', 'updated_at'
+          ])
+          AND has_column_privilege(
+            'brain_x402_seller_worker',
+            'public.x402_seller_receipts',
+            column_name,
+            'UPDATE'
+          )
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_logical_operations', 'UPDATE'
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM unnest(ARRAY['state', 'updated_at']) AS allowed(column_name)
+        WHERE NOT has_column_privilege(
+          'brain_x402_seller_worker',
+          'public.x402_seller_logical_operations',
+          allowed.column_name,
+          'UPDATE'
+        )
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'x402_seller_logical_operations'
+          AND column_name <> ALL (ARRAY['state', 'updated_at'])
+          AND has_column_privilege(
+            'brain_x402_seller_worker',
+            'public.x402_seller_logical_operations',
+            column_name,
+            'UPDATE'
+          )
      )
      OR has_table_privilege(
        'brain_x402_seller_worker', 'public.x402_seller_receipts', 'DELETE'

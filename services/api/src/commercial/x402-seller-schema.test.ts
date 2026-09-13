@@ -53,6 +53,9 @@ describe("x402 seller Phase 1 schema", () => {
     expect(roles).toContain(
       "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM brain_x402_seller_worker",
     );
+    expect(roles).toContain("FROM unnest(ARRAY[");
+    expect(roles).toContain("column_name <> ALL (ARRAY[");
+    expect(roles).toContain("'public.x402_seller_logical_operations',");
   });
 
   it("keeps brain_privileged read-only", () => {
