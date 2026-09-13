@@ -84,6 +84,7 @@ const DB_URL_ENV_NAMES = [
   "BRAIN_AUTH_DB_URL",
   "BRAIN_AUTH_AUDIT_DB_URL",
   "BRAIN_COMMERCIAL_STRIPE_DB_URL",
+  "BRAIN_X402_SELLER_DB_URL",
 ] as const;
 
 const INFRA_SECRET_ENV_NAMES = [
@@ -233,6 +234,8 @@ const envSchema = z.object({
   BRAIN_AUTH_AUDIT_DB_URL: z.string().url().optional(),
   /** Reserved for the dedicated commercial Stripe worker. No fallback is allowed. */
   BRAIN_COMMERCIAL_STRIPE_DB_URL: optionalNonEmptyString().pipe(z.string().url().optional()),
+  /** Reserved for the isolated seller worker. It never falls back to DATABASE_URL. */
+  BRAIN_X402_SELLER_DB_URL: optionalNonEmptyString().pipe(z.string().url().optional()),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -533,6 +536,17 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default(false),
+  BRAIN_X402_SELLER_MODE: z.enum(["disabled", "base_sepolia"]).default("disabled"),
+  BRAIN_X402_PROTOCOL_VERSION: z.coerce.number().pipe(z.literal(2)).default(2),
+  BRAIN_X402_CDP_FACILITATOR_URL: z
+    .literal("https://api.cdp.coinbase.com/platform/v2/x402")
+    .default("https://api.cdp.coinbase.com/platform/v2/x402"),
+  BRAIN_X402_SEPOLIA_USDC_ADDRESS: z
+    .literal("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+    .default("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),
+  /** Reserved for Phase 2. Phase 1 does not create or require either value. */
+  BRAIN_X402_CDP_API_KEY_ID: optionalNonEmptyString(),
+  BRAIN_X402_CDP_API_KEY_SECRET: optionalNonEmptyString(),
   BRAIN_OUTCOME_FEES_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
@@ -1189,6 +1203,16 @@ export function parseConfig(
     throw new Error(
       "Invalid Brain configuration: BRAIN_STRIPE_BILLING_ENABLED=true requires the " +
         "dedicated Stripe worker database URL and test-mode Stripe secrets",
+    );
+  }
+  if (
+    result.data.BRAIN_X402_PAYMENTS_ENABLED &&
+    (result.data.BRAIN_X402_SELLER_MODE !== "base_sepolia" ||
+      result.data.BRAIN_X402_SELLER_DB_URL === undefined)
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_X402_PAYMENTS_ENABLED=true requires " +
+        "BRAIN_X402_SELLER_MODE=base_sepolia and BRAIN_X402_SELLER_DB_URL",
     );
   }
   assertProductionInfraSecretsSafe(env, options);

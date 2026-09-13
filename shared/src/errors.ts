@@ -255,6 +255,9 @@ export const BRAIN_ERROR_CODES = [
   // Per-customer API keys
   "api_key_not_found",
 
+  // x402 seller receipts
+  "commercial_x402_receipt_not_found",
+
   // Governance
   "governance_report_not_found",
 ] as const;
@@ -368,6 +371,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   invite_consumed: 403,
   invite_revoked: 403,
   api_key_not_found: 404,
+  commercial_x402_receipt_not_found: 404,
   governance_report_not_found: 404,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate

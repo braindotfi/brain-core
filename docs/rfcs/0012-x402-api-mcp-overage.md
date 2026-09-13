@@ -1,8 +1,9 @@
 # RFC 0012. x402 API and MCP usage payments
 
-- **Status:** Proposed. Phase 1 disabled interfaces and evidence schema are
-  implemented in PR #773 but are not closed until that PR merges. No Coinbase
-  credential, payment, or activation exists.
+- **Status:** Phase 1 seller control plane implemented and provider-disabled.
+  PR #773's original schema is extended by the current x402 v2 protocol,
+  receipt, replay, retention, and least-privilege contracts. No Coinbase
+  credential, wallet, payment, or activation exists.
 - **Date:** 2026-09-03
 - **Affects:** API and MCP gateways, standalone and overage calls, RFC 0008
   request metering and entitlements, RobotMoney commercial catalog, USDC
@@ -63,6 +64,23 @@ RobotMoney's selected ordering is verify, settle, confirm, then execute. This
 follows the requirement to block until paid and prevents delivery of an unpaid
 resource. A post-settlement service failure follows the automatic refund policy
 in section 9.
+
+The x402 v2 specification now distinguishes its default authorization flow,
+which may run the resource before settlement, from the `upfront` flow, which
+settles before the resource. RobotMoney requires `upfront` semantics. Coinbase
+CDP exposes low-level v2 `/verify` and `/settle` operations for exact USDC on
+Base Sepolia, so Phase 1 selects a Brain-owned low-level orchestration:
+
+1. call `/verify`,
+2. call `/settle`,
+3. require a successful transaction and sealed L2 inclusion, and
+4. only then invoke the resource handler.
+
+Stock authorization middleware is not accepted because its handler ordering is
+not a sufficient contract. Phase 2 must capture an authenticated facilitator
+capability response and a real Sepolia settlement witness before any payment
+path can be enabled. This is an operational proof gate, not a reason to weaken
+the settle-before-fulfillment requirement.
 
 ## 3. Network and existing Brain infrastructure
 
@@ -171,8 +189,9 @@ Approved mechanism:
   units. A downgrade changes the ceiling without rewriting use and may leave no
   included capacity until the next month.
 
-The tenant-wide scope and five-minute lease are approved. A later reviewed
-schema change implements them; this RFC creates no counter or table.
+The tenant-wide scope and five-minute lease are approved. Phase 1 implements the
+atomic reservation function and logical-operation uniqueness while leaving all
+payment behavior disabled.
 
 ### 4.3 The handshake creates multiple HTTP attempts
 
@@ -237,8 +256,10 @@ fixed-price envelope exists. `upto` is not a launch fallback.
 ## 6. Planned MCP request flow
 
 MCP access uses the same entitlement and commercial operation ids as HTTP API
-access. The approved launch transport is MCP Streamable HTTP backed by the same
-paid HTTP resource adapter used by the API gateway:
+access. MCP Streamable HTTP carries the v2 payment challenge and response in
+the current x402 MCP result metadata contract. It does not assume that an MCP
+client can consume only HTTP response headers. The API and MCP paths still
+share one settlement orchestrator:
 
 1. The MCP POST identifies the stable tool name and authenticates any required
    tenant-scoped credential.

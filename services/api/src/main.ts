@@ -109,6 +109,10 @@ import { UnpaidGraduationService } from "./graduation/provisioning.js";
 import { PostgresGraduationProvisioningStore } from "./graduation/provisioning-repository.js";
 import { CommercialTierService } from "./usage/commercial-tiers.js";
 import { registerCommercialTierRoutes } from "./usage/commercial-tier-routes.js";
+import {
+  PostgresX402ReceiptRepository,
+  registerX402ReceiptRoutes,
+} from "./commercial/x402-receipt-routes.js";
 import { registerGovernanceRoutes } from "./governance/routes.js";
 import {
   buildApiKeyAuthenticator,
@@ -2683,6 +2687,11 @@ async function main(): Promise<void> {
               pool,
               service: commercialTierService,
             }),
+          );
+        }
+        if (cfg.BRAIN_X402_PAYMENTS_ENABLED) {
+          await v1.register(async (child) =>
+            registerX402ReceiptRoutes(child, new PostgresX402ReceiptRepository(pool)),
           );
         }
         await v1.register(async (child) =>

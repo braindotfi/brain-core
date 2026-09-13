@@ -1032,6 +1032,60 @@ BEGIN
   END IF;
 END $$;
 
+-- RFC 0012 Phase 1 seller capability role. It remains NOLOGIN until the Base
+-- Sepolia wallet and facilitator credential are separately reviewed.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_x402_seller_worker') THEN
+    CREATE ROLE brain_x402_seller_worker NOLOGIN;
+  END IF;
+END $$;
+ALTER ROLE brain_x402_seller_worker WITH NOLOGIN NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO brain_x402_seller_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM brain_x402_seller_worker;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM brain_x402_seller_worker;
+GRANT SELECT ON x402_operation_price_policies, x402_seller_operation_allowlist,
+  api_usage_allowance_counters, api_usage_allowance_reservations,
+  x402_seller_logical_operations, x402_seller_quotes,
+  x402_seller_nonce_consumptions, x402_seller_receipts,
+  x402_seller_settlement_events TO brain_x402_seller_worker;
+GRANT INSERT ON x402_seller_logical_operations, x402_seller_quotes,
+  x402_seller_nonce_consumptions, x402_seller_receipts,
+  x402_seller_settlement_events TO brain_x402_seller_worker;
+GRANT UPDATE (state, updated_at) ON x402_seller_logical_operations
+  TO brain_x402_seller_worker;
+GRANT UPDATE (
+  state, payer_address, settlement_tx_hash, refund_tx_hash, l2_finality,
+  l1_finality, version, updated_at
+) ON x402_seller_receipts TO brain_x402_seller_worker;
+
+DO $$
+BEGIN
+  IF NOT has_table_privilege(
+    'brain_x402_seller_worker', 'public.x402_seller_receipts', 'SELECT'
+  )
+     OR NOT has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_receipts', 'INSERT'
+     )
+     OR NOT has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_receipts', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_receipts', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_settlement_events', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_settlement_events', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_seller_settlement_events', 'TRUNCATE'
+     ) THEN
+    RAISE EXCEPTION 'brain_x402_seller_worker privilege contract is invalid';
+  END IF;
+END $$;
+
 -- Deploy wiring (env): request-path services connect with brain_app via
 -- DATABASE_URL; the Wiki projection connects with brain_wiki_reader via
 -- BRAIN_WIKI_DB_URL; each §4 cross-tenant role connects via its own URL:

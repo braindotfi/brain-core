@@ -4007,10 +4007,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/x402/receipts/{receipt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read current x402 settlement state
+         * @description Requires `ledger:read`. Exchanged `brain_ak_*` agent JWTs are rejected.
+         *     Reads the authoritative receipt projection without scanning audit events.
+         *     The route is registered only while the default-off x402 gate is enabled.
+         */
+        get: operations["getX402Receipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/x402/receipts/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read current state for a bounded receipt set
+         * @description Requires `ledger:read`. Accepts one through one hundred unique receipt
+         *     ids and performs one authoritative projection query. It never scans
+         *     audit events or settlement-event history.
+         */
+        post: operations["queryX402Receipts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        X402Receipt: {
+            receipt_id: string;
+            logical_operation_id: string;
+            operation_id: string;
+            /** @enum {string} */
+            operation_class: "api" | "mcp";
+            /** @enum {string} */
+            state: "verified" | "settlement_pending" | "settled" | "fulfilled" | "service_failed" | "refund_pending" | "refunded" | "rejected";
+            network: string;
+            asset_contract: string;
+            amount_atomic: string;
+            settlement_transaction_hash: string | null;
+            refund_transaction_hash: string | null;
+            /** @enum {string} */
+            l2_finality: "not_checked" | "sealed" | "reorged";
+            /** @enum {string} */
+            l1_finality: "not_checked" | "included" | "failed";
+            /** Format: date-time */
+            updated_at: string;
+        };
         AgentApiKey: {
             id: string;
             tenant_id: string;
@@ -12853,6 +12917,75 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    getX402Receipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                receipt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current settlement state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["X402Receipt"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Receipt does not exist. Error code `commercial_x402_receipt_not_found`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    queryX402Receipts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    receipt_ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description One result in input order for every requested id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        receipts: {
+                            receipt_id: string;
+                            found: boolean;
+                            receipt: components["schemas"]["X402Receipt"] | null;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

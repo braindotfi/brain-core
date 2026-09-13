@@ -65,6 +65,9 @@ describe("parseConfig", () => {
       BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST: "sk_test_fixture",
       BRAIN_COMMERCIAL_STRIPE_WEBHOOK_SECRET_TEST: "whsec_fixture",
       BRAIN_X402_PAYMENTS_ENABLED: "true",
+      BRAIN_X402_SELLER_MODE: "base_sepolia",
+      BRAIN_X402_SELLER_DB_URL:
+        "postgres://brain_x402_seller_worker:strong-pass@localhost:5432/brain",
       BRAIN_OUTCOME_FEES_ENABLED: "true",
       BRAIN_MOVEMENT_FEES_ENABLED: "true",
     });
@@ -79,8 +82,18 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_COMMERCIAL_STRIPE_MODE).toBe("test");
     expect(cfg.BRAIN_COMMERCIAL_STRIPE_API_VERSION).toBe("2026-02-25.clover");
     expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(true);
+    expect(cfg.BRAIN_X402_PROTOCOL_VERSION).toBe(2);
+    expect(cfg.BRAIN_X402_CDP_FACILITATOR_URL).toBe(
+      "https://api.cdp.coinbase.com/platform/v2/x402",
+    );
     expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(true);
     expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(true);
+  });
+
+  it("fails closed when x402 is enabled without the isolated Sepolia worker binding", () => {
+    expect(() => parseConfig({ ...MIN_ENV, BRAIN_X402_PAYMENTS_ENABLED: "true" })).toThrow(
+      /BRAIN_X402_SELLER_MODE=base_sepolia and BRAIN_X402_SELLER_DB_URL/,
+    );
   });
 
   it("fails closed when commercial Stripe is enabled without its isolated test bindings", () => {
