@@ -1,7 +1,9 @@
 # Commercial financial evidence retention design
 
-Status: proposed design only. No schema or deletion behavior changes are made
-by this document.
+Status: implemented by
+`services/api/migrations/0047_commercial_financial_evidence_retention.sql`
+and the transactional tenant-retirement path. Live Stripe and x402 activation
+remain subject to the gate in section 11.
 
 This contract resolves the conflict between tenant erasure and the seven-year
 retention required for Stripe billing, commercial charge, provider-command,

@@ -84,6 +84,12 @@ async function buildApp(opts: BuildOpts) {
               rowCount: 1,
             });
           }
+          if (sql.includes("prepare_commercial_financial_retention")) {
+            return Promise.resolve({
+              rows: [{ retention_subject_id: "retsub_route_test" }],
+              rowCount: 1,
+            });
+          }
           return Promise.resolve({
             rows: [],
             rowCount: sql.startsWith("DELETE") ? 1 : 0,

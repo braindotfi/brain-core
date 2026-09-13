@@ -5,8 +5,10 @@ import { InMemoryAuditEmitter, newTenantId, newUserId } from "@brain/shared";
 import type { Pool } from "pg";
 import {
   TenantDeletionService,
+  CASCADE_DELETED_TABLES,
   TENANT_SCOPED_TABLES,
   PRESERVED_TABLES,
+  RETENTION_PREPARED_TABLES,
   assertTenantDeleteStatement,
 } from "./service.js";
 
@@ -28,6 +30,12 @@ function fakePool(deletePerTable: Record<string, number>, blobUris: string[] = [
       if (sql.startsWith("SELECT role, active, status FROM members")) {
         return Promise.resolve({
           rows: [{ role: "admin", active: true, status: "active" }],
+          rowCount: 1,
+        });
+      }
+      if (sql.includes("prepare_commercial_financial_retention")) {
+        return Promise.resolve({
+          rows: [{ retention_subject_id: "retsub_test" }],
           rowCount: 1,
         });
       }
@@ -208,6 +216,12 @@ describe("TenantDeletionService", () => {
             rowCount: 1,
           });
         }
+        if (sql.includes("prepare_commercial_financial_retention")) {
+          return Promise.resolve({
+            rows: [{ retention_subject_id: "retsub_test" }],
+            rowCount: 1,
+          });
+        }
         if (sql.includes("ledger_payment_intents")) {
           return Promise.reject(new Error("constraint violation"));
         }
@@ -238,6 +252,12 @@ describe("TenantDeletionService", () => {
         if (sql.startsWith("SELECT role, active, status FROM members")) {
           return Promise.resolve({
             rows: [{ role: "admin", active: true, status: "active" }],
+            rowCount: 1,
+          });
+        }
+        if (sql.includes("prepare_commercial_financial_retention")) {
+          return Promise.resolve({
+            rows: [{ retention_subject_id: "retsub_test" }],
             rowCount: 1,
           });
         }
@@ -519,16 +539,20 @@ describe("TenantDeletionService — registry coverage (migration-derived)", () =
     expect(scanned.length).toBeGreaterThan(20);
   });
 
-  it("every tenant-scoped table is either in the deletion list or explicitly preserved", () => {
+  it("every tenant-scoped table is deleted, cascade-deleted, or explicitly preserved", () => {
     const uncovered = scanned.filter(
-      (t) => !listedDelete.has(t.table) && !PRESERVED_TABLES.has(t.table),
+      (t) =>
+        !listedDelete.has(t.table) &&
+        !CASCADE_DELETED_TABLES.has(t.table) &&
+        !RETENTION_PREPARED_TABLES.has(t.table) &&
+        !PRESERVED_TABLES.has(t.table),
     );
     if (uncovered.length > 0) {
       const msg = uncovered
         .map((t) => `  - ${t.table} (${t.column}) from ${t.migrationFile}`)
         .join("\n");
       throw new Error(
-        `Tenant-scoped tables missing from TENANT_SCOPED_TABLES or PRESERVED_TABLES:\n${msg}\n\n` +
+        `Tenant-scoped tables missing from the deletion registries:\n${msg}\n\n` +
           "Add each to services/api/src/tenant-deletion/service.ts. Partial deletion is " +
           "worse than no deletion for GDPR.",
       );
@@ -562,5 +586,12 @@ describe("TenantDeletionService — registry coverage (migration-derived)", () =
   it("preserved tables (audit chain) are not in the deletion list", () => {
     const conflicts = TENANT_SCOPED_TABLES.filter((t) => PRESERVED_TABLES.has(t.table));
     expect(conflicts).toEqual([]);
+  });
+
+  it("retention-prepared tables are not preserved or ordinarily deleted", () => {
+    const deleted = TENANT_SCOPED_TABLES.filter((t) => RETENTION_PREPARED_TABLES.has(t.table));
+    const preserved = [...RETENTION_PREPARED_TABLES].filter((table) => PRESERVED_TABLES.has(table));
+    expect(deleted).toEqual([]);
+    expect(preserved).toEqual([]);
   });
 });

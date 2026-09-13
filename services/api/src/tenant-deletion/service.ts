@@ -32,7 +32,7 @@
 
 import type { Pool } from "pg";
 import type { AuditEmitter, AuditEventInput, ServiceCallContext } from "@brain/shared";
-import { brainError } from "@brain/shared";
+import { brainError, newRequestId } from "@brain/shared";
 import { enqueueBlobPurgeJob } from "./blob-purge-repo.js";
 import { enqueueAuditOutbox } from "./blob-purge-audit-outbox.js";
 
@@ -55,8 +55,8 @@ export interface TenantDeletionResult {
  * Tables to wipe, in deletion order. Children before parents where a foreign
  * key exists. The registry-derived test in service.test.ts scans every
  * migration in services/{layer}/migrations and asserts each tenant-scoped table
- * is either listed here OR in PRESERVED_TABLES — so a new migration that
- * adds a tenant-scoped table without updating this list fails CI.
+ * is listed here or in one of the explicit preservation, cascade, or sealed
+ * retention registries, so an unclassified table fails CI.
  */
 export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   table: string;
@@ -239,11 +239,16 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The authoritative head is retained with the audit chain so retirement
   // cannot discard its terminal sequence and integrity pointer.
   "audit_chain_heads",
-  // RFC 0012 accounting evidence survives tenant retirement for seven years.
-  // The tenant foreign key is SET NULL while the irreversible tenant digest
-  // continues to bind the retained receipt without retaining tenant metadata.
-  "x402_seller_logical_operations",
-  "x402_seller_receipts",
+  "commercial_retention_subjects",
+  "commercial_retention_receipts",
+  "commercial_retained_stripe_subscriptions",
+  "commercial_retained_stripe_events",
+  "commercial_retained_charge_facts",
+  "commercial_retained_x402_operations",
+  "commercial_retained_x402_events",
+  "commercial_retained_provider_commands",
+  "commercial_retention_legal_hold_events",
+  "commercial_retention_purge_receipts",
   // RFC 0003: the blob purge queue must SURVIVE the deletion — a privileged
   // worker drains it after the tenant rows are gone, and the row stands as the
   // on-record proof that Article 17 erasure was enqueued.
@@ -275,6 +280,23 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Codex 307161b P1 #2: integrity findings are forensic records ABOUT the
   // preserved, append-only audit log; they are retained with it, not erased.
   "audit_integrity_findings",
+]);
+
+/**
+ * Rows that must remain until the final tenant DELETE and are removed by its
+ * foreign-key cascade. Listing the retention seal in the ordinary delete plan
+ * would remove the proof that the tenant trigger checks.
+ */
+export const CASCADE_DELETED_TABLES: ReadonlySet<string> = new Set(["commercial_retirement_seals"]);
+
+/**
+ * Seller rows are dependency-linked through quote and receipt ids instead of
+ * carrying a tenant key on every child. The sealed retention function archives
+ * and removes this graph before the ordinary tenant-scoped deletion loop.
+ */
+export const RETENTION_PREPARED_TABLES: ReadonlySet<string> = new Set([
+  "x402_seller_logical_operations",
+  "x402_seller_receipts",
 ]);
 
 export interface TenantDeletionDeps {
@@ -354,6 +376,15 @@ export class TenantDeletionService {
       if (member.role !== "admin") {
         throw brainError("auth_scope_insufficient", "admin member required");
       }
+      const retentionReceiptId = `retreceipt_${newRequestId()}`;
+      const retention = await client.query<{ retention_subject_id: string }>(
+        `SELECT prepare_commercial_financial_retention($1, $2) AS retention_subject_id`,
+        [targetTenantId, retentionReceiptId],
+      );
+      const retentionSubjectId = retention.rows[0]?.retention_subject_id;
+      if (retentionSubjectId === undefined) {
+        throw new Error("commercial financial retention preparation returned no subject");
+      }
       // Snapshot the blob_uri list BEFORE the DELETE wipes the rows. These
       // URIs are what an operator must purge out-of-band to satisfy GDPR
       // Article 17 fully (Layer-1 immutability blocks in-band hard delete).
@@ -404,6 +435,8 @@ export class TenantDeletionService {
         blob_artifact_count: blobUrisPendingPurge.length,
         blob_uris_pending_purge: blobUrisPendingPurge,
         blob_purge_job_id: blobPurgeJobId,
+        commercial_retention_subject_id: retentionSubjectId,
+        commercial_retention_receipt_id: retentionReceiptId,
       };
       await enqueueAuditOutbox(client, {
         tenantId: targetTenantId,

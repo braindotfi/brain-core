@@ -9,6 +9,7 @@ function privilegeClient(
   options: {
     missingTenantUpdate?: boolean;
     missingAgentStateUpdate?: boolean;
+    missingRetentionExecute?: boolean;
     superuser?: boolean;
   } = {},
 ) {
@@ -58,6 +59,10 @@ function privilegeClient(
         },
       ],
       rowCount: 2,
+    }))
+    .mockImplementationOnce(() => ({
+      rows: [{ allowed: options.missingRetentionExecute !== true }],
+      rowCount: 1,
     }));
   return { query, client: { query: query as TenantDeletionPrivilegeClient["query"] } };
 }
@@ -112,6 +117,13 @@ describe("tenant-deletion privilege contract", () => {
     const { client } = privilegeClient({ missingAgentStateUpdate: true });
     await expect(assertTenantDeletionPrivilegeContract(client, ["agent_runs"])).rejects.toThrow(
       "tenant-deletion agent UPDATE contract failed",
+    );
+  });
+
+  it("fails closed when retention preparation EXECUTE is missing", async () => {
+    const { client } = privilegeClient({ missingRetentionExecute: true });
+    await expect(assertTenantDeletionPrivilegeContract(client, ["agent_runs"])).rejects.toThrow(
+      "cannot execute commercial retention preparation",
     );
   });
 

@@ -1156,6 +1156,122 @@ BEGIN
   END IF;
 END $$;
 
+-- Commercial financial retention capability. This is a NOLOGIN group role
+-- assumed only by the protected expiry operator. Tenant deletion can invoke
+-- the sealed preparation function but receives no archive table mutation.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_commercial_retention_worker') THEN
+    CREATE ROLE brain_commercial_retention_worker NOLOGIN;
+  END IF;
+END $$;
+ALTER ROLE brain_commercial_retention_worker WITH NOLOGIN NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO brain_commercial_retention_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM brain_commercial_retention_worker;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM brain_commercial_retention_worker;
+
+REVOKE ALL PRIVILEGES ON commercial_retention_hmac_keys,
+  commercial_retention_subjects, commercial_retention_extractor_registry,
+  commercial_retirement_seals, commercial_retention_receipts,
+  commercial_retained_stripe_subscriptions, commercial_retained_stripe_events,
+  commercial_retained_charge_facts, commercial_retained_x402_operations,
+  commercial_retained_x402_events, commercial_retained_provider_commands,
+  commercial_retention_legal_hold_events, commercial_retention_purge_receipts
+  FROM brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer,
+       brain_stripe_billing_worker, brain_x402_seller_worker,
+       brain_commercial_retention_worker;
+REVOKE ALL ON FUNCTION commercial_retention_subject_digest(TEXT),
+  reject_commercial_activity_after_retention_seal(),
+  reject_x402_seller_child_activity_after_retention_seal(),
+  reject_x402_seller_immutable_mutation(),
+  commercial_retention_extractor_version(TEXT, TEXT),
+  commercial_retention_digest_set(REGCLASS, TEXT),
+  commercial_retention_source_count(TEXT, TEXT),
+  prepare_commercial_financial_retention(TEXT, TEXT),
+  require_commercial_retention_before_tenant_delete(),
+  require_commercial_retention_before_source_delete(),
+  require_commercial_retention_before_x402_seller_delete(),
+  set_commercial_retention_legal_hold(TEXT, BOOLEAN, TEXT, TEXT),
+  commercial_retention_expiry_eligible(TEXT, TIMESTAMPTZ),
+  purge_expired_commercial_retention(TEXT, TEXT, TEXT, TEXT)
+  FROM PUBLIC, brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer,
+       brain_stripe_billing_worker, brain_x402_seller_worker,
+       brain_commercial_retention_worker;
+
+GRANT SELECT ON commercial_retention_subjects,
+  commercial_retention_extractor_registry, commercial_retention_receipts,
+  commercial_retained_stripe_subscriptions, commercial_retained_stripe_events,
+  commercial_retained_charge_facts, commercial_retained_x402_operations,
+  commercial_retained_x402_events, commercial_retained_provider_commands,
+  commercial_retention_legal_hold_events, commercial_retention_purge_receipts
+  TO brain_privileged, brain_commercial_retention_worker;
+GRANT INSERT ON commercial_retention_subjects, commercial_retention_receipts,
+  commercial_retained_stripe_subscriptions, commercial_retained_stripe_events,
+  commercial_retained_charge_facts, commercial_retained_x402_operations,
+  commercial_retained_x402_events, commercial_retained_provider_commands,
+  commercial_retention_legal_hold_events, commercial_retention_purge_receipts
+  TO brain_commercial_retention_worker;
+GRANT EXECUTE ON FUNCTION prepare_commercial_financial_retention(TEXT, TEXT)
+  TO brain_tenant_deletion, brain_commercial_retention_worker;
+GRANT EXECUTE ON FUNCTION set_commercial_retention_legal_hold(TEXT, BOOLEAN, TEXT, TEXT),
+  commercial_retention_expiry_eligible(TEXT, TIMESTAMPTZ),
+  purge_expired_commercial_retention(TEXT, TEXT, TEXT, TEXT)
+  TO brain_commercial_retention_worker;
+
+DO $$
+DECLARE role_name TEXT; table_name TEXT; privilege_name TEXT;
+BEGIN
+  FOREACH role_name IN ARRAY ARRAY[
+    'brain_app', 'brain_privileged', 'brain_wiki_reader', 'brain_mcp_reader',
+    'brain_raw_worker', 'brain_canonical_projector', 'brain_ledger_projector',
+    'brain_execution_worker', 'brain_audit_verifier', 'brain_audit_publisher',
+    'brain_resolver', 'brain_tenant_deletion', 'brain_surface_gateway',
+    'brain_surface_audit_writer', 'brain_auth', 'brain_auth_audit_writer',
+    'brain_stripe_billing_worker', 'brain_x402_seller_worker'
+  ] LOOP
+    FOREACH table_name IN ARRAY ARRAY[
+      'commercial_retention_subjects', 'commercial_retention_receipts',
+      'commercial_retained_stripe_subscriptions', 'commercial_retained_stripe_events',
+      'commercial_retained_charge_facts', 'commercial_retained_x402_operations',
+      'commercial_retained_x402_events', 'commercial_retained_provider_commands',
+      'commercial_retention_legal_hold_events', 'commercial_retention_purge_receipts'
+    ] LOOP
+      FOREACH privilege_name IN ARRAY ARRAY[
+        'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+      ] LOOP
+        IF has_table_privilege(role_name, 'public.' || table_name, privilege_name) THEN
+          RAISE EXCEPTION '% must not have % on %', role_name, privilege_name, table_name;
+        END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  IF has_table_privilege(
+       'brain_commercial_retention_worker',
+       'public.commercial_retained_stripe_events',
+       'DELETE'
+     )
+     OR NOT has_function_privilege(
+       'brain_commercial_retention_worker',
+       'public.purge_expired_commercial_retention(text,text,text,text)',
+       'EXECUTE'
+     )
+     OR NOT has_function_privilege(
+       'brain_tenant_deletion',
+       'public.prepare_commercial_financial_retention(text,text)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'commercial retention role contract is invalid';
+  END IF;
+END $$;
+
 -- Deploy wiring (env): request-path services connect with brain_app via
 -- DATABASE_URL; the Wiki projection connects with brain_wiki_reader via
 -- BRAIN_WIKI_DB_URL; each §4 cross-tenant role connects via its own URL:
