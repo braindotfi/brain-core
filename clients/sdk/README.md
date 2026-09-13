@@ -10,7 +10,7 @@ npm install @brainfinance/sdk@rc
 
 ### Release-candidate compatibility
 
-`0.1.0-rc.0` is generated against, and tested against, the **v0.0.4
+`0.1.0-rc.0` is generated against, and tested against, the **v0.0.7
 deployment** of the Brain API (`https://api.brain.fi`). The SDK version line
 is independent of the service version; this note is the compatibility
 statement.
@@ -93,7 +93,8 @@ Pass exactly one of `apiKey`, `agentApiKey`, or `token`. Passing more than one,
 or none, throws.
 
 **`apiKey` (recommended)**. A long-lived Brain API key (`brain_sk_...`),
-issued for a tenant. The SDK sends it directly as
+issued for a tenant with the read-only `ledger:read`, `audit:read`, and
+`governance:read` scope ceiling. The SDK sends it directly as
 `Authorization: Bearer brain_sk_...`:
 
 ```typescript
@@ -101,6 +102,17 @@ import { Brain } from "@brainfinance/sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 ```
+
+Run the executable commercial-key smoke example against a tenant you control:
+
+```bash
+BRAIN_API_KEY=brain_sk_live_... \
+BRAIN_TENANT_ID=tnt_... \
+pnpm -C clients/sdk exec tsx examples/commercial-read-only.ts
+```
+
+It performs only ledger, audit, and governance reads. Wiki, proposal,
+approval, and execution routes require a different authenticated principal.
 
 **`agentApiKey`**. A durable exchange-only agent credential (`brain_ak_...`).
 The SDK never sends it to API resource routes. It exchanges the key for a
