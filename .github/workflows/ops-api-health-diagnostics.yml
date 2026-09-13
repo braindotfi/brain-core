@@ -133,7 +133,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           docker exec -i brain-prod-postgres psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
-          SET transaction_read_only = on;
+          BEGIN READ ONLY;
           WITH
           fork_groups AS MATERIALIZED (
             SELECT tenant_id, prev_event_hash, count(*)::bigint AS successor_count
@@ -258,7 +258,7 @@ jobs:
                )), '[]'::json) FROM trigger_state)
           );
 
-          RESET transaction_read_only;
+          COMMIT;
 
           BEGIN;
           CREATE TEMP TABLE audit_chain_enforcement_results (
