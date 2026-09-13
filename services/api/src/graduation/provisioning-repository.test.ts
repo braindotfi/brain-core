@@ -8,20 +8,6 @@ import type { DestinationSessionSeed } from "./provisioning.js";
 const serviceTokenMocks = vi.hoisted(() => ({
   ensureActiveDefaultPolicy: vi.fn(async () => undefined),
   ensureBffServiceAgent: vi.fn(async () => ({ agentId: "agent_destination", created: true })),
-  findActiveProductionAgentToken: vi.fn(
-    async (): Promise<{
-      tenantId: string;
-      agentId: string;
-      tokenId: string;
-      expiresAt: number;
-    } | null> => null,
-  ),
-  insertProductionAgentToken: vi.fn(async () => ({
-    tenantId: destinationTenantId,
-    agentId: "agent_destination",
-    tokenId: "token_destination",
-    expiresAt: 1_788_328_000,
-  })),
 }));
 
 vi.mock("@brain/shared", async (importOriginal) => {
@@ -50,7 +36,6 @@ const destinationMemberId = newUserId();
 describe("PostgresGraduationProvisioningStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    serviceTokenMocks.findActiveProductionAgentToken.mockResolvedValue(null);
   });
 
   it("rejects a missing graduation request", async () => {
@@ -151,31 +136,40 @@ describe("PostgresGraduationProvisioningStore", () => {
   });
 
   it("provisions a classified destination and reuses an active agent token", async () => {
-    const activeToken = {
-      tenantId: destinationTenantId,
-      agentId: "agent_destination",
-      tokenId: "token_existing",
-      expiresAt: 1_788_328_001,
-    };
-    serviceTokenMocks.findActiveProductionAgentToken.mockResolvedValue(activeToken);
-    const pool = fakePool([undefined, destinationClassification(), undefined, undefined]);
+    const activeToken = agentApiKeyRow();
+    const pool = fakePool([
+      undefined,
+      destinationClassification(),
+      undefined,
+      undefined,
+      activeToken,
+    ]);
     await expect(store(pool).provisionDestination(reservation(), session())).resolves.toEqual({
       agentId: "agent_destination",
       agentCreated: true,
-      agentToken: activeToken,
+      agentKey: { row: activeToken, created: false },
     });
-    expect(serviceTokenMocks.insertProductionAgentToken).not.toHaveBeenCalled();
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("FROM agent_api_keys"), [
+      destinationTenantId,
+      "agent_destination",
+    ]);
   });
 
   it("mints an agent token when the destination has none", async () => {
-    const pool = fakePool([undefined, destinationClassification(), undefined, undefined]);
+    const pool = fakePool([
+      undefined,
+      destinationClassification(),
+      undefined,
+      undefined,
+      undefined,
+      agentApiKeyRow(),
+    ]);
     const result = await store(pool).provisionDestination(reservation(), session());
-    expect(result.agentToken).toMatchObject({ tokenId: "token_destination" });
-    expect(serviceTokenMocks.insertProductionAgentToken).toHaveBeenCalledWith(
-      expect.anything(),
-      destinationTenantId,
-      "agent_destination",
-    );
+    expect(result.agentKey).toMatchObject({
+      row: { id: "agkey_destination" },
+      secret: expect.stringMatching(/^brain_ak_live_/),
+      created: true,
+    });
   });
 
   it.each([
@@ -228,6 +222,7 @@ function store(pool: Pool) {
   return new PostgresGraduationProvisioningStore(
     pool,
     "0x0000000000000000000000000000000000000001",
+    "test-agent-api-key-pepper",
   );
 }
 
@@ -315,6 +310,25 @@ function destinationClassification(overrides: Record<string, unknown> = {}) {
     data_profile: "customer",
     access_stage: "production",
     ...overrides,
+  };
+}
+
+function agentApiKeyRow() {
+  return {
+    id: "agkey_destination",
+    tenant_id: destinationTenantId,
+    agent_id: "agent_destination",
+    profile: "bff_service_v1",
+    environment: "live",
+    scopes: ["ledger:read"],
+    key_prefix: "brain_ak_live_",
+    key_last4: "ined",
+    name: "Unpaid graduation production agent",
+    created_at: "2026-09-03T00:00:00Z",
+    last_used_at: null,
+    expires_at: "2099-09-03T00:00:00Z",
+    revoked_at: null,
+    rotated_from_id: null,
   };
 }
 

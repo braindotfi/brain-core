@@ -5,7 +5,8 @@
   `BRAIN_PRODUCTION_GRADUATION_ENABLED` gate. They are not active. Paid
   graduation remains blocked on RFC 0009 and the dormant agent credential
   response must be reconciled with the RFC 8693 exchange flow before this gate
-  can be enabled.
+  can be enabled. Unpaid completion now returns the existing exchange-only
+  production agent API-key contract rather than minting a long-lived agent JWT.
 - **Date:** 2026-09-02
 - **Affects:** Signup, tenant provisioning, production tenancy, business
   verification, risk review, Stripe subscription setup, Raw ingestion, API
@@ -82,7 +83,7 @@ is:
 9. Core creates the fresh production tenant and one active
    bootstrap admin in the same transaction.
 10. The admin explicitly accepts or invites additional members. Core issues
-    fresh live keys only after production activation.
+    a fresh live exchange-only agent API key only after production activation.
 11. The new tenant may ingest real Raw data. The demo tenant remains separate
     and visibly labeled synthetic.
 
@@ -252,12 +253,24 @@ Recommended sequence:
 4. In one database transaction, create the new `data_profile=customer`,
    `access_stage=production_review` tenant and bootstrap admin member.
 5. Create production sessions and service principals through the existing
-   production-tenancy contracts.
+   production-tenancy contracts. The service principal credential is a
+   `brain_ak_live_*` key using the `bff_service_v1` profile, stored in
+   `agent_api_keys` and accepted only as an RFC 8693 subject token. It is
+   never returned as an agent JWT.
 6. Verify required policies, audit chain, RLS, object namespace, and billing
    entitlement.
 7. Transition the new tenant to `access_stage=production` through a guarded
    compare-and-set.
 8. Permit live key issuance and real Raw ingestion.
+
+The unpaid completion response uses the established agent API-key response
+shape (`id`, profile, environment, scopes, key metadata, and one-time
+`api_key`). A newly inserted credential includes `api_key` exactly once.
+Retries reuse the same stored credential and return its metadata without
+inventing a replacement or fabricating plaintext that cannot be recovered from
+the digest-only store. If that credential is expired or revoked, completion
+returns an explicit conflict and requires the existing agent-key rotation
+operation; it does not silently mint an unrelated credential.
 
 If step 6 fails, the production tenant stays closed in `production_review`.
 Retry repairs the same tenant. It does not create another tenant or relabel the
@@ -342,7 +355,10 @@ Expected member-session endpoints include:
 - request an audited manual reconsideration when policy permits.
 
 Only tenant admins may mutate a request. API keys and agents cannot graduate a
-tenant. Sensitive review details require a separate internal permission.
+tenant. Sensitive review details require a separate internal permission. The
+unpaid completion response contains an exchange-only `brain_ak_live_*`
+credential, never a long-lived agent JWT. The key must be exchanged at the RFC
+8693 token endpoint before it can authenticate API requests.
 
 ## 9. Security, privacy, and compliance gates
 
@@ -415,6 +431,10 @@ that the launch markets and product do not require more.
 - Flagged applications stop at manual review with stable reason codes.
 - An approved reviewer cannot bypass payment, RLS, or provisioning checks.
 - Production Raw write remains closed until every graduation gate is true.
+- Graduation agent credentials are durable exchange-only API keys; JWTs are
+  short-lived exchange results, not graduation outputs.
+- Repeating completion reuses the same credential metadata and never returns
+  impossible plaintext or silently mints a second credential.
 - A provisioning failure retries the same tenant and preserves evidence.
 - All transitions emit authenticated actor and before and after audit records.
 - Standard typecheck, test, lint, invariants, RLS, OpenAPI, SDK, migration, and

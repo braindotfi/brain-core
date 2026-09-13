@@ -152,8 +152,16 @@ describe("graduation routes", () => {
           financial_data_copied: false,
         },
         session: { token: "member-token", refresh_token: "refresh-token" },
-        agent: { id: "agent_destination", token: "agent-token" },
+        agent: {
+          id: "agkey_destination",
+          agent_id: "agent_destination",
+          profile: "bff_service_v1",
+          environment: "live",
+          api_key: "brain_ak_live_new",
+        },
       });
+      expect(response.json().agent).not.toHaveProperty("token");
+      expect(response.json().agent.api_key).toMatch(/^brain_ak_live_/);
       expect(complete).toHaveBeenCalledWith({
         sourceTenantId: tenantId,
         actorMemberId: memberId,
@@ -291,9 +299,23 @@ function provisioningResult() {
     session: { token: "member-token", refreshToken: "refresh-token", expiresIn: 900 },
     agent: {
       id: "agent_destination",
-      token: "agent-token",
-      tokenId: "token_destination",
-      expiresAt: 1_788_328_000,
+      credential: {
+        id: "agkey_destination",
+        tenantId: otherTenantId,
+        agentId: "agent_destination",
+        profile: "bff_service_v1",
+        environment: "live",
+        scopes: ["ledger:read"],
+        name: "Unpaid graduation production agent",
+        keyPrefix: "brain_ak_live_",
+        keyLast4: "new",
+        createdAt: "2026-09-02T00:00:01.000Z",
+        lastUsedAt: null,
+        expiresAt: "2026-12-01T00:00:01.000Z",
+        revokedAt: null,
+        rotatedFromId: null,
+        apiKey: "brain_ak_live_new",
+      },
     },
   };
 }

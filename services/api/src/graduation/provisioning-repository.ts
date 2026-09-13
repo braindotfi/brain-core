@@ -6,12 +6,11 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
+import { ensureActiveDefaultPolicy, ensureBffServiceAgent } from "../onboarding/service-token.js";
 import {
-  ensureActiveDefaultPolicy,
-  ensureBffServiceAgent,
-  findActiveProductionAgentToken,
-  insertProductionAgentToken,
-} from "../onboarding/service-token.js";
+  insertAgentApiKey,
+  type AgentApiKeyRow,
+} from "../production-tenancy/agent-key-issuance.js";
 import {
   GRADUATION_EXCLUDED_DATA_CLASSES,
   type DestinationSessionSeed,
@@ -56,6 +55,7 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
   public constructor(
     private readonly pool: Pool,
     private readonly smartAccount: string,
+    private readonly agentApiKeyPepper: string,
   ) {}
 
   public async reserve(input: {
@@ -239,15 +239,41 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
         reservation.destinationTenantId,
         this.smartAccount,
       );
-      const activeToken = await findActiveProductionAgentToken(
+      const existingKey = await findGraduationAgentApiKey(
         client,
         reservation.destinationTenantId,
         agent.agentId,
       );
-      const agentToken =
-        activeToken ??
-        (await insertProductionAgentToken(client, reservation.destinationTenantId, agent.agentId));
-      return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
+      if (existingKey !== null) {
+        if (
+          existingKey.revoked_at !== null ||
+          new Date(existingKey.expires_at).getTime() <= Date.now()
+        ) {
+          throw brainError(
+            "execution_idempotency_conflict",
+            "graduation already has an unavailable agent API key; rotate it explicitly",
+            { statusOverride: 409 },
+          );
+        }
+        return {
+          agentId: agent.agentId,
+          agentCreated: agent.created,
+          agentKey: { row: existingKey, created: false },
+        };
+      }
+      const issued = await insertAgentApiKey(client, {
+        tenantId: reservation.destinationTenantId,
+        agentId: agent.agentId,
+        profile: "bff_service_v1",
+        environment: "live",
+        name: "Unpaid graduation production agent",
+        pepper: this.agentApiKeyPepper,
+      });
+      return {
+        agentId: agent.agentId,
+        agentCreated: agent.created,
+        agentKey: { row: issued.row, secret: issued.secret, created: true },
+      };
     });
   }
 
@@ -313,6 +339,25 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
       return serializeLineage(row);
     });
   }
+}
+
+async function findGraduationAgentApiKey(
+  client: TenantScopedClient,
+  tenantId: string,
+  agentId: string,
+): Promise<AgentApiKeyRow | null> {
+  const { rows } = await client.query<AgentApiKeyRow>(
+    `SELECT id, tenant_id, agent_id, profile, environment, scopes, key_prefix,
+            key_last4, name, created_at, last_used_at, expires_at, revoked_at,
+            rotated_from_id
+       FROM agent_api_keys
+      WHERE tenant_id = $1 AND agent_id = $2
+        AND profile = 'bff_service_v1' AND environment = 'live'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [tenantId, agentId],
+  );
+  return rows[0] ?? null;
 }
 
 function carryForward(row: ReservationRow): GraduationCarryForward {

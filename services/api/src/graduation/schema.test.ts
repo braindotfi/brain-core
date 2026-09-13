@@ -63,6 +63,12 @@ describe("RFC 0010 Phase 1 graduation schema", () => {
       /if \(cfg\.BRAIN_PRODUCTION_GRADUATION_ENABLED\) \{[\s\S]+registerGraduationRoutes/,
     );
   });
+
+  it("requires the exchange-only agent-key pepper only inside the graduation gate", () => {
+    expect(main).toMatch(
+      /if \(cfg\.BRAIN_PRODUCTION_GRADUATION_ENABLED\) \{[\s\S]+BRAIN_AGENT_API_KEY_PEPPER/,
+    );
+  });
 });
 
 describe("RFC 0010 Phase 2 unpaid graduation schema", () => {
@@ -99,5 +105,12 @@ describe("RFC 0010 Phase 2 unpaid graduation schema", () => {
     ]) {
       expect(provisioningRepository).not.toContain(`INSERT INTO ${table}`);
     }
+  });
+
+  it("uses durable exchange-only live agent keys instead of graduation JWTs", () => {
+    expect(provisioningRepository).toContain("insertAgentApiKey");
+    expect(provisioningRepository).toContain('profile: "bff_service_v1"');
+    expect(provisioningRepository).toContain('environment: "live"');
+    expect(provisioningRepository).not.toContain("insertProductionAgentToken");
   });
 });

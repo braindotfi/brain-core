@@ -2647,6 +2647,16 @@ async function main(): Promise<void> {
           }),
         );
         if (cfg.BRAIN_PRODUCTION_GRADUATION_ENABLED) {
+          if (
+            !cfg.BRAIN_AGENT_KEY_EXCHANGE_ENABLED ||
+            cfg.BRAIN_AGENT_KEY_ENVIRONMENT !== "live" ||
+            cfg.BRAIN_AGENT_API_KEY_PEPPER === undefined
+          ) {
+            throw new Error(
+              "live agent-key exchange and BRAIN_AGENT_API_KEY_PEPPER are required " +
+                "when production graduation is enabled",
+            );
+          }
           const graduationVerificationService = new GraduationVerificationService(
             new PostgresGraduationVerificationRepository(pool),
             buildPendingComplianceGraduationVerifier(),
@@ -2657,6 +2667,7 @@ async function main(): Promise<void> {
               pool,
               process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
                 "0x0000000000000000000000000000000000000000",
+              cfg.BRAIN_AGENT_API_KEY_PEPPER,
             ),
             siwxSigner,
             audit,

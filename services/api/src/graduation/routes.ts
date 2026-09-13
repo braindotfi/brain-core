@@ -221,10 +221,23 @@ function serializeProvisioning(result: CompleteUnpaidGraduationResult) {
       expires_in: result.session.expiresIn,
     },
     agent: {
-      id: result.agent.id,
-      token: result.agent.token,
-      token_id: result.agent.tokenId,
-      expires_at: result.agent.expiresAt,
+      id: result.agent.credential.id,
+      tenant_id: result.agent.credential.tenantId,
+      agent_id: result.agent.credential.agentId,
+      profile: result.agent.credential.profile,
+      environment: result.agent.credential.environment,
+      scopes: result.agent.credential.scopes,
+      name: result.agent.credential.name,
+      key_prefix: result.agent.credential.keyPrefix,
+      key_last4: result.agent.credential.keyLast4,
+      created_at: result.agent.credential.createdAt,
+      last_used_at: result.agent.credential.lastUsedAt,
+      expires_at: result.agent.credential.expiresAt,
+      revoked_at: result.agent.credential.revokedAt,
+      rotated_from_id: result.agent.credential.rotatedFromId,
+      ...(result.agent.credential.apiKey !== undefined
+        ? { api_key: result.agent.credential.apiKey }
+        : {}),
     },
   };
 }
