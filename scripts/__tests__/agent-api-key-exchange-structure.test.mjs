@@ -8,13 +8,15 @@ test("agent exchange keys remain structurally separate from commercial API keys"
   const migration = read("services/api/migrations/0036_agent_api_keys.sql");
   const middleware = read("shared/src/auth/middleware.ts");
   const routes = read("services/api/src/production-tenancy/agent-key-routes.ts");
+  const store = read("services/api/src/production-tenancy/agent-key-store.ts");
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS agent_api_keys/);
   assert.match(migration, /profile = 'document_extractor_v1'.*ARRAY\['raw:write'\]/s);
   assert.match(migration, /profile = 'bff_service_v1'.*'payment_intent:propose'.*'audit:read'/s);
   assert.doesNotMatch(migration, /ALTER TABLE api_keys/);
-  assert.match(routes, /generateAgentApiKey/);
-  assert.doesNotMatch(routes, /generateApiKeySecret/);
+  assert.match(routes, /issueAgentApiKey/);
+  assert.match(store, /generateAgentApiKey/);
+  assert.doesNotMatch(`${routes}\n${store}`, /generateApiKeySecret/);
   assert.match(middleware, /token\.startsWith\("brain_ak_"\)/);
   assert.match(middleware, /must be exchanged for an access token/);
 });

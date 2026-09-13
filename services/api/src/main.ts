@@ -2657,15 +2657,22 @@ async function main(): Promise<void> {
               pool,
               process.env["BRAIN_ONCHAIN_SMART_ACCOUNT"] ??
                 "0x0000000000000000000000000000000000000000",
+              cfg.BRAIN_AGENT_API_KEY_PEPPER!,
             ),
             siwxSigner,
             audit,
+            {
+              tokenEndpoint: `${cfg.AUTH_ISSUER}/token`,
+              resource: cfg.BRAIN_API_RESOURCE_URL,
+            },
           );
           await v1.register(async (child) =>
             registerGraduationRoutes(child, {
               pool,
               service: graduationVerificationService,
               provisioning: graduationProvisioningService,
+              idempotencyStore,
+              idempotencyTtlSeconds: cfg.IDEMPOTENCY_TTL_SECONDS,
             }),
           );
         }

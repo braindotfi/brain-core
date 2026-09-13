@@ -3,9 +3,9 @@
 - **Status:** Proposed. Phase 1 verification and unpaid Phase 2 graduation are
   implemented in PR #773 behind the default-off
   `BRAIN_PRODUCTION_GRADUATION_ENABLED` gate. They are not active. Paid
-  graduation remains blocked on RFC 0009 and the dormant agent credential
-  response must be reconciled with the RFC 8693 exchange flow before this gate
-  can be enabled.
+  graduation remains blocked on RFC 0009. The unpaid completion contract now
+  issues an exchange-only `brain_ak_live_*` credential under the RFC 8693 flow
+  instead of a long-lived agent JWT.
 - **Date:** 2026-09-02
 - **Affects:** Signup, tenant provisioning, production tenancy, business
   verification, risk review, Stripe subscription setup, Raw ingestion, API
@@ -251,8 +251,10 @@ Recommended sequence:
    verified paid state.
 4. In one database transaction, create the new `data_profile=customer`,
    `access_stage=production_review` tenant and bootstrap admin member.
-5. Create production sessions and service principals through the existing
-   production-tenancy contracts.
+5. Create the member session and BFF service principal, then issue one
+   `brain_ak_live_*` credential with the server-owned `bff_service_v1` profile.
+   Return the plaintext once with the RFC 8693 token endpoint, resource, and
+   token-type parameters. Never mint a long-lived agent JWT or a refresh token.
 6. Verify required policies, audit chain, RLS, object namespace, and billing
    entitlement.
 7. Transition the new tenant to `access_stage=production` through a guarded
@@ -417,6 +419,11 @@ that the launch markets and product do not require more.
 - Production Raw write remains closed until every graduation gate is true.
 - A provisioning failure retries the same tenant and preserves evidence.
 - All transitions emit authenticated actor and before and after audit records.
+- Graduation completion returns only a `brain_ak_live_*` BFF credential and
+  never returns or persists a newly minted long-lived agent JWT.
+- The issued key has exactly the `bff_service_v1` profile, is accepted only by
+  RFC 8693 token exchange, and yields five-minute audience-restricted access
+  tokens without refresh tokens.
 - Standard typecheck, test, lint, invariants, RLS, OpenAPI, SDK, migration, and
   no-em-dashes checks pass.
 
@@ -430,6 +437,8 @@ that the launch markets and product do not require more.
 - [x] Required paid Stripe state and a selected tier before activation.
 - [x] Scoped real Raw ingestion and fresh live-key eligibility.
 - [x] Identified legal, compliance, privacy, security, and finance gates.
+- [x] Reconciled unpaid completion with the `brain_ak_*` RFC 8693 exchange
+      contract.
 
 ### Pending approval or implementation
 

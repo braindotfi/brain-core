@@ -532,9 +532,13 @@ export interface paths {
         /**
          * Complete an approved unpaid production graduation
          * @description Creates a fresh production tenant and bootstrap member, records
-         *     immutable demo-to-production lineage, and returns new member and agent
-         *     sessions. It never relabels the demo tenant or copies synthetic data.
-         *     Only a clear verification assessment can enter this unpaid path.
+         *     immutable demo-to-production lineage, returns a new member session,
+         *     and issues a one-time `brain_ak_live_*` BFF credential. The agent
+         *     credential is exchange-only and must be submitted to the returned RFC
+         *     8693 token endpoint. It never relabels the demo tenant or copies
+         *     synthetic data. Only a clear verification assessment can enter this
+         *     unpaid path. Matching Idempotency-Key retries replay the one-time
+         *     response for the configured idempotency window.
          */
         post: operations["completeUnpaidGraduation"];
         delete?: never;
@@ -4034,6 +4038,64 @@ export interface components {
             /** @description Plaintext exchange credential. Returned only in this response. */
             api_key: string;
         };
+        UnpaidGraduationCompletion: {
+            lineage: {
+                id: string;
+                graduation_request_id: string;
+                source_tenant_id: string;
+                destination_tenant_id: string;
+                destination_member_id: string;
+                /** @enum {string} */
+                graduation_mode: "unpaid";
+                copied_fields: {
+                    [key: string]: unknown;
+                };
+                excluded_data_classes: string[];
+                /** @enum {boolean} */
+                financial_data_copied: false;
+                /** Format: date-time */
+                created_at: string;
+            };
+            session: {
+                token: string;
+                refresh_token: string;
+                /** @enum {integer} */
+                expires_in: 900;
+            };
+            agent: {
+                id: string;
+                credential_id: string;
+                /** @description Plaintext returned on initial issuance and idempotent replay only. */
+                api_key: string | null;
+                /** @enum {string} */
+                profile: "bff_service_v1";
+                /** @enum {string} */
+                environment: "live";
+                scopes: ("ledger:read" | "wiki:read" | "raw:read" | "raw:write" | "policy:read" | "execution:read" | "execution:propose" | "payment_intent:propose" | "audit:read")[];
+                /** @enum {string} */
+                key_prefix: "brain_ak_live_";
+                key_last4: string;
+                /** Format: date-time */
+                expires_at: string;
+                issued_now: boolean;
+                token_exchange: {
+                    /** Format: uri */
+                    token_endpoint: string;
+                    /** @enum {string} */
+                    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange";
+                    /** @enum {string} */
+                    subject_token_type: "urn:brain:params:oauth:token-type:agent-api-key";
+                    /** @enum {string} */
+                    requested_token_type: "urn:ietf:params:oauth:token-type:access_token";
+                    /** Format: uri */
+                    resource: string;
+                    /** @enum {integer} */
+                    access_token_expires_in: 300;
+                    /** @enum {boolean} */
+                    refresh_token_issued: false;
+                };
+            };
+        };
         TenantExportJob: {
             job_id: string;
             tenant_id: string;
@@ -6761,9 +6823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UnpaidGraduationCompletion"];
                 };
             };
             400: components["responses"]["BadRequest"];

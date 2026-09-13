@@ -6,12 +6,11 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import { insertBootstrapAdminMember } from "../onboarding/bootstrap-member.js";
+import { ensureActiveDefaultPolicy, ensureBffServiceAgent } from "../onboarding/service-token.js";
 import {
-  ensureActiveDefaultPolicy,
-  ensureBffServiceAgent,
-  findActiveProductionAgentToken,
-  insertProductionAgentToken,
-} from "../onboarding/service-token.js";
+  findActiveAgentApiKeyByName,
+  issueAgentApiKey,
+} from "../production-tenancy/agent-key-store.js";
 import {
   GRADUATION_EXCLUDED_DATA_CLASSES,
   type DestinationSessionSeed,
@@ -56,6 +55,7 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
   public constructor(
     private readonly pool: Pool,
     private readonly smartAccount: string,
+    private readonly agentApiKeyPepper: string,
   ) {}
 
   public async reserve(input: {
@@ -239,15 +239,41 @@ export class PostgresGraduationProvisioningStore implements GraduationProvisioni
         reservation.destinationTenantId,
         this.smartAccount,
       );
-      const activeToken = await findActiveProductionAgentToken(
-        client,
-        reservation.destinationTenantId,
-        agent.agentId,
-      );
-      const agentToken =
-        activeToken ??
-        (await insertProductionAgentToken(client, reservation.destinationTenantId, agent.agentId));
-      return { agentId: agent.agentId, agentCreated: agent.created, agentToken };
+      const credentialName = `graduation-bff:${reservation.requestId}`;
+      const existingCredential = await findActiveAgentApiKeyByName(client, {
+        tenantId: reservation.destinationTenantId,
+        agentId: agent.agentId,
+        profile: "bff_service_v1",
+        environment: "live",
+        name: credentialName,
+      });
+      const issued =
+        existingCredential === null
+          ? await issueAgentApiKey(client, {
+              tenantId: reservation.destinationTenantId,
+              agentId: agent.agentId,
+              profile: "bff_service_v1",
+              environment: "live",
+              name: credentialName,
+              pepper: this.agentApiKeyPepper,
+            })
+          : null;
+      const credential = issued?.row ?? existingCredential!;
+      return {
+        agentId: agent.agentId,
+        agentCreated: agent.created,
+        agentCredential: {
+          credentialId: credential.id,
+          apiKey: issued?.secret ?? null,
+          profile: "bff_service_v1",
+          environment: "live",
+          scopes: credential.scopes,
+          keyPrefix: credential.key_prefix,
+          keyLast4: credential.key_last4,
+          expiresAt: toIso(credential.expires_at),
+          issuedNow: issued !== null,
+        },
+      };
     });
   }
 
@@ -385,9 +411,10 @@ function serializeLineage(row: LineageRow): GraduationLineageRecord {
     copiedFields: row.copied_fields,
     excludedDataClasses: row.excluded_data_classes,
     financialDataCopied: false,
-    createdAt:
-      row.created_at instanceof Date
-        ? row.created_at.toISOString()
-        : new Date(row.created_at).toISOString(),
+    createdAt: toIso(row.created_at),
   };
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

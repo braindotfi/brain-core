@@ -1,6 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Pool } from "pg";
-import { brainError, requireAdminMember, requireScope } from "@brain/shared";
+import {
+  brainError,
+  hashBody,
+  requireAdminMember,
+  requireScope,
+  type IdempotencyStore,
+} from "@brain/shared";
 import { requireIdempotencyKey, type SubmitGraduationVerificationInput } from "./service.js";
 import type { GraduationRequestRecord } from "./repository.js";
 import type { GraduationBusinessProfile } from "./verifier.js";
@@ -18,6 +24,8 @@ export interface GraduationRoutesDeps {
   provisioning: {
     complete(input: CompleteUnpaidGraduationInput): Promise<CompleteUnpaidGraduationResult>;
   };
+  idempotencyStore: IdempotencyStore;
+  idempotencyTtlSeconds: number;
 }
 
 export async function registerGraduationRoutes(
@@ -50,13 +58,53 @@ export async function registerGraduationRoutes(
     "/tenants/:tenantId/graduation/complete-unpaid",
     async (request, reply) => {
       const principal = await requireGraduationAdmin(request, deps.pool, request.params.tenantId);
-      const result = await deps.provisioning.complete({
-        sourceTenantId: request.params.tenantId,
-        actorMemberId: principal.id,
-        idempotencyKey: requireIdempotencyKey(request.headers["idempotency-key"]),
+      const suppliedKey = requireIdempotencyKey(request.headers["idempotency-key"]);
+      const idempotencyKey = `graduation-complete-unpaid:${suppliedKey}`;
+      const bodyHash = hashBody(
+        JSON.stringify({ tenant_id: request.params.tenantId, actor_member_id: principal.id }),
+      );
+      const probe = await deps.idempotencyStore.probeAndMark({
+        tenantId: request.params.tenantId,
+        key: idempotencyKey,
+        bodyHash,
+        ttlSeconds: deps.idempotencyTtlSeconds,
       });
-      reply.status(201);
-      return serializeProvisioning(result);
+      if (probe.state === "done") {
+        reply.header("idempotent-replay", "true").status(probe.response.status);
+        return JSON.parse(probe.response.body) as unknown;
+      }
+      if (probe.state === "in_flight" || probe.state === "conflict") {
+        throw brainError(
+          "execution_idempotency_conflict",
+          probe.state === "in_flight"
+            ? "a concurrent graduation request is still in flight"
+            : "Idempotency-Key reused for a different graduation request",
+          { statusOverride: 409 },
+        );
+      }
+      try {
+        const result = await deps.provisioning.complete({
+          sourceTenantId: request.params.tenantId,
+          actorMemberId: principal.id,
+          idempotencyKey: suppliedKey,
+        });
+        const response = serializeProvisioning(result);
+        await deps.idempotencyStore.complete({
+          tenantId: request.params.tenantId,
+          key: idempotencyKey,
+          bodyHash,
+          response: { status: 201, body: JSON.stringify(response) },
+          ttlSeconds: deps.idempotencyTtlSeconds,
+        });
+        reply.status(201);
+        return response;
+      } catch (error) {
+        await deps.idempotencyStore.discard({
+          tenantId: request.params.tenantId,
+          key: idempotencyKey,
+        });
+        throw error;
+      }
     },
   );
 }
@@ -222,9 +270,24 @@ function serializeProvisioning(result: CompleteUnpaidGraduationResult) {
     },
     agent: {
       id: result.agent.id,
-      token: result.agent.token,
-      token_id: result.agent.tokenId,
+      credential_id: result.agent.credentialId,
+      api_key: result.agent.apiKey,
+      profile: result.agent.profile,
+      environment: result.agent.environment,
+      scopes: result.agent.scopes,
+      key_prefix: result.agent.keyPrefix,
+      key_last4: result.agent.keyLast4,
       expires_at: result.agent.expiresAt,
+      issued_now: result.agent.issuedNow,
+      token_exchange: {
+        token_endpoint: result.agent.tokenExchange.tokenEndpoint,
+        grant_type: result.agent.tokenExchange.grantType,
+        subject_token_type: result.agent.tokenExchange.subjectTokenType,
+        requested_token_type: result.agent.tokenExchange.requestedTokenType,
+        resource: result.agent.tokenExchange.resource,
+        access_token_expires_in: result.agent.tokenExchange.accessTokenExpiresIn,
+        refresh_token_issued: result.agent.tokenExchange.refreshTokenIssued,
+      },
     },
   };
 }

@@ -1137,6 +1137,18 @@ export function parseConfig(
     );
   }
   if (
+    result.data.BRAIN_PRODUCTION_GRADUATION_ENABLED &&
+    (!result.data.BRAIN_AGENT_KEY_EXCHANGE_ENABLED ||
+      result.data.BRAIN_AGENT_API_KEY_PEPPER === undefined ||
+      result.data.BRAIN_AGENT_KEY_ENVIRONMENT !== "live")
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_PRODUCTION_GRADUATION_ENABLED=true requires " +
+        "BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true, BRAIN_AGENT_API_KEY_PEPPER, and " +
+        "BRAIN_AGENT_KEY_ENVIRONMENT=live",
+    );
+  }
+  if (
     result.data.BRAIN_COMMERCIAL_SHADOW_ENABLED &&
     result.data.BRAIN_COMMERCIAL_SHADOW_TENANT_ID === undefined
   ) {

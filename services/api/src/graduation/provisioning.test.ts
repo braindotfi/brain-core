@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryAuditEmitter, type JwtSigner } from "@brain/shared";
+import { BFF_SERVICE_AGENT_SCOPES, InMemoryAuditEmitter, type JwtSigner } from "@brain/shared";
 import {
   GRADUATION_CARRY_FORWARD_FIELDS,
   GRADUATION_EXCLUDED_DATA_CLASSES,
@@ -17,7 +17,10 @@ describe("UnpaidGraduationService", () => {
     const store = fakeStore();
     const audit = new InMemoryAuditEmitter();
     const sign = vi.fn(async (input: { type: string }) => `${input.type}-token`);
-    const service = new UnpaidGraduationService(store, { sign } as unknown as JwtSigner, audit);
+    const service = new UnpaidGraduationService(store, { sign } as unknown as JwtSigner, audit, {
+      tokenEndpoint: "https://auth.brain.fi/token",
+      resource: "https://api.brain.fi/",
+    });
 
     const result = await service.complete({
       sourceTenantId,
@@ -32,7 +35,22 @@ describe("UnpaidGraduationService", () => {
       financialDataCopied: false,
     });
     expect(result.session.token).toBe("user-token");
-    expect(result.agent.token).toBe("agent-token");
+    expect(result.agent).toMatchObject({
+      credentialId: "agkey_01K123456789ABCDEFGHJKMNPQ",
+      apiKey: "brain_ak_live_one-time-secret",
+      profile: "bff_service_v1",
+      environment: "live",
+      scopes: BFF_SERVICE_AGENT_SCOPES,
+      issuedNow: true,
+      tokenExchange: {
+        tokenEndpoint: "https://auth.brain.fi/token",
+        resource: "https://api.brain.fi/",
+        accessTokenExpiresIn: 300,
+        refreshTokenIssued: false,
+      },
+    });
+    expect(sign).toHaveBeenCalledOnce();
+    expect(sign).toHaveBeenCalledWith(expect.objectContaining({ type: "user" }));
     expect(store.reserve).toHaveBeenCalledOnce();
     expect(store.provisionDestination).toHaveBeenCalledOnce();
     expect(store.finalize).toHaveBeenCalledOnce();
@@ -48,6 +66,11 @@ describe("UnpaidGraduationService", () => {
     expect(audit.events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ action: "member.changed" }),
+        expect.objectContaining({ action: "auth.agent_api_key.issued" }),
+      ]),
+    );
+    expect(audit.events).not.toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ action: "auth.production_agent_token.minted" }),
       ]),
     );
@@ -89,11 +112,16 @@ function fakeStore() {
     provisionDestination: vi.fn(async () => ({
       agentId: "agent_destination",
       agentCreated: true,
-      agentToken: {
-        tenantId: destinationTenantId,
-        agentId: "agent_destination",
-        tokenId: "token_destination",
-        expiresAt: 1_788_328_000,
+      agentCredential: {
+        credentialId: "agkey_01K123456789ABCDEFGHJKMNPQ",
+        apiKey: "brain_ak_live_one-time-secret",
+        profile: "bff_service_v1" as const,
+        environment: "live" as const,
+        scopes: BFF_SERVICE_AGENT_SCOPES,
+        keyPrefix: "brain_ak_live_",
+        keyLast4: "cret",
+        expiresAt: "2026-12-12T00:00:00.000Z",
+        issuedNow: true as const,
       },
     })),
     finalize: vi.fn(async () => ({

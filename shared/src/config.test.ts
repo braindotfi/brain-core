@@ -51,6 +51,9 @@ describe("parseConfig", () => {
       ...MIN_ENV,
       BRAIN_COMMERCIAL_CATALOG_ENABLED: "true",
       BRAIN_PRODUCTION_GRADUATION_ENABLED: "true",
+      BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true",
+      BRAIN_AGENT_API_KEY_PEPPER: "graduation-agent-pepper",
+      BRAIN_AGENT_KEY_ENVIRONMENT: "live",
       BRAIN_COMMERCIAL_SHADOW_ENABLED: "true",
       BRAIN_COMMERCIAL_SHADOW_TENANT_ID: "tnt_01M2B3C4D5E6F7G8H9JKMNPQRS",
       BRAIN_ENTITY_SCOPE_ENABLED: "true",
@@ -72,6 +75,21 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(true);
     expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(true);
     expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(true);
+  });
+
+  it("requires live agent-key exchange before graduation can be enabled", () => {
+    expect(() => parseConfig({ ...MIN_ENV, BRAIN_PRODUCTION_GRADUATION_ENABLED: "true" })).toThrow(
+      /BRAIN_AGENT_KEY_EXCHANGE_ENABLED=true/,
+    );
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_PRODUCTION_GRADUATION_ENABLED: "true",
+        BRAIN_AGENT_KEY_EXCHANGE_ENABLED: "true",
+        BRAIN_AGENT_API_KEY_PEPPER: "graduation-agent-pepper",
+        BRAIN_AGENT_KEY_ENVIRONMENT: "test",
+      }),
+    ).toThrow(/BRAIN_AGENT_KEY_ENVIRONMENT=live/);
   });
 
   it("requires an exact tenant binding when commercial shadow is enabled", () => {
