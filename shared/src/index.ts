@@ -102,7 +102,12 @@ export {
 // Audit (§1 principle 4)
 export * from "./audit/types.js";
 export * from "./audit/hash.js";
-export { InMemoryAuditEmitter, PostgresAuditEmitter, type AuditEmitter } from "./audit/emitter.js";
+export {
+  InMemoryAuditEmitter,
+  PostgresAuditEmitter,
+  type AuditEmitter,
+  type PostgresAuditEmitterOptions,
+} from "./audit/emitter.js";
 
 // HTTP plumbing
 export { default as requestIdPlugin, sanitizeRequestId } from "./http/request-id.js";

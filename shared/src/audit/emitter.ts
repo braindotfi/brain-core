@@ -16,14 +16,11 @@
  * row directly. The interface stays the same; implementations swap.
  *
  * Hash chain: we serialize emit per tenant with a transaction-scoped advisory
- * lock keyed by the tenant id (`pg_advisory_xact_lock`), held until COMMIT/
- * ROLLBACK. A row lock on the latest event is NOT sufficient: a tenant with no
- * events yet has no row to lock (genesis race), and `ORDER BY ... LIMIT 1 FOR
- * UPDATE` only locks the row found at query start, so a concurrent emit that
- * already passed that point appends off the same predecessor and FORKS the
- * chain. The advisory lock makes emits for one tenant strictly serial (each
- * sees the true latest event) while different tenants stay concurrent. (Codex
- * 2026-06-07 P1: concurrent audit writes must not fork the per-tenant chain.)
+ * lock keyed by the tenant id (`pg_advisory_xact_lock`), held until COMMIT or
+ * ROLLBACK. The predecessor comes only from `audit_chain_heads`; timestamps and
+ * random ULIDs are never used to infer chain order. A database trigger advances
+ * the head with a compare and swap, while unique indexes reject a second
+ * genesis or successor even if application serialization regresses.
  */
 
 import type { Pool, PoolClient } from "pg";
@@ -45,6 +42,11 @@ const AUDIT_CHAIN_LOCK_NAMESPACE = 0x41554454;
 
 export interface AuditEmitter {
   emit(event: AuditEventInput): Promise<AuditEvent>;
+}
+
+export interface PostgresAuditEmitterOptions {
+  idFactory?: () => string;
+  clock?: () => Date;
 }
 
 /** For tests and for bootstrap paths where a real DB isn't available. */
@@ -125,7 +127,16 @@ export class InMemoryAuditEmitter implements AuditEmitter {
  * successful emit has been durably persisted and chained.
  */
 export class PostgresAuditEmitter implements AuditEmitter {
-  public constructor(private readonly pool: Pool) {}
+  private readonly idFactory: () => string;
+  private readonly clock: () => Date;
+
+  public constructor(
+    private readonly pool: Pool,
+    options: PostgresAuditEmitterOptions = {},
+  ) {
+    this.idFactory = options.idFactory ?? newAuditEventId;
+    this.clock = options.clock ?? (() => new Date());
+  }
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
     const normalizedEvent = normalizeAuditEventInput(event);
@@ -309,30 +320,39 @@ export class PostgresAuditEmitter implements AuditEmitter {
         }
       }
 
-      // Read the most recent event for this tenant (race-free under the
-      // per-tenant advisory lock taken above — no row lock needed, and a plain
-      // SELECT here is REQUIRED: the append-only grant model revokes UPDATE on
-      // audit_events from the runtime roles, so a `FOR UPDATE` row lock would
-      // raise `permission denied for table audit_events` (42501). The advisory
-      // lock already serialises this tenant's emits, so the row lock added
-      // nothing anyway.
-      // event_hash is a BYTEA column, so node-pg hands it back as a Buffer.
-      // Normalize to the canonical hex string here: hashEvent's contract is a hex
-      // predecessor, and leaking the raw Buffer would (a) canonicalize a
-      // {"0":..} object instead of the hex digest and (b) make a non-genesis
-      // idempotent replay falsely conflict (Codex c96283d P1).
-      const prev = await client.query<{ event_hash: Buffer }>(
-        `SELECT event_hash
-           FROM audit_events
-          WHERE tenant_id = $1
-          ORDER BY created_at DESC, id DESC
-          LIMIT 1`,
+      // A brand-new tenant needs an empty head. Existing tenants are populated
+      // by the migration backfill. INSERT is limited to tenant_id at the role
+      // boundary, so runtime callers cannot forge a non-empty head.
+      await client.query(
+        `INSERT INTO audit_chain_heads (tenant_id)
+         VALUES ($1)
+         ON CONFLICT (tenant_id) DO NOTHING`,
         [normalizedEvent.tenantId],
       );
-      const prevHash = prev.rows[0]?.event_hash.toString("hex") ?? null;
 
-      const id = newAuditEventId();
-      const createdAt = new Date().toISOString();
+      // This row is authoritative. The advisory lock above serializes compliant
+      // emitters; the database trigger independently compare-and-swaps this
+      // value when the audit row is inserted.
+      const head = await client.query<{ head_event_hash: Buffer | null }>(
+        `SELECT head_event_hash
+           FROM audit_chain_heads
+          WHERE tenant_id = $1`,
+        [normalizedEvent.tenantId],
+      );
+      const headRow = head.rows[0];
+      if (headRow === undefined) {
+        throw brainError(
+          "audit_chain_head_unavailable",
+          "authoritative audit chain head is missing",
+          {
+            details: { tenantId: normalizedEvent.tenantId },
+          },
+        );
+      }
+      const prevHash = headRow.head_event_hash?.toString("hex") ?? null;
+
+      const id = this.idFactory();
+      const createdAt = this.clock().toISOString();
       const eventHash = hashEvent({
         event: normalizedEvent,
         id,

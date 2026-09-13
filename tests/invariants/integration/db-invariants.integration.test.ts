@@ -21,6 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client, Pool } from "pg";
 import {
@@ -42,6 +43,13 @@ import { applyAll, discoverMigrations } from "../../../tools/migrate/src/index.j
 
 const DB_URL = process.env.DATABASE_URL;
 const suite = DB_URL !== undefined && DB_URL !== "" ? describe : describe.skip;
+const AUDIT_CHAIN_PREFLIGHT_SQL = readFileSync(
+  new URL(
+    "../../../services/audit/migrations/0027_audit_chain_constraint_preflight.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 function repoRoot(): string {
   return new URL("../../..", import.meta.url).pathname;
@@ -482,6 +490,148 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
     expect(visited.size).toBe(N);
   }, 30_000);
 
+  it("uses the authoritative head when timestamps match and ULIDs are non-monotonic", async () => {
+    const tenant = newTenantId();
+    const ids = [`evt_${"7".repeat(26)}`, `evt_${"0".repeat(26)}`, `evt_${"4".repeat(26)}`];
+    const fixedTime = new Date("2026-09-13T12:00:00.000Z");
+    const emitter = new PostgresAuditEmitter(pool, {
+      idFactory: () => {
+        const id = ids.shift();
+        if (id === undefined) throw new Error("deterministic audit id fixture exhausted");
+        return id;
+      },
+      clock: () => fixedTime,
+    });
+
+    const first = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.same_timestamp.first",
+      inputs: {},
+      outputs: {},
+    });
+    const second = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.same_timestamp.second",
+      inputs: {},
+      outputs: {},
+    });
+    const third = await emitter.emit({
+      tenantId: tenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.same_timestamp.third",
+      inputs: {},
+      outputs: {},
+    });
+
+    expect(second.prevEventHash).toBe(first.eventHash);
+    expect(third.prevEventHash).toBe(second.eventHash);
+    expect(first.createdAt).toBe(fixedTime.toISOString());
+    expect(second.createdAt).toBe(fixedTime.toISOString());
+    expect(third.createdAt).toBe(fixedTime.toISOString());
+
+    const state = await pool.query<{
+      head_event_id: string;
+      head_hash: string;
+      sequence: string;
+      legacy_order_id: string;
+    }>(
+      `SELECT head.head_event_id,
+              encode(head.head_event_hash, 'hex') AS head_hash,
+              head.sequence,
+              legacy.id AS legacy_order_id
+         FROM audit_chain_heads head
+         CROSS JOIN LATERAL (
+           SELECT id
+             FROM audit_events
+            WHERE tenant_id = head.tenant_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+         ) legacy
+        WHERE head.tenant_id = $1`,
+      [tenant],
+    );
+    expect(state.rows[0]).toMatchObject({
+      head_event_id: third.id,
+      head_hash: third.eventHash,
+      sequence: "3",
+      legacy_order_id: first.id,
+    });
+  });
+
+  it("database uniqueness constraints reject a second genesis and successor", async () => {
+    async function expectConstraint(
+      sql: string,
+      values: unknown[],
+      constraint: string,
+    ): Promise<void> {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL session_replication_role = replica");
+        await expect(client.query(sql, values)).rejects.toMatchObject({
+          code: "23505",
+          constraint,
+        });
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    }
+
+    const genesisTenant = newTenantId();
+    const emitter = new PostgresAuditEmitter(pool);
+    await emitter.emit({
+      tenantId: genesisTenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.constraint.genesis",
+      inputs: {},
+      outputs: {},
+    });
+    await expectConstraint(
+      `INSERT INTO audit_events
+         (id, tenant_id, layer, actor, action, event_hash, prev_event_hash)
+       VALUES ($1, $2, 'audit', 'system', 'test.constraint.second_genesis', $3, NULL)`,
+      [`evt_${"1".repeat(26)}`, genesisTenant, Buffer.from("11".repeat(32), "hex")],
+      "uq_audit_events_one_genesis_per_tenant",
+    );
+
+    const successorTenant = newTenantId();
+    const first = await emitter.emit({
+      tenantId: successorTenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.constraint.predecessor",
+      inputs: {},
+      outputs: {},
+    });
+    await emitter.emit({
+      tenantId: successorTenant,
+      layer: "audit",
+      actor: "system",
+      action: "test.constraint.first_successor",
+      inputs: {},
+      outputs: {},
+    });
+    await expectConstraint(
+      `INSERT INTO audit_events
+         (id, tenant_id, layer, actor, action, event_hash, prev_event_hash)
+       VALUES ($1, $2, 'audit', 'system', 'test.constraint.second_successor', $3, $4)`,
+      [
+        `evt_${"2".repeat(26)}`,
+        successorTenant,
+        Buffer.from("22".repeat(32), "hex"),
+        Buffer.from(first.eventHash, "hex"),
+      ],
+      "uq_audit_events_one_successor_per_predecessor",
+    );
+  });
+
   // 7 — an idempotency key makes audit delivery replay-safe (Codex 2026-06-07
   // P2: replaying one outbox row cannot create a second logical audit event).
   it("an idempotency key dedupes audit events (replay-safe, exactly-once)", async () => {
@@ -584,7 +734,7 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
   it("detects a tenant with two genesis events via the privileged pool", async () => {
     const tenant = newTenantId();
     const emitter = new PostgresAuditEmitter(pool);
-    await emitter.emit({
+    const first = await emitter.emit({
       tenantId: tenant,
       layer: "audit",
       actor: "system",
@@ -601,14 +751,28 @@ suite("DB invariants (integration — requires DATABASE_URL)", () => {
       outputs: {},
     });
 
-    // Sever the second event's predecessor as the (super)owner: now the tenant
-    // has two null-predecessor events — a duplicated chain head.
-    await pool.query(`UPDATE audit_events SET prev_event_hash = NULL WHERE id = $1`, [second.id]);
-
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const res = await checkAuditConsistency({ privilegedPool: pool });
-    errSpy.mockRestore();
-    expect(res.invalidGenesis).toBeGreaterThanOrEqual(1);
+    // Temporarily remove the new preventive control so this test can still
+    // prove the independent detective verifier sees historical corruption.
+    await pool.query(`DROP INDEX ${schema}.uq_audit_events_one_genesis_per_tenant`);
+    try {
+      await pool.query(`UPDATE audit_events SET prev_event_hash = NULL WHERE id = $1`, [second.id]);
+      await expect(pool.query(AUDIT_CHAIN_PREFLIGHT_SQL)).rejects.toThrow(
+        /audit chain constraint preflight found/,
+      );
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const res = await checkAuditConsistency({ privilegedPool: pool });
+      errSpy.mockRestore();
+      expect(res.invalidGenesis).toBeGreaterThanOrEqual(1);
+    } finally {
+      await pool.query(`UPDATE audit_events SET prev_event_hash = $1 WHERE id = $2`, [
+        Buffer.from(first.eventHash, "hex"),
+        second.id,
+      ]);
+      await pool.query(
+        `CREATE UNIQUE INDEX uq_audit_events_one_genesis_per_tenant
+           ON audit_events (tenant_id) WHERE prev_event_hash IS NULL`,
+      );
+    }
   });
 
   // 10 — reusing an idempotency key with DIFFERENT content fails loudly instead

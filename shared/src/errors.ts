@@ -150,6 +150,9 @@ export const BRAIN_ERROR_CODES = [
   // how to verify (e.g. written by a newer deployment). Fail closed (Codex
   // fca9ac8 P1 #1).
   "audit_hash_version_unsupported",
+  // The authoritative per-tenant chain head is unavailable. Emission must stop
+  // instead of falling back to timestamp or identifier ordering.
+  "audit_chain_head_unavailable",
 
   // Trust surfaces (H-07 Proof API / H-25 Agent Run History)
   "proof_not_found",
@@ -486,6 +489,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   internal_error: 500,
   // Data carries a hash schema version this build cannot verify — fail closed.
   audit_hash_version_unsupported: 500,
+  audit_chain_head_unavailable: 500,
 };
 
 export function httpStatusForCode(code: BrainErrorCode): number {

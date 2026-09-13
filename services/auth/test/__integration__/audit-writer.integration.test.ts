@@ -5,11 +5,9 @@
  * human-auth.integration.test.ts injects InMemoryAuditEmitter and grants
  * brain_auth a blanket ALL TABLES privilege in its private schema, so it
  * never exercises this role's REAL, narrow audit_events grant. This suite
- * connects as brain_auth_audit_writer with exactly the SELECT, INSERT grant
- * infra/db-roles.sql ships (no blanket schema grant), so a future edit that
- * drops the SELECT half of that grant (the hash-chain predecessor read
- * PostgresAuditEmitter.emit runs before every insert) 42501s here and fails
- * CI, instead of surfacing only as a live /forgot-password 500.
+ * connects as brain_auth_audit_writer with exactly the audit-event and
+ * chain-head grants infra/db-roles.sql ships, so privilege drift fails CI
+ * instead of surfacing only as a live /forgot-password 500.
  *
  * Requires DATABASE_URL (owner, for the harness) and DATABASE_URL_AUTH_AUDIT
  * (brain_auth_audit_writer). Skips cleanly when either is absent.
@@ -37,6 +35,10 @@ DESCRIBE("brain_auth_audit_writer (requires DATABASE_URL, DATABASE_URL_AUTH_AUDI
     // emit below starts 42501ing.
     await h.pool.query(`GRANT USAGE ON SCHEMA ${h.schema} TO brain_auth_audit_writer`);
     await h.pool.query(`GRANT SELECT, INSERT ON audit_events TO brain_auth_audit_writer`);
+    await h.pool.query(
+      `GRANT SELECT (tenant_id, head_event_hash), INSERT (tenant_id)
+         ON audit_chain_heads TO brain_auth_audit_writer`,
+    );
 
     const schema = h.schema;
     auditPool = new Pool({ connectionString: AUDIT_URL as string, max: 3 });
@@ -50,7 +52,7 @@ DESCRIBE("brain_auth_audit_writer (requires DATABASE_URL, DATABASE_URL_AUTH_AUDI
     if (h !== null) await h.cleanup();
   });
 
-  it("emits a real audit event through the real role, including the hash-chain predecessor read", async () => {
+  it("emits a real audit event through the real role and authoritative head", async () => {
     if (h === null || auditPool === null) return;
     const tenantId = newTenantId();
     const emitter = new PostgresAuditEmitter(auditPool);

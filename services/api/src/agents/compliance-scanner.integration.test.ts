@@ -620,13 +620,19 @@ async function seedPaymentIntentCase(
       await seedApproval(client, tenantId, paymentIntentId, "stale");
     }
     if (options.createAudit !== false) {
+      const head = await client.query<{ head_event_hash: Buffer | null }>(
+        `SELECT head_event_hash
+           FROM audit_chain_heads
+          WHERE tenant_id = $1`,
+        [tenantId],
+      );
       await client.query(
         `INSERT INTO audit_events (
            id, tenant_id, layer, actor, action, inputs, outputs, policy_version,
            event_hash, prev_event_hash, created_at
          )
          VALUES ($1, $2, 'execution', 'agent_payment', 'payment_intent.execute.before',
-           $3::jsonb, '{}'::jsonb, 1, $4, NULL, '2026-07-18T00:00:01.000Z')`,
+           $3::jsonb, '{}'::jsonb, 1, $4, $5, '2026-07-18T00:00:01.000Z')`,
         [
           auditEventId,
           tenantId,
@@ -635,6 +641,7 @@ async function seedPaymentIntentCase(
             policy_decision_id: policyDecisionId,
           }),
           createHash("sha256").update(auditEventId).digest(),
+          head.rows[0]?.head_event_hash ?? null,
         ],
       );
     }

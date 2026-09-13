@@ -94,13 +94,15 @@ describe("InMemoryAuditEmitter", () => {
 // PostgresAuditEmitter — tested with a fake pool double.
 // ---------------------------------------------------------------------------
 
-function makeFakePgPool(rows: Array<{ event_hash: string | Buffer }> = []) {
+function makeFakePgPool(
+  rows: Array<{ head_event_hash: Buffer | null }> = [{ head_event_hash: null }],
+) {
   const log: string[] = [];
   const client = {
     released: false,
     query: vi.fn(async (text: string, _values?: unknown[]) => {
       log.push(text.trim().split("\n")[0]!.trim());
-      if (text.includes("SELECT event_hash")) {
+      if (text.includes("SELECT head_event_hash")) {
         return { rows, rowCount: rows.length };
       }
       return { rows: [], rowCount: 0 };
@@ -124,24 +126,24 @@ describe("PostgresAuditEmitter", () => {
     const ev = await emitter.emit(baseEvent());
     expect(log[0]).toBe("BEGIN");
     expect(log[1]).toContain("set_config");
-    // Per-tenant serialization lock BEFORE reading the chain tail (so the chain
-    // cannot fork under concurrency).
+    // Per-tenant serialization precedes the authoritative chain-head read.
     expect(log[2]).toContain("pg_advisory_xact_lock");
     expect(log[2]).toContain("hashtext($1)");
-    expect(log[3]).toContain("SELECT event_hash");
-    expect(log[4]).toContain("INSERT INTO audit_events");
-    expect(log[5]).toBe("COMMIT");
+    expect(log[3]).toContain("INSERT INTO audit_chain_heads");
+    expect(log[4]).toContain("SELECT head_event_hash");
+    expect(log[5]).toContain("INSERT INTO audit_events");
+    expect(log[6]).toBe("COMMIT");
     expect(client.released).toBe(true);
     expect(ev.prevEventHash).toBeNull();
     expect(ev.eventHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("reads prev_event_hash from the tenant's latest row and exposes it as hex", async () => {
+  it("reads prev_event_hash from the authoritative tenant head and exposes it as hex", async () => {
     // node-pg returns the BYTEA event_hash column as a Buffer; the emitter must
     // normalize it to the canonical hex string, not leak the Buffer through the
     // declared `string` contract (Codex c96283d P1).
     const priorHashHex = "b".repeat(64);
-    const { pool } = makeFakePgPool([{ event_hash: Buffer.from(priorHashHex, "hex") }]);
+    const { pool } = makeFakePgPool([{ head_event_hash: Buffer.from(priorHashHex, "hex") }]);
     const emitter = new PostgresAuditEmitter(pool);
 
     const ev = await emitter.emit(baseEvent());
@@ -154,7 +156,7 @@ describe("PostgresAuditEmitter", () => {
     // hash would not recompute from the documented hex form (and a non-genesis
     // idempotent replay would falsely conflict). (Codex c96283d P1)
     const priorHashHex = "c".repeat(64);
-    const { pool } = makeFakePgPool([{ event_hash: Buffer.from(priorHashHex, "hex") }]);
+    const { pool } = makeFakePgPool([{ head_event_hash: Buffer.from(priorHashHex, "hex") }]);
     const emitter = new PostgresAuditEmitter(pool);
     const input = baseEvent();
 
@@ -386,6 +388,9 @@ describe("PostgresAuditEmitter", () => {
     const client = {
       query: vi.fn(async (text: string, values?: unknown[]) => {
         calls.push({ text, values: values ?? [] });
+        if (text.includes("SELECT head_event_hash")) {
+          return { rows: [{ head_event_hash: null }], rowCount: 1 };
+        }
         return { rows: [], rowCount: 0 }; // no idempotency hit, empty tail → genesis insert
       }),
       release: vi.fn(),
@@ -406,6 +411,9 @@ describe("PostgresAuditEmitter", () => {
     const client = {
       query: vi.fn(async (text: string, values?: unknown[]) => {
         calls.push({ text, values: values ?? [] });
+        if (text.includes("SELECT head_event_hash")) {
+          return { rows: [{ head_event_hash: null }], rowCount: 1 };
+        }
         return { rows: [], rowCount: 0 };
       }),
       release: vi.fn(),
@@ -443,8 +451,10 @@ describe("PostgresAuditEmitter", () => {
       released: false,
       query: vi.fn(async (text: string, _v?: unknown[]) => {
         log.push(text.trim().split("\n")[0]!.trim());
-        if (text.startsWith("INSERT")) throw new Error("boom");
-        if (text.includes("SELECT event_hash")) return { rows: [], rowCount: 0 };
+        if (text.includes("INSERT INTO audit_events")) throw new Error("boom");
+        if (text.includes("SELECT head_event_hash")) {
+          return { rows: [{ head_event_hash: null }], rowCount: 1 };
+        }
         return { rows: [], rowCount: 0 };
       }),
       release: vi.fn(() => {
