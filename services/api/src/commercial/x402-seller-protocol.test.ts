@@ -5,6 +5,7 @@ import {
   settleBeforeFulfillment,
   X402_BASE_SEPOLIA_NETWORK,
   X402_BASE_SEPOLIA_USDC,
+  type CoinbaseExactFacilitator,
   type X402V2ExactRequirements,
 } from "./x402-seller-protocol.js";
 
@@ -81,6 +82,61 @@ describe("x402 seller protocol", () => {
     expect(fulfilled).toBe(false);
   });
 
+  it("rejects failed verification and mismatched settlement networks", async () => {
+    const facilitator: CoinbaseExactFacilitator = {
+      verify: async () => ({ valid: false, payer: null, reason: null }),
+      settle: async () => ({
+        success: true,
+        payer: "0xpayer",
+        transaction: `0x${"a".repeat(64)}`,
+        network: "eip155:1",
+        errorReason: null,
+      }),
+    };
+    const fulfill = async () => "unexpected";
+
+    await expect(
+      settleBeforeFulfillment({
+        facilitator,
+        finality: { requireSealed: async () => undefined },
+        requirements,
+        paymentPayload: {},
+        fulfill,
+      }),
+    ).rejects.toThrow(/verification failed: unknown/);
+
+    facilitator.verify = async () => ({ valid: true, payer: "0xpayer", reason: null });
+    await expect(
+      settleBeforeFulfillment({
+        facilitator,
+        finality: { requireSealed: async () => undefined },
+        requirements,
+        paymentPayload: {},
+        fulfill,
+      }),
+    ).rejects.toThrow(/network does not match/);
+  });
+
+  it("accepts the Coinbase Base Sepolia network alias", async () => {
+    const result = await settleBeforeFulfillment({
+      facilitator: {
+        verify: async () => ({ valid: true, payer: "0xpayer", reason: null }),
+        settle: async () => ({
+          success: true,
+          payer: "0xpayer",
+          transaction: `0x${"b".repeat(64)}`,
+          network: "base-sepolia",
+          errorReason: null,
+        }),
+      },
+      finality: { requireSealed: async () => undefined },
+      requirements,
+      paymentPayload: {},
+      fulfill: async () => "ok",
+    });
+    expect(result.result).toBe("ok");
+  });
+
   it("explicitly excludes direct and exchanged brain_ak credentials", () => {
     expect(() =>
       assertX402SellerCredentialEligible({ presentedCredential: "brain_ak_live_redacted" }),
@@ -98,5 +154,14 @@ describe("x402 seller protocol", () => {
     expect(() => assertX402SellerCredentialEligible({ principal: agent })).toThrow(
       /never eligible/,
     );
+
+    expect(() =>
+      assertX402SellerCredentialEligible({
+        apiKeyCredentialClass: "unsupported" as never,
+      }),
+    ).toThrow(/unsupported x402 credential class/);
+    expect(() =>
+      assertX402SellerCredentialEligible({ apiKeyCredentialClass: "x402_pay_per_call" }),
+    ).not.toThrow();
   });
 });

@@ -82,6 +82,47 @@ describe("x402 receipt routes", () => {
     ]);
   });
 
+  it("returns not found and rejects malformed or duplicate receipt ids", async () => {
+    const missing = "x402rcpt_01M2B3C4D5E6F7G8H9JKMNPQRT";
+    expect((await app.inject({ method: "GET", url: `/x402/receipts/${missing}` })).statusCode).toBe(
+      404,
+    );
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/x402/receipts/query",
+          payload: { receipt_ids: [RECEIPT_ID, RECEIPT_ID] },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/x402/receipts/query",
+          payload: { receipt_ids: ["not-a-receipt"] },
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it("requires ledger read and rejects a credential-bound non-agent principal", async () => {
+    currentPrincipal = { ...principal(), scopes: [] };
+    expect(
+      (await app.inject({ method: "GET", url: `/x402/receipts/${RECEIPT_ID}` })).statusCode,
+    ).toBe(403);
+
+    currentPrincipal = {
+      ...principal(),
+      credentialId: "agkey_01M2B3C4D5E6F7G8H9JKMNPQRS",
+    };
+    const denied = await app.inject({ method: "GET", url: `/x402/receipts/${RECEIPT_ID}` });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().code).toBe("auth_scope_insufficient");
+  });
+
   it("rejects oversized batches and exchanged brain_ak agent JWTs", async () => {
     const tooMany = Array.from(
       { length: 101 },
