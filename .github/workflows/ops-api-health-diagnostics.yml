@@ -121,3 +121,63 @@ jobs:
             || true
           echo "::endgroup::"
           REMOTE
+
+      - name: Run fixed read-only production audit-chain preflight
+        if: inputs.target == 'production'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" == "production" ]]
+          [[ "$VM_ENV_FILE" == ".env.prod" ]]
+          [[ "$COMPOSE_PROJECT" == "brain-prod" ]]
+          ssh -i ~/.ssh/id_deploy -o ServerAliveInterval=30 "azureuser@$VM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker exec -i brain-prod-postgres psql -X -qAt -v ON_ERROR_STOP=1 -U brain -d brain <<'SQL'
+          WITH
+          fork_groups AS (
+            SELECT tenant_id, prev_event_hash, count(*)::bigint AS successor_count
+              FROM audit_events
+             WHERE prev_event_hash IS NOT NULL
+             GROUP BY tenant_id, prev_event_hash
+            HAVING count(*) > 1
+          ),
+          gaps AS (
+            SELECT event.tenant_id, event.id
+              FROM audit_events event
+             WHERE event.prev_event_hash IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM audit_events predecessor
+                  WHERE predecessor.tenant_id = event.tenant_id
+                    AND predecessor.event_hash = event.prev_event_hash
+               )
+          ),
+          tenant_counts AS (
+            SELECT tenant_id,
+                   count(*)::bigint AS event_count,
+                   count(*) FILTER (WHERE prev_event_hash IS NULL)::bigint AS genesis_count
+              FROM audit_events
+             GROUP BY tenant_id
+          )
+          SELECT json_build_object(
+            'total_events', (SELECT count(*) FROM audit_events),
+            'event_tenants', (SELECT count(*) FROM tenant_counts),
+            'fork_groups', (SELECT count(*) FROM fork_groups),
+            'forked_successor_rows',
+              (SELECT coalesce(sum(successor_count), 0) FROM fork_groups),
+            'forked_tenants',
+              (SELECT coalesce(json_agg(tenant_id ORDER BY tenant_id), '[]'::json)
+                 FROM (SELECT DISTINCT tenant_id FROM fork_groups) affected),
+            'gap_rows', (SELECT count(*) FROM gaps),
+            'gap_tenants',
+              (SELECT coalesce(json_agg(tenant_id ORDER BY tenant_id), '[]'::json)
+                 FROM (SELECT DISTINCT tenant_id FROM gaps) affected),
+            'zero_genesis_tenants',
+              (SELECT coalesce(json_agg(tenant_id ORDER BY tenant_id), '[]'::json)
+                 FROM tenant_counts WHERE genesis_count = 0),
+            'multi_genesis_tenants',
+              (SELECT coalesce(json_agg(tenant_id ORDER BY tenant_id), '[]'::json)
+                 FROM tenant_counts WHERE genesis_count > 1)
+          );
+          SQL
+          REMOTE
