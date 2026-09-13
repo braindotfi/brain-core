@@ -83,6 +83,7 @@ const DB_URL_ENV_NAMES = [
   "BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL",
   "BRAIN_AUTH_DB_URL",
   "BRAIN_AUTH_AUDIT_DB_URL",
+  "BRAIN_COMMERCIAL_STRIPE_DB_URL",
 ] as const;
 
 const INFRA_SECRET_ENV_NAMES = [
@@ -230,6 +231,8 @@ const envSchema = z.object({
   // reused unchanged for the AS's pre-tenant email -> user lookup.
   BRAIN_AUTH_DB_URL: z.string().url().optional(),
   BRAIN_AUTH_AUDIT_DB_URL: z.string().url().optional(),
+  /** Reserved for the dedicated commercial Stripe worker. No fallback is allowed. */
+  BRAIN_COMMERCIAL_STRIPE_DB_URL: optionalNonEmptyString().pipe(z.string().url().optional()),
 
   // ---- Redis ----
   REDIS_URL: z.string().url(),
@@ -506,6 +509,26 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((v) => v === "true")
     .default(false),
+  /** Phase 1 is test-only. A later reviewed migration may add live mode. */
+  BRAIN_COMMERCIAL_STRIPE_MODE: z.enum(["test"]).default("test"),
+  BRAIN_COMMERCIAL_STRIPE_API_VERSION: z.literal("2026-02-25.clover").default("2026-02-25.clover"),
+  BRAIN_COMMERCIAL_STRIPE_WEBHOOK_VERSION: z
+    .literal("2026-02-25.clover")
+    .default("2026-02-25.clover"),
+  BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST: z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z
+      .string()
+      .regex(/^sk_test_[A-Za-z0-9_]+$/)
+      .optional(),
+  ),
+  BRAIN_COMMERCIAL_STRIPE_WEBHOOK_SECRET_TEST: z.preprocess(
+    (v) => (typeof v === "string" && v.length === 0 ? undefined : v),
+    z
+      .string()
+      .regex(/^whsec_[A-Za-z0-9_]+$/)
+      .optional(),
+  ),
   BRAIN_X402_PAYMENTS_ENABLED: z
     .enum(["true", "false"])
     .transform((v) => v === "true")
@@ -1155,6 +1178,17 @@ export function parseConfig(
     throw new Error(
       "Invalid Brain configuration: BRAIN_COMMERCIAL_SHADOW_TENANT_ID is required when " +
         "BRAIN_COMMERCIAL_SHADOW_ENABLED=true",
+    );
+  }
+  if (
+    result.data.BRAIN_STRIPE_BILLING_ENABLED &&
+    (result.data.BRAIN_COMMERCIAL_STRIPE_DB_URL === undefined ||
+      result.data.BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST === undefined ||
+      result.data.BRAIN_COMMERCIAL_STRIPE_WEBHOOK_SECRET_TEST === undefined)
+  ) {
+    throw new Error(
+      "Invalid Brain configuration: BRAIN_STRIPE_BILLING_ENABLED=true requires the " +
+        "dedicated Stripe worker database URL and test-mode Stripe secrets",
     );
   }
   assertProductionInfraSecretsSafe(env, options);

@@ -984,6 +984,54 @@ BEGIN
   END LOOP;
 END $$;
 
+-- RFC 0009 Phase 1 capability role. It has no login and therefore cannot be
+-- used by a process until a later phase provisions a separately reviewed
+-- runtime credential. Keeping it outside the broad runtime matrix prevents
+-- provider writes from leaking into brain_app or brain_privileged.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_stripe_billing_worker') THEN
+    CREATE ROLE brain_stripe_billing_worker NOLOGIN;
+  END IF;
+END $$;
+ALTER ROLE brain_stripe_billing_worker WITH NOLOGIN NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO brain_stripe_billing_worker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM brain_stripe_billing_worker;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM brain_stripe_billing_worker;
+GRANT SELECT, INSERT, UPDATE ON commercial_stripe_customers
+  TO brain_stripe_billing_worker;
+GRANT SELECT, INSERT ON commercial_stripe_price_bindings,
+  commercial_stripe_webhook_inbox,
+  commercial_stripe_webhook_processing_attempts,
+  commercial_stripe_catalog_operation_receipts TO brain_stripe_billing_worker;
+
+DO $$
+BEGIN
+  IF NOT has_table_privilege(
+    'brain_stripe_billing_worker', 'public.commercial_stripe_customers', 'SELECT'
+  )
+     OR NOT has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_customers', 'INSERT'
+     )
+     OR NOT has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_customers', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_customers', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_webhook_inbox', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_webhook_inbox', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_stripe_billing_worker', 'public.commercial_stripe_webhook_inbox', 'TRUNCATE'
+     ) THEN
+    RAISE EXCEPTION 'brain_stripe_billing_worker privilege contract is invalid';
+  END IF;
+END $$;
+
 -- Deploy wiring (env): request-path services connect with brain_app via
 -- DATABASE_URL; the Wiki projection connects with brain_wiki_reader via
 -- BRAIN_WIKI_DB_URL; each §4 cross-tenant role connects via its own URL:

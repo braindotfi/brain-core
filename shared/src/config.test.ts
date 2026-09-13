@@ -60,6 +60,10 @@ describe("parseConfig", () => {
       BRAIN_AGENT_CAPACITY_ENABLED: "true",
       BRAIN_EXECUTION_LIMITS_ENABLED: "true",
       BRAIN_STRIPE_BILLING_ENABLED: "true",
+      BRAIN_COMMERCIAL_STRIPE_DB_URL:
+        "postgres://brain_stripe_billing_worker:strong-pass@localhost:5432/brain",
+      BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST: "sk_test_fixture",
+      BRAIN_COMMERCIAL_STRIPE_WEBHOOK_SECRET_TEST: "whsec_fixture",
       BRAIN_X402_PAYMENTS_ENABLED: "true",
       BRAIN_OUTCOME_FEES_ENABLED: "true",
       BRAIN_MOVEMENT_FEES_ENABLED: "true",
@@ -72,9 +76,23 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_AGENT_CAPACITY_ENABLED).toBe(true);
     expect(cfg.BRAIN_EXECUTION_LIMITS_ENABLED).toBe(true);
     expect(cfg.BRAIN_STRIPE_BILLING_ENABLED).toBe(true);
+    expect(cfg.BRAIN_COMMERCIAL_STRIPE_MODE).toBe("test");
+    expect(cfg.BRAIN_COMMERCIAL_STRIPE_API_VERSION).toBe("2026-02-25.clover");
     expect(cfg.BRAIN_X402_PAYMENTS_ENABLED).toBe(true);
     expect(cfg.BRAIN_OUTCOME_FEES_ENABLED).toBe(true);
     expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(true);
+  });
+
+  it("fails closed when commercial Stripe is enabled without its isolated test bindings", () => {
+    expect(() => parseConfig({ ...MIN_ENV, BRAIN_STRIPE_BILLING_ENABLED: "true" })).toThrow(
+      /dedicated Stripe worker database URL and test-mode Stripe secrets/,
+    );
+    expect(() =>
+      parseConfig({
+        ...MIN_ENV,
+        BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST: "sk_live_forbidden",
+      }),
+    ).toThrow(/BRAIN_COMMERCIAL_STRIPE_SECRET_KEY_TEST/);
   });
 
   it("requires live agent-key exchange before graduation can be enabled", () => {
