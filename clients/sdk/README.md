@@ -10,7 +10,7 @@ npm install @brainfinance/sdk@rc
 
 ### Release-candidate compatibility
 
-`0.1.0-rc.0` is generated against, and tested against, the **v0.0.4
+`0.1.0-rc.0` is generated against, and tested against, the **v0.0.7
 deployment** of the Brain API (`https://api.brain.fi`). The SDK version line
 is independent of the service version; this note is the compatibility
 statement.
@@ -85,6 +85,24 @@ The token is valid for 24 hours. To reset the dataset between demo sessions:
 pnpm run demo:reset
 ```
 
+### Quickstart with a commercial API key
+
+A direct commercial key (`brain_sk_test_...` or `brain_sk_live_...`) is
+read-only. It can read the tenant's ledger, audit, and governance surfaces,
+but it cannot access Wiki, payment proposals, approvals, execution, policy
+signing, or tenant administration. Run the dedicated read-only smoke example
+with a commercial key:
+
+```bash
+BRAIN_API_KEY=brain_sk_live_... \
+BRAIN_BASE_URL=https://api.brain.fi/v1 \
+  pnpm -C clients/sdk exec tsx examples/commercial-key-smoke.ts
+```
+
+The smoke example uses only `ledger:read` and `audit:read` routes. Use the
+JWT demo-token quickstart above when you need the broader demo surface,
+including Wiki and payment demonstrations.
+
 ## Usage
 
 ### Authentication
@@ -134,6 +152,10 @@ const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 (`https://staging-api.brain.fi/v1`). Two names, one environment.
 
 ### High-Level (`Brain` Class)
+
+The following is a JWT example. It demonstrates the broader demo-token
+surface. Do not replace its `token` with a direct commercial `apiKey`; use the
+commercial read-only example above for `brain_sk_*` credentials.
 
 ```typescript
 import { Brain } from "@brainfinance/sdk";
