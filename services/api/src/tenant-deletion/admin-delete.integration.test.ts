@@ -12,6 +12,8 @@ suite("admin tenant deletion as brain_tenant_deletion", () => {
   let owner: Pool;
   let deletion: Pool;
   const cleanupIds = new Set<string>();
+  const cleanupBillingIds = new Set<string>();
+  const cleanupRetentionSubjects = new Set<string>();
 
   beforeAll(() => {
     owner = new Pool({ connectionString: OWNER_URL });
@@ -21,6 +23,35 @@ suite("admin tenant deletion as brain_tenant_deletion", () => {
   afterAll(async () => {
     if (owner !== undefined) {
       const ids = [...cleanupIds];
+      for (const subjectId of cleanupRetentionSubjects) {
+        await owner.query("BEGIN");
+        try {
+          await owner.query(
+            `SELECT set_config('app.commercial_retention_purge', 'authorized', true)`,
+          );
+          await owner.query(
+            `UPDATE commercial_retention_subjects
+                SET retired_at = now() - interval '8 years',
+                    retain_until = now() - interval '1 second'
+              WHERE id = $1`,
+            [subjectId],
+          );
+          await owner.query(
+            `SELECT purge_expired_commercial_retention(
+               $1, $2, 'integration-cleanup', 'PURGE_EXPIRED_COMMERCIAL_RETENTION'
+             )`,
+            [subjectId, "f".repeat(64)],
+          );
+          await owner.query(
+            `DELETE FROM commercial_retention_purge_receipts WHERE retention_subject_id = $1`,
+            [subjectId],
+          );
+          await owner.query("COMMIT");
+        } catch (error) {
+          await owner.query("ROLLBACK");
+          throw error;
+        }
+      }
       await owner.query(`DELETE FROM tenant_blob_purge_audit_outbox WHERE tenant_id = ANY($1)`, [
         ids,
       ]);
@@ -28,6 +59,9 @@ suite("admin tenant deletion as brain_tenant_deletion", () => {
       await owner.query(`DELETE FROM tenant_deletion_jobs WHERE tenant_id = ANY($1)`, [ids]);
       await owner.query(`DELETE FROM agents WHERE tenant_id = ANY($1)`, [ids]);
       await owner.query(`DELETE FROM tenants WHERE id = ANY($1)`, [ids]);
+      await owner.query(`DELETE FROM commercial_billing_accounts WHERE id = ANY($1)`, [
+        [...cleanupBillingIds],
+      ]);
       await owner.end();
     }
     if (deletion !== undefined) await deletion.end();
@@ -200,5 +234,77 @@ suite("admin tenant deletion as brain_tenant_deletion", () => {
       (await owner.query(`SELECT status FROM tenant_deletion_jobs WHERE id = $1`, [target.jobId]))
         .rows[0],
     ).toEqual({ status: "failed" });
+  }, 60_000);
+
+  it("atomically retains minimized commercial evidence before deleting the tenant", async () => {
+    const target = await seedTenant();
+    const billingId = `cba_delete_${target.jobId}`;
+    const eventId = `cse_delete_${target.jobId}`;
+    cleanupBillingIds.add(billingId);
+    await owner.query(
+      `INSERT INTO commercial_billing_accounts (id, status, billing_currency, created_by)
+       VALUES ($1, 'closed', 'USD', 'integration-test')`,
+      [billingId],
+    );
+    await owner.query(
+      `INSERT INTO commercial_billing_account_tenants
+         (tenant_id, billing_account_id, relationship)
+       VALUES ($1, $2, 'production')`,
+      [target.tenantId, billingId],
+    );
+    await owner.query(
+      `INSERT INTO commercial_stripe_events (
+         id, tenant_id, billing_account_id, provider_mode, stripe_event_id,
+         event_type, event_created_at, payload, status, applied_at
+       ) VALUES (
+         $1, $2, $3, 'test', $4, 'invoice.paid', now(), $5::jsonb, 'applied', now()
+       )`,
+      [
+        eventId,
+        target.tenantId,
+        billingId,
+        `evt_delete_${target.jobId}`,
+        JSON.stringify({
+          data: { object: { id: "in_delete", amount_paid: 5000, currency: "usd" } },
+          customer_email: "must-not-survive@example.invalid",
+          secret: "must-not-survive",
+        }),
+      ],
+    );
+
+    await expect(
+      runTenantDeletionCycle({ pool: deletion, workerId: "integration-retention" }),
+    ).resolves.toBe(true);
+
+    expect(
+      (await owner.query(`SELECT 1 FROM tenants WHERE id = $1`, [target.tenantId])).rowCount,
+    ).toBe(0);
+    const subject = await owner.query<{ id: string; former_tenant_digest: string }>(
+      `SELECT id, former_tenant_digest
+         FROM commercial_retention_subjects WHERE retirement_receipt_id = $1`,
+      [target.jobId],
+    );
+    expect(subject.rows[0]?.former_tenant_digest).toMatch(/^[0-9a-f]{64}$/);
+    const subjectId = subject.rows[0]?.id;
+    if (subjectId === undefined) throw new Error("retention subject missing");
+    cleanupRetentionSubjects.add(subjectId);
+    const retained = await owner.query<{ evidence: Record<string, unknown> }>(
+      `SELECT evidence FROM commercial_retained_stripe_events
+        WHERE retention_subject_id = $1 AND source_row_id = $2`,
+      [subjectId, eventId],
+    );
+    expect(retained.rows[0]?.evidence).toMatchObject({
+      event_type: "invoice.paid",
+      amount_paid: "5000",
+      currency: "usd",
+    });
+    expect(JSON.stringify(retained.rows[0]?.evidence)).not.toContain("must-not-survive");
+    expect(
+      (
+        await owner.query(`SELECT 1 FROM commercial_retirement_seals WHERE tenant_id = $1`, [
+          target.tenantId,
+        ])
+      ).rowCount,
+    ).toBe(0);
   }, 60_000);
 });

@@ -9,6 +9,7 @@ export default defineConfig({
       "src/usage/commercial-entity-backfill.integration.test.ts",
       "src/commercial/commercial-shadow-api-mcp.integration.test.ts",
       "src/commercial/shadow-operator.integration.test.ts",
+      "src/commercial/commercial-retention.integration.test.ts",
       "src/tenant-deletion/batched-delete.integration.test.ts",
       "src/tenant-deletion/admin-delete.integration.test.ts",
     ],

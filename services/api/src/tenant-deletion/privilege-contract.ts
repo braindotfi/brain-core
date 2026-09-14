@@ -190,10 +190,21 @@ export async function assertTenantDeletionPrivilegeContract(
     );
   }
 
+  const retentionFunction = await client.query<{ allowed: boolean }>(
+    `SELECT has_function_privilege(
+       current_user,
+       'public.prepare_commercial_financial_retention(text,text)',
+       'EXECUTE'
+     ) AS allowed`,
+  );
+  if (retentionFunction.rows[0]?.allowed !== true) {
+    throw new Error("tenant-deletion role cannot execute commercial retention preparation");
+  }
+
   return {
     role: role.role,
     superuser: role.superuser,
     tableOwnerMatches,
-    checkedPrivileges: results.rows.length + agentUpdateColumns.rows.length,
+    checkedPrivileges: results.rows.length + agentUpdateColumns.rows.length + 1,
   };
 }

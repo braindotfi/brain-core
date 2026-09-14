@@ -764,4 +764,64 @@ suite("§4 DB role grant matrix (integration -- requires SUPERUSER DATABASE_URL)
       client.release();
     }
   });
+
+  it("commercial retained evidence is immutable to every runtime role", async (ctx) => {
+    if (!isSuper) {
+      ctx.skip();
+      return;
+    }
+    const client = await pool.connect();
+    const archiveTables = [
+      "commercial_retention_subjects",
+      "commercial_retention_receipts",
+      "commercial_retained_stripe_subscriptions",
+      "commercial_retained_stripe_events",
+      "commercial_retained_charge_facts",
+      "commercial_retained_x402_operations",
+      "commercial_retained_x402_events",
+      "commercial_retained_provider_commands",
+      "commercial_retention_legal_hold_events",
+      "commercial_retention_purge_receipts",
+    ] as const;
+    try {
+      for (const role of [
+        ...ALL_RUNTIME_ROLES,
+        "brain_stripe_billing_worker",
+        "brain_x402_seller_worker",
+      ]) {
+        for (const table of archiveTables) {
+          for (const privilege of [
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+          ]) {
+            const result = await client.query<{ has: boolean }>(
+              "SELECT has_table_privilege($1, $2, $3) AS has",
+              [role, table, privilege],
+            );
+            expect(result.rows[0]?.has, `${role} unexpected ${privilege} on ${table}`).toBe(false);
+          }
+        }
+      }
+      const privilegedRead = await client.query<{ has: boolean }>(
+        `SELECT has_table_privilege(
+           'brain_privileged', 'commercial_retention_receipts', 'SELECT'
+         ) AS has`,
+      );
+      expect(privilegedRead.rows[0]?.has).toBe(true);
+      const deletionExecute = await client.query<{ has: boolean }>(
+        `SELECT has_function_privilege(
+           'brain_tenant_deletion',
+           'prepare_commercial_financial_retention(text,text)',
+           'EXECUTE'
+         ) AS has`,
+      );
+      expect(deletionExecute.rows[0]?.has).toBe(true);
+    } finally {
+      client.release();
+    }
+  });
 });

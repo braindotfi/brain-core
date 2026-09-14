@@ -1,0 +1,218 @@
+name: commercial-retention
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options: [inspect, plan-expiry, apply-expiry, verify]
+      approved_sha:
+        description: "Exact deployed production SHA."
+        required: true
+        type: string
+      manifest_subject_ids:
+        description: "Sorted comma-separated opaque retention subject ids, empty for inspect."
+        required: false
+        type: string
+      manifest_digest:
+        description: "SHA-256 of the exact manifest_subject_ids string, empty for inspect."
+        required: false
+        type: string
+      reason:
+        description: "Reviewed operator reason, 10 to 240 characters."
+        required: true
+        type: string
+      confirmation:
+        description: "Exact fixed confirmation for the selected action."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: commercial-retention-production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.approved_sha }}
+
+      - name: Validate protected command boundary
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          SUBJECT_IDS: ${{ inputs.manifest_subject_ids }}
+          MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+          REASON: ${{ inputs.reason }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+
+          action = os.environ["ACTION"]
+          expected = {
+              "inspect": "INSPECT_COMMERCIAL_RETENTION",
+              "plan-expiry": "PLAN_EXPIRED_COMMERCIAL_RETENTION",
+              "apply-expiry": "PURGE_EXPIRED_COMMERCIAL_RETENTION",
+              "verify": "VERIFY_COMMERCIAL_RETENTION",
+          }
+          if os.environ["CONFIRMATION"] != expected.get(action):
+              raise SystemExit("confirmation does not match the fixed action boundary")
+          if not re.fullmatch(r"[0-9a-f]{40}", os.environ["APPROVED_SHA"]):
+              raise SystemExit("approved_sha must be 40 lowercase hex characters")
+          reason = os.environ["REASON"]
+          if not 10 <= len(reason) <= 240 or "\n" in reason or "\r" in reason:
+              raise SystemExit("reason must be 10 to 240 characters on one line")
+          subject_ids = os.environ["SUBJECT_IDS"]
+          digest = os.environ["MANIFEST_DIGEST"]
+          if action == "inspect":
+              if subject_ids or digest:
+                  raise SystemExit("inspect does not accept a manifest")
+          else:
+              ids = subject_ids.split(",") if subject_ids else []
+              if not ids or ids != sorted(set(ids)):
+                  raise SystemExit("manifest subjects must be nonempty, unique, and sorted")
+              if any(re.fullmatch(r"retsub_[0-9a-f]{32}", item) is None for item in ids):
+                  raise SystemExit("manifest contains an invalid opaque subject id")
+              actual = hashlib.sha256(subject_ids.encode()).hexdigest()
+              if not hashlib.compare_digest(actual, digest):
+                  raise SystemExit("manifest digest mismatch")
+          PY
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Confirm true production and exact SHA
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && API_BASE=https://api.brain.fi VM_ENV_FILE=.env.prod bash scripts/ops/assert-true-production.sh >/dev/null && curl -fsS https://api.brain.fi/health" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+          test "$remote_sha" = "$APPROVED_SHA"
+          echo "true_production=true"
+          echo "deployed_sha_matches=true"
+
+      - name: Run retention operator
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          SUBJECT_IDS: ${{ inputs.manifest_subject_ids }}
+          MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+          ACTOR: github:${{ github.actor }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          command_file=$(mktemp)
+          chmod 600 "$command_file"
+          ACTION="$ACTION" SUBJECT_IDS="$SUBJECT_IDS" MANIFEST_DIGEST="$MANIFEST_DIGEST" \
+            ACTOR="$ACTOR" CONFIRMATION="$CONFIRMATION" python3 - "$command_file" <<'PY'
+          import json
+          import os
+          import sys
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump({key.lower(): os.environ[key] for key in (
+                  "ACTION", "SUBJECT_IDS", "MANIFEST_DIGEST", "ACTOR", "CONFIRMATION"
+              )}, handle)
+          PY
+          remote_file="/tmp/commercial-retention-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          scp -i ~/.ssh/id_deploy "$command_file" "azureuser@$VM_HOST:$remote_file"
+          rm -f "$command_file"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s -- "$remote_file" <<'REMOTE'
+          set -euo pipefail
+          command_file="$1"
+          trap 'rm -f "$command_file"' EXIT
+          eval "$(python3 - "$command_file" <<'PY'
+          import json
+          import shlex
+          import sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          for key, value in data.items():
+              print(f"{key.upper()}={shlex.quote(value)}")
+          PY
+          )"
+
+          case "$ACTION" in
+            inspect)
+              docker exec -i brain-prod-postgres psql -X -U brain -d brain -v ON_ERROR_STOP=1 -At <<'SQL'
+              SET ROLE brain_commercial_retention_worker;
+              SELECT jsonb_build_object(
+                'subjects', count(*),
+                'held', count(*) FILTER (WHERE legal_hold),
+                'eligible', count(*) FILTER (WHERE retain_until < now() AND NOT legal_hold)
+              ) FROM commercial_retention_subjects;
+          SQL
+              ;;
+            plan-expiry)
+              result=$(docker exec -i brain-prod-postgres psql -X -qAt -U brain -d brain \
+                -v ON_ERROR_STOP=1 -v subject_ids="$SUBJECT_IDS" \
+                -v manifest_digest="$MANIFEST_DIGEST" <<'SQL'
+              SET ROLE brain_commercial_retention_worker;
+              SELECT CASE WHEN count(*) = cardinality(string_to_array(:'subject_ids', ','))
+                                AND bool_and(commercial_retention_expiry_eligible(id, now()))
+                          THEN 'plan_valid=true' ELSE 'plan_valid=false' END
+                FROM commercial_retention_subjects
+               WHERE id = ANY(string_to_array(:'subject_ids', ','));
+              SELECT 'manifest_digest=' || :'manifest_digest';
+          SQL
+              )
+              test "$(printf '%s\n' "$result" | sed -n '1p')" = "plan_valid=true"
+              ;;
+            apply-expiry)
+              docker exec -i brain-prod-postgres psql -X -U brain -d brain -v ON_ERROR_STOP=1 \
+                -v subject_ids="$SUBJECT_IDS" -v manifest_digest="$MANIFEST_DIGEST" \
+                -v actor="$ACTOR" -v confirmation="$CONFIRMATION" -At <<'SQL'
+              BEGIN;
+              SET LOCAL ROLE brain_commercial_retention_worker;
+              SELECT purge_expired_commercial_retention(
+                id, :'manifest_digest', :'actor', :'confirmation'
+              )
+                FROM unnest(string_to_array(:'subject_ids', ',')) AS manifest(id)
+               ORDER BY id;
+              COMMIT;
+          SQL
+              ;;
+            verify)
+              result=$(docker exec -i brain-prod-postgres psql -X -qAt -U brain -d brain \
+                -v ON_ERROR_STOP=1 -v subject_ids="$SUBJECT_IDS" \
+                -v manifest_digest="$MANIFEST_DIGEST" <<'SQL'
+              SET ROLE brain_commercial_retention_worker;
+              SELECT CASE
+                WHEN NOT EXISTS (
+                  SELECT 1 FROM commercial_retention_subjects
+                   WHERE id = ANY(string_to_array(:'subject_ids', ','))
+                ) AND (
+                  SELECT count(*) FROM commercial_retention_purge_receipts
+                   WHERE retention_subject_id = ANY(string_to_array(:'subject_ids', ','))
+                     AND manifest_digest = :'manifest_digest'
+                ) = cardinality(string_to_array(:'subject_ids', ','))
+                THEN 'verified=true' ELSE 'verified=false' END;
+          SQL
+              )
+              test "$result" = "verified=true"
+              ;;
+          esac
+          REMOTE

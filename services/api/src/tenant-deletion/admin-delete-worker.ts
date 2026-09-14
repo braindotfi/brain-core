@@ -147,6 +147,15 @@ async function executeDeletion(client: PoolClient, job: TenantDeletionJobRow): P
       throw new Error("tenant disappeared or became protected after enqueue");
     }
 
+    const retention = await client.query<{ retention_subject_id: string }>(
+      `SELECT prepare_commercial_financial_retention($1, $2) AS retention_subject_id`,
+      [job.tenant_id, job.id],
+    );
+    const retentionSubjectId = retention.rows[0]?.retention_subject_id;
+    if (retentionSubjectId === undefined) {
+      throw new Error("commercial financial retention preparation returned no subject");
+    }
+
     const expected = await captureTenantReconciliationCounts(client, DELETE_TABLES, job.tenant_id);
     const preservedBefore = await captureTenantReconciliationCounts(
       client,
@@ -234,6 +243,8 @@ async function executeDeletion(client: PoolClient, job: TenantDeletionJobRow): P
         total_rows_deleted: total,
         per_table_counts: deleted,
         preserved: [...PRESERVED_TABLES].sort(),
+        commercial_retention_subject_id: retentionSubjectId,
+        commercial_retention_receipt_id: job.id,
         blob_artifact_count: blobs.rows.length,
         blob_purge_job_id: purgeJobId,
       },

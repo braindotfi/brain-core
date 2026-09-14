@@ -1,0 +1,180 @@
+name: commercial-retention-legal-hold
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        required: true
+        type: choice
+        options: [inspect, set, release]
+      approved_sha:
+        description: "Exact deployed production SHA."
+        required: true
+        type: string
+      retention_subject_id:
+        description: "One opaque retention subject id."
+        required: true
+        type: string
+      reason:
+        description: "Reviewed legal-hold reason, 10 to 500 characters."
+        required: true
+        type: string
+      confirmation:
+        description: "Exact fixed confirmation for the selected action."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  legal-hold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: commercial-retention-production
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.approved_sha }}
+
+      - name: Validate protected legal-hold boundary
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          SUBJECT_ID: ${{ inputs.retention_subject_id }}
+          REASON: ${{ inputs.reason }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          expected = {
+              "inspect": "INSPECT_COMMERCIAL_RETENTION_LEGAL_HOLD",
+              "set": "SET_COMMERCIAL_RETENTION_LEGAL_HOLD",
+              "release": "RELEASE_COMMERCIAL_RETENTION_LEGAL_HOLD",
+          }
+          action = os.environ["ACTION"]
+          if os.environ["CONFIRMATION"] != expected.get(action):
+              raise SystemExit("confirmation does not match the fixed legal-hold boundary")
+          if not re.fullmatch(r"[0-9a-f]{40}", os.environ["APPROVED_SHA"]):
+              raise SystemExit("approved_sha must be 40 lowercase hex characters")
+          if re.fullmatch(r"retsub_[0-9a-f]{32}", os.environ["SUBJECT_ID"]) is None:
+              raise SystemExit("retention_subject_id is invalid")
+          reason = os.environ["REASON"]
+          if not 10 <= len(reason) <= 500 or "\n" in reason or "\r" in reason:
+              raise SystemExit("reason must be 10 to 500 characters on one line")
+          PY
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Confirm true production and exact SHA
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" \
+            "cd ~/brain-core && API_BASE=https://api.brain.fi VM_ENV_FILE=.env.prod bash scripts/ops/assert-true-production.sh >/dev/null && curl -fsS https://api.brain.fi/health" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+          test "$remote_sha" = "$APPROVED_SHA"
+          echo "true_production=true"
+          echo "deployed_sha_matches=true"
+
+      - name: Apply and verify legal-hold action
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          SUBJECT_ID: ${{ inputs.retention_subject_id }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: github:${{ github.actor }}
+        run: |
+          set -euo pipefail
+          command_file=$(mktemp)
+          chmod 600 "$command_file"
+          ACTION="$ACTION" SUBJECT_ID="$SUBJECT_ID" REASON="$REASON" ACTOR="$ACTOR" \
+            python3 - "$command_file" <<'PY'
+          import json
+          import os
+          import sys
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump({key.lower(): os.environ[key] for key in (
+                  "ACTION", "SUBJECT_ID", "REASON", "ACTOR"
+              )}, handle)
+          PY
+          remote_file="/tmp/commercial-retention-hold-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          scp -i ~/.ssh/id_deploy "$command_file" "azureuser@$VM_HOST:$remote_file"
+          rm -f "$command_file"
+          ssh -i ~/.ssh/id_deploy "azureuser@$VM_HOST" bash -s -- "$remote_file" <<'REMOTE'
+          set -euo pipefail
+          command_file="$1"
+          trap 'rm -f "$command_file"' EXIT
+          eval "$(python3 - "$command_file" <<'PY'
+          import json
+          import shlex
+          import sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          for key, value in data.items():
+              print(f"{key.upper()}={shlex.quote(value)}")
+          PY
+          )"
+
+          case "$ACTION" in
+            inspect)
+              expected=""
+              ;;
+            set)
+              expected=true
+              ;;
+            release)
+              expected=false
+              ;;
+          esac
+          result=$(docker exec -i brain-prod-postgres psql -X -qAt -U brain -d brain -v ON_ERROR_STOP=1 \
+            -v action="$ACTION" -v subject_id="$SUBJECT_ID" -v reason="$REASON" \
+            -v actor="$ACTOR" -v expected="$expected" <<'SQL'
+          BEGIN;
+          SET LOCAL ROLE brain_commercial_retention_worker;
+          SELECT CASE :'action'
+            WHEN 'set' THEN set_commercial_retention_legal_hold(
+              :'subject_id', true, :'reason', :'actor'
+            )
+            WHEN 'release' THEN set_commercial_retention_legal_hold(
+              :'subject_id', false, :'reason', :'actor'
+            )
+          END;
+          SELECT CASE
+            WHEN :'action' = 'inspect' THEN 'subject_present=true legal_hold=' || legal_hold::text
+            WHEN legal_hold::text = :'expected' THEN 'legal_hold_verified=true'
+            ELSE 'legal_hold_verified=false'
+          END
+            FROM commercial_retention_subjects
+           WHERE id = :'subject_id';
+          COMMIT;
+          SQL
+          )
+          if [ "$ACTION" = inspect ]; then
+            case "$result" in
+              "subject_present=true legal_hold=true"|"subject_present=true legal_hold=false") ;;
+              *) echo "legal-hold inspect failed" >&2; exit 1 ;;
+            esac
+          else
+            test "$result" = "legal_hold_verified=true"
+          fi
+          REMOTE
