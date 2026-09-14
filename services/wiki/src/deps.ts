@@ -8,7 +8,12 @@ import type {
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
 import type { SchemaRegistry } from "./schemas.js";
-import type { AgentReader, PolicyReader, ProposalReader } from "./pages/types.js";
+import type {
+  AgentReader,
+  AuditEntityHistoryReader,
+  PolicyReader,
+  ProposalReader,
+} from "./pages/types.js";
 
 export interface WikiDeps {
   pool: Pool;
@@ -30,4 +35,5 @@ export interface WikiDeps {
   policyReader?: PolicyReader;
   agentReader?: AgentReader;
   proposalReader?: ProposalReader;
+  auditEntityHistoryReader?: AuditEntityHistoryReader;
 }

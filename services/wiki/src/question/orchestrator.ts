@@ -38,7 +38,14 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Redis } from "ioredis";
-import type { PolicyReader, PolicyView, ProposalReader, ProposalView } from "../pages/types.js";
+import type {
+  AuditEntityHistoryEventView,
+  AuditEntityHistoryReader,
+  PolicyReader,
+  PolicyView,
+  ProposalReader,
+  ProposalView,
+} from "../pages/types.js";
 
 export interface AskOptions {
   question: string;
@@ -93,7 +100,10 @@ export interface AskDeps {
   policyContext?: ServiceCallContext;
   /** Optional Execution-owned read projection for deterministic proposal questions. */
   proposalReader?: ProposalReader;
+  /** Optional Audit-owned read projection for deterministic audit history questions. */
+  auditEntityHistoryReader?: AuditEntityHistoryReader;
   evidenceBoundaryFactory?: (() => string) | undefined;
+  requestContext?: ServiceCallContext;
 }
 
 const CACHE_TTL_SECONDS = 300;
@@ -127,6 +137,7 @@ export type DeterministicIntentId =
   | "transaction_listing"
   | "cash_flow_listing"
   | "invoice_listing"
+  | "invoice_audit_trail"
   | "open_payables_listing"
   | "open_customer_invoices_listing"
   | "payable_by_counterparty"
@@ -219,6 +230,10 @@ interface InvoiceListingRow {
 interface InvoiceAggregateRow extends InvoiceListingRow {
   matching_count: string;
   matching_sum: string;
+}
+
+interface InvoiceAuditTrailIntent {
+  invoiceReference: string;
 }
 
 interface NetCashFlowRow extends TransactionListingRow {
@@ -360,6 +375,8 @@ interface DeterministicAnswerContext {
   policyReader?: PolicyReader;
   policyContext?: ServiceCallContext;
   proposalReader?: ProposalReader;
+  auditEntityHistoryReader?: AuditEntityHistoryReader;
+  requestContext?: ServiceCallContext;
 }
 
 interface DeterministicIntentDefinition {
@@ -402,6 +419,10 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
         ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
         ...(deps.policyContext !== undefined ? { policyContext: deps.policyContext } : {}),
         ...(deps.proposalReader !== undefined ? { proposalReader: deps.proposalReader } : {}),
+        ...(deps.auditEntityHistoryReader !== undefined
+          ? { auditEntityHistoryReader: deps.auditEntityHistoryReader }
+          : {}),
+        ...(deps.requestContext !== undefined ? { requestContext: deps.requestContext } : {}),
       },
     );
     result.deterministicIntentId = deterministicIntent.definition.id;
@@ -831,6 +852,89 @@ async function answerOpenCustomerInvoicesListing(client: TenantScopedClient): Pr
   );
 }
 
+async function answerInvoiceAuditTrail(
+  client: TenantScopedClient,
+  intent: InvoiceAuditTrailIntent,
+  context: DeterministicAnswerContext,
+): Promise<AskResult> {
+  if (context.auditEntityHistoryReader === undefined || context.requestContext === undefined) {
+    return {
+      answered: false,
+      answer: "Audit trail data is not available in this deployment.",
+      evidence: [],
+      model: "structured-audit-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const { rows } = await client.query<InvoiceListingRow>(
+    `SELECT inv.id,
+            inv.invoice_number,
+            inv.amount_due::text AS amount_due,
+            inv.amount_paid::text AS amount_paid,
+            inv.currency,
+            inv.issue_date,
+            inv.due_date,
+            inv.status,
+            inv.counterparty_id,
+            cp.name AS counterparty_name
+       FROM ledger_invoices inv
+       JOIN ledger_counterparties cp ON cp.id = inv.counterparty_id
+      WHERE inv.id = $1
+         OR LOWER(inv.invoice_number) = LOWER($1)
+      ORDER BY CASE WHEN inv.id = $1 THEN 0 ELSE 1 END,
+               inv.issue_date DESC,
+               inv.id ASC
+      LIMIT 2`,
+    [intent.invoiceReference],
+  );
+
+  if (rows.length === 0) {
+    return {
+      answered: false,
+      answer: `I couldn't find a matching invoice for ${intent.invoiceReference}.`,
+      evidence: [],
+      model: "structured-audit-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+  if (rows.length > 1) {
+    return {
+      answered: false,
+      answer: `I found multiple invoices matching ${intent.invoiceReference}, so I can't provide a reliable audit trail.`,
+      evidence: rows.map(toInvoiceEvidence),
+      model: "structured-audit-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  const invoice = rows[0]!;
+  const events = await context.auditEntityHistoryReader.listByEntity(
+    context.requestContext,
+    "invoice",
+    invoice.id,
+    MAX_LISTING_RECORDS,
+  );
+  const evidence = [toInvoiceEvidence(invoice)];
+  if (events.length === 0) {
+    return {
+      answered: true,
+      answer: `I found invoice ${invoice.invoice_number} (${invoice.id}), but no audit events were found for it.`,
+      evidence,
+      model: "structured-audit-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  return {
+    answered: true,
+    answer: `Audit trail for invoice ${invoice.invoice_number} (${invoice.id}):\n${events.map(formatAuditTrailEvent).join("\n")}`,
+    evidence,
+    model: "structured-audit-query",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
 function structuredListingResult(answer: string, evidence: AskEvidenceItem[]): AskResult {
   return {
     answered: true,
@@ -877,6 +981,11 @@ function formatInvoiceListingRow(row: InvoiceListingRow): string {
     row.due_date === null ? "no due date" : `due ${row.due_date.toISOString().slice(0, 10)}`;
   const counterparty = row.counterparty_name ?? "unidentified counterparty";
   return `- ${row.invoice_number}: ${formatCurrencyAmount(row.amount_due, row.currency)} ${row.status}, issued ${row.issue_date.toISOString().slice(0, 10)}, ${due}, counterparty ${counterparty}`;
+}
+
+function formatAuditTrailEvent(row: AuditEntityHistoryEventView): string {
+  const outcome = row.outcome === null ? "" : `, outcome ${row.outcome}`;
+  return `- ${row.created_at.toISOString()}: ${row.layer} ${row.action} (${row.event_type}) by ${row.actor}${outcome}`;
 }
 
 function formatPayableListingRow(row: LargestPayableRow): string {
@@ -2609,6 +2718,26 @@ function parseStructuredListingIntent(
   };
 }
 
+function parseInvoiceAuditTrailIntent(question: string): InvoiceAuditTrailIntent | null {
+  const invoiceReferencePattern =
+    "((?:INV|AR|AP)-[A-Z0-9-]*\\d[A-Z0-9-]*|inv_[a-z0-9_]*\\d[a-z0-9_]*)";
+  const patterns = [
+    new RegExp(
+      `\\b(?:audit\\s+trail|history|audit\\s+history)\\s+(?:for|of)\\s+(?:invoice\\s+)?${invoiceReferencePattern}\\b`,
+      "i",
+    ),
+    new RegExp(
+      `\\b(?:invoice\\s+)?${invoiceReferencePattern}\\b.*\\b(?:audit\\s+trail|history|audit\\s+history)\\b`,
+      "i",
+    ),
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(question);
+    if (match !== null) return { invoiceReference: match[1]! };
+  }
+  return null;
+}
+
 function parsePayableByCounterpartyIntent(question: string): PayableByCounterpartyIntent | null {
   const match =
     /\b(?:what(?:'s| is)?|how much)\s+do\s+we\s+owe\s+(?:to\s+)?(.+?)[?!.\s]*$/i.exec(question) ??
@@ -3084,6 +3213,15 @@ export const DETERMINISTIC_INTENT_REGISTRY: readonly DeterministicIntentDefiniti
     parse: parseListingEntityIntent("invoice"),
     answer: (client, intent) => answerStructuredListing(client, intent as StructuredListingIntent),
     isEligible: (client, asOf) => hasEligibleInvoices(client, asOf, currentMonthRange(asOf)),
+  },
+  {
+    id: "invoice_audit_trail",
+    displayText: "Show the audit trail for an invoice",
+    suggestable: false,
+    parse: (question) => parseInvoiceAuditTrailIntent(question),
+    answer: (client, intent, context) =>
+      answerInvoiceAuditTrail(client, intent as InvoiceAuditTrailIntent, context),
+    isEligible: () => Promise.resolve(false),
   },
   {
     id: "open_payables_listing",

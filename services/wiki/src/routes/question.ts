@@ -36,6 +36,16 @@ export async function registerQuestion(app: FastifyInstance, deps: WikiDeps): Pr
           metrics: deps.metrics,
           ...(deps.policyReader !== undefined ? { policyReader: deps.policyReader } : {}),
           ...(deps.proposalReader !== undefined ? { proposalReader: deps.proposalReader } : {}),
+          ...(deps.auditEntityHistoryReader !== undefined
+            ? { auditEntityHistoryReader: deps.auditEntityHistoryReader }
+            : {}),
+          requestContext: {
+            tenantId: request.principal!.tenantId,
+            actor: request.principal!.id,
+            requestId: request.id,
+            principalType: request.principal!.type,
+            scopes: request.principal!.scopes,
+          },
           policyContext: {
             tenantId: request.principal!.tenantId,
             actor: request.principal!.id,

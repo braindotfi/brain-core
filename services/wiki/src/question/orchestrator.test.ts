@@ -17,7 +17,12 @@ import {
   listSuggestedQuestions,
   recordDeterministicIntentUsage,
 } from "./orchestrator.js";
-import type { PolicyReader, PolicyView, ProposalReader } from "../pages/types.js";
+import type {
+  AuditEntityHistoryReader,
+  PolicyReader,
+  PolicyView,
+  ProposalReader,
+} from "../pages/types.js";
 
 /**
  * v0.3 — orchestrator grounds in Ledger rows. The fake client returns
@@ -418,6 +423,14 @@ function fakeClient(rows: FakeRows): TenantScopedClient {
         const parameters = values ?? [];
         let parameterIndex = 0;
         let invoices = rows.invoices ?? [];
+        if (text.includes("LOWER(inv.invoice_number) = LOWER($1)")) {
+          const reference = String(parameters[parameterIndex++]).toLowerCase();
+          invoices = invoices.filter(
+            (invoice) =>
+              invoice.id.toLowerCase() === reference ||
+              invoice.invoice_number.toLowerCase() === reference,
+          );
+        }
         if (text.includes("inv.status = 'overdue'")) {
           invoices = invoices.filter((invoice) => invoice.status === "overdue");
         }
@@ -1164,6 +1177,148 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.evidence).toEqual([
       expect.objectContaining({ entityType: "invoice", entityId: "inv_JULY" }),
     ]);
+  });
+
+  it("answers invoice audit trail questions through the audit entity reader", async () => {
+    const requestContext = {
+      tenantId: "tnt_test",
+      actor: "usr_test",
+      requestId: "req_test",
+      principalType: "user" as const,
+      scopes: ["audit:read"],
+    };
+    const auditEntityHistoryReader: AuditEntityHistoryReader = {
+      listByEntity: vi.fn(async () => [
+        {
+          id: "evt_INV1027",
+          layer: "ledger",
+          event_type: "invoice.created",
+          action: "ledger.invoice.created",
+          actor: "usr_finance",
+          created_at: new Date("2026-08-06T12:00:00Z"),
+          outcome: "success",
+        },
+      ]),
+    };
+    const rows: FakeRows = {
+      transactions: [],
+      obligations: [],
+      counterparties: [
+        {
+          id: "cp_ENTERPRISE",
+          name: "Enterprise Holdings",
+          normalized_name: "enterprise_holdings",
+          type: "customer",
+          risk_level: null,
+        },
+      ],
+      invoices: [
+        {
+          id: "inv_1027",
+          invoice_number: "INV-1027",
+          amount_due: "290000.00",
+          amount_paid: "0.00",
+          currency: "USD",
+          issue_date: new Date("2026-08-01T00:00:00Z"),
+          due_date: new Date("2026-08-21T00:00:00Z"),
+          status: "sent",
+          counterparty_id: "cp_ENTERPRISE",
+          scenario: "ar",
+        },
+      ],
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("invoice audit trail questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient(rows),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        auditEntityHistoryReader,
+        requestContext,
+      },
+      {
+        question: "Show me the audit trail for Invoice INV-1027",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-audit",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      deterministicIntentId: "invoice_audit_trail",
+      model: "structured-audit-query",
+    });
+    expect(result.answer).toContain("Audit trail for invoice INV-1027 (inv_1027):");
+    expect(result.answer).toContain("ledger ledger.invoice.created (invoice.created)");
+    expect(result.evidence).toEqual([
+      expect.objectContaining({ entityType: "invoice", entityId: "inv_1027" }),
+    ]);
+    expect(auditEntityHistoryReader.listByEntity).toHaveBeenCalledWith(
+      requestContext,
+      "invoice",
+      "inv_1027",
+      50,
+    );
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("fails closed when an invoice audit trail question names an unknown invoice", async () => {
+    const requestContext = {
+      tenantId: "tnt_test",
+      actor: "usr_test",
+      requestId: "req_test",
+      principalType: "user" as const,
+      scopes: ["audit:read"],
+    };
+    const auditEntityHistoryReader: AuditEntityHistoryReader = {
+      listByEntity: vi.fn(async () => {
+        throw new Error("unresolved invoices must not query audit events");
+      }),
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("unresolved invoice audit trail questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [],
+          invoices: [],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        auditEntityHistoryReader,
+        requestContext,
+      },
+      {
+        question: "Show me the history of INV-1027",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-audit",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: false,
+      answer: "I couldn't find a matching invoice for INV-1027.",
+      deterministicIntentId: "invoice_audit_trail",
+      evidence: [],
+      model: "structured-audit-query",
+    });
+    expect(auditEntityHistoryReader.listByEntity).not.toHaveBeenCalled();
+    expect(llm.seen).toEqual([]);
   });
 
   it("answers a named counterparty payable total without mixing unrelated obligations", async () => {
