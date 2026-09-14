@@ -59,6 +59,10 @@ export function buildWikiMemoryService(
             embed: wikiDeps.embed,
             redis: wikiDeps.redis,
             metrics: wikiDeps.metrics,
+            ...(wikiDeps.auditEntityHistoryReader !== undefined
+              ? { auditEntityHistoryReader: wikiDeps.auditEntityHistoryReader }
+              : {}),
+            requestContext: ctx,
           },
           {
             question: req.question,

@@ -38,6 +38,8 @@ export type {
   PolicyAutoAllowPaymentRuleView,
   AgentView,
   ProposalView,
+  AuditEntityHistoryEventView,
+  AuditEntityHistoryReader,
 } from "./pages/types.js";
 // H-07: Proof narrative renderer (derived view; reads a structured proof).
 export { renderProofExplanation, type ProofExplanationInput } from "./pages/proof-explanation.js";

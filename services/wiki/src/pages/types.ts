@@ -102,6 +102,25 @@ export interface ProposalReader {
   listPendingCollections(ctx: ServiceCallContext): Promise<readonly ProposalView[]>;
 }
 
+export interface AuditEntityHistoryEventView {
+  id: string;
+  layer: string;
+  event_type: string;
+  action: string;
+  actor: string;
+  created_at: Date;
+  outcome: string | null;
+}
+
+export interface AuditEntityHistoryReader {
+  listByEntity(
+    ctx: ServiceCallContext,
+    entityType: "invoice",
+    entityId: string,
+    limit: number,
+  ): Promise<readonly AuditEntityHistoryEventView[]>;
+}
+
 export interface PageGenerationContext {
   ctx: ServiceCallContext;
   client: TenantScopedClient;

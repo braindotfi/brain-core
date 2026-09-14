@@ -248,6 +248,7 @@ import {
   classifyAnchorBatchOutcome,
   createPendingAnchor,
   findAuditAnchoringMode,
+  findEventsByEntity,
   nextAnchorWindow,
   publishAnchor,
   publishPendingAnchorBatch,
@@ -373,6 +374,7 @@ import type {
   WikiDeps,
   PolicyReader,
   AgentReader,
+  AuditEntityHistoryReader,
   PolicyView,
   ProposalReader,
   ProposalView,
@@ -871,6 +873,21 @@ async function main(): Promise<void> {
       return result.proposals.map(toProposalView);
     },
   };
+  const auditEntityHistoryReader: AuditEntityHistoryReader = {
+    listByEntity: (rctx, entityType, entityId, limit) =>
+      withTenantScope(pool, rctx.tenantId, async (c) => {
+        const rows = await findEventsByEntity(c, entityType, entityId, limit);
+        return rows.map((row) => ({
+          id: row.id,
+          layer: row.layer,
+          event_type: row.event_type,
+          action: row.action,
+          actor: row.actor,
+          created_at: row.created_at,
+          outcome: row.outcome,
+        }));
+      }),
+  };
 
   const wikiDeps: WikiDeps = {
     // H-14: read-only (brain_wiki_reader) pool when BRAIN_WIKI_DB_URL is set.
@@ -889,6 +906,7 @@ async function main(): Promise<void> {
     policyReader,
     agentReader,
     proposalReader,
+    auditEntityHistoryReader,
   };
 
   const wikiPageService = new WikiPageService({

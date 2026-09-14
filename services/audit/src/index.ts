@@ -32,8 +32,10 @@ export {
 } from "./publisher.js";
 export {
   findAuditAnchoringMode,
+  findEventsByEntity,
   type AuditAnchorRow,
   type AuditAnchoringMode,
+  type AuditEventRow,
 } from "./repository.js";
 export { registerAuditRoutes } from "./routes.js";
 export { registerWebhookRoutes, type WebhookRouteDeps } from "./webhook-routes.js";
