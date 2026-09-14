@@ -133,6 +133,23 @@ suite("tenant deletion — surface-gateway tables (requires DATABASE_URL)", () =
       await applyAll(migrator as unknown as Parameters<typeof applyAll>[0], discovered, {
         appliedBy: "tenant-deletion-surface-integration",
       });
+      // This suite intentionally installs migrations in a disposable schema so
+      // it can exercise the surface-table deletion list without changing the
+      // shared test database. The production retention function pins every
+      // relation to public as part of its SECURITY DEFINER boundary, so calling
+      // that function from this schema would correctly inspect public rather
+      // than this fixture. Retention extraction itself has a dedicated live
+      // Postgres integration suite. Keep this focused suite schema-local by
+      // replacing only its disposable copy with a no-evidence subject result.
+      await migrator.query(`
+        CREATE OR REPLACE FUNCTION ${schema}.prepare_commercial_financial_retention(
+          p_tenant_id TEXT,
+          p_retirement_receipt_id TEXT
+        )
+        RETURNS TEXT
+        LANGUAGE SQL
+        AS $$ SELECT 'retsub_surface_fixture'::TEXT $$
+      `);
     } finally {
       migrator.release();
     }
