@@ -1570,12 +1570,8 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result.answer).toContain(
       "- 2 daily aging refreshes, Sep 2-3, 2026, days_overdue 45->47, by collections and collections_proposal_reconciler",
     );
-    expect(result.answer).not.toContain(
-      "2026-09-02T12:00:00.000Z: agent agent.action.refreshed",
-    );
-    expect(result.answer).not.toContain(
-      "2026-09-03T12:00:00.000Z: agent agent.action.refreshed",
-    );
+    expect(result.answer).not.toContain("2026-09-02T12:00:00.000Z: agent agent.action.refreshed");
+    expect(result.answer).not.toContain("2026-09-03T12:00:00.000Z: agent agent.action.refreshed");
     expect(llm.seen).toEqual([]);
   });
 
