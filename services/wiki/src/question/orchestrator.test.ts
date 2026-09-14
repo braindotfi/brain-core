@@ -3842,6 +3842,56 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
   });
 
+  it("fails closed when a generic question names an invoice not present in cited evidence", async () => {
+    const llm = new InspectingLlmAdapter(() =>
+      JSON.stringify({
+        answer:
+          "No audit trail was found for INV-1027. Other invoice obligations include an unrelated overdue invoice.",
+        evidence_ids: ["obl_UNRELATED"],
+      }),
+    );
+
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_UNRELATED",
+              type: "invoice",
+              direction: "payable",
+              amount_due: "1200.00",
+              currency: "USD",
+              due_date: new Date("2026-08-01T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_VENDOR",
+            },
+          ],
+          counterparties: [{ id: "cp_VENDOR", name: "CloudOps", type: "vendor", risk_level: null }],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "Show me the audit trail for Invoice INV-1027",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-specific-reference",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: false,
+      answer: "I couldn't find a matching invoice for INV-1027.",
+      evidence: [],
+      model: "m-specific-reference",
+    });
+    expect(llm.seen).toHaveLength(1);
+  });
+
   it("filters generic AR evidence to receivable invoice obligations", async () => {
     const rows: FakeRows = {
       transactions: [],
