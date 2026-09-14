@@ -864,16 +864,6 @@ async function answerInvoiceAuditTrail(
   intent: InvoiceAuditTrailIntent,
   context: DeterministicAnswerContext,
 ): Promise<AskResult> {
-  if (context.auditEntityHistoryReader === undefined || context.requestContext === undefined) {
-    return {
-      answered: false,
-      answer: "Audit trail data is not available in this deployment.",
-      evidence: [],
-      model: "structured-audit-query",
-      usage: { inputTokens: 0, outputTokens: 0 },
-    };
-  }
-
   const { rows } = await client.query<InvoiceListingRow>(
     `SELECT inv.id,
             inv.invoice_number,
@@ -910,6 +900,16 @@ async function answerInvoiceAuditTrail(
       answered: false,
       answer: `I found multiple invoices matching ${intent.invoiceReference}, so I can't provide a reliable audit trail.`,
       evidence: rows.map(toInvoiceEvidence),
+      model: "structured-audit-query",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  }
+
+  if (context.auditEntityHistoryReader === undefined || context.requestContext === undefined) {
+    return {
+      answered: false,
+      answer: "Audit trail data is not available in this deployment.",
+      evidence: [],
       model: "structured-audit-query",
       usage: { inputTokens: 0, outputTokens: 0 },
     };

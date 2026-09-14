@@ -3997,7 +3997,7 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     );
   });
 
-  it("fails closed when a generic question names an invoice not present in cited evidence", async () => {
+  it("fails closed through the deterministic route when an audit trail question names an unknown invoice", async () => {
     const llm = new InspectingLlmAdapter(() =>
       JSON.stringify({
         answer:
@@ -4041,9 +4041,60 @@ describe("askWiki — Ledger-grounded retrieval", () => {
     expect(result).toMatchObject({
       answered: false,
       answer: "I couldn't find a matching invoice for INV-1027.",
+      deterministicIntentId: "invoice_audit_trail",
+      evidence: [],
+      model: "structured-audit-query",
+    });
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("fails closed when a generic question names an invoice not present in cited evidence", async () => {
+    const llm = new InspectingLlmAdapter(() =>
+      JSON.stringify({
+        answer: "Invoice INV-1027 was not found. An unrelated obligation is overdue.",
+        evidence_ids: ["obl_UNRELATED"],
+      }),
+    );
+
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [
+            {
+              id: "obl_UNRELATED",
+              type: "invoice",
+              direction: "payable",
+              amount_due: "1200.00",
+              currency: "USD",
+              due_date: new Date("2026-08-01T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_VENDOR",
+            },
+          ],
+          counterparties: [{ id: "cp_VENDOR", name: "CloudOps", type: "vendor", risk_level: null }],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+      },
+      {
+        question: "What do we know about Invoice INV-1027?",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-specific-reference",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: false,
+      answer: "I couldn't find a matching invoice for INV-1027.",
       evidence: [],
       model: "m-specific-reference",
     });
+    expect(result.deterministicIntentId).toBeUndefined();
     expect(llm.seen).toHaveLength(1);
   });
 
