@@ -110,6 +110,8 @@ export interface AuditEntityHistoryEventView {
   actor: string;
   created_at: Date;
   outcome: string | null;
+  inputs?: Readonly<Record<string, unknown>>;
+  outputs?: Readonly<Record<string, unknown>>;
 }
 
 export interface AuditEntityHistoryReader {

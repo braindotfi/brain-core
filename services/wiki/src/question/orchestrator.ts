@@ -935,7 +935,7 @@ async function answerInvoiceAuditTrail(
 
   return {
     answered: true,
-    answer: `Audit trail for invoice ${invoice.invoice_number} (${invoice.id}):\n${events.map(formatAuditTrailEvent).join("\n")}`,
+    answer: `Audit trail for invoice ${invoice.invoice_number} (${invoice.id}):\n${formatAuditTrailEvents(events).join("\n")}`,
     evidence,
     model: "structured-audit-query",
     usage: { inputTokens: 0, outputTokens: 0 },
@@ -993,6 +993,167 @@ function formatInvoiceListingRow(row: InvoiceListingRow): string {
 function formatAuditTrailEvent(row: AuditEntityHistoryEventView): string {
   const outcome = row.outcome === null ? "" : `, outcome ${row.outcome}`;
   return `- ${row.created_at.toISOString()}: ${row.layer} ${row.action} (${row.event_type}) by ${row.actor}${outcome}`;
+}
+
+interface AuditRefreshGroupKey {
+  readonly subjectId: string;
+  readonly actorGroup: string;
+  readonly outcome: string | null;
+  readonly actionKind: string;
+}
+
+interface AuditRefreshGroup {
+  readonly key: AuditRefreshGroupKey;
+  readonly rows: AuditEntityHistoryEventView[];
+}
+
+const COLLECTIONS_REFRESH_ACTORS = new Set(["collections", "collections_proposal_reconciler"]);
+
+function formatAuditTrailEvents(rows: readonly AuditEntityHistoryEventView[]): string[] {
+  const lines: string[] = [];
+  let group: AuditRefreshGroup | null = null;
+  let previousOutcome: string | null | undefined;
+
+  const flushGroup = () => {
+    if (group === null) return;
+    lines.push(...formatAuditRefreshGroup(group.rows));
+    group = null;
+  };
+
+  for (const row of rows) {
+    const key = refreshGroupKey(row, previousOutcome);
+    if (key !== null) {
+      if (group !== null && sameRefreshGroupKey(group.key, key)) {
+        group.rows.push(row);
+      } else {
+        flushGroup();
+        group = { key, rows: [row] };
+      }
+    } else {
+      flushGroup();
+      lines.push(formatAuditTrailEvent(row));
+    }
+    previousOutcome = row.outcome;
+  }
+
+  flushGroup();
+  return lines;
+}
+
+function refreshGroupKey(
+  row: AuditEntityHistoryEventView,
+  previousOutcome: string | null | undefined,
+): AuditRefreshGroupKey | null {
+  if (row.action !== "agent.action.refreshed") return null;
+  if (
+    previousOutcome !== undefined &&
+    previousOutcome !== null &&
+    row.outcome !== null &&
+    row.outcome !== previousOutcome
+  ) {
+    return null;
+  }
+
+  const subjectId =
+    readAuditString(row.inputs, "invoice_id") ?? readAuditString(row.outputs, "invoice_id");
+  if (subjectId === null) return null;
+  return {
+    subjectId,
+    actorGroup: refreshActorGroup(row.actor),
+    outcome: row.outcome,
+    actionKind: readAuditString(row.inputs, "action_kind") ?? "",
+  };
+}
+
+function refreshActorGroup(actor: string): string {
+  return COLLECTIONS_REFRESH_ACTORS.has(actor) ? "collections" : actor;
+}
+
+function sameRefreshGroupKey(left: AuditRefreshGroupKey, right: AuditRefreshGroupKey): boolean {
+  return (
+    left.subjectId === right.subjectId &&
+    left.actorGroup === right.actorGroup &&
+    left.outcome === right.outcome &&
+    left.actionKind === right.actionKind
+  );
+}
+
+function formatAuditRefreshGroup(rows: readonly AuditEntityHistoryEventView[]): string[] {
+  if (rows.length < 2) return rows.map(formatAuditTrailEvent);
+  const first = rows[0]!;
+  const last = rows[rows.length - 1]!;
+  const dateRange = formatAuditDateRange(first.created_at, last.created_at);
+  const previousDays = readAuditNumber(first.outputs, "previous_days_overdue");
+  const daysOverdue = readAuditNumber(last.outputs, "days_overdue");
+  const actors = [...new Set(rows.map((row) => row.actor))].sort();
+  const actorText = `, by ${formatActorList(actors)}`;
+  if (previousDays !== null && daysOverdue !== null) {
+    return [
+      `- ${rows.length} daily aging refreshes, ${dateRange}, days_overdue ${previousDays}->${daysOverdue}${actorText}`,
+    ];
+  }
+  return [`- ${rows.length} refreshes, ${dateRange}${actorText}`];
+}
+
+function formatAuditDateRange(start: Date, end: Date): string {
+  const startYear = start.getUTCFullYear();
+  const endYear = end.getUTCFullYear();
+  const startMonth = start.getUTCMonth();
+  const endMonth = end.getUTCMonth();
+  const startDay = start.getUTCDate();
+  const endDay = end.getUTCDate();
+  if (startYear === endYear && startMonth === endMonth && startDay === endDay) {
+    return `${MONTH_NAMES[startMonth]} ${startDay}, ${startYear}`;
+  }
+  if (startYear === endYear && startMonth === endMonth) {
+    return `${MONTH_NAMES[startMonth]} ${startDay}-${endDay}, ${startYear}`;
+  }
+  if (startYear === endYear) {
+    return `${MONTH_NAMES[startMonth]} ${startDay}-${MONTH_NAMES[endMonth]} ${endDay}, ${startYear}`;
+  }
+  return `${MONTH_NAMES[startMonth]} ${startDay}, ${startYear}-${MONTH_NAMES[endMonth]} ${endDay}, ${endYear}`;
+}
+
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function readAuditString(
+  source: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): string | null {
+  const value = source?.[key];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function readAuditNumber(
+  source: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): number | null {
+  const value = source?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function formatActorList(actors: readonly string[]): string {
+  if (actors.length === 0) return "unknown actor";
+  if (actors.length === 1) return actors[0]!;
+  return `${actors.slice(0, -1).join(", ")} and ${actors[actors.length - 1]}`;
 }
 
 function formatPayableListingRow(row: LargestPayableRow): string {

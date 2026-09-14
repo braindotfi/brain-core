@@ -18,6 +18,7 @@ import {
   recordDeterministicIntentUsage,
 } from "./orchestrator.js";
 import type {
+  AuditEntityHistoryEventView,
   AuditEntityHistoryReader,
   PolicyReader,
   PolicyView,
@@ -1267,6 +1268,229 @@ describe("askWiki — Ledger-grounded retrieval", () => {
       50,
     );
     expect(llm.seen).toEqual([]);
+  });
+
+  it("summarizes repeated Collections aging refreshes in invoice audit trail answers", async () => {
+    const requestContext = {
+      tenantId: "tnt_test",
+      actor: "usr_test",
+      requestId: "req_test",
+      principalType: "user" as const,
+      scopes: ["audit:read"],
+    };
+    const refreshes: AuditEntityHistoryEventView[] = Array.from({ length: 13 }, (_, index) => ({
+      id: `evt_REFRESH_${index}`,
+      layer: "agent",
+      event_type: "system_activity",
+      action: "agent.action.refreshed",
+      actor: index % 2 === 0 ? "collections" : "collections_proposal_reconciler",
+      created_at: new Date(`2026-09-${String(index + 1).padStart(2, "0")}T12:00:00Z`),
+      outcome: "confirm",
+      inputs: {
+        action_kind: "agent_action",
+        invoice_id: "inv_HELIO",
+        proposal_id: "prop_HELIO",
+      },
+      outputs: {
+        changed_fields: ["action"],
+        previous_days_overdue: 45 + index,
+        days_overdue: 46 + index,
+      },
+    }));
+    const auditEntityHistoryReader: AuditEntityHistoryReader = {
+      listByEntity: vi.fn(async () => [
+        {
+          id: "evt_PROPOSED",
+          layer: "agent",
+          event_type: "system_activity",
+          action: "agent.action.proposed",
+          actor: "collections",
+          created_at: new Date("2026-09-01T08:00:00Z"),
+          outcome: "confirm",
+        },
+        ...refreshes,
+      ]),
+    };
+    const llm = new InspectingLlmAdapter(() => {
+      throw new Error("invoice audit trail questions must not call the LLM");
+    });
+
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            {
+              id: "cp_HELIO",
+              name: "Helio Manufacturing",
+              normalized_name: "helio_manufacturing",
+              type: "customer",
+              risk_level: null,
+            },
+          ],
+          invoices: [
+            {
+              id: "inv_HELIO",
+              invoice_number: "AR-HELIO-2026-06",
+              amount_due: "184000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-08T00:00:00Z"),
+              due_date: new Date("2026-07-11T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+            },
+          ],
+        }),
+        llm,
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        auditEntityHistoryReader,
+        requestContext,
+      },
+      {
+        question: "Show me the audit trail for Invoice AR-HELIO-2026-06",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-audit",
+      },
+    );
+
+    expect(result).toMatchObject({
+      answered: true,
+      deterministicIntentId: "invoice_audit_trail",
+      model: "structured-audit-query",
+    });
+    expect(result.answer).toContain(
+      "- 13 daily aging refreshes, Sep 1-13, 2026, days_overdue 45->58",
+    );
+    expect(result.answer).toContain("by collections and collections_proposal_reconciler");
+    expect(result.answer).toContain("agent agent.action.proposed");
+    expect(result.answer).not.toContain("2026-09-02T12:00:00.000Z: agent agent.action.refreshed");
+    expect(llm.seen).toEqual([]);
+  });
+
+  it("keeps lifecycle and outcome-change audit events out of refresh summaries", async () => {
+    const requestContext = {
+      tenantId: "tnt_test",
+      actor: "usr_test",
+      requestId: "req_test",
+      principalType: "user" as const,
+      scopes: ["audit:read"],
+    };
+    const baseRefresh = {
+      layer: "agent",
+      event_type: "system_activity",
+      action: "agent.action.refreshed",
+      actor: "collections",
+      inputs: {
+        action_kind: "agent_action",
+        invoice_id: "inv_HELIO",
+        proposal_id: "prop_HELIO",
+      },
+    };
+    const auditEntityHistoryReader: AuditEntityHistoryReader = {
+      listByEntity: vi.fn(async () => [
+        {
+          id: "evt_PROPOSED",
+          layer: "agent",
+          event_type: "system_activity",
+          action: "agent.action.proposed",
+          actor: "collections",
+          created_at: new Date("2026-09-01T08:00:00Z"),
+          outcome: "confirm",
+        },
+        {
+          ...baseRefresh,
+          id: "evt_REFRESH_1",
+          created_at: new Date("2026-09-02T12:00:00Z"),
+          outcome: "confirm",
+          outputs: { previous_days_overdue: 45, days_overdue: 46 },
+        },
+        {
+          ...baseRefresh,
+          id: "evt_REFRESH_2",
+          created_at: new Date("2026-09-03T12:00:00Z"),
+          outcome: "confirm",
+          outputs: { previous_days_overdue: 46, days_overdue: 47 },
+        },
+        {
+          ...baseRefresh,
+          id: "evt_REFRESH_REJECT",
+          created_at: new Date("2026-09-04T12:00:00Z"),
+          outcome: "reject",
+          outputs: { previous_days_overdue: 47, days_overdue: 48 },
+        },
+        {
+          id: "evt_SUPERSEDED",
+          layer: "agent",
+          event_type: "system_activity",
+          action: "agent.action.superseded",
+          actor: "collections_proposal_reconciler",
+          created_at: new Date("2026-09-05T12:00:00Z"),
+          outcome: "reject",
+        },
+      ]),
+    };
+
+    const result = await askWiki(
+      {
+        client: fakeClient({
+          transactions: [],
+          obligations: [],
+          counterparties: [
+            {
+              id: "cp_HELIO",
+              name: "Helio Manufacturing",
+              normalized_name: "helio_manufacturing",
+              type: "customer",
+              risk_level: null,
+            },
+          ],
+          invoices: [
+            {
+              id: "inv_HELIO",
+              invoice_number: "AR-HELIO-2026-06",
+              amount_due: "184000.00",
+              amount_paid: "0.00",
+              currency: "USD",
+              issue_date: new Date("2026-06-08T00:00:00Z"),
+              due_date: new Date("2026-07-11T00:00:00Z"),
+              status: "overdue",
+              counterparty_id: "cp_HELIO",
+            },
+          ],
+        }),
+        llm: new InspectingLlmAdapter(() => {
+          throw new Error("invoice audit trail questions must not call the LLM");
+        }),
+        embed: new DeterministicEmbeddingAdapter(16),
+        redis: fakeRedis() as unknown as Redis,
+        metrics: new MockMetrics(),
+        auditEntityHistoryReader,
+        requestContext,
+      },
+      {
+        question: "Show me the audit trail for Invoice AR-HELIO-2026-06",
+        asOf: null,
+        maxEvidenceDepth: 3,
+        tenantId: "tnt_test",
+        model: "m-audit",
+      },
+    );
+
+    expect(result.answer).toContain(
+      "- 2 daily aging refreshes, Sep 2-3, 2026, days_overdue 45->47, by collections",
+    );
+    expect(result.answer).toContain(
+      "- 2026-09-04T12:00:00.000Z: agent agent.action.refreshed (system_activity) by collections, outcome reject",
+    );
+    expect(result.answer).toContain(
+      "- 2026-09-05T12:00:00.000Z: agent agent.action.superseded (system_activity) by collections_proposal_reconciler, outcome reject",
+    );
   });
 
   it("fails closed when an invoice audit trail question names an unknown invoice", async () => {
