@@ -15,7 +15,7 @@
 	}
 }
 
-api.brain.fi {
+api.brain.fi, api.robotmoney.com {
 	import edge_security_headers
 	import api_docs_csp
 
