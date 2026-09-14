@@ -51,6 +51,7 @@ import {
   newTenantId,
   newUserId,
   isBrainId,
+  stripUnsafeControlCharacters,
   PAYMENT_AGENT_SCOPES,
   InMemoryAuditEmitter,
   AGENT_PERMITTED_SCOPES,
@@ -381,6 +382,23 @@ import type {
 } from "@brain/wiki";
 import type { RawDeps } from "@brain/raw";
 import type { GatePaymentIntent, TenantScopedClient } from "@brain/shared";
+
+function sanitizeAuditJsonObject(value: Record<string, unknown>): Record<string, unknown> {
+  return sanitizeAuditJsonValue(value) as Record<string, unknown>;
+}
+
+function sanitizeAuditJsonValue(value: unknown): unknown {
+  if (typeof value === "string") return stripUnsafeControlCharacters(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeAuditJsonValue(item));
+  if (value !== null && typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      sanitized[stripUnsafeControlCharacters(key)] = sanitizeAuditJsonValue(nested);
+    }
+    return sanitized;
+  }
+  return value;
+}
 
 const DEMO_MEMBER_SESSION_SCOPES = [
   "ledger:read",
@@ -885,6 +903,8 @@ async function main(): Promise<void> {
           actor: row.actor,
           created_at: row.created_at,
           outcome: row.outcome,
+          inputs: sanitizeAuditJsonObject(row.inputs),
+          outputs: sanitizeAuditJsonObject(row.outputs),
         }));
       }),
   };
