@@ -116,6 +116,11 @@ interface LedgerCandidate {
   counterpartyName?: string | undefined;
 }
 
+interface SpecificQuestionReference {
+  kind: "invoice" | "transaction" | "counterparty";
+  value: string;
+}
+
 type QuestionIntent = "accounts_receivable" | "payables" | "reconciliation" | "generic";
 
 type AggregateOperation = "count" | "sum" | "average";
@@ -414,6 +419,8 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   //    wiki_pages embeddings; Phase 3 keeps the retrieval surface narrow.
   const intent = classifyQuestionIntent(opts.question);
   const candidates = await retrieveLedgerCandidates(deps.client, opts.asOf, intent);
+  const requiredReferences =
+    intent === "generic" ? extractSpecificQuestionReferences(opts.question) : [];
 
   // 2. Compose evidence context.
   const boundaryToken = (deps.evidenceBoundaryFactory ?? createEvidenceBoundaryToken)();
@@ -438,7 +445,7 @@ export async function askWiki(deps: AskDeps, opts: AskOptions): Promise<AskResul
   };
 
   const completion = await deps.llm.complete(llmReq);
-  const parsed = parseLlmAnswer(completion.text, candidates, boundaryToken);
+  const parsed = parseLlmAnswer(completion.text, candidates, boundaryToken, requiredReferences);
   const evidenceCandidates = parsed.evidenceIds
     .map((id) => candidates.find((candidate) => candidate.id === id))
     .filter((candidate): candidate is LedgerCandidate => candidate !== undefined);
@@ -3389,6 +3396,7 @@ function parseLlmAnswer(
   text: string,
   candidates: ReadonlyArray<LedgerCandidate>,
   boundaryToken: string,
+  requiredReferences: ReadonlyArray<SpecificQuestionReference> = [],
 ): { answered: boolean; answer: string; evidenceIds: string[] } {
   try {
     const json = JSON.parse(stripCodeFence(text)) as { answer?: string; evidence_ids?: string[] };
@@ -3396,6 +3404,16 @@ function parseLlmAnswer(
     const ids = Array.isArray(json.evidence_ids) ? json.evidence_ids : [];
     const allowed = new Set(candidates.map((c) => c.id));
     const evidenceIds = ids.filter((id) => typeof id === "string" && allowed.has(id));
+    const citedCandidates = evidenceIds
+      .map((id) => candidates.find((candidate) => candidate.id === id))
+      .filter((candidate): candidate is LedgerCandidate => candidate !== undefined);
+    if (guarded.accepted && !hasRequiredSpecificReferences(requiredReferences, citedCandidates)) {
+      return {
+        answered: false,
+        answer: specificReferenceNotFoundAnswer(requiredReferences),
+        evidenceIds: [],
+      };
+    }
     return {
       // A generative answer is only answerable when the output passed the
       // safety guard and cites retrieved tenant-scoped evidence.
@@ -3406,6 +3424,72 @@ function parseLlmAnswer(
   } catch {
     return { answered: false, answer: GROUNDED_ANSWER_FALLBACK, evidenceIds: [] };
   }
+}
+
+function extractSpecificQuestionReferences(question: string): readonly SpecificQuestionReference[] {
+  const references: SpecificQuestionReference[] = [];
+  const seen = new Set<string>();
+  const add = (kind: SpecificQuestionReference["kind"], value: string) => {
+    const clean = value.trim().replace(/[?!.,;:]+$/g, "");
+    if (clean === "") return;
+    const key = `${kind}:${clean.toLocaleLowerCase("en-US")}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    references.push({ kind, value: clean });
+  };
+
+  for (const match of question.matchAll(
+    /\b((?:INV|AR|AP)-[A-Z0-9-]*\d[A-Z0-9-]*|inv_[a-z0-9_]*\d[a-z0-9_]*)\b/gi,
+  )) {
+    add("invoice", match[1]!);
+  }
+  for (const match of question.matchAll(
+    /\b((?:TX)-[A-Z0-9-]*\d[A-Z0-9-]*|tx_[a-z0-9_]*\d[a-z0-9_]*)\b/gi,
+  )) {
+    add("transaction", match[1]!);
+  }
+  for (const match of question.matchAll(
+    /\b(?:vendor|counterparty|customer|merchant)\s+(?:named\s+|called\s+)?([A-Z][A-Za-z0-9.' -]{1,80}?)(?=$|[?!.,;:]|\s+(?:audit|history|trail|transactions?|payments?|invoices?|records?)\b)/g,
+  )) {
+    add("counterparty", match[1]!);
+  }
+
+  return references;
+}
+
+function hasRequiredSpecificReferences(
+  references: ReadonlyArray<SpecificQuestionReference>,
+  citedCandidates: ReadonlyArray<LedgerCandidate>,
+): boolean {
+  if (references.length === 0) return true;
+  return references.every((reference) =>
+    citedCandidates.some((candidate) => candidateContainsReference(candidate, reference)),
+  );
+}
+
+function candidateContainsReference(
+  candidate: LedgerCandidate,
+  reference: SpecificQuestionReference,
+): boolean {
+  const needle = reference.value.toLocaleLowerCase("en-US");
+  const haystack = `${candidate.id} ${candidate.excerpt}`.toLocaleLowerCase("en-US");
+  if (reference.kind !== "counterparty") return haystack.includes(needle);
+  const normalizedNeedle = normalizeCounterpartyName(reference.value);
+  return (
+    normalizeCounterpartyName(candidate.counterpartyName ?? "") === normalizedNeedle ||
+    normalizeCounterpartyName(candidate.excerpt).includes(normalizedNeedle)
+  );
+}
+
+function specificReferenceNotFoundAnswer(
+  references: ReadonlyArray<SpecificQuestionReference>,
+): string {
+  const reference = references[0];
+  if (reference === undefined) return GROUNDED_ANSWER_FALLBACK;
+  const label =
+    references.length === 1 ? reference.value : references.map((item) => item.value).join(", ");
+  const noun = references.length === 1 ? reference.kind : "records";
+  return `I couldn't find a matching ${noun} for ${label}.`;
 }
 
 /**
