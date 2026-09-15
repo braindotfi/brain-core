@@ -36,7 +36,7 @@
     "commercial-shadow-daily": "tsx src/commercial/shadow-daily-cli.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.116.0",
+    "@anthropic-ai/sdk": "^0.125.0",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@azure/storage-blob": "^12.25.0",
