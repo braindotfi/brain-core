@@ -31,6 +31,7 @@ scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
   scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
   scripts/ops/check-commercial-demo-retirement-privileges.mjs \
+  scripts/ops/commercial-demo-retention-evidence.mjs \
   scripts/ops/execute-commercial-demo-retirement.mjs \
   scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
@@ -324,6 +325,8 @@ docker cp "$REPORT_DIR/commercial-demo-retirement-targets.csv" \
   brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
 docker cp "$REMOTE_ROOT/execute-commercial-demo-retirement.mjs" \
   brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
+docker cp "$REMOTE_ROOT/commercial-demo-retention-evidence.mjs" \
+  brain-prod-api:/app/scripts/ops/commercial-demo-retention-evidence.mjs
 docker cp "$REMOTE_ROOT/rehearse-commercial-demo-tenant-retirement.mjs" \
   brain-prod-api:/app/scripts/ops/rehearse-commercial-demo-tenant-retirement.mjs
 docker exec brain-prod-api \

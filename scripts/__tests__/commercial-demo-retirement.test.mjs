@@ -18,6 +18,10 @@ const progressMigration = readFileSync(
   "services/api/migrations/0034_commercial_demo_retirement_progress.sql",
   "utf8",
 );
+const retentionProgressMigration = readFileSync(
+  "services/api/migrations/0048_commercial_demo_retirement_retention_evidence.sql",
+  "utf8",
+);
 const perTenantRetirement = readFileSync(
   "services/api/src/tenant-deletion/per-tenant-retirement.ts",
   "utf8",
@@ -58,12 +62,16 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(perTenantRetirement, /ROLLBACK/);
   assert.match(execution, /tenant_blob_purge_jobs/);
   assert.match(execution, /tenant_blob_purge_audit_outbox/);
+  assert.match(execution, /commercial_retention_subject_id/);
+  assert.match(execution, /commercial_retention_receipt_id/);
   assert.match(execution, /assertPostDelete/);
   assert.match(execution, /EXPECTED_DEMO_SECOND_APPROVERS = 788/);
   assert.match(execution, /viewer@example\.com/);
   assert.match(execution, /damon@brain\.fi/);
   assert.match(execution, /approved non-bootstrap member preflight failed/);
   assert.match(runner, /restore_agent_states_after_abort/);
+  assert.match(runner, /commercial-demo-retention-evidence\.mjs/);
+  assert.match(phaseARunner, /commercial-demo-retention-evidence\.mjs/);
   assert.match(runner, /brain-prod-worker/);
   assert.match(runner, /brain-prod-agents/);
   assert.match(runner, /QUIET_WINDOW_SECONDS=120/);
@@ -89,6 +97,34 @@ test("commercial demo retirement stays fail closed and transactionally audited",
   assert.match(workflow, /timeout-minutes: 210/);
   assert.match(workflow, /Exact promoted commit SHA/);
   assert.match(workflow, /brain-prod-worker restart count is not zero/);
+});
+
+test("commercial demo retirement prepares retained evidence before deletion", () => {
+  const oneTenantStart = execution.indexOf("export async function executeOneTenant");
+  const oneTenantEnd = execution.indexOf("async function initializeOrValidateRun", oneTenantStart);
+  const oneTenantPath = execution.slice(oneTenantStart, oneTenantEnd);
+  const lockIndex = oneTenantPath.indexOf("SELECT id FROM tenants WHERE id = $1 FOR UPDATE");
+  const preflightIndex = oneTenantPath.indexOf("assertTenantFinalPreflight");
+  const prepareIndex = oneTenantPath.indexOf("prepareCommercialFinancialRetention");
+  const deleteIndex = oneTenantPath.indexOf("deleteTenantRows");
+  assert.ok(lockIndex >= 0, "the final tenant lock must be present");
+  assert.ok(preflightIndex > lockIndex, "the final preflight must follow the tenant lock");
+  assert.ok(prepareIndex > preflightIndex, "retention preparation must follow final preflight");
+  assert.ok(deleteIndex > prepareIndex, "tenant deletion must follow retention preparation");
+  assert.match(execution, /RETENTION_PREPARED_TABLES/);
+  assert.match(execution, /CASCADE_DELETED_TABLES/);
+  assert.match(retentionProgressMigration, /ADD COLUMN retention_subject_id TEXT/);
+  assert.match(retentionProgressMigration, /ADD COLUMN retention_receipt_id TEXT/);
+  assert.match(
+    retentionProgressMigration,
+    /retention_evidence_required = \(status <> 'completed'\)/,
+  );
+  assert.match(
+    retentionProgressMigration,
+    /commercial_demo_retirement_completed_retention_evidence/,
+  );
+  assert.match(perTenantRetirement, /retention_subject_id = \$7/);
+  assert.match(perTenantRetirement, /retention_receipt_id = \$8/);
 });
 
 test("commercial demo rows use durable one-tenant transactions", () => {

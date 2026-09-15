@@ -32,6 +32,7 @@ scp -i ~/.ssh/id_deploy \
   scripts/ops/commercial-name-exceptions-2026-09-03.csv \
   scripts/ops/check-commercial-demo-retirement-host-overlap.sh \
   scripts/ops/report-commercial-demo-retirement-dry-run.sql \
+  scripts/ops/commercial-demo-retention-evidence.mjs \
   scripts/ops/execute-commercial-demo-retirement.mjs \
   "azureuser@$VM_HOST:/tmp/"
 
@@ -351,6 +352,8 @@ docker cp /tmp/commercial-demo-retirement-targets.csv \
   brain-prod-api:/tmp/commercial-demo-retirement-targets.csv
 docker cp /tmp/execute-commercial-demo-retirement.mjs \
   brain-prod-api:/app/scripts/ops/execute-commercial-demo-retirement.mjs
+docker cp /tmp/commercial-demo-retention-evidence.mjs \
+  brain-prod-api:/app/scripts/ops/commercial-demo-retention-evidence.mjs
 
 if ! command -v timeout >/dev/null 2>&1; then
   echo "the remote host must provide the timeout command"
