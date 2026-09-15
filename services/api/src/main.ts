@@ -1422,6 +1422,15 @@ async function main(): Promise<void> {
           statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
           applicationName: `${cfg.SERVICE_NAME}-mcp-reader`,
         });
+  const x402SellerPool =
+    cfg.BRAIN_X402_PAYMENTS_ENABLED && cfg.BRAIN_X402_SELLER_DB_URL !== undefined
+      ? createPool({
+          connectionString: cfg.BRAIN_X402_SELLER_DB_URL,
+          max: 3,
+          statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
+          applicationName: `${cfg.SERVICE_NAME}-x402-seller`,
+        })
+      : undefined;
 
   await assertRuntimeDbRoles({
     nodeEnv: cfg.NODE_ENV,
@@ -2729,7 +2738,7 @@ async function main(): Promise<void> {
         }
         if (cfg.BRAIN_X402_PAYMENTS_ENABLED) {
           await v1.register(async (child) =>
-            registerX402ReceiptRoutes(child, new PostgresX402ReceiptRepository(pool)),
+            registerX402ReceiptRoutes(child, new PostgresX402ReceiptRepository(x402SellerPool!)),
           );
         }
         await v1.register(async (child) =>
@@ -4183,6 +4192,7 @@ async function main(): Promise<void> {
             resolverPool,
             tenantDeletionPool,
             ...(mcpReaderPool !== undefined ? [mcpReaderPool] : []),
+            ...(x402SellerPool !== undefined ? [x402SellerPool] : []),
           ]),
         disconnectRedis: () => redis.disconnect(),
         shutdownTracing: () => shutdownTracing(),

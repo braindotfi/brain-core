@@ -1,0 +1,44 @@
+name: x402-cdp-status
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check official Coinbase status feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          response=$(mktemp)
+          trap 'rm -f "$response"' EXIT
+          curl --fail --silent --show-error --max-time 15 \
+            https://status.coinbase.com/api/v2/summary.json > "$response"
+          python3 - "$response" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              payload = json.load(source)
+          matches = [
+              component for component in payload.get("components", [])
+              if "developer platform" in component.get("name", "").lower()
+          ]
+          if not matches:
+              raise SystemExit("Coinbase Developer Platform component is absent from status feed")
+          unhealthy = [
+              {"name": item.get("name"), "status": item.get("status")}
+              for item in matches if item.get("status") != "operational"
+          ]
+          if unhealthy:
+              print(json.dumps({"coinbase_developer_platform": unhealthy}, sort_keys=True))
+              raise SystemExit("Coinbase Developer Platform is not operational")
+          print("coinbase_developer_platform=operational")
+          PY

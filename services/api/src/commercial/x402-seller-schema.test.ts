@@ -49,7 +49,10 @@ describe("x402 seller Phase 1 schema", () => {
     expect(deletion).toContain('"x402_seller_logical_operations"');
     expect(deletion).toContain('"x402_seller_receipts"');
     expect(migration).toContain("ON DELETE SET NULL");
-    expect(roles).toContain("CREATE ROLE brain_x402_seller_worker NOLOGIN");
+    expect(roles).toContain("CREATE ROLE brain_x402_seller_worker LOGIN");
+    expect(roles).toContain(
+      "ALTER ROLE brain_x402_seller_worker WITH LOGIN PASSWORD :'brain_x402_seller_worker_password' NOBYPASSRLS",
+    );
     expect(roles).toContain(
       "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM brain_x402_seller_worker",
     );

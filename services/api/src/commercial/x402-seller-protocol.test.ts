@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Principal } from "@brain/shared";
 import {
   assertX402SellerCredentialEligible,
+  executeX402UpfrontSettlement,
   settleBeforeFulfillment,
   X402_BASE_SEPOLIA_NETWORK,
   X402_BASE_SEPOLIA_USDC,
@@ -41,6 +42,9 @@ describe("x402 seller protocol", () => {
         },
       },
       finality: {
+        requireRpcConfirmation: async () => {
+          order.push("rpc");
+        },
         requireSealed: async () => {
           order.push("sealed");
         },
@@ -53,7 +57,7 @@ describe("x402 seller protocol", () => {
       },
     });
 
-    expect(order).toEqual(["verify", "settle", "sealed", "fulfill"]);
+    expect(order).toEqual(["verify", "settle", "rpc", "sealed", "fulfill"]);
     expect(result.result).toBe("ok");
   });
 
@@ -71,7 +75,10 @@ describe("x402 seller protocol", () => {
             errorReason: "settlement_pending",
           }),
         },
-        finality: { requireSealed: async () => undefined },
+        finality: {
+          requireRpcConfirmation: async () => undefined,
+          requireSealed: async () => undefined,
+        },
         requirements,
         paymentPayload: {},
         fulfill: async () => {
@@ -98,7 +105,10 @@ describe("x402 seller protocol", () => {
     await expect(
       settleBeforeFulfillment({
         facilitator,
-        finality: { requireSealed: async () => undefined },
+        finality: {
+          requireRpcConfirmation: async () => undefined,
+          requireSealed: async () => undefined,
+        },
         requirements,
         paymentPayload: {},
         fulfill,
@@ -109,7 +119,10 @@ describe("x402 seller protocol", () => {
     await expect(
       settleBeforeFulfillment({
         facilitator,
-        finality: { requireSealed: async () => undefined },
+        finality: {
+          requireRpcConfirmation: async () => undefined,
+          requireSealed: async () => undefined,
+        },
         requirements,
         paymentPayload: {},
         fulfill,
@@ -129,7 +142,10 @@ describe("x402 seller protocol", () => {
           errorReason: null,
         }),
       },
-      finality: { requireSealed: async () => undefined },
+      finality: {
+        requireRpcConfirmation: async () => undefined,
+        requireSealed: async () => undefined,
+      },
       requirements,
       paymentPayload: {},
       fulfill: async () => "ok",
@@ -159,9 +175,125 @@ describe("x402 seller protocol", () => {
       assertX402SellerCredentialEligible({
         apiKeyCredentialClass: "unsupported" as never,
       }),
-    ).toThrow(/unsupported x402 credential class/);
+    ).toThrow(/requires an x402 pay-per-call credential/);
+    expect(() =>
+      assertX402SellerCredentialEligible({ apiKeyCredentialClass: "commercial_included" }),
+    ).toThrow(/requires an x402 pay-per-call credential/);
     expect(() =>
       assertX402SellerCredentialEligible({ apiKeyCredentialClass: "x402_pay_per_call" }),
     ).not.toThrow();
+  });
+
+  it("enforces the complete upfront settlement order", async () => {
+    const order: string[] = [];
+    const result = await executeX402UpfrontSettlement({
+      authenticate: async () => {
+        order.push("authenticate");
+      },
+      reserveAllowance: async () => {
+        order.push("reserve");
+      },
+      createQuote: async () => {
+        order.push("quote");
+        return requirements;
+      },
+      captureFacilitatorSupport: async () => {
+        order.push("supported");
+      },
+      facilitator: {
+        verify: async () => {
+          order.push("verify");
+          return { valid: true, payer: "0xpayer", reason: null };
+        },
+        settle: async () => {
+          order.push("settle");
+          return {
+            success: true,
+            payer: "0xpayer",
+            transaction: `0x${"c".repeat(64)}`,
+            network: X402_BASE_SEPOLIA_NETWORK,
+            errorReason: null,
+          };
+        },
+      },
+      finality: {
+        requireRpcConfirmation: async () => {
+          order.push("rpc");
+        },
+        requireSealed: async () => {
+          order.push("sealed");
+        },
+      },
+      paymentPayload: {},
+      persistSettlement: async () => {
+        order.push("persist-settlement");
+      },
+      executeHandler: async () => {
+        order.push("handler");
+        return "fulfilled";
+      },
+      persistFulfillment: async () => {
+        order.push("persist-fulfillment");
+      },
+      queueMatchingRefund: async () => {
+        order.push("refund");
+      },
+    });
+    expect(result).toBe("fulfilled");
+    expect(order).toEqual([
+      "authenticate",
+      "reserve",
+      "quote",
+      "supported",
+      "verify",
+      "settle",
+      "rpc",
+      "sealed",
+      "persist-settlement",
+      "handler",
+      "persist-fulfillment",
+    ]);
+  });
+
+  it("queues an exact refund after settlement when handler execution fails", async () => {
+    const refunds: unknown[] = [];
+    await expect(
+      executeX402UpfrontSettlement({
+        authenticate: async () => undefined,
+        reserveAllowance: async () => undefined,
+        createQuote: async () => requirements,
+        captureFacilitatorSupport: async () => undefined,
+        facilitator: {
+          verify: async () => ({ valid: true, payer: "0xpayer", reason: null }),
+          settle: async () => ({
+            success: true,
+            payer: "0xpayer",
+            transaction: `0x${"d".repeat(64)}`,
+            network: X402_BASE_SEPOLIA_NETWORK,
+            errorReason: null,
+          }),
+        },
+        finality: {
+          requireRpcConfirmation: async () => undefined,
+          requireSealed: async () => undefined,
+        },
+        paymentPayload: {},
+        persistSettlement: async () => undefined,
+        executeHandler: async () => {
+          throw new Error("handler unavailable");
+        },
+        persistFulfillment: async () => undefined,
+        queueMatchingRefund: async (refund) => {
+          refunds.push(refund);
+        },
+      }),
+    ).rejects.toThrow("handler unavailable");
+    expect(refunds).toEqual([
+      {
+        transactionHash: `0x${"d".repeat(64)}`,
+        payer: "0xpayer",
+        reason: "handler unavailable",
+      },
+    ]);
   });
 });

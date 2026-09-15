@@ -32,12 +32,8 @@ export function assertX402SellerCredentialEligible(context: X402SellerCredential
   ) {
     throw new Error("brain_ak_* agent credentials are never eligible for x402 payment");
   }
-  if (
-    context.apiKeyCredentialClass !== undefined &&
-    context.apiKeyCredentialClass !== "x402_pay_per_call" &&
-    context.apiKeyCredentialClass !== "commercial_included"
-  ) {
-    throw new Error("unsupported x402 credential class");
+  if (context.apiKeyCredentialClass !== "x402_pay_per_call") {
+    throw new Error("x402 payment authorization requires an x402 pay-per-call credential");
   }
 }
 
@@ -63,6 +59,7 @@ export interface CoinbaseExactFacilitator {
 }
 
 export interface BaseSettlementFinality {
+  requireRpcConfirmation(transactionHash: string): Promise<void>;
   requireSealed(transactionHash: string): Promise<void>;
 }
 
@@ -98,9 +95,77 @@ export async function settleBeforeFulfillment<T>(input: {
     throw new Error("x402 settlement network does not match the quote");
   }
 
+  await input.finality.requireRpcConfirmation(settlement.transaction);
   await input.finality.requireSealed(settlement.transaction);
   const result = await input.fulfill();
   return { result, transactionHash: settlement.transaction, payer: settlement.payer };
+}
+
+export async function executeX402UpfrontSettlement<T>(input: {
+  readonly authenticate: () => Promise<void>;
+  readonly reserveAllowance: () => Promise<void>;
+  readonly createQuote: () => Promise<X402V2ExactRequirements>;
+  readonly captureFacilitatorSupport: () => Promise<void>;
+  readonly facilitator: CoinbaseExactFacilitator;
+  readonly finality: BaseSettlementFinality;
+  readonly paymentPayload: unknown;
+  readonly persistSettlement: (input: {
+    readonly transactionHash: string;
+    readonly payer: string;
+  }) => Promise<void>;
+  readonly executeHandler: () => Promise<T>;
+  readonly persistFulfillment: (result: T) => Promise<void>;
+  readonly queueMatchingRefund: (input: {
+    readonly transactionHash: string;
+    readonly payer: string;
+    readonly reason: string;
+  }) => Promise<void>;
+}): Promise<T> {
+  await input.authenticate();
+  await input.reserveAllowance();
+  const requirements = await input.createQuote();
+  await input.captureFacilitatorSupport();
+  const verification = await input.facilitator.verify({
+    paymentPayload: input.paymentPayload,
+    paymentRequirements: requirements,
+  });
+  if (!verification.valid) {
+    throw new Error(`x402 verification failed: ${verification.reason ?? "unknown"}`);
+  }
+  const providerSettlement = await input.facilitator.settle({
+    paymentPayload: input.paymentPayload,
+    paymentRequirements: requirements,
+  });
+  if (!providerSettlement.success || providerSettlement.transaction === null) {
+    throw new Error(`x402 settlement failed: ${providerSettlement.errorReason ?? "unknown"}`);
+  }
+  if (
+    providerSettlement.network !== requirements.network &&
+    !(
+      requirements.network === X402_BASE_SEPOLIA_NETWORK &&
+      providerSettlement.network === "base-sepolia"
+    )
+  ) {
+    throw new Error("x402 settlement network does not match the quote");
+  }
+  await input.finality.requireRpcConfirmation(providerSettlement.transaction);
+  await input.finality.requireSealed(providerSettlement.transaction);
+  const settled = {
+    transactionHash: providerSettlement.transaction,
+    payer: providerSettlement.payer,
+  };
+  await input.persistSettlement(settled);
+  try {
+    const result = await input.executeHandler();
+    await input.persistFulfillment(result);
+    return result;
+  } catch (error) {
+    await input.queueMatchingRefund({
+      ...settled,
+      reason: error instanceof Error ? error.message : "handler_failed",
+    });
+    throw error;
+  }
 }
 
 export const COINBASE_X402_COMPATIBILITY_WITNESS = Object.freeze({

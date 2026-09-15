@@ -11,6 +11,13 @@
 environment      = "production"
 primary_location = "canadacentral"
 
+# RFC 0012 Phase 2 provisions only the private custody foundation on its first
+# apply. HSM activation and seller-key creation remain blocked on the reviewed
+# offline 3-of-5 recovery ceremony.
+enable_x402_phase2_custody = true
+x402_hsm_activated         = false
+enable_x402_payments       = false
+
 services = ["api", "agents"]
 
 # Human operator (sanket.debnath_redsoftware.in#EXT#@dreallayer.onmicrosoft.com)

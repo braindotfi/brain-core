@@ -8,6 +8,34 @@ variable "environment" {
   }
 }
 
+variable "enable_x402_phase2_custody" {
+  description = "Create the isolated RFC 0012 Managed HSM foundation. This does not activate the HSM or create a key."
+  type        = bool
+  default     = false
+}
+
+variable "x402_hsm_activated" {
+  description = "Set only after the reviewed offline 3-of-5 security-domain ceremony has activated the HSM."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.x402_hsm_activated || var.enable_x402_phase2_custody
+    error_message = "x402_hsm_activated requires enable_x402_phase2_custody."
+  }
+}
+
+variable "enable_x402_payments" {
+  description = "Enable the RFC 0012 Base Sepolia seller path. Mainnet is not supported."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_x402_payments || var.x402_hsm_activated
+    error_message = "enable_x402_payments requires the reviewed HSM activation checkpoint."
+  }
+}
+
 variable "primary_location" {
   description = "Primary Azure region."
   type        = string
