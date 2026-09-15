@@ -181,6 +181,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   // ---- Commercial foundation (RFCs 0009, 0011, and 0012) ----
   // Reservation and adjustment rows reference their period or counter row.
   // Rows referencing RobotMoney entities must be deleted before the entity.
+  { table: "x402_api_key_operation_grants", column: "tenant_id" },
   { table: "api_usage_allowance_reservations", column: "tenant_id" },
   { table: "api_usage_allowance_counters", column: "tenant_id" },
   { table: "commercial_execution_reservations", column: "tenant_id" },
@@ -249,6 +250,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   "commercial_retained_provider_commands",
   "commercial_retention_legal_hold_events",
   "commercial_retention_purge_receipts",
+  // Independent counterfactual evidence remains for seven years and its
+  // tenant foreign key is nulled by the final tenant deletion.
+  "x402_counterfactual_observations",
   // RFC 0003: the blob purge queue must SURVIVE the deletion — a privileged
   // worker drains it after the tenant rows are gone, and the row stands as the
   // on-record proof that Article 17 erasure was enqueued.

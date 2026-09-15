@@ -158,6 +158,12 @@ const plugin: FastifyPluginAsync<AuthPluginOptions> = async (fastify, opts) => {
     if (token.startsWith("brain_ak_")) {
       throw brainError("auth_invalid_key", "agent API keys must be exchanged for an access token");
     }
+    if (token.startsWith("brain_xk_")) {
+      throw brainError(
+        "auth_invalid_key",
+        "x402 pay-per-call keys require the x402 payment authorization path",
+      );
+    }
     if (token.startsWith("brain_sk_")) {
       const meterRequestId = newRequestId();
       const rawResult = await apiKeyAuthenticator?.(token, { requestId: meterRequestId });

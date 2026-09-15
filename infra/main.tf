@@ -399,7 +399,10 @@ locals {
   # issuance and auth exchange need it.
   api_secret_env = merge(local.secret_env, {
     BRAIN_AGENT_API_KEY_PEPPER = "brain-agent-api-key-pepper"
-  })
+    }, var.enable_x402_payments ? {
+    BRAIN_X402_CDP_API_KEY_ID     = "brain-x402-cdp-api-key-id"
+    BRAIN_X402_CDP_API_KEY_SECRET = "brain-x402-cdp-api-key-secret" # gitleaks:allow non-secret Key Vault secret name
+  } : {})
   worker_kv_secret_refs = {
     for name, secret_ref in local.kv_secret_refs : name => secret_ref
     if name != "brain-agent-api-key-pepper"
@@ -458,6 +461,12 @@ locals {
     BRAIN_AGENT_WINDOW_LOOKBACK_SECONDS = "86400"
     WIKI_EMBED_MODEL                    = "text-embedding-3-small"
     WIKI_LLM_MODEL                      = "gpt-4o-mini"
+
+    BRAIN_X402_PAYMENTS_ENABLED     = tostring(var.enable_x402_payments)
+    BRAIN_X402_SELLER_MODE          = var.enable_x402_payments ? "base_sepolia" : "disabled"
+    BRAIN_X402_PROTOCOL_VERSION     = "2"
+    BRAIN_X402_CDP_FACILITATOR_URL  = "https://api.cdp.coinbase.com/platform/v2/x402"
+    BRAIN_X402_SEPOLIA_USDC_ADDRESS = var.onchain_addresses.usdc
 
     BRAIN_SERVICE_TOKEN_ENABLED  = tostring(var.enable_service_token)
     BRAIN_DEMO_PROVISION_ENABLED = tostring(var.enable_demo_provision)

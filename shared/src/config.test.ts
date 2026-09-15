@@ -46,7 +46,7 @@ describe("parseConfig", () => {
     expect(cfg.BRAIN_MOVEMENT_FEES_ENABLED).toBe(false);
   });
 
-  it("parses each commercial gate independently without provider credentials", () => {
+  it("parses each commercial gate with its isolated provider credentials", () => {
     const cfg = parseConfig({
       ...MIN_ENV,
       BRAIN_COMMERCIAL_CATALOG_ENABLED: "true",
@@ -68,6 +68,8 @@ describe("parseConfig", () => {
       BRAIN_X402_SELLER_MODE: "base_sepolia",
       BRAIN_X402_SELLER_DB_URL:
         "postgres://brain_x402_seller_worker:strong-pass@localhost:5432/brain",
+      BRAIN_X402_CDP_API_KEY_ID: "organizations/test/apiKeys/test",
+      BRAIN_X402_CDP_API_KEY_SECRET: "test-only-cdp-secret",
       BRAIN_OUTCOME_FEES_ENABLED: "true",
       BRAIN_MOVEMENT_FEES_ENABLED: "true",
     });
@@ -92,7 +94,7 @@ describe("parseConfig", () => {
 
   it("fails closed when x402 is enabled without the isolated Sepolia worker binding", () => {
     expect(() => parseConfig({ ...MIN_ENV, BRAIN_X402_PAYMENTS_ENABLED: "true" })).toThrow(
-      /BRAIN_X402_SELLER_MODE=base_sepolia and BRAIN_X402_SELLER_DB_URL/,
+      /BRAIN_X402_SELLER_MODE=base_sepolia, BRAIN_X402_SELLER_DB_URL/,
     );
   });
 

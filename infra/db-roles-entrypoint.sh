@@ -31,6 +31,7 @@ brain_surface_gateway_password
 brain_surface_audit_writer_password
 brain_auth_password
 brain_auth_audit_writer_password
+brain_x402_seller_worker_password
 "
 
 set -- -v ON_ERROR_STOP=1

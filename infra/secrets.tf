@@ -33,6 +33,7 @@ locals {
     brain_surface_audit_writer = "BRAIN_SURFACE_GATEWAY_AUDIT_DB_URL"
     brain_auth                 = "BRAIN_AUTH_DB_URL"
     brain_auth_audit_writer    = "BRAIN_AUTH_AUDIT_DB_URL"
+    brain_x402_seller_worker   = "BRAIN_X402_SELLER_DB_URL"
   }
 
   # brain_privileged is granted BYPASSRLS and is used through a pool that is not
@@ -124,15 +125,17 @@ resource "azurerm_key_vault_secret" "app_secret" {
 
 locals {
   operator_supplied_secrets = [
-    "auth-sign-key",       # AUTH_SIGN_KEY -- JWK, must match issued tokens
-    "audit-publisher-key", # AUDIT_PUBLISHER_KEY -- funded EVM key
-    "brain-session-key",   # BRAIN_SESSION_KEY -- funded EVM key
-    "openai-api-key",      # external credential
-    "brain-api-token",     # agents -> API bearer token
+    "auth-sign-key",           # AUTH_SIGN_KEY -- JWK, must match issued tokens
+    "audit-publisher-key",     # AUDIT_PUBLISHER_KEY -- funded EVM key
+    "brain-session-key",       # BRAIN_SESSION_KEY -- funded EVM key
+    "openai-api-key",          # external credential
+    "brain-api-token",         # agents -> API bearer token
     "terraform-client-secret", # in-VNet runner auth; see the runner job
-    "email-endpoint",      # auth service hard-exits without these two
+    "email-endpoint",          # auth service hard-exits without these two
     "email-api-key",
     "email-from",
+    "brain-x402-cdp-api-key-id",
+    "brain-x402-cdp-api-key-secret",
   ]
 }
 

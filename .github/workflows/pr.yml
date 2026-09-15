@@ -297,6 +297,7 @@ jobs:
             -v brain_surface_audit_writer_password="brain_surface_audit_writer" \
             -v brain_auth_password="brain_auth" \
             -v brain_auth_audit_writer_password="brain_auth_audit_writer" \
+            -v brain_x402_seller_worker_password="brain_x402_seller_worker" \
             -f infra/db-roles.sql
 
       - name: Integration tests

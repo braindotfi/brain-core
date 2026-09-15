@@ -77,6 +77,41 @@ describe("exchange-only agent API keys", () => {
   });
 });
 
+describe("x402 pay-per-call API keys", () => {
+  it("rejects ordinary resource use before invoking either authenticator", async () => {
+    let apiKeyCalls = 0;
+    let jwtCalls = 0;
+    const app = Fastify({ logger: false });
+    await app.register(authPlugin, {
+      verifier: {
+        verify: async () => {
+          jwtCalls += 1;
+          throw new Error("must not run");
+        },
+      } as unknown as JwtVerifier,
+      apiKeyAuthenticator: async () => {
+        apiKeyCalls += 1;
+        return null;
+      },
+    });
+    app.get("/resource", async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/resource",
+        headers: { authorization: "Bearer brain_xk_test_not-an-ordinary-api-key" },
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ code: "auth_invalid_key" });
+      expect(apiKeyCalls).toBe(0);
+      expect(jwtCalls).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 class InMemoryRequestMeter implements ApiRequestMeter {
   public readonly events: ApiRequestMeterEvent[] = [];
 

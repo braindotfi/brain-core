@@ -1047,14 +1047,14 @@ BEGIN
   END IF;
 END $$;
 
--- RFC 0012 Phase 1 seller capability role. It remains NOLOGIN until the Base
--- Sepolia wallet and facilitator credential are separately reviewed.
+-- RFC 0012 seller capability role. Phase 2 gives it a generated login password
+-- and the API opens its dedicated pool only when x402 payments are enabled.
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_x402_seller_worker') THEN
-    CREATE ROLE brain_x402_seller_worker NOLOGIN;
+    CREATE ROLE brain_x402_seller_worker LOGIN;
   END IF;
 END $$;
-ALTER ROLE brain_x402_seller_worker WITH NOLOGIN NOBYPASSRLS;
+ALTER ROLE brain_x402_seller_worker WITH LOGIN PASSWORD :'brain_x402_seller_worker_password' NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public TO brain_x402_seller_worker;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   REVOKE ALL PRIVILEGES ON TABLES FROM brain_x402_seller_worker;
@@ -1063,16 +1063,91 @@ GRANT SELECT ON x402_operation_price_policies, x402_seller_operation_allowlist,
   api_usage_allowance_counters, api_usage_allowance_reservations,
   x402_seller_logical_operations, x402_seller_quotes,
   x402_seller_nonce_consumptions, x402_seller_receipts,
-  x402_seller_settlement_events TO brain_x402_seller_worker;
+  x402_seller_settlement_events, x402_seller_wallets,
+  x402_api_key_operation_grants, x402_counterfactual_observations,
+  x402_cdp_capability_witnesses, x402_sweep_destination_changes
+  TO brain_x402_seller_worker;
 GRANT INSERT ON x402_seller_logical_operations, x402_seller_quotes,
   x402_seller_nonce_consumptions, x402_seller_receipts,
-  x402_seller_settlement_events TO brain_x402_seller_worker;
+  x402_seller_settlement_events, x402_counterfactual_observations,
+  x402_cdp_capability_witnesses TO brain_x402_seller_worker;
 GRANT UPDATE (state, updated_at) ON x402_seller_logical_operations
   TO brain_x402_seller_worker;
 GRANT UPDATE (
   state, payer_address, settlement_tx_hash, refund_tx_hash, l2_finality,
   l1_finality, version, updated_at
 ) ON x402_seller_receipts TO brain_x402_seller_worker;
+
+-- Treasury control records never inherit the broad request-path DML grant.
+-- A protected operator assumes this NOLOGIN role only after the independent
+-- Treasury and Security approvals have been verified.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'brain_x402_treasury_operator') THEN
+    CREATE ROLE brain_x402_treasury_operator NOLOGIN;
+  END IF;
+END $$;
+ALTER ROLE brain_x402_treasury_operator WITH NOLOGIN NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO brain_x402_treasury_operator;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM brain_x402_treasury_operator;
+REVOKE ALL PRIVILEGES ON x402_seller_wallets, x402_sweep_destination_changes
+  FROM PUBLIC, brain_app, brain_privileged, brain_wiki_reader, brain_mcp_reader,
+       brain_raw_worker, brain_canonical_projector, brain_ledger_projector,
+       brain_execution_worker, brain_audit_verifier, brain_audit_publisher,
+       brain_resolver, brain_tenant_deletion, brain_surface_gateway,
+       brain_surface_audit_writer, brain_auth, brain_auth_audit_writer,
+       brain_stripe_billing_worker, brain_x402_seller_worker,
+       brain_x402_treasury_operator;
+GRANT SELECT ON x402_seller_wallets, x402_sweep_destination_changes
+  TO brain_x402_treasury_operator;
+GRANT INSERT ON x402_seller_wallets, x402_sweep_destination_changes
+  TO brain_x402_treasury_operator;
+GRANT UPDATE (status, may_receive, may_sign, retired_at) ON x402_seller_wallets
+  TO brain_x402_treasury_operator;
+GRANT SELECT ON x402_seller_wallets, x402_sweep_destination_changes
+  TO brain_x402_seller_worker;
+
+DO $$
+BEGIN
+  IF NOT has_table_privilege(
+    'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'SELECT'
+  )
+     OR NOT has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'INSERT'
+     )
+     OR has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'UPDATE'
+     )
+     OR NOT has_column_privilege(
+       'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'status', 'UPDATE'
+     )
+     OR has_column_privilege(
+       'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'address', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_seller_wallets', 'DELETE'
+     )
+     OR NOT has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_sweep_destination_changes', 'INSERT'
+     )
+     OR has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_sweep_destination_changes', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_treasury_operator', 'public.x402_sweep_destination_changes', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_sweep_destination_changes', 'INSERT'
+     )
+     OR has_table_privilege(
+       'brain_app', 'public.x402_sweep_destination_changes', 'INSERT'
+     )
+     OR has_table_privilege(
+       'brain_app', 'public.x402_seller_wallets', 'INSERT'
+     ) THEN
+    RAISE EXCEPTION 'x402 treasury control privilege contract is invalid';
+  END IF;
+END $$;
 
 DO $$
 BEGIN
@@ -1151,6 +1226,24 @@ BEGIN
      )
      OR has_table_privilege(
        'brain_x402_seller_worker', 'public.x402_seller_settlement_events', 'TRUNCATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_counterfactual_observations', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_counterfactual_observations', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_counterfactual_observations', 'TRUNCATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_cdp_capability_witnesses', 'UPDATE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_cdp_capability_witnesses', 'DELETE'
+     )
+     OR has_table_privilege(
+       'brain_x402_seller_worker', 'public.x402_cdp_capability_witnesses', 'TRUNCATE'
      ) THEN
     RAISE EXCEPTION 'brain_x402_seller_worker privilege contract is invalid';
   END IF;

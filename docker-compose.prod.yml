@@ -293,6 +293,7 @@ services:
           -v brain_surface_audit_writer_password="${BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD:?BRAIN_SURFACE_GATEWAY_AUDIT_DB_PASSWORD is required in production}" \
           -v brain_auth_password="${BRAIN_AUTH_DB_PASSWORD:?BRAIN_AUTH_DB_PASSWORD is required in production}" \
           -v brain_auth_audit_writer_password="${BRAIN_AUTH_AUDIT_DB_PASSWORD:?BRAIN_AUTH_AUDIT_DB_PASSWORD is required in production}" \
+          -v brain_x402_seller_worker_password="${BRAIN_X402_SELLER_DB_PASSWORD:?BRAIN_X402_SELLER_DB_PASSWORD is required in production}" \
           -f /db-roles.sql
     depends_on:
       migrate:
@@ -493,6 +494,7 @@ services:
       BRAIN_RESOLVER_DB_URL: postgres://brain_resolver:${BRAIN_RESOLVER_DB_PASSWORD:?BRAIN_RESOLVER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_TENANT_DELETION_DB_URL: postgres://brain_tenant_deletion:${BRAIN_TENANT_DELETION_DB_PASSWORD:?BRAIN_TENANT_DELETION_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_AUDIT_VERIFIER_DB_URL: postgres://brain_audit_verifier:${BRAIN_AUDIT_VERIFIER_DB_PASSWORD:?BRAIN_AUDIT_VERIFIER_DB_PASSWORD is required in production}@postgres:5432/brain
+      BRAIN_X402_SELLER_DB_URL: postgres://brain_x402_seller_worker:${BRAIN_X402_SELLER_DB_PASSWORD:?BRAIN_X402_SELLER_DB_PASSWORD is required in production}@postgres:5432/brain
       BRAIN_SURFACE_ACTION_SECRET: ${BRAIN_SURFACE_ACTION_SECRET:-}
     # No `auth: condition: service_healthy` here: both deploy workflows recreate
     # this service with --no-deps, so compose would ignore the condition anyway

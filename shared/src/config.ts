@@ -85,6 +85,7 @@ const DB_URL_ENV_NAMES = [
   "BRAIN_AUTH_AUDIT_DB_URL",
   "BRAIN_COMMERCIAL_STRIPE_DB_URL",
   "BRAIN_X402_SELLER_DB_URL",
+  "BRAIN_X402_CDP_API_KEY_SECRET",
 ] as const;
 
 const INFRA_SECRET_ENV_NAMES = [
@@ -1208,11 +1209,14 @@ export function parseConfig(
   if (
     result.data.BRAIN_X402_PAYMENTS_ENABLED &&
     (result.data.BRAIN_X402_SELLER_MODE !== "base_sepolia" ||
-      result.data.BRAIN_X402_SELLER_DB_URL === undefined)
+      result.data.BRAIN_X402_SELLER_DB_URL === undefined ||
+      result.data.BRAIN_X402_CDP_API_KEY_ID === undefined ||
+      result.data.BRAIN_X402_CDP_API_KEY_SECRET === undefined)
   ) {
     throw new Error(
       "Invalid Brain configuration: BRAIN_X402_PAYMENTS_ENABLED=true requires " +
-        "BRAIN_X402_SELLER_MODE=base_sepolia and BRAIN_X402_SELLER_DB_URL",
+        "BRAIN_X402_SELLER_MODE=base_sepolia, BRAIN_X402_SELLER_DB_URL, and " +
+        "the Coinbase CDP API key id and secret",
     );
   }
   assertProductionInfraSecretsSafe(env, options);
