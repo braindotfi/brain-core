@@ -72,12 +72,20 @@ suite("bounded tenant deletion transaction behavior", () => {
       total_rows_deleted bigint,
       blob_purge_job_id text,
       blob_artifact_count integer,
+      retention_subject_id text,
+      retention_receipt_id text,
+      retention_evidence_required boolean NOT NULL DEFAULT true,
       first_started_at timestamptz,
       last_attempt_at timestamptz,
       committed_at timestamptz,
       last_error text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
+      CHECK (
+        status <> 'completed'
+        OR NOT retention_evidence_required
+        OR (retention_subject_id IS NOT NULL AND retention_receipt_id IS NOT NULL)
+      ),
       PRIMARY KEY (operation_id, tenant_id),
       UNIQUE (operation_id, ordinal)
     )`);
@@ -503,6 +511,8 @@ suite("bounded tenant deletion transaction behavior", () => {
         totalRowsDeleted: 2,
         blobPurgeJobId: null,
         blobArtifactCount: 0,
+        retentionSubjectId: `retsub_${tenantId.padEnd(32, "0").slice(0, 32)}`,
+        retentionReceiptId: `retreceipt_${tenantId}`,
       };
     };
 
@@ -532,16 +542,53 @@ suite("bounded tenant deletion transaction behavior", () => {
     expect(skipped.status).toBe("skipped");
     expect(resumed.status).toBe("completed");
     const progress = await ownerPool.query(
-      `SELECT tenant_id, status, attempt_count
+      `SELECT tenant_id, status, attempt_count, retention_subject_id, retention_receipt_id
          FROM commercial_demo_retirement_progress
         WHERE operation_id = $1
         ORDER BY ordinal`,
       [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
     );
     expect(progress.rows).toEqual([
-      { tenant_id: "target-one", status: "completed", attempt_count: 1 },
-      { tenant_id: "target-two", status: "completed", attempt_count: 2 },
+      {
+        tenant_id: "target-one",
+        status: "completed",
+        attempt_count: 1,
+        retention_subject_id: "retsub_target-one0000000000000000000000",
+        retention_receipt_id: "retreceipt_target-one",
+      },
+      {
+        tenant_id: "target-two",
+        status: "completed",
+        attempt_count: 2,
+        retention_subject_id: "retsub_target-two0000000000000000000000",
+        retention_receipt_id: "retreceipt_target-two",
+      },
     ]);
+  });
+
+  it("rejects a newly completed progress row without retention evidence", async () => {
+    const setup = await deletionPool.connect();
+    try {
+      await setup.query("BEGIN");
+      await initializeRetirementProgress(setup, "c".repeat(64), [
+        {
+          tenantId: "target",
+          ordinal: 1,
+          expectedRows: { retirement_test_rows: 0, tenants: 1 },
+        },
+      ]);
+      await expect(
+        setup.query(
+          `UPDATE commercial_demo_retirement_progress
+              SET status = 'completed'
+            WHERE operation_id = $1 AND tenant_id = 'target'`,
+          [COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await setup.query("ROLLBACK");
+    } finally {
+      setup.release();
+    }
   });
 
   it("rolls back a tenant when its total transaction duration exceeds the cap", async () => {
@@ -573,6 +620,8 @@ suite("bounded tenant deletion transaction behavior", () => {
           totalRowsDeleted: 1,
           blobPurgeJobId: null,
           blobArtifactCount: 0,
+          retentionSubjectId: `retsub_${"a".repeat(32)}`,
+          retentionReceiptId: "retreceipt_timeout",
         };
       },
       { maxDurationMs: -1 },

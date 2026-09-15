@@ -40,6 +40,8 @@ jobs:
             scripts/ops/execute-commercial-demo-retirement.mjs
           grep -F 'BEGIN ISOLATION LEVEL READ COMMITTED' \
             scripts/ops/execute-commercial-demo-retirement.mjs
+          grep -F 'prepareCommercialFinancialRetention' \
+            scripts/ops/execute-commercial-demo-retirement.mjs
           grep -F 'DATABASE_EXECUTION_WATCHDOG_SECONDS=10800' \
             scripts/ops/run-commercial-demo-retirement.sh
           grep -F 'timeout-minutes: 210' \

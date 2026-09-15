@@ -5,7 +5,9 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import pg from "../../services/api/node_modules/pg/lib/index.js";
 import {
+  CASCADE_DELETED_TABLES,
   PRESERVED_TABLES,
+  RETENTION_PREPARED_TABLES,
   TENANT_SCOPED_TABLES,
   tenantDeleteStatement,
 } from "../../services/api/dist/tenant-deletion/service.js";
@@ -19,6 +21,7 @@ import {
   listRetirementProgress,
   runRetirementTenantAttempt,
 } from "../../services/api/dist/tenant-deletion/per-tenant-retirement.js";
+import { prepareCommercialFinancialRetention } from "./commercial-demo-retention-evidence.mjs";
 
 const { Pool } = pg;
 
@@ -141,8 +144,13 @@ export async function assertRegistryCoverage(client) {
       ORDER BY column_name_group.table_name, column_name_group.priority`,
   );
   const declared = new Map(TENANT_SCOPED_TABLES.map((entry) => [entry.table, entry.column]));
+  const separatelyManaged = new Set([
+    ...PRESERVED_TABLES,
+    ...CASCADE_DELETED_TABLES,
+    ...RETENTION_PREPARED_TABLES,
+  ]);
   const unknown = live.rows.filter(
-    (row) => !declared.has(row.table_name) && !PRESERVED_TABLES.has(row.table_name),
+    (row) => !declared.has(row.table_name) && !separatelyManaged.has(row.table_name),
   );
   const mismatched = live.rows.filter(
     (row) => declared.has(row.table_name) && declared.get(row.table_name) !== row.column_name,
@@ -654,9 +662,9 @@ export async function captureTenantCounts(client, liveTables, tenantId) {
   );
 }
 
-async function captureCohortPreservedCounts(client) {
+async function captureCohortPreservedCounts(client, liveTables) {
   const counts = {};
-  for (const tableName of PRESERVED_TABLES) {
+  for (const tableName of [...PRESERVED_TABLES].filter((table) => liveTables.has(table))) {
     const table = assertIdentifier(tableName);
     counts[table] = await scalarCount(
       client,
@@ -666,10 +674,12 @@ async function captureCohortPreservedCounts(client) {
   return counts;
 }
 
-async function captureTenantPreservedCounts(client, tenantId) {
+async function captureTenantPreservedCounts(client, tenantId, liveTables) {
   return captureTenantReconciliationCounts(
     client,
-    [...PRESERVED_TABLES].map((table) => ({ table, column: "tenant_id" })),
+    [...PRESERVED_TABLES]
+      .filter((table) => liveTables.has(table))
+      .map((table) => ({ table, column: "tenant_id" })),
     tenantId,
   );
 }
@@ -691,13 +701,24 @@ async function insertBlobJobs(client, blobsByTenant) {
   }
 }
 
-async function insertAuditOutbox(client, ids, countsByTenant, blobsByTenant, fenceStartedAt) {
+async function insertAuditOutbox(
+  client,
+  ids,
+  countsByTenant,
+  blobsByTenant,
+  retentionByTenant,
+  fenceStartedAt,
+) {
   for (const tenantId of ids) {
     const deletedRows = countsByTenant.get(tenantId) ?? { tenants: 1 };
     const totalRows = Object.values(deletedRows).reduce((sum, count) => sum + count, 0);
     const uris = blobsByTenant.get(tenantId) ?? [];
     const purgeJobId =
       uris.length > 0 ? fixedId("tbp", `commercial-demo-retirement:${tenantId}`) : null;
+    const retention = retentionByTenant.get(tenantId);
+    if (retention === undefined) {
+      throw new Error(`commercial retention evidence is absent for ${tenantId}`);
+    }
     const deletedPayload = {
       total_rows_deleted: totalRows,
       per_table_counts: deletedRows,
@@ -705,6 +726,8 @@ async function insertAuditOutbox(client, ids, countsByTenant, blobsByTenant, fen
       blob_artifact_count: uris.length,
       blob_uris_pending_purge: uris,
       blob_purge_job_id: purgeJobId,
+      commercial_retention_subject_id: retention.retentionSubjectId,
+      commercial_retention_receipt_id: retention.retentionReceiptId,
       activity_fence_started_at: fenceStartedAt,
       operation: "commercial_demo_retirement",
     };
@@ -788,7 +811,7 @@ async function assertPostDelete(
     tenantId,
   );
 
-  const preservedAfter = await captureTenantPreservedCounts(client, tenantId);
+  const preservedAfter = await captureTenantPreservedCounts(client, tenantId, liveTables);
   for (const [table, before] of Object.entries(preservedBefore)) {
     const expectedIncrease =
       table === "tenant_blob_purge_jobs"
@@ -822,6 +845,35 @@ function assertCountSnapshot(tenantId, expected, actual) {
   }
 }
 
+function commercialRetentionPreparedRowCounts(tenantId, before, after) {
+  const prepared = {};
+  const tables = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const table of tables) {
+    const beforeCount = Number(before[table] ?? 0);
+    const afterCount = Number(after[table] ?? 0);
+    if (afterCount > beforeCount) {
+      throw new Error(`commercial retention increased ${tenantId} ${table} row count`);
+    }
+    const removed = beforeCount - afterCount;
+    if (removed > 0 && table !== "commercial_billing_account_tenants") {
+      throw new Error(
+        `commercial retention unexpectedly removed ${tenantId} ${table} rows: ${removed}`,
+      );
+    }
+    prepared[table] = removed;
+  }
+  return prepared;
+}
+
+function combineDeletedRows(expectedRows, retentionPreparedRows, directlyDeletedRows) {
+  return Object.fromEntries(
+    Object.keys(expectedRows).map((table) => [
+      table,
+      Number(retentionPreparedRows[table] ?? 0) + Number(directlyDeletedRows[table] ?? 0),
+    ]),
+  );
+}
+
 function assertProgressMatches(progressRows, digest, ids) {
   if (progressRows.length !== ids.length) {
     throw new Error(`retirement progress count mismatch: ${progressRows.length}`);
@@ -843,7 +895,7 @@ export async function executeOneTenant(client, tenantId, expectedRows, fenceStar
   await assertTenantFinalPreflight(client, tenantId, fenceStartedAt, liveTables);
   const actualBefore = await captureTenantCounts(client, liveTables, tenantId);
   assertCountSnapshot(tenantId, expectedRows, actualBefore);
-  const preservedBefore = await captureTenantPreservedCounts(client, tenantId);
+  const preservedBefore = await captureTenantPreservedCounts(client, tenantId, liveTables);
   const blobs = await client.query(
     `SELECT blob_uri
        FROM raw_artifacts
@@ -869,13 +921,33 @@ export async function executeOneTenant(client, tenantId, expectedRows, fenceStar
     );
   }
 
+  const retention = await prepareCommercialFinancialRetention(
+    client,
+    COMMERCIAL_DEMO_RETIREMENT_OPERATION_ID,
+    tenantId,
+  );
+  const afterRetentionPreparation = await captureTenantCounts(client, liveTables, tenantId);
+  const retentionPreparedRows = commercialRetentionPreparedRowCounts(
+    tenantId,
+    actualBefore,
+    afterRetentionPreparation,
+  );
+
   await insertBlobJobs(client, blobsByTenant);
-  const deleted = await deleteTenantRows(client, liveTables, tenantId, expectedRows);
+  const directlyDeleted = await deleteTenantRows(
+    client,
+    liveTables,
+    tenantId,
+    afterRetentionPreparation,
+  );
+  const deleted = combineDeletedRows(expectedRows, retentionPreparedRows, directlyDeleted);
+  assertCountSnapshot(tenantId, expectedRows, deleted);
   await insertAuditOutbox(
     client,
     [tenantId],
-    new Map([[tenantId, expectedRows]]),
+    new Map([[tenantId, deleted]]),
     blobsByTenant,
+    new Map([[tenantId, retention]]),
     fenceStartedAt,
   );
   await assertPostDelete(client, tenantId, liveTables, preservedBefore, blobsByTenant);
@@ -885,6 +957,7 @@ export async function executeOneTenant(client, tenantId, expectedRows, fenceStar
     blobPurgeJobId:
       blobUris.length > 0 ? fixedId("tbp", `commercial-demo-retirement:${tenantId}`) : null,
     blobArtifactCount: blobUris.length,
+    ...retention,
   };
 }
 
@@ -953,7 +1026,7 @@ async function initializeOrValidateRun(pool, digest, ids, fenceStartedAt) {
     }
     assertProgressMatches(progressRows, digest, ids);
     assertCohortCounts(expectedRemainingCounts(progressRows), cohortCounts.totals);
-    const cohortPreserved = await captureCohortPreservedCounts(client);
+    const cohortPreserved = await captureCohortPreservedCounts(client, liveTables);
     console.log(
       JSON.stringify({
         event: "commercial_demo_retirement_cohort_reconciliation_started",
@@ -1020,7 +1093,7 @@ async function reconcileCompletedCohort(pool, ids, liveTables, cohortBefore) {
     const expectedRemaining = expectedRemainingCounts(progressRows);
     assertCohortCounts(expectedRemaining, cohortAfter.totals);
 
-    const preservedAfter = await captureCohortPreservedCounts(client);
+    const preservedAfter = await captureCohortPreservedCounts(client, liveTables);
     const stablePreservedTables = ["audit_anchors", "audit_events", "audit_integrity_findings"];
     for (const table of stablePreservedTables) {
       if (preservedAfter[table] !== cohortBefore.preserved[table]) {

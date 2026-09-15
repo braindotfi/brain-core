@@ -26,6 +26,8 @@ export interface RetirementTenantResult {
   totalRowsDeleted: number;
   blobPurgeJobId: string | null;
   blobArtifactCount: number;
+  retentionSubjectId: string;
+  retentionReceiptId: string;
 }
 
 export interface RetirementAttemptResult {
@@ -47,6 +49,9 @@ export interface RetirementProgressRow extends Record<string, unknown> {
   status: "pending" | "running" | "completed" | "failed";
   candidate_list_sha256: string;
   expected_rows: Record<string, number>;
+  retention_subject_id: string | null;
+  retention_receipt_id: string | null;
+  retention_evidence_required: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -194,7 +199,8 @@ export async function listRetirementProgress(
   client: PerTenantRetirementClient,
 ): Promise<RetirementProgressRow[]> {
   const result = await client.query<RetirementProgressRow>(
-    `SELECT tenant_id, ordinal, status, candidate_list_sha256, expected_rows
+    `SELECT tenant_id, ordinal, status, candidate_list_sha256, expected_rows,
+            retention_subject_id, retention_receipt_id, retention_evidence_required
        FROM commercial_demo_retirement_progress
       WHERE operation_id = $1
       ORDER BY ordinal`,
@@ -236,7 +242,8 @@ export async function runRetirementTenantAttempt(
     await client.query("SET LOCAL lock_timeout = '5s'");
     await client.query("SET LOCAL idle_in_transaction_session_timeout = '45s'");
     const progress = await client.query<RetirementProgressRow>(
-      `SELECT tenant_id, ordinal, status, candidate_list_sha256, expected_rows
+      `SELECT tenant_id, ordinal, status, candidate_list_sha256, expected_rows,
+              retention_subject_id, retention_receipt_id, retention_evidence_required
          FROM commercial_demo_retirement_progress
         WHERE operation_id = $1 AND tenant_id = $2
         FOR UPDATE`,
@@ -271,6 +278,8 @@ export async function runRetirementTenantAttempt(
               total_rows_deleted = $4,
               blob_purge_job_id = $5,
               blob_artifact_count = $6,
+              retention_subject_id = $7,
+              retention_receipt_id = $8,
               committed_at = now(),
               last_error = NULL,
               updated_at = now()
@@ -282,6 +291,8 @@ export async function runRetirementTenantAttempt(
         result.totalRowsDeleted,
         result.blobPurgeJobId,
         result.blobArtifactCount,
+        result.retentionSubjectId,
+        result.retentionReceiptId,
       ],
     );
     await client.query("COMMIT");

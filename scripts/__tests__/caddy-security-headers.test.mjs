@@ -11,7 +11,11 @@ test("Caddy applies the common security headers to every public site", () => {
   assert.match(caddyfile, /Referrer-Policy "strict-origin-when-cross-origin"/);
   assert.match(caddyfile, /\n\s*-Server\n/);
 
-  for (const site of ["api.brain.fi", "mcp.brain.fi", "auth.brain.fi"]) {
+  for (const site of [
+    "api.brain.fi, api.robotmoney.com",
+    "mcp.brain.fi",
+    "auth.brain.fi",
+  ]) {
     const siteBlock = caddyfile.slice(caddyfile.indexOf(`${site} {`));
     assert.match(siteBlock, /import edge_security_headers/);
   }
@@ -26,6 +30,6 @@ test("Caddy applies the Scalar-compatible CSP only to API documentation", () => 
   assert.match(caddyfile, /frame-ancestors 'none'/);
   assert.match(
     caddyfile,
-    /api.brain.fi \{\n\s*import edge_security_headers\n\s*import api_docs_csp/,
+    /api.brain.fi, api.robotmoney.com \{\n\s*import edge_security_headers\n\s*import api_docs_csp/,
   );
 });

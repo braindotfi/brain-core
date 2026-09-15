@@ -50,6 +50,8 @@ jobs:
             echo "checked-out commit does not match sha"
             exit 1
           fi
+          grep -F 'prepareCommercialFinancialRetention' \
+            scripts/ops/execute-commercial-demo-retirement.mjs
 
       - name: Configure SSH
         shell: bash
