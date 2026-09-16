@@ -11,9 +11,13 @@
 environment      = "production"
 primary_location = "canadacentral"
 
-# RFC 0012 Phase 2 provisions only the private custody foundation on its first
-# apply. HSM activation and seller-key creation remain blocked on the reviewed
-# offline 3-of-5 recovery ceremony.
+# RFC 0012 Phase 2 provisions only the private custody and backup foundation on
+# its first apply. During the witnessed Damon and Sanket ceremony, the flag is
+# set only after Azure confirms HSM activation so Terraform can create the
+# backup-only role and Sepolia seller key required for the A+B restore drill.
+# Azure receives three certificates with quorum two; transient certificate C
+# is destroyed after that drill. Mainnet requires full reapproval with three
+# or more real, distinct holders.
 enable_x402_phase2_custody = true
 x402_hsm_activated         = false
 enable_x402_payments       = false
