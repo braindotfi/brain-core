@@ -16,6 +16,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.12"
+    }
   }
 
   # Remote state (blocker #7). The backing storage account is created by
@@ -47,3 +51,5 @@ provider "azurerm" {
 }
 
 provider "azuread" {}
+
+provider "azapi" {}

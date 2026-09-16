@@ -9,13 +9,13 @@ variable "environment" {
 }
 
 variable "enable_x402_phase2_custody" {
-  description = "Create the isolated RFC 0012 Managed HSM foundation. This does not activate the HSM or create a key."
+  description = "Create the isolated RFC 0012 Managed HSM, recovery, and backup foundation. This does not activate the HSM or create a key."
   type        = bool
   default     = false
 }
 
 variable "x402_hsm_activated" {
-  description = "Set only after the reviewed offline 3-of-5 security-domain ceremony has activated the HSM."
+  description = "Set during the witnessed Damon and Sanket ceremony only after Azure confirms HSM activation. This creates the backup role and Sepolia seller key needed for the restore drill but does not enable payments."
   type        = bool
   default     = false
 
