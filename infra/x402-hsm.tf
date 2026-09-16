@@ -1,8 +1,9 @@
 # RFC 0012 Phase 2 custody foundation. The first apply creates an inactive,
 # private Managed HSM, its immutable security-domain store, and a separate
 # backup-compatible store. Activation uses an effective two-of-two recovery
-# model inside Azure's required three-certificate, quorum-two envelope. Only
-# after the witnessed ceremony may x402_hsm_activated become true.
+# model inside Azure's required three-certificate, quorum-two envelope. During
+# the witnessed ceremony, x402_hsm_activated becomes true only after Azure
+# confirms activation, enabling the key and backup role needed for the drill.
 
 resource "azurerm_user_assigned_identity" "x402_treasury_signer" {
   count               = var.enable_x402_phase2_custody ? 1 : 0
