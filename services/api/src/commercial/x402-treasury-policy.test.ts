@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertX402CustodyBindingAllowed,
   assertX402TreasuryIntentAllowed,
   assertX402OperationalBalanceAllowed,
   requireChecksummedAddress,
   shouldSweepX402TestUsdc,
   X402_BASE_SEPOLIA_CHAIN_ID,
+  X402_BASE_MAINNET_CHAIN_ID,
+  X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG,
   X402_TEST_USDC_OPERATIONAL_CEILING,
 } from "./x402-treasury-policy.js";
 import {
@@ -21,6 +24,52 @@ const policy = {
 };
 
 describe("x402 treasury signing policy", () => {
+  it("binds the Premium-vault bootstrap to Base Sepolia and a versioned key", () => {
+    const binding = {
+      chainId: X402_BASE_SEPOLIA_CHAIN_ID,
+      keyUri:
+        "https://brain-x402-sepolia-kv.vault.azure.net/keys/brain-x402-sepolia-seller/version-one",
+      addressClassification: X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG,
+    };
+    expect(() => assertX402CustodyBindingAllowed(binding)).not.toThrow();
+    expect(() =>
+      assertX402CustodyBindingAllowed({
+        ...binding,
+        keyUri: binding.keyUri.replace(/\/version-one$/, ""),
+      }),
+    ).toThrow(/exact versioned/);
+    expect(() =>
+      assertX402CustodyBindingAllowed({
+        ...binding,
+        keyUri:
+          "https://brain-x402-sepolia.managedhsm.azure.net/keys/brain-x402-sepolia-seller/version-one",
+      }),
+    ).toThrow(/Premium/);
+  });
+
+  it("rejects the Premium bootstrap on Base mainnet and reserves mainnet for a new Managed HSM key", () => {
+    const premiumBinding = {
+      chainId: X402_BASE_MAINNET_CHAIN_ID,
+      keyUri:
+        "https://brain-x402-sepolia-kv.vault.azure.net/keys/brain-x402-sepolia-seller/version-one",
+      addressClassification: X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG,
+    };
+    expect(() => assertX402CustodyBindingAllowed(premiumBinding)).toThrow(/rejects Key Vault/);
+    expect(() =>
+      assertX402CustodyBindingAllowed({
+        ...premiumBinding,
+        keyUri: "https://brain-mainnet-x402.managedhsm.azure.net/keys/new-mainnet-key/version-one",
+        addressClassification: "x402_mainnet_reapproved",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertX402CustodyBindingAllowed({
+        ...premiumBinding,
+        keyUri: "https://brain-mainnet-x402.managedhsm.azure.net/keys/new-mainnet-key/version-one",
+      }),
+    ).toThrow(/Sepolia bootstrap address/);
+  });
+
   it("enforces the 1,000 test USDC ceiling and the 500-or-daily sweep policy", () => {
     expect(() => assertX402OperationalBalanceAllowed(1_000_000_001n)).toThrow(/1,000/);
     expect(

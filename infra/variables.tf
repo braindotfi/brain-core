@@ -8,32 +8,10 @@ variable "environment" {
   }
 }
 
-variable "enable_x402_phase2_custody" {
-  description = "Create the isolated RFC 0012 Managed HSM, recovery, and backup foundation. This does not activate the HSM or create a key."
-  type        = bool
-  default     = false
-}
-
-variable "x402_hsm_activated" {
-  description = "Set during the witnessed Damon and Sanket ceremony only after Azure confirms HSM activation. This creates the backup role and Sepolia seller key needed for the restore drill but does not enable payments."
-  type        = bool
-  default     = false
-
-  validation {
-    condition     = !var.x402_hsm_activated || var.enable_x402_phase2_custody
-    error_message = "x402_hsm_activated requires enable_x402_phase2_custody."
-  }
-}
-
 variable "enable_x402_payments" {
   description = "Enable the RFC 0012 Base Sepolia seller path. Mainnet is not supported."
   type        = bool
   default     = false
-
-  validation {
-    condition     = !var.enable_x402_payments || var.x402_hsm_activated
-    error_message = "enable_x402_payments requires the reviewed HSM activation checkpoint."
-  }
 }
 
 variable "primary_location" {
