@@ -1,80 +1,120 @@
 # RFC 0012 Phase 2: seller custody and Coinbase adapter
 
-Status: implementation ready, external activation pending witnessed ceremony
+Status: Key Vault Premium bootstrap implementation ready, external activation
+pending two-person approval and witnessed restore drill
 
 ## Safety state
 
 This phase does not enable an x402 operation. The six Phase 1 allowlist rows
-remain disabled. Mainnet remains unsupported. The old RFC 0008 receiver
-`0x5e22088C527e2C112dbe47ceADca94db9Aa19497` is recorded as
+remain disabled. Mainnet remains unsupported. No vault, HSM-backed key, wallet,
+Coinbase credential, test tenant, or funding is created by merging this code.
+
+The old RFC 0008 receiver
+`0x5e22088C527e2C112dbe47ceADca94db9Aa19497` remains
 `rfc0008_test_receiver_retired`, with both receive and sign authorization set
 to false. It must never be funded or authorized.
 
-## Custody checkpoints
+## Testnet custody bootstrap
 
-The production Terraform stack creates these resources before activation:
+Base Sepolia piloting uses Azure Key Vault Premium rather than Azure Managed
+HSM. Premium uses shared Azure HSM infrastructure but still generates a
+non-exportable HSM-backed key. This is a testnet cost decision, not approval of
+Premium custody for real money.
 
-1. A private Azure Key Vault Managed HSM with purge protection.
-2. A dedicated `brain-x402-treasury-signer` managed identity.
-3. A private GRS recovery storage account with a seven-year immutable
-   security-domain container and infrastructure encryption.
-4. A separate private GRS backup storage account named
-   `brainx402backupprod`, with versioning and infrastructure encryption.
-5. A private `managed-hsm-full-backups` container without an immutability
-   policy, because Azure Managed HSM full backup rejects immutable storage.
-6. A dedicated `brain-x402-hsm-backup` managed identity scoped to Storage Blob
-   Data Contributor on that dedicated backup account only.
-7. Private endpoint and private DNS connectivity for both the HSM and backup
-   storage.
+The isolated `infra/x402-key-vault-bootstrap` root creates:
 
-The backup identity receives only `backup/start` and `backup/status` inside
-the HSM after activation. It receives no restore, key, role, security-domain,
-sign, or other cryptographic permission. Azure's trusted-service storage
-bypass is enabled because Managed HSM performs backup as an Azure service. No
-shared storage key or public network path is permitted.
+1. A dedicated resource group and virtual network in Canada Central.
+2. A private Premium source vault with purge protection and 90-day soft delete.
+3. A private Premium restore-drill vault in the same subscription and
+   geography, also with purge protection and 90-day soft delete.
+4. An Azure-generated, non-exportable `EC-HSM` `P-256K` seller key whose only
+   key operation is `sign`.
+5. A dedicated `brain-x402-treasury-signer` managed identity.
+6. One custom data action, `Microsoft.KeyVault/vaults/keys/sign/action`,
+   assigned to that identity at the exact seller-key resource scope.
+7. Private endpoints, private DNS, 90-day Log Analytics retention, two-human
+   alert delivery, control-plane change alerts, key-lifecycle alerts, and
+   failed or anomalous signing alerts.
 
-The first apply leaves the HSM inactive and does not create a seller key. HSM
-activation is a separate observed ceremony involving exactly two retained
-recovery holders:
+The runtime identity receives no create, import, export, backup, restore,
+delete, purge, rotate, encrypt, decrypt, wrap, unwrap, role, vault, or network
+permission. The source address is permanently classified
+`x402_sepolia_bootstrap_only`.
 
-- Holder A: Damon
-- Holder B: Sanket
+The key is created through the Key Vault ARM resource provider, not through a
+runner-to-vault data-plane connection. The isolated plan and apply therefore do
+not require the paused Container Apps stack or its ACR. The existing Terraform
+state account remains the only data-plane dependency for the hosted OIDC
+runner. The restore drill later requires short-lived private-network execution,
+but can use Microsoft's public Azure CLI image in the dedicated delegated
+subnet. It does not resurrect the production Container Apps stack.
 
-Azure requires at least three recovery certificates and permits a minimum
-quorum of two. The ceremony therefore uses certificates A, B, and transient C
-with quorum two. A and B remain under their respective holders' exclusive
-offline control. C exists only through the restore drill and its private key is
-then permanently destroyed with both holders witnessing. Only C's public
-certificate and fingerprint remain. This is an effective two-of-two recovery
-arrangement inside Azure's three-certificate, quorum-two envelope.
+## Two-person administrative control
 
-The encrypted security domain is transferred directly to the immutable GRS
-recovery container. A full HSM backup is written only to the separate
-backup-compatible GRS container. No recovery private key may enter a repo, CI
-secret, Azure Key Vault, terminal log, cloud drive, password manager, or
-ticket.
+The former Managed HSM security-domain recovery ceremony does not apply to Key
+Vault Premium. Azure controls Premium-vault service recovery. The equivalent
+human control is administrative dual approval around every sensitive change.
 
-After Azure confirms activation during the witnessed ceremony,
-`x402_hsm_activated` is changed to true for a reviewed ceremony-only Terraform
-apply. That apply creates the backup-only HSM role and exactly one
-non-exportable `EC-HSM` `P-256K` key with only the `sign` key operation. It does
-not enable x402 payments. The treasury signer receives only
-`Microsoft.KeyVault/managedHsm/keys/sign/action`, scoped to that key.
+Any apply crosses two sequential protected GitHub environments:
 
-The ceremony then takes a full backup and must prove an A+B recovery into an
-isolated drill HSM before C is destroyed. The restored seller key must have the
-same public-key fingerprint and derived Base Sepolia address, remain
-non-exportable, and complete a fixed signing challenge. A failed backup or
-restore stops all later activation work and leaves x402 payments disabled.
+- Treasury: Damon, GitHub `damonnam`, is the only required reviewer.
+- Security: Sanket, GitHub `sanketdebnath24`, is the only required reviewer.
 
-This custody model is Base Sepolia-only and is never sufficient for mainnet.
-Mainnet requires full custody reapproval, at least three real and distinct
-recovery holders, a newly wrapped security domain, and a witnessed restore
-drill. No waiver or risk acceptance may override that requirement.
+The workflow verifies each environment's sole reviewer identity and user ID
+immediately before Azure login. The reviewer sets are disjoint, so a single
+reviewer cannot satisfy both gates. Self-review prevention is not required
+because either of the two operators must be able to dispatch the workflow and
+approve their own distinct gate. The other person's separate approval remains
+mandatory. The apply also requires an exact main SHA, a retained exact Terraform
+plan, and the confirmation
+`APPLY-X402-SEPOLIA-KEY-VAULT-BOOTSTRAP`.
+
+The same dual approval is required before temporary drill permissions, key
+disablement, new versions, recovery, backup, restore, network changes, role
+changes, or destination changes. Permanent runtime permissions remain sign
+only. MFA and PIM remain required for Azure administrative identities.
+
+## Witnessed restore drill
+
+Damon and Sanket jointly witness
+`scripts/ops/x402-key-vault-restore-drill.mjs` from a short-lived private-network
+operator. Temporary source backup and restore-vault restore, read, and sign
+permissions are granted only for the drill and removed immediately afterward.
+
+The operator writes the protected backup blob to a mode-0600 temporary
+directory and removes it on every exit path. It restores the seller key into
+the isolated Premium vault, then verifies:
+
+- both vaults are Premium and in the same subscription and geography;
+- source and restored keys are `EC-HSM`, curve `P-256K`, enabled, and sign only;
+- public-key fingerprints match;
+- the derived checksummed EVM addresses match;
+- source and restored keys both sign the fixed challenge;
+- both signatures verify against their public keys.
+
+The receipt excludes the backup blob, tokens, and private material. It records
+the public fingerprint, derived address, fixed-challenge digest, resource IDs,
+verification booleans, witnesses, and UTC completion time. A failed drill keeps
+x402 payments disabled.
+
+## Testnet and mainnet technical gates
+
+Premium-vault custody is accepted only when all of these are true:
+
+- chain id is exactly `84532`;
+- the exact versioned key URI ends in `.vault.azure.net`;
+- the address classification is `x402_sepolia_bootstrap_only`.
+
+A Key Vault URI is rejected for chain id `8453`. Any future Base mainnet key URI
+must end in `.managedhsm.azure.net`. Mainnet additionally requires a genuinely
+new Managed HSM-generated key and wallet, at least three real and distinct
+recovery holders, a full security-domain ceremony, a witnessed backup and
+restore receipt, and full custody reapproval. The Premium key and address are
+never migrated to mainnet. No waiver can bypass this gate.
 
 ## Signing policy
 
-HSM RBAC limits the identity to one key and the `sign` operation. It cannot
+Key RBAC limits the identity to one key and the `sign` operation. It cannot
 inspect a transaction digest. The signer service therefore accepts only typed
 treasury intents and constructs the transaction internally. It rejects raw
 transactions, raw calldata, contract deployment, request-supplied destinations,
@@ -99,10 +139,6 @@ The exact confirmation is
 `APPROVE_X402_SWEEP_DESTINATION_CHANGE_NO_BYPASS`. A test transfer receipt is
 mandatory. A future mainnet change has a 24-hour delay from the later approval.
 There is no bypass path.
-
-The GitHub environments `x402-treasury-approval` and
-`x402-security-approval` must have disjoint reviewer memberships before the
-destination operator can be used.
 
 ## Coinbase CDP adapter
 
@@ -144,18 +180,18 @@ operations:
 - MCP `ledger.transactions.list`
 - MCP `ledger.obligations.list`
 
-The credentials are not ordinary commercial-included API keys. Presenting one
-to the ordinary resource authorization path is rejected. Agent API keys and
-exchanged agent JWTs are never eligible for x402 payment authorization.
+These are not commercial-included API keys. Presenting one to ordinary resource
+authorization is rejected. Agent API keys and exchanged agent JWTs are never
+eligible for x402 payment authorization.
 
 ## Counterfactual sandbox
 
 Counterfactual observations use `x402_counterfactual_observations`, not the RFC
 0008 or RFC 0011 shadow tenant or tables. The table is append-only and retains
 evidence for seven years. When route execution is introduced, a dedicated
-internal x402 sandbox tenant must be created with its own immutable commercial
-billing exclusion before the first request. It must never share the commercial
-shadow tenant or credentials.
+internal x402 sandbox tenant must receive its own immutable commercial billing
+exclusion before the first request. It must never share the commercial shadow
+tenant or credentials.
 
 ## Settlement order
 
@@ -174,14 +210,12 @@ The only accepted order is:
 Stock authorization middleware remains rejected because it cannot prove this
 ordering. The low-level adapter is required.
 
-## External apply gates
+## External activation gates
 
-Before the custody foundation is applied, review must confirm the Azure SKU and
-cost, Damon and Sanket as the retained recovery holders, the transient-C
-destruction procedure, and the two disjoint destination reviewer groups. Before
-activation, the ceremony runbook, immutable security-domain destination,
-backup-compatible destination, PIM, MFA, and alerts must be verified. Before a
-settlement test, the witnessed A+B restore receipt, C destruction receipt,
-Coinbase CDP test credential, official status subscription, fresh authenticated
-support witness, seller address, billing-excluded sandbox tenant, and test USDC
-funding must all exist.
+Before apply, the two protected approval environments, OIDC identity, expected
+subscription, Terraform state access, alert recipients, and private network
+plan must be verified. Before any signing test, the witnessed restore receipt,
+temporary-role cleanup evidence, Coinbase CDP test credential, official status
+subscription, fresh authenticated support witness, seller address, billing
+excluded sandbox tenant, and test USDC funding must all exist. Merging this
+implementation performs none of those external actions.

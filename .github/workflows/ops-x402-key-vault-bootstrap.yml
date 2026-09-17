@@ -1,0 +1,310 @@
+name: ops-x402-key-vault-bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Inspect, plan, or apply the Base Sepolia custody bootstrap."
+        required: true
+        type: choice
+        options: [inspect, plan, apply]
+        default: inspect
+      sha:
+        description: "Full main commit SHA. Blank uses current main for inspect or plan."
+        required: false
+        type: string
+        default: ""
+      plan_run_id:
+        description: "Successful plan run ID. Required only for apply."
+        required: false
+        type: string
+        default: ""
+      confirmation:
+        description: "For apply, enter APPLY-X402-SEPOLIA-KEY-VAULT-BOOTSTRAP."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  deployments: read
+
+jobs:
+  validate:
+    name: validate request
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Validate fixed control boundary
+        env:
+          ACTION: ${{ inputs.action }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          case "$ACTION" in
+            inspect|plan)
+              test -z "$PLAN_RUN_ID"
+              test -z "$CONFIRMATION"
+              ;;
+            apply)
+              [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]]
+              test "$CONFIRMATION" = "APPLY-X402-SEPOLIA-KEY-VAULT-BOOTSTRAP"
+              ;;
+            *)
+              echo "::error::unsupported action"
+              exit 1
+              ;;
+          esac
+
+      - name: Resolve exact main SHA
+        id: release
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          sha="$REQUESTED_SHA"
+          if [ -z "$sha" ]; then sha="${{ github.sha }}"; fi
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full lowercase commit SHA"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  treasury-approval:
+    name: Damon Treasury approval
+    if: ${{ inputs.action == 'apply' }}
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: x402-treasury-approval
+    steps:
+      - run: echo "Treasury approval recorded for ${{ needs.validate.outputs.sha }}"
+
+  security-approval:
+    name: Sanket Security approval
+    if: ${{ inputs.action == 'apply' }}
+    needs: [validate, treasury-approval]
+    runs-on: ubuntu-latest
+    environment: x402-security-approval
+    steps:
+      - run: echo "Security approval recorded for ${{ needs.validate.outputs.sha }}"
+
+  terraform:
+    name: x402 Key Vault ${{ inputs.action }}
+    needs: [validate, treasury-approval, security-approval]
+    if: ${{ always() && needs.validate.result == 'success' && ((inputs.action != 'apply' && needs.treasury-approval.result == 'skipped' && needs.security-approval.result == 'skipped') || (inputs.action == 'apply' && needs.treasury-approval.result == 'success' && needs.security-approval.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: x402-key-vault-bootstrap
+      cancel-in-progress: false
+    env:
+      EXPECTED_SUBSCRIPTION_ID: ${{ vars.AZURE_PRODUCTION_EXPECTED_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_PRODUCTION_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_PRODUCTION_TENANT_ID }}
+      TF_VAR_treasury_alert_email: ${{ secrets.X402_TREASURY_ALERT_EMAIL }}
+      TF_VAR_security_alert_email: ${{ secrets.X402_SECURITY_ALERT_EMAIL }}
+      TF_VAR_github_run_id: ${{ github.run_id }}
+      ARM_USE_CLI: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify release commit
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SHA"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$SHA" origin/main || {
+            echo "::error::$SHA is not reachable from main"
+            exit 1
+          }
+
+      - name: Verify dual-approval environment configuration
+        if: ${{ inputs.action == 'apply' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          check_environment() {
+            local name="$1" expected_login="$2" expected_id="$3"
+            gh api "repos/${GITHUB_REPOSITORY}/environments/${name}" > "/tmp/${name}.json"
+            jq -e \
+              --arg login "$expected_login" \
+              --argjson id "$expected_id" \
+              '[.protection_rules[]? | select(.type == "required_reviewers")][0] as $rule
+               | ($rule.reviewers | length) == 1
+               and $rule.reviewers[0].type == "User"
+               and $rule.reviewers[0].reviewer.login == $login
+               and $rule.reviewers[0].reviewer.id == $id' \
+              "/tmp/${name}.json" >/dev/null || {
+                echo "::error::$name does not have the exact reviewed owner and self-review protection"
+                exit 1
+              }
+          }
+          check_environment x402-treasury-approval damonnam 6476148
+          check_environment x402-security-approval sanketdebnath24 124357033
+
+      - name: Azure production login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_PRODUCTION_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_PRODUCTION_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_PRODUCTION_SUBSCRIPTION_ID }}
+
+      - name: Verify production identity and required inputs
+        run: |
+          set -euo pipefail
+          for required in EXPECTED_SUBSCRIPTION_ID TF_VAR_subscription_id TF_VAR_tenant_id \
+            TF_VAR_treasury_alert_email TF_VAR_security_alert_email; do
+            if [ -z "${!required}" ]; then
+              echo "::error::missing protected production value $required"
+              exit 1
+            fi
+          done
+          actual_subscription=$(az account show --query id -o tsv)
+          test "${actual_subscription,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
+          test "${TF_VAR_subscription_id,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.2
+          terraform_wrapper: false
+
+      - name: Initialize and validate isolated root
+        working-directory: infra/x402-key-vault-bootstrap
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform init -reconfigure -input=false -backend-config=backend-production.hcl
+          terraform validate
+
+      - name: Inspect current custody state
+        if: ${{ inputs.action == 'inspect' }}
+        working-directory: infra/x402-key-vault-bootstrap
+        run: |
+          set -euo pipefail
+          terraform state list 2>/dev/null | sort || true
+          az keyvault show --name brain-x402-sepolia-kv \
+            --query '{name:name,sku:properties.sku.name,publicNetworkAccess:properties.publicNetworkAccess,purgeProtection:properties.enablePurgeProtection,softDeleteDays:properties.softDeleteRetentionInDays}' \
+            --output json 2>/dev/null || echo '{"state":"not_provisioned"}'
+
+      - name: Build reviewed plan
+        if: ${{ inputs.action == 'plan' }}
+        working-directory: infra/x402-key-vault-bootstrap
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          terraform plan -input=false -no-color -out=tfplan -var-file=production.tfvars
+          terraform show -no-color tfplan | tee tfplan.txt
+          terraform show -json tfplan > tfplan.json
+          if jq -e '
+            [.resource_changes[]?
+              | select(.mode == "managed")
+              | select(.change.actions != ["no-op"])
+              | select((.change.actions | index("delete")) != null or (.change.actions | index("replace")) != null)]
+            | length > 0
+          ' tfplan.json >/dev/null; then
+            echo "::error::bootstrap plan contains a delete or replacement"
+            exit 1
+          fi
+          if jq -e '
+            [.resource_changes[]?.type]
+            | any(. == "azurerm_container_registry" or . == "azurerm_container_app" or . == "azurerm_container_app_environment" or . == "azurerm_key_vault_managed_hardware_security_module")
+          ' tfplan.json >/dev/null; then
+            echo "::error::plan crossed the isolated Key Vault bootstrap boundary"
+            exit 1
+          fi
+          sha256sum tfplan > tfplan.sha256
+          jq -n \
+            --arg sha "$SHA" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg subscription_id "$EXPECTED_SUBSCRIPTION_ID" \
+            --arg backend_key "x402-key-vault-bootstrap.terraform.tfstate" \
+            '{sha:$sha,run_id:$run_id,subscription_id:$subscription_id,backend_key:$backend_key,chain_id:84532}' \
+            > plan-manifest.json
+
+      - name: Retain exact plan
+        if: ${{ inputs.action == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: x402-key-vault-bootstrap-plan
+          path: |
+            infra/x402-key-vault-bootstrap/tfplan
+            infra/x402-key-vault-bootstrap/tfplan.txt
+            infra/x402-key-vault-bootstrap/tfplan.json
+            infra/x402-key-vault-bootstrap/tfplan.sha256
+            infra/x402-key-vault-bootstrap/plan-manifest.json
+          retention-days: 2
+          if-no-files-found: error
+
+      - name: Download exact reviewed plan
+        if: ${{ inputs.action == 'apply' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: x402-key-vault-bootstrap-plan
+          path: infra/x402-key-vault-bootstrap/reviewed
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run_id }}
+
+      - name: Verify reviewed plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/x402-key-vault-bootstrap
+        env:
+          SHA: ${{ needs.validate.outputs.sha }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_run=$(gh run view "$PLAN_RUN_ID" --json workflowName,conclusion,event)
+          test "$(jq -r '.workflowName' <<<"$source_run")" = "ops-x402-key-vault-bootstrap"
+          test "$(jq -r '.conclusion' <<<"$source_run")" = "success"
+          test "$(jq -r '.event' <<<"$source_run")" = "workflow_dispatch"
+          test "$(jq -r '.sha' reviewed/plan-manifest.json)" = "$SHA"
+          test "$(jq -r '.run_id' reviewed/plan-manifest.json)" = "$PLAN_RUN_ID"
+          test "$(jq -r '.subscription_id' reviewed/plan-manifest.json)" = "$EXPECTED_SUBSCRIPTION_ID"
+          test "$(jq -r '.backend_key' reviewed/plan-manifest.json)" = "x402-key-vault-bootstrap.terraform.tfstate"
+          test "$(jq -r '.chain_id' reviewed/plan-manifest.json)" = "84532"
+          (cd reviewed && sha256sum --check tfplan.sha256)
+          cmp reviewed/tfplan.txt <(terraform show -no-color reviewed/tfplan)
+
+      - name: Apply exact reviewed plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/x402-key-vault-bootstrap
+        run: terraform apply -input=false -no-color reviewed/tfplan
+
+      - name: Verify applied safety boundary
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/x402-key-vault-bootstrap
+        run: |
+          set -euo pipefail
+          terraform output -json custody_checkpoint > custody-checkpoint.json
+          jq -e '
+            .chain_id == 84532
+            and (.vault_uri | endswith(".vault.azure.net/"))
+            and (.restore_vault_uri | endswith(".vault.azure.net/"))
+            and (.seller_key_versioned_uri | contains(".vault.azure.net/keys/brain-x402-sepolia-seller/"))
+            and .address_classification_tag == "x402_sepolia_bootstrap_only"
+            and .payments_enabled == false
+          ' custody-checkpoint.json >/dev/null
+          az keyvault show --name brain-x402-sepolia-kv --output json |
+            jq -e '
+              .properties.sku.name == "premium"
+              and .properties.publicNetworkAccess == "Disabled"
+              and .properties.enablePurgeProtection == true
+              and .properties.softDeleteRetentionInDays == 90
+            ' >/dev/null
+          az role assignment list \
+            --assignee-object-id "$(jq -r '.signer_principal_id' custody-checkpoint.json)" \
+            --all --output json > signer-assignments.json
+          test "$(jq 'length' signer-assignments.json)" = "1"
+          test "$(jq -r '.[0].scope' signer-assignments.json)" = "$(jq -r '.signer_role_scope' custody-checkpoint.json)"
+          jq '{summary:"x402_key_vault_bootstrap_applied",chain_id,vault_uri,restore_vault_uri,address_classification_tag,payments_enabled}' custody-checkpoint.json

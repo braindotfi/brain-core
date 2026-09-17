@@ -2,6 +2,8 @@ import { getAddress, isAddress, type Address } from "viem";
 import { X402_BASE_SEPOLIA_NETWORK, X402_BASE_SEPOLIA_USDC } from "./x402-seller-protocol.js";
 
 export const X402_BASE_SEPOLIA_CHAIN_ID = 84_532 as const;
+export const X402_BASE_MAINNET_CHAIN_ID = 8_453 as const;
+export const X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG = "x402_sepolia_bootstrap_only" as const;
 export const X402_TEST_USDC_OPERATIONAL_CEILING = 1_000_000_000n;
 export const X402_TEST_USDC_SWEEP_THRESHOLD = 500_000_000n;
 export const X402_TEST_USDC_MAX_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1_000;
@@ -30,6 +32,58 @@ export type X402TreasuryIntent =
 export interface X402TreasuryPolicy {
   readonly approvedSweepDestination: Address;
   readonly testUsdcOperationalCeiling: bigint;
+}
+
+export interface X402CustodyBinding {
+  readonly chainId: number;
+  readonly keyUri: string;
+  readonly addressClassification: string;
+}
+
+/**
+ * Fail closed before any signer is constructed. Premium Key Vault is an
+ * explicitly temporary Base Sepolia custody backend. A future Base mainnet
+ * signer must use a new Managed HSM key and a separate reviewed address.
+ */
+export function assertX402CustodyBindingAllowed(binding: X402CustodyBinding): void {
+  let uri: URL;
+  try {
+    uri = new URL(binding.keyUri);
+  } catch {
+    throw new Error("x402 custody key URI must be a valid HTTPS Azure key URI");
+  }
+  if (uri.protocol !== "https:" || !/^\/keys\/[^/]+\/[^/]+$/.test(uri.pathname)) {
+    throw new Error("x402 custody key URI must identify an exact versioned Azure key");
+  }
+
+  const host = uri.hostname.toLowerCase();
+  const isPremiumVault = host.endsWith(".vault.azure.net");
+  const isManagedHsm = host.endsWith(".managedhsm.azure.net");
+
+  if (binding.chainId === X402_BASE_SEPOLIA_CHAIN_ID) {
+    if (!isPremiumVault || isManagedHsm) {
+      throw new Error("Base Sepolia bootstrap requires a Key Vault Premium key URI");
+    }
+    if (binding.addressClassification !== X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG) {
+      throw new Error("Base Sepolia bootstrap address must carry its custody classification");
+    }
+    return;
+  }
+
+  if (binding.chainId === X402_BASE_MAINNET_CHAIN_ID) {
+    if (isPremiumVault) {
+      throw new Error("Base mainnet rejects Key Vault Premium custody");
+    }
+    if (!isManagedHsm) {
+      throw new Error("Base mainnet requires a new Azure Managed HSM key URI");
+    }
+    if (binding.addressClassification === X402_SEPOLIA_BOOTSTRAP_ADDRESS_TAG) {
+      throw new Error("Base mainnet rejects the Sepolia bootstrap address");
+    }
+    return;
+  }
+
+  throw new Error("x402 custody is not approved for this chain id");
 }
 
 export function assertX402OperationalBalanceAllowed(balanceAtomic: bigint): void {
