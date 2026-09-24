@@ -35,11 +35,10 @@ per-holder grants, nonces, pause state, and window spend. This is the main reaso
 the feature can be implemented without changing the contract for the base case.
 
 `services/execution/src/rails/session-keys.ts` currently derives one-time
-minimum-privilege session key parameters for a payment intent. It is useful for
-cap-mode mapping and exact recipient grants, but it is not the full lifecycle for
-stable per-agent keys. The implementation should either extend it with a shared
-grant builder or add a sibling module that reuses its cap-mode constants,
-selector choices, and validation posture.
+minimum-privilege session key parameters for a payment intent. That per-task
+model is deprecated for production. PR B should reuse only its cap-mode
+vocabulary, selector choices, and validation posture. It should not create new
+short-lived keys for each task.
 
 ## Activation Flow
 
@@ -172,10 +171,30 @@ Mapping to `grantSessionKey`:
   selector is exactly one method, `capAmountOffset` identifies the amount word,
   and `pinOffset` plus `pinValue` bind the grant to the object when needed.
 
-`services/execution/src/rails/session-keys.ts` should be reused for exact
-per-payment child grants if the owner-grant path supports them. For stable
-per-agent grants, reuse the cap-mode vocabulary and validation but keep the
-lifecycle in an agent session-key service.
+`services/execution/src/rails/session-keys.ts` should not be reused to mint
+per-payment child grants. For stable per-agent grants, reuse the cap-mode
+vocabulary and validation but keep the lifecycle in an agent session-key
+service.
+
+## Decision: No Short Lived Per Task Keys
+
+Use one pre-granted session key per tenant agent. Do not create short-lived
+per-task keys during normal execution.
+
+Recommendation: keep each per-agent key tightly scoped by policy. Caps,
+periods, targets, recipients, selectors, token, mode, expiry, and policy version
+must come from signed tenant policy. The backend should reject a task when it
+does not fit inside the agent's already active grant instead of creating a new
+grant for that task.
+
+Reason: post-creation grants now have a mandatory on-chain delay when they add
+authority. Per-task key creation would either block routine execution for 24
+hours or pressure the system to create a bypass. Stable per-agent keys preserve
+the hard delay while keeping execution practical.
+
+Operational rule: rotations can be prepared ahead of time. A rotation that is
+equal or stricter can activate immediately. A broader replacement follows the
+on-chain delayed-grant path from PR A.
 
 ## Delayed Privilege Increases
 
