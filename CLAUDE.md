@@ -57,9 +57,15 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feature/members-approval-attribution`. Branch from latest `origin/main`.
-Members, approval authority, and actor attribution are moving into core as the
-normative money-path contract in `docs/contracts/members-attribution.md`.
+Current planning branch: `feat/per-agent-session-keys`. Branch from latest
+`origin/main`. This branch is plan-only until approved. The current plan lives
+at `docs/plans/per-agent-session-keys.md` and covers replacing the shared
+`BRAIN_SESSION_KEY` with one Azure Key Vault backed BrainSmartAccount session
+key per tenant agent.
+
+Historical branch context: `feature/members-approval-attribution`. Members,
+approval authority, and actor attribution are moving into core as the normative
+money-path contract in `docs/contracts/members-attribution.md`.
 
 ## Commands (from root)
 
