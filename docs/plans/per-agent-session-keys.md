@@ -109,6 +109,41 @@ The concrete executor should become a tenant-agent signer resolver:
 4. Read `nonce(holder)` for the resolved holder.
 5. Send `executeViaSessionKey` with the resolved holder signer.
 
+## Owner Key Custody
+
+Per-agent session keys reduce agent blast radius, but they do not remove the
+owner key risk. The owner key can grant, revoke, pause, unpause, rotate
+ownership, and pause the whole account. It must move away from the deployer key
+before production use.
+
+Recommended owner model:
+
+1. Tenant onboarding creates the BrainSmartAccount with a tenant-controlled owner
+   address or a custody address assigned to that tenant.
+2. Demo and testnet may still use the deployer key, but production must reject a
+   BrainSmartAccount whose owner is the deployer address.
+3. Production owner control should be a hardware wallet, institutional custody
+   account, or threshold signer controlled through an operator runbook.
+4. Grant, pause, revoke, and rotation requests should produce an owner-signable
+   transaction request. The server must not hold the owner private key.
+5. The activation service should treat an unsigned owner transaction as
+   `pending_owner_signature`.
+6. The system should read back `owner()` before each owner-only transaction and
+   fail closed when it does not match the configured custody authority.
+7. Owner rotation should use the existing two-step `transferOwnership` and
+   `acceptOwnership` path.
+
+Migration away from the deployer key:
+
+1. Inventory every BrainSmartAccount where `owner()` equals the deployer address.
+2. For each tenant, choose the target owner custody address.
+3. Call `transferOwnership(targetOwner)` from the deployer key.
+4. Require the target owner to call `acceptOwnership()`.
+5. Verify `owner()` on-chain.
+6. Disable the deployer key for future owner actions.
+7. Record the rotation in audit with old owner, new owner, tenant id, smart
+   account, and transaction hashes.
+
 ## Per Agent Limits
 
 Limits should come from the tenant policy authority, not from agent payloads.
@@ -141,6 +176,43 @@ Mapping to `grantSessionKey`:
 per-payment child grants if the owner-grant path supports them. For stable
 per-agent grants, reuse the cap-mode vocabulary and validation but keep the
 lifecycle in an agent session-key service.
+
+## Delayed Privilege Increases
+
+Lowering privilege should be immediate. Raising privilege should be delayed.
+
+Immediate actions:
+
+- Pause a holder.
+- Revoke a holder.
+- Lower `maxPerTx`.
+- Lower `maxPerPeriod`.
+- Shorten `validUntil`.
+- Remove targets, selectors, or recipients.
+
+Delayed actions:
+
+- Raise `maxPerTx`.
+- Raise `maxPerPeriod`.
+- Extend `validUntil`.
+- Add targets, selectors, or recipients.
+- Grant a brand new holder for an active agent.
+
+Recommended rule:
+
+1. Treat every privilege increase as a scheduled change with a minimum delay.
+2. Use a default delay of 24 hours for production tenants.
+3. Allow emergency shortening only through a human break-glass workflow with
+   audit severity `critical`.
+4. During the delay, keep the current holder and caps active.
+5. At execution time, re-read policy and ensure the scheduled change is still
+   approved.
+6. Lowering, pause, and revoke bypass the delay and execute immediately.
+7. Rotation can grant the new holder immediately only when the new grant is equal
+   to or stricter than the old grant. A broader rotation must wait out the delay.
+
+The database should store scheduled grant changes separately from active holder
+metadata so pending increases cannot be confused with executable authority.
 
 ## Pause, Revoke, and Rotation
 
@@ -289,12 +361,14 @@ Operational tests:
 
 ## Effort
 
-Estimated implementation effort: 8 to 12 engineering days after plan approval.
+Estimated implementation effort: 10 to 14 engineering days after plan approval.
 
 - Schema and repository: 1 to 2 days.
 - Azure Key Vault signer and local mock signer: 2 to 3 days.
-- Activation, grant, pause, revoke, and rotation services: 2 to 3 days.
+- Activation, grant, pause, revoke, rotation, and delayed increase services:
+  3 to 4 days.
 - Dispatch integration and migration flag: 1 to 2 days.
+- Owner-key custody migration checks: 1 day.
 - Tests, docs, and operational runbook: 2 days.
 
 ## Risks
@@ -303,6 +377,8 @@ Estimated implementation effort: 8 to 12 engineering days after plan approval.
   point before implementation is committed.
 - Owner-key custody is still the sharp edge. Per-agent keys improve blast radius,
   but `grantSessionKey` remains owner-controlled.
+- Delayed privilege increases add state-machine complexity and operator waiting
+  periods.
 - Direct holder gas means every agent holder needs ETH monitoring.
 - Migration must avoid sending live transactions through the old shared holder
   after a tenant is marked migrated.
@@ -324,6 +400,8 @@ Pending:
 - Add per-agent session-key metadata table.
 - Add activation grant service.
 - Add pause, revoke, rotate, and tenant deletion flows.
+- Add owner-key custody migration checks.
+- Add delayed privilege increase scheduling.
 - Route on-chain dispatch by tenant id and agent id.
 - Add gas top-up and sweep operations.
 - Add migration feature flag.
