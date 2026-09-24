@@ -20,12 +20,12 @@ import {BrainPolicyRegistry} from "../src/BrainPolicyRegistry.sol";
 /// ONCHAIN_RECIPIENT == the EOA address for that key. The smart account
 /// will send ETH to itself, which is fine on testnet and avoids losing funds.
 ///
-/// Why a policy registry is deployed here: BrainSmartAccount.grantSessionKey now
-/// VERIFIES that a key's policyVersion is a policy hash the tenant actually
-/// registered. The registry address used to be passed as address(0) and never
-/// read, so the "policy-version binding" the architecture documents claim was an
-/// unread field. Deploy order is therefore registry first, policy registered,
-/// then the account.
+/// Why a policy registry is deployed here: BrainSmartAccount validates that a
+/// key's policyVersion is a policy hash the tenant actually registered. The
+/// registry address used to be passed as address(0) and never read, so the
+/// "policy-version binding" the architecture documents claim was an unread
+/// field. Deploy order is therefore registry first, policy registered, then the
+/// account with its initial key.
 ///
 /// After broadcast, copy the logged BRAIN_ONCHAIN_SMART_ACCOUNT and
 /// POLICY_REGISTRY_ADDRESS into brain-core/.env, then restart the API server.
@@ -103,8 +103,9 @@ contract DeployOnchainDemo is Script {
         vm.startBroadcast(deployerKey);
 
         BrainPolicyRegistry registry = _deployRegistry(deployerKey, deployer, tenantIdHash);
-        BrainSmartAccount account = new BrainSmartAccount(deployer, tenantIdHash, address(registry));
-        account.grantSessionKey(_nativeKey(deployer, recipient));
+        BrainSmartAccount.SessionKey[] memory initialKeys = new BrainSmartAccount.SessionKey[](1);
+        initialKeys[0] = _nativeKey(deployer, recipient);
+        BrainSmartAccount account = new BrainSmartAccount(deployer, tenantIdHash, address(registry), initialKeys);
 
         // Fund the smart account so it can forward value to the target.
         payable(address(account)).transfer(0.1 ether);

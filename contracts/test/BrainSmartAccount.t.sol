@@ -148,7 +148,7 @@ contract BrainSmartAccountTest is Test {
         vm.warp(1_000_233);
         registry = new StubPolicyRegistry();
         registry.setRegistered(TENANT, POLICY_VER, true);
-        acct = new BrainSmartAccount(ownerKey, TENANT, address(registry));
+        acct = new BrainSmartAccount(ownerKey, TENANT, address(registry), _emptyInitialKeys());
         target = new Target();
         vm.deal(address(acct), 100 ether);
     }
@@ -163,6 +163,19 @@ contract BrainSmartAccountTest is Test {
     function _sels(bytes4 s) internal pure returns (bytes4[] memory out) {
         out = new bytes4[](1);
         out[0] = s;
+    }
+
+    function _emptyInitialKeys() internal pure returns (BrainSmartAccount.SessionKey[] memory out) {
+        out = new BrainSmartAccount.SessionKey[](0);
+    }
+
+    function _initialKeys(BrainSmartAccount.SessionKey memory key)
+        internal
+        pure
+        returns (BrainSmartAccount.SessionKey[] memory out)
+    {
+        out = new BrainSmartAccount.SessionKey[](1);
+        out[0] = key;
     }
 
     /// @dev CALL-mode key over Target.ping, metering the `n` argument. Caps are
@@ -314,12 +327,99 @@ contract BrainSmartAccountTest is Test {
 
     function test_M1_constructor_rejectsZeroOwner() public {
         vm.expectRevert(BrainSmartAccount.ZeroAddress.selector);
-        new BrainSmartAccount(address(0), TENANT, address(registry));
+        new BrainSmartAccount(address(0), TENANT, address(registry), _emptyInitialKeys());
     }
 
     function test_M1_constructor_rejectsZeroPolicyRegistry() public {
         vm.expectRevert(BrainSmartAccount.ZeroAddress.selector);
-        new BrainSmartAccount(ownerKey, TENANT, address(0));
+        new BrainSmartAccount(ownerKey, TENANT, address(0), _emptyInitialKeys());
+    }
+
+    function test_M1_initialGrantActiveImmediately() public {
+        BrainSmartAccount.SessionKey memory key =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(key));
+
+        assertEq(fresh.sessionKey(holder).holder, holder);
+        (,, bool exists) = fresh.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
+
+        vm.prank(holder);
+        fresh.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+        assertEq(target.counter(), 0.5 ether);
+    }
+
+    function test_M1_creationPathCannotBeReusedAfterDeployment() public {
+        BrainSmartAccount.SessionKey memory key =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(key));
+
+        bytes memory initializerCall = abi.encodeWithSignature(
+            "initializeSessionKeys((address,uint256,uint256,address[],bytes4[],uint8,address,address[],uint256,uint256,bytes32,uint256,uint256,uint256,bytes32)[])",
+            _initialKeys(key)
+        );
+        vm.prank(ownerKey);
+        (bool ok,) = address(fresh).call(initializerCall);
+        assertFalse(ok);
+    }
+
+    function test_M1_newKeyAddedAfterCreationWaits() public {
+        BrainSmartAccount.SessionKey memory initial =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(initial));
+        address laterHolder = address(0xC0DE);
+        BrainSmartAccount.SessionKey memory later = _callKey(
+            laterHolder,
+            address(target),
+            block.timestamp,
+            block.timestamp + fresh.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        fresh.grantSessionKey(later);
+
+        assertEq(fresh.sessionKey(laterHolder).holder, address(0));
+        (,, bool exists) = fresh.pendingSessionKeyGrant(laterHolder);
+        assertTrue(exists);
+
+        vm.prank(laterHolder);
+        vm.expectRevert(BrainSmartAccount.NotHolder.selector);
+        fresh.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+    }
+
+    function test_M1_ownerCannotReinitializeOrRedeployToSkipExistingAccountDelay() public {
+        address laterHolder = address(0xC0DE);
+        BrainSmartAccount.SessionKey memory later = _callKey(
+            laterHolder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(later);
+
+        BrainSmartAccount replacement = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(later));
+
+        assertEq(acct.sessionKey(laterHolder).holder, address(0));
+        (,, bool exists) = acct.pendingSessionKeyGrant(laterHolder);
+        assertTrue(exists);
+        assertEq(replacement.sessionKey(laterHolder).holder, laterHolder);
+
+        bytes memory initializerCall = abi.encodeWithSignature(
+            "initializeSessionKeys((address,uint256,uint256,address[],bytes4[],uint8,address,address[],uint256,uint256,bytes32,uint256,uint256,uint256,bytes32)[])",
+            _initialKeys(later)
+        );
+        vm.prank(ownerKey);
+        (bool ok,) = address(acct).call(initializerCall);
+        assertFalse(ok);
+        assertEq(acct.sessionKey(laterHolder).holder, address(0));
     }
 
     // --- grant authorization + validation --------------------------------
@@ -503,7 +603,7 @@ contract BrainSmartAccountTest is Test {
         BrainPolicyRegistry real = _realRegistryWithPolicy(0xF00D);
         assertTrue(real.isRegisteredHash(TENANT, POLICY_VER));
 
-        BrainSmartAccount bound = new BrainSmartAccount(ownerKey, TENANT, address(real));
+        BrainSmartAccount bound = new BrainSmartAccount(ownerKey, TENANT, address(real), _emptyInitialKeys());
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,

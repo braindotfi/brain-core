@@ -132,7 +132,8 @@ contract BrainSmartAccountInvariantTest is Test {
         vm.warp(1_000_233);
         registry = new StubPolicyRegistry();
         registry.setRegistered(TENANT, POLICY_VER, true);
-        acct = new BrainSmartAccount(owner, TENANT, address(registry));
+        BrainSmartAccount.SessionKey[] memory initialKeys = new BrainSmartAccount.SessionKey[](0);
+        acct = new BrainSmartAccount(owner, TENANT, address(registry), initialKeys);
         target = new Target();
         handler = new SessionKeyHandler(acct, address(target), PERIOD);
         vm.deal(address(acct), 100 ether);

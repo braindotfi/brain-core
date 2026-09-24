@@ -59,7 +59,10 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 Current contract branch: `feat/smart-account-delayed-grants`. Branch from
 latest `origin/main`. This branch adds on-chain delayed activation for broader
-BrainSmartAccount session-key grants before the external audit.
+BrainSmartAccount session-key grants before the external audit. Constructor
+initial session keys are the only immediate new-holder path, so new customers
+can start without waiting 24 hours. There is no callable initializer after
+deployment.
 
 Historical branch context: `feature/members-approval-attribution`. Members,
 approval authority, and actor attribution are moving into core as the normative

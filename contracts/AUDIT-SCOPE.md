@@ -142,7 +142,7 @@ On-chain registry of signed policy versions (content hash + EIP-712 attestation)
 **Coverage:** unit + fuzz per external function; invariant "registered versions
 carry a content hash matching the stored policy."
 
-## BrainSmartAccount (755 LoC)
+## BrainSmartAccount (765 LoC)
 
 Smart account with directly-called session keys; the payment agent executes
 on-chain via a session key under a deterministic gate. NOT ERC-4337: no
@@ -158,6 +158,8 @@ attack surface to audit.
 - A broader session-key grant cannot activate until `GRANT_INCREASE_DELAY`
   elapses. This includes new holders, raised caps, extended expiry, added
   targets, added selectors, added recipients, and shorter spend periods.
+- Session keys supplied to the constructor are creation-only and active
+  immediately. There is no post-deploy initializer to reuse this path.
 - Stricter or equal grants can activate immediately.
 - Pause, pauseAll, revoke, and pending-grant cancel remain immediate.
 - Owner rotation is access-controlled (hardware-wallet swap path).
@@ -168,8 +170,10 @@ attack surface to audit.
 - H-04 adds on-chain delayed broader grants. `grantSessionKey` now validates the
   key, compares it to the active holder grant, and schedules broader authority
   into pending state. `activatePendingSessionKeyGrant` can activate only after
-  the delay. `cancelPendingSessionKeyGrant` and `revokeSessionKey` clear pending
-  broader grants.
+  the delay. Initial keys passed to the constructor are the only immediate
+  new-holder path, so new customers can start without waiting. There is no
+  callable initializer after deployment. `cancelPendingSessionKeyGrant` and
+  `revokeSessionKey` clear pending broader grants.
 - R-06 / R-07 (Opus 4.8 peer review F-3 + F-4, batch 8): the `SessionKey` struct
   now carries an explicit `capToken` field. When non-zero (ERC20 mode), caps
   are denominated in the token's raw units (USDC=6dp, DAI=18dp), the target
@@ -188,7 +192,9 @@ instant; owner cannot skip the delay; target, recipient, and period comparison
 edge cases. Plus R-06 / R-07 tests: USDC 6dp cap enforces in token units, DAI
 18dp cap same, grant rejects non-decodable selector in ERC20 mode, grant rejects
 target/capToken mismatch, execute rejects value > 0 in ERC20 mode, native mode
-preserved.
+preserved. Creation-path tests cover immediate initial grants, no initializer
+reuse, delayed post-creation new keys, and redeploy not changing an existing
+account.
 
 ## BrainMCPAgentRegistry (287 LoC)
 

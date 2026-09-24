@@ -259,7 +259,7 @@ contract BrainSmartAccount {
         _;
     }
 
-    constructor(address _owner, bytes32 _tenantId, address _policyRegistry) {
+    constructor(address _owner, bytes32 _tenantId, address _policyRegistry, SessionKey[] memory initialSessionKeys) {
         // A zero owner permanently bricks an account that can still receive
         // funds through receive(); a zero registry makes the policy binding
         // unverifiable. Both are fatal at construction.
@@ -267,6 +267,11 @@ contract BrainSmartAccount {
         owner = _owner;
         tenantId = _tenantId;
         policyRegistry = _policyRegistry;
+
+        for (uint256 i = 0; i < initialSessionKeys.length; ++i) {
+            _validateSessionKey(initialSessionKeys[i]);
+            _storeSessionKey(initialSessionKeys[i]);
+        }
     }
 
     /// @notice Begin a two-step owner rotation (e.g. a hardware-wallet swap).
@@ -308,7 +313,7 @@ contract BrainSmartAccount {
         _storeSessionKey(key);
     }
 
-    function _validateSessionKey(SessionKey calldata key) private view {
+    function _validateSessionKey(SessionKey memory key) private view {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
         if (key.validAfter == 0 || key.validAfter >= key.validUntil) {
@@ -396,13 +401,13 @@ contract BrainSmartAccount {
         }
     }
 
-    function _grantRequiresDelay(SessionKey calldata key) private view returns (bool) {
+    function _grantRequiresDelay(SessionKey memory key) private view returns (bool) {
         SessionKey storage current = _keys[key.holder];
         if (current.holder != key.holder) return true;
         return _isBroaderThanCurrent(current, key);
     }
 
-    function _scheduleSessionKeyGrant(SessionKey calldata key) private {
+    function _scheduleSessionKeyGrant(SessionKey memory key) private {
         uint256 executableAt = block.timestamp + GRANT_INCREASE_DELAY;
         if (key.validUntil <= executableAt) revert InvalidValidityWindow(key.validAfter, key.validUntil);
 
@@ -414,7 +419,7 @@ contract BrainSmartAccount {
         emit SessionKeyGrantScheduled(key.holder, key.policyVersion, executableAt, key.validUntil, key.capMode);
     }
 
-    function _storeSessionKey(SessionKey calldata key) private {
+    function _storeSessionKey(SessionKey memory key) private {
         // First grant fixes the accounting anchor for this holder forever. A
         // re-grant deliberately does NOT move it and does NOT clear
         // _windowSpent, so refreshing a key cannot reset the period budget.
@@ -458,7 +463,7 @@ contract BrainSmartAccount {
         }
     }
 
-    function _isBroaderThanCurrent(SessionKey storage current, SessionKey calldata next) private view returns (bool) {
+    function _isBroaderThanCurrent(SessionKey storage current, SessionKey memory next) private view returns (bool) {
         if (next.validAfter < current.validAfter) return true;
         if (next.validUntil > current.validUntil) return true;
         if (next.maxPerTx > current.maxPerTx) return true;
@@ -482,13 +487,13 @@ contract BrainSmartAccount {
         return next < current;
     }
 
-    function _pinIsBroader(SessionKey storage current, SessionKey calldata next) private view returns (bool) {
+    function _pinIsBroader(SessionKey storage current, SessionKey memory next) private view returns (bool) {
         if (current.pinOffset == 0) return false;
         if (next.pinOffset == 0) return true;
         return next.pinOffset != current.pinOffset || next.pinValue != current.pinValue;
     }
 
-    function _hasNewAddress(address[] calldata next, address[] storage current) private view returns (bool) {
+    function _hasNewAddress(address[] memory next, address[] storage current) private view returns (bool) {
         for (uint256 i = 0; i < next.length; ++i) {
             if (!_containsAddress(current, next[i])) return true;
         }
@@ -502,7 +507,7 @@ contract BrainSmartAccount {
         return false;
     }
 
-    function _hasNewSelector(bytes4[] calldata next, bytes4[] storage current) private view returns (bool) {
+    function _hasNewSelector(bytes4[] memory next, bytes4[] storage current) private view returns (bool) {
         for (uint256 i = 0; i < next.length; ++i) {
             if (!_containsSelector(current, next[i])) return true;
         }

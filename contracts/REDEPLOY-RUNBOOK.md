@@ -19,14 +19,16 @@ So the order is forced:
 
 1. `BrainPolicyRegistry`
 2. bootstrap a tenant signer, then `registerPolicy` for each tenant
-3. `BrainSmartAccount` (constructed with that registry address)
-4. `grantSessionKey`
+3. `BrainSmartAccount` (constructed with that registry address and any initial
+   session keys)
+4. `grantSessionKey` for keys added after creation
 
 Deploying the account first, or against a registry with no policy registered for
 its tenant, leaves an account that cannot grant any session key.
 
-`script/DeployOnchainDemo.s.sol` already does all four steps in one broadcast and
-is the reference for the sequence.
+`script/DeployOnchainDemo.s.sol` registers the policy, then constructs the
+account with an initial key so the demo holder is active immediately. It is the
+reference for the sequence.
 
 ## Deploy order
 
@@ -37,7 +39,7 @@ is the reference for the sequence.
 | 3     | `BrainAuditAnchor`        | `publisher` (Safe multi-sig in prod)     | none                       |
 | 4     | `BrainReputationRegistry` | `attestor`                               | none                       |
 | 5     | `BrainEscrow`             | `arbiter`                                | none                       |
-| 6     | `BrainSmartAccount`       | `owner`, `tenantId`, `policyRegistry`    | 1, and a registered policy |
+| 6     | `BrainSmartAccount`       | `owner`, `tenantId`, `policyRegistry`, `initialSessionKeys` | 1, and a registered policy |
 
 `BrainSignatureChecker` is a library with only `internal` functions, so it is
 inlined into both registries. There is nothing separate to deploy or link.
@@ -83,7 +85,10 @@ Storage does not carry across a redeploy. For each tenant, in order:
    `scripts/ops/register-prod-agent.ts` (dry-run by default, `--broadcast` to
    send). Its ABI and call site are already updated for the new `authSigner`
    parameter.
-6. **Session keys.** `GrantSessionKey.s.sol` (ERC20) or
+6. **Session keys.** For new customer accounts, pass the first session keys in
+   the `BrainSmartAccount` constructor. Those keys are active immediately and
+   this path exists only at creation. There is no initializer to call later. For
+   deployed accounts, use `GrantSessionKey.s.sol` (ERC20) or
    `GrantSessionKeyNative.s.sol` (NATIVE). Note the ERC20 script now takes a
    fourth argument, the allowed recipient. A new or broader holder grant is
    scheduled, not active. Wait `GRANT_INCREASE_DELAY`, then call
