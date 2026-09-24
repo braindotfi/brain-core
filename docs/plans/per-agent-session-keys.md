@@ -214,6 +214,43 @@ Recommended rule:
 The database should store scheduled grant changes separately from active holder
 metadata so pending increases cannot be confused with executable authority.
 
+## Open Decision: On Chain Delay for Increases
+
+With no contract change, the 24-hour delay is enforced in the backend only. The
+activation service, rotation service, policy service, and dispatch path would
+refuse to submit or use a broader grant before the delay expires.
+
+The owner key can still call `grantSessionKey` directly and skip the backend
+delay. That is true today because BrainSmartAccount treats the owner as final
+authority. Backend policy can detect and alert on an unexpected on-chain grant,
+but it cannot prevent an owner transaction that bypasses the service.
+
+An on-chain delay would require BrainSmartAccount changes:
+
+1. Add pending session-key grants or pending grant changes.
+2. Classify a grant as broader, equal, or stricter than the active grant.
+3. Apply a delay only to broader grants.
+4. Allow immediate stricter grants, pause, and revoke.
+5. Add execute or finalize functions after the delay expires.
+6. Add events and read methods so the backend can show pending increases.
+7. Update grant scripts, TypeScript callers, and contract tests.
+
+Estimated effort: 4 to 6 engineering days for the contract and callers, plus 2
+to 3 days for focused tests and runbook updates.
+
+Main risks:
+
+- The comparison logic can be wrong and allow a broader grant immediately.
+- Delayed grants add contract state and lifecycle complexity.
+- Existing grant scripts and activation flows need migration.
+- More contract surface area increases audit work.
+- Emergency access needs careful design so it cannot become a bypass.
+
+Recommendation: add the on-chain delay before the external audit if the product
+requires the 24-hour delay to be a hard security control. If the delay is an
+operator governance control, keep it backend-only for this phase and document
+that the owner key can bypass it.
+
 ## Pause, Revoke, and Rotation
 
 Pause per agent:
