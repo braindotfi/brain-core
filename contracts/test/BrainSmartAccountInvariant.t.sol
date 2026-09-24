@@ -161,6 +161,9 @@ contract BrainSmartAccountInvariantTest is Test {
         });
         vm.prank(owner);
         acct.grantSessionKey(key);
+        vm.warp(block.timestamp + acct.GRANT_INCREASE_DELAY());
+        vm.prank(owner);
+        acct.activatePendingSessionKeyGrant(address(handler));
 
         targetContract(address(handler));
     }

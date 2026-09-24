@@ -57,9 +57,13 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feature/members-approval-attribution`. Branch from latest `origin/main`.
-Members, approval authority, and actor attribution are moving into core as the
-normative money-path contract in `docs/contracts/members-attribution.md`.
+Current contract branch: `feat/smart-account-delayed-grants`. Branch from
+latest `origin/main`. This branch adds on-chain delayed activation for broader
+BrainSmartAccount session-key grants before the external audit.
+
+Historical branch context: `feature/members-approval-attribution`. Members,
+approval authority, and actor attribution are moving into core as the normative
+money-path contract in `docs/contracts/members-attribution.md`.
 
 ## Commands (from root)
 

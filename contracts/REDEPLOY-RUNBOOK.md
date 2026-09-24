@@ -85,7 +85,11 @@ Storage does not carry across a redeploy. For each tenant, in order:
    parameter.
 6. **Session keys.** `GrantSessionKey.s.sol` (ERC20) or
    `GrantSessionKeyNative.s.sol` (NATIVE). Note the ERC20 script now takes a
-   fourth argument, the allowed recipient.
+   fourth argument, the allowed recipient. A new or broader holder grant is
+   scheduled, not active. Wait `GRANT_INCREASE_DELAY`, then call
+   `activatePendingSessionKeyGrant(holder)` from the owner key. Stricter or
+   equal grants activate immediately. `cancelPendingSessionKeyGrant(holder)`
+   cancels a pending broader grant.
 
 ### Signature-shape changes to expect
 
@@ -117,6 +121,18 @@ which was impossible before.
 ## Session-key cap mode: pick the right one
 
 Granting the wrong mode is the easiest way to ship an unmetered key.
+
+Broader grants are now delayed on-chain. The contract treats these as broader:
+new holders, raised `maxPerTx`, raised `maxPerPeriod`, extended `validUntil`,
+earlier `validAfter`, new targets, new selectors, new ERC20 recipients, shorter
+period windows, removed pinning, changed policy version, changed cap token, or
+changed cap mode. Lower caps, removed allowlist entries, later `validAfter`, and
+added pinning can activate immediately when every other field is equal or
+stricter.
+
+Pause, account-wide pause, revoke, and pending-grant cancel remain immediate
+owner actions. `revokeSessionKey(holder)` also clears any pending broader grant
+for that holder.
 
 | Use case                | Mode     | `capAmountOffset`            | Notes                                                                                            |
 | ----------------------- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |

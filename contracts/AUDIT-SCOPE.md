@@ -142,7 +142,7 @@ On-chain registry of signed policy versions (content hash + EIP-712 attestation)
 **Coverage:** unit + fuzz per external function; invariant "registered versions
 carry a content hash matching the stored policy."
 
-## BrainSmartAccount (256 LoC)
+## BrainSmartAccount (755 LoC)
 
 Smart account with directly-called session keys; the payment agent executes
 on-chain via a session key under a deterministic gate. NOT ERC-4337: no
@@ -155,11 +155,21 @@ attack surface to audit.
   a replayed/stale nonce reverts.
 - **Re-entrancy:** the external call is guarded by a per-holder re-entrancy lock.
 - A revoked session key cannot execute.
+- A broader session-key grant cannot activate until `GRANT_INCREASE_DELAY`
+  elapses. This includes new holders, raised caps, extended expiry, added
+  targets, added selectors, added recipients, and shorter spend periods.
+- Stricter or equal grants can activate immediately.
+- Pause, pauseAll, revoke, and pending-grant cancel remain immediate.
 - Owner rotation is access-controlled (hardware-wallet swap path).
 
 **Hardening:**
 
 - H-03 added the per-holder replay nonce + re-entrancy guard.
+- H-04 adds on-chain delayed broader grants. `grantSessionKey` now validates the
+  key, compares it to the active holder grant, and schedules broader authority
+  into pending state. `activatePendingSessionKeyGrant` can activate only after
+  the delay. `cancelPendingSessionKeyGrant` and `revokeSessionKey` clear pending
+  broader grants.
 - R-06 / R-07 (Opus 4.8 peer review F-3 + F-4, batch 8): the `SessionKey` struct
   now carries an explicit `capToken` field. When non-zero (ERC20 mode), caps
   are denominated in the token's raw units (USDC=6dp, DAI=18dp), the target
@@ -170,11 +180,15 @@ attack surface to audit.
   grant time so caps are always meterable. Closes the "unit-blind ERC20 cap"
   and "non-decodable selector bypasses caps" findings.
 
-**Coverage:** unit (execute happy path, owner rotation, session-key revoke) +
-fuzz + invariant "a revoked session key cannot execute." Plus R-06 / R-07 tests:
-USDC 6dp cap enforces in token units, DAI 18dp cap same, grant rejects
-non-decodable selector in ERC20 mode, grant rejects target/capToken mismatch,
-execute rejects value > 0 in ERC20 mode, native mode preserved.
+**Coverage:** unit (execute happy path, owner rotation, session-key revoke,
+pending grant schedule, cancel, and activation) + fuzz + invariant "a revoked
+session key cannot execute." Delayed-grant tests cover: broader grant blocked
+before 24 hours and allowed after; stricter grant instant; pause and revoke
+instant; owner cannot skip the delay; target, recipient, and period comparison
+edge cases. Plus R-06 / R-07 tests: USDC 6dp cap enforces in token units, DAI
+18dp cap same, grant rejects non-decodable selector in ERC20 mode, grant rejects
+target/capToken mismatch, execute rejects value > 0 in ERC20 mode, native mode
+preserved.
 
 ## BrainMCPAgentRegistry (287 LoC)
 

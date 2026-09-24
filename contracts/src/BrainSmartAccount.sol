@@ -111,6 +111,12 @@ contract BrainSmartAccount {
         bytes32 policyVersion; // must be registered in BrainPolicyRegistry for this tenant
     }
 
+    struct PendingGrant {
+        SessionKey key;
+        uint256 executableAt;
+        bool exists;
+    }
+
     /// @dev ERC20 selector constants for cap-decode and grant-time validation.
     bytes4 private constant _SELECTOR_TRANSFER = 0xa9059cbb; // transfer(address,uint256)
     bytes4 private constant _SELECTOR_APPROVE = 0x095ea7b3; // approve(address,uint256)
@@ -124,8 +130,17 @@ contract BrainSmartAccount {
     ///         executeViaSessionKey bounded, so a key can never be granted with
     ///         an allowlist too large to execute against.
     uint256 public constant MAX_ALLOWLIST = 32;
+    /// @notice Minimum delay before a broader session-key grant can activate.
+    uint256 public constant GRANT_INCREASE_DELAY = 24 hours;
 
     event SessionKeyGranted(address indexed holder, bytes32 policyVersion, uint256 validUntil, CapMode capMode);
+    event SessionKeyGrantScheduled(
+        address indexed holder, bytes32 policyVersion, uint256 executableAt, uint256 validUntil, CapMode capMode
+    );
+    event PendingSessionKeyGrantCancelled(address indexed holder);
+    event PendingSessionKeyGrantExecuted(
+        address indexed holder, bytes32 policyVersion, uint256 validUntil, CapMode capMode
+    );
     event SessionKeyRevoked(address indexed holder);
     /// @dev Kill-switch: execution disabled but the key record is preserved.
     event SessionKeyPaused(address indexed holder);
@@ -164,6 +179,7 @@ contract BrainSmartAccount {
     address public immutable policyRegistry;
 
     mapping(address => SessionKey) private _keys;
+    mapping(address => PendingGrant) private _pendingGrants;
     /// @dev holder => window_start_timestamp => spent_in_window. Windows are
     ///      anchored to _windowAnchor[holder], not to the unix epoch.
     mapping(address => mapping(uint256 => uint256)) private _windowSpent;
@@ -235,6 +251,8 @@ contract BrainSmartAccount {
     error AllowlistTooLarge(uint256 maxAllowed);
     error InvalidValidityWindow(uint256 validAfter, uint256 validUntil);
     error PolicyVersionNotRegistered(bytes32 policyVersion);
+    error NoPendingSessionKeyGrant(address holder);
+    error PendingSessionKeyGrantNotReady(address holder, uint256 executableAt);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -273,18 +291,26 @@ contract BrainSmartAccount {
         emit OwnershipTransferred(previous, owner);
     }
 
-    /// @notice Grant a session key. Overwrites any existing key for the holder.
+    /// @notice Grant or schedule a session key.
     /// @dev Validation is exhaustive per cap mode so executeViaSessionKey can be
     ///      straight-line and every accepted key is guaranteed meterable. The
     ///      policyVersion must be a hash BrainPolicyRegistry has registered for
-    ///      this account's tenant, so the binding is real rather than an unread
-    ///      field.
+    ///      this account's tenant. Broader grants are delayed on-chain.
     function grantSessionKey(SessionKey calldata key) external onlyOwner {
+        _validateSessionKey(key);
+
+        if (_grantRequiresDelay(key)) {
+            _scheduleSessionKeyGrant(key);
+            return;
+        }
+
+        _cancelPendingIfExists(key.holder);
+        _storeSessionKey(key);
+    }
+
+    function _validateSessionKey(SessionKey calldata key) private view {
         if (key.holder == address(0)) revert ZeroAddress();
         if (key.validUntil <= block.timestamp) revert KeyExpired();
-        // validAfter == 0 is rejected rather than read as "no lower bound": it is
-        // indistinguishable from an unset struct field, and a zero start bound
-        // makes the key active for all of history before validUntil.
         if (key.validAfter == 0 || key.validAfter >= key.validUntil) {
             revert InvalidValidityWindow(key.validAfter, key.validUntil);
         }
@@ -368,7 +394,27 @@ contract BrainSmartAccount {
                 revert InvalidPinOffset(0);
             }
         }
+    }
 
+    function _grantRequiresDelay(SessionKey calldata key) private view returns (bool) {
+        SessionKey storage current = _keys[key.holder];
+        if (current.holder != key.holder) return true;
+        return _isBroaderThanCurrent(current, key);
+    }
+
+    function _scheduleSessionKeyGrant(SessionKey calldata key) private {
+        uint256 executableAt = block.timestamp + GRANT_INCREASE_DELAY;
+        if (key.validUntil <= executableAt) revert InvalidValidityWindow(key.validAfter, key.validUntil);
+
+        PendingGrant storage pending = _pendingGrants[key.holder];
+        if (pending.exists) emit PendingSessionKeyGrantCancelled(key.holder);
+        pending.key = key;
+        pending.executableAt = executableAt;
+        pending.exists = true;
+        emit SessionKeyGrantScheduled(key.holder, key.policyVersion, executableAt, key.validUntil, key.capMode);
+    }
+
+    function _storeSessionKey(SessionKey calldata key) private {
         // First grant fixes the accounting anchor for this holder forever. A
         // re-grant deliberately does NOT move it and does NOT clear
         // _windowSpent, so refreshing a key cannot reset the period budget.
@@ -376,6 +422,98 @@ contract BrainSmartAccount {
 
         _keys[key.holder] = key;
         emit SessionKeyGranted(key.holder, key.policyVersion, key.validUntil, key.capMode);
+    }
+
+    function _storePendingSessionKey(address holder) private {
+        PendingGrant storage pending = _pendingGrants[holder];
+        SessionKey storage key = pending.key;
+        if (_windowAnchor[holder] == 0) _windowAnchor[holder] = block.timestamp;
+
+        _keys[holder] = key;
+        emit SessionKeyGranted(holder, key.policyVersion, key.validUntil, key.capMode);
+        emit PendingSessionKeyGrantExecuted(holder, key.policyVersion, key.validUntil, key.capMode);
+        delete _pendingGrants[holder];
+    }
+
+    function activatePendingSessionKeyGrant(address holder) external onlyOwner {
+        PendingGrant storage pending = _pendingGrants[holder];
+        if (!pending.exists) revert NoPendingSessionKeyGrant(holder);
+        if (block.timestamp < pending.executableAt) {
+            revert PendingSessionKeyGrantNotReady(holder, pending.executableAt);
+        }
+        _storePendingSessionKey(holder);
+    }
+
+    function cancelPendingSessionKeyGrant(address holder) external onlyOwner {
+        PendingGrant storage pending = _pendingGrants[holder];
+        if (!pending.exists) revert NoPendingSessionKeyGrant(holder);
+        delete _pendingGrants[holder];
+        emit PendingSessionKeyGrantCancelled(holder);
+    }
+
+    function _cancelPendingIfExists(address holder) private {
+        if (_pendingGrants[holder].exists) {
+            delete _pendingGrants[holder];
+            emit PendingSessionKeyGrantCancelled(holder);
+        }
+    }
+
+    function _isBroaderThanCurrent(SessionKey storage current, SessionKey calldata next) private view returns (bool) {
+        if (next.validAfter < current.validAfter) return true;
+        if (next.validUntil > current.validUntil) return true;
+        if (next.maxPerTx > current.maxPerTx) return true;
+        if (next.maxPerPeriod > current.maxPerPeriod) return true;
+        if (_periodIsBroader(current.periodSeconds, next.periodSeconds)) return true;
+        if (next.capMode != current.capMode) return true;
+        if (next.capToken != current.capToken) return true;
+        if (next.capAmountOffset != current.capAmountOffset) return true;
+        if (next.policyVersion != current.policyVersion) return true;
+        if (_pinIsBroader(current, next)) return true;
+        if (_hasNewAddress(next.allowedTargets, current.allowedTargets)) return true;
+        if (_hasNewSelector(next.allowedSelectors, current.allowedSelectors)) return true;
+        if (_hasNewAddress(next.allowedRecipients, current.allowedRecipients)) return true;
+        return false;
+    }
+
+    function _periodIsBroader(uint256 current, uint256 next) private pure returns (bool) {
+        if (current == next) return false;
+        if (current == 0) return false;
+        if (next == 0) return true;
+        return next < current;
+    }
+
+    function _pinIsBroader(SessionKey storage current, SessionKey calldata next) private view returns (bool) {
+        if (current.pinOffset == 0) return false;
+        if (next.pinOffset == 0) return true;
+        return next.pinOffset != current.pinOffset || next.pinValue != current.pinValue;
+    }
+
+    function _hasNewAddress(address[] calldata next, address[] storage current) private view returns (bool) {
+        for (uint256 i = 0; i < next.length; ++i) {
+            if (!_containsAddress(current, next[i])) return true;
+        }
+        return false;
+    }
+
+    function _containsAddress(address[] storage list, address value) private view returns (bool) {
+        for (uint256 i = 0; i < list.length; ++i) {
+            if (list[i] == value) return true;
+        }
+        return false;
+    }
+
+    function _hasNewSelector(bytes4[] calldata next, bytes4[] storage current) private view returns (bool) {
+        for (uint256 i = 0; i < next.length; ++i) {
+            if (!_containsSelector(current, next[i])) return true;
+        }
+        return false;
+    }
+
+    function _containsSelector(bytes4[] storage list, bytes4 value) private view returns (bool) {
+        for (uint256 i = 0; i < list.length; ++i) {
+            if (list[i] == value) return true;
+        }
+        return false;
     }
 
     /// @notice H-03: the next expected execute nonce for `holder`.
@@ -390,6 +528,7 @@ contract BrainSmartAccount {
     ///         deliberately NOT cleared: revoke-then-regrant would otherwise be a
     ///         one-owner-transaction reset of the period cap.
     function revokeSessionKey(address holder) external onlyOwner {
+        _cancelPendingIfExists(holder);
         delete _keys[holder];
         delete _paused[holder];
         emit SessionKeyRevoked(holder);
@@ -580,6 +719,16 @@ contract BrainSmartAccount {
     /// @notice Read a holder's session key.
     function sessionKey(address holder) external view returns (SessionKey memory) {
         return _keys[holder];
+    }
+
+    /// @notice Read a holder's pending broader grant, if any.
+    function pendingSessionKeyGrant(address holder)
+        external
+        view
+        returns (SessionKey memory key, uint256 executableAt, bool exists)
+    {
+        PendingGrant storage pending = _pendingGrants[holder];
+        return (pending.key, pending.executableAt, pending.exists);
     }
 
     /// @notice Amount spent by `holder` in the current period window.
