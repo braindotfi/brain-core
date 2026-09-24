@@ -20,14 +20,28 @@ export type ProposalState =
   | "failed"
   | "undone"
   | "superseded"
+  | "blocked"
   | "unknown";
 
 export function isValidProposalTransition(from: ProposalState, to: ProposalState): boolean {
   switch (from) {
     case "pending":
-      return to === "approved" || to === "rejected" || to === "acknowledged" || to === "superseded";
+      return (
+        to === "approved" ||
+        to === "rejected" ||
+        to === "acknowledged" ||
+        to === "executed" ||
+        to === "superseded" ||
+        to === "blocked"
+      );
     case "approved":
-      return to === "executed" || to === "rejected" || to === "undone" || to === "reconciling";
+      return (
+        to === "executed" ||
+        to === "rejected" ||
+        to === "undone" ||
+        to === "reconciling" ||
+        to === "blocked"
+      );
     case "reconciling":
       return to === "executed" || to === "failed";
     case "executed":
@@ -37,6 +51,7 @@ export function isValidProposalTransition(from: ProposalState, to: ProposalState
     case "failed":
     case "undone":
     case "superseded":
+    case "blocked":
     case "unknown":
       return false;
   }

@@ -56,8 +56,10 @@ function buildFraudAnomalyProposal(input: HandlerInput): ProposedAction {
       kind: "agent_action",
       transaction_id: transactionId,
       account_id: readString(input.context.account_id) || null,
+      card_id: readString(input.context.card_id) || null,
       counterparty_id: readString(input.context.counterparty_id) || null,
       counterparty_name: counterpartyName || null,
+      merchant_descriptor: counterpartyName || readString(input.context.description) || null,
       amount: amount.toFixed(2),
       currency: readString(input.context.currency, "USD").toUpperCase(),
       transaction_date: readString(input.context.transaction_date) || null,
@@ -66,6 +68,8 @@ function buildFraudAnomalyProposal(input: HandlerInput): ProposedAction {
       risk_band: score.riskBand,
       recommended_action: score.recommendedAction,
       triggering_signals: score.signals.map((signal) => signal.id),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("signals", input.context.signals),
       ranked_signals: score.signals.map((signal) => ({
         id: signal.id,
         label: signal.label,
@@ -226,6 +230,12 @@ function readNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function positiveMin(a: number | null, b: number | null): number | null {

@@ -18,6 +18,14 @@ const DEFAULT_LOW_BALANCE_FLOOR = 25_000;
 const DEFAULT_SURPLUS_FLOOR = 100_000;
 const SCANNER_ACTOR = "treasury_scanner";
 
+export interface TreasuryAllocationAccount {
+  readonly account_id: string;
+  readonly name: string | null;
+  readonly account_type: string | null;
+  readonly current_balance: string;
+  readonly currency: string;
+}
+
 export interface TreasuryBalanceRow {
   readonly tenant_id: string;
   readonly balance_id: string;
@@ -26,6 +34,10 @@ export interface TreasuryBalanceRow {
   readonly currency: string;
   readonly as_of: string;
   readonly event_hint: string;
+  readonly account_type?: string | null;
+  readonly all_balances?: readonly TreasuryAllocationAccount[];
+  readonly current_yield_rate?: string | null;
+  readonly recommended_yield_rate?: string | null;
 }
 
 export interface TreasuryScannerDeps {
@@ -56,7 +68,8 @@ interface TreasurySelection {
   readonly totalFair: number;
 }
 
-interface TreasuryDbRow extends TreasuryBalanceRow {
+interface TreasuryDbRow extends Omit<TreasuryBalanceRow, "all_balances"> {
+  readonly all_balances?: unknown;
   readonly eligible_count?: number | string;
   readonly fair_count?: number | string;
 }
@@ -140,6 +153,13 @@ export async function runTreasuryScanCycle(
             low_balance_floor: thresholds.lowBalanceFloor.toFixed(2),
             surplus_floor: thresholds.surplusFloor.toFixed(2),
           },
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            allocation_before: allocationBeforeFor(row),
+            allocation_after: allocationAfterFor(row, thresholds),
+            safety_meter: safetyMeterFor(row, thresholds),
+            estimated_annual_yield_gain: estimatedYieldGainFor(row, thresholds),
+          }),
         },
       });
       status = result.status;
@@ -187,6 +207,8 @@ async function listTreasuryBalances(
            SELECT b.owner_id AS tenant_id,
                   b.id AS balance_id,
                   b.account_id,
+                  a.name,
+                  a.account_type,
                   b.current_balance::text AS current_balance,
                   b.currency,
                   b.as_of::text AS as_of,
@@ -203,12 +225,28 @@ async function listTreasuryBalances(
      ),
      candidates AS (
        SELECT l.*,
+              COALESCE(allocation.items, '[]'::jsonb) AS all_balances,
               CASE
                 WHEN l.current_balance::numeric <= $4::numeric THEN 'cash.balance_low'
                 WHEN l.current_balance::numeric >= $5::numeric THEN 'cash.balance_high'
                 ELSE 'runway.changed'
               END AS event_hint
          FROM latest l
+         LEFT JOIN LATERAL (
+           SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'account_id', other.account_id,
+                      'name', other.name,
+                      'account_type', other.account_type,
+                      'current_balance', other.current_balance,
+                      'currency', other.currency
+                    )
+                    ORDER BY other.account_type ASC, other.account_id ASC
+                  ) AS items
+             FROM latest other
+            WHERE other.tenant_id = l.tenant_id
+              AND other.currency = l.currency
+         ) allocation ON true
         WHERE l.current_balance::numeric <= $4::numeric
            OR l.current_balance::numeric >= $5::numeric
      ),
@@ -244,7 +282,10 @@ async function listTreasuryBalances(
     ],
   );
   return {
-    rows,
+    rows: rows.map((row) => ({
+      ...row,
+      all_balances: normalizeAllocationAccounts(row.all_balances),
+    })),
     totalEligible: normalizeCount(rows[0]?.eligible_count, rows.length),
     totalFair: normalizeCount(rows[0]?.fair_count, rows.length),
   };
@@ -330,6 +371,20 @@ function eventFor(row: TreasuryBalanceRow): DomainEvent {
   return row.event_hint === "cash.balance_low" ? "cash.balance_low" : "cash.balance_high";
 }
 
+function decisionContextFor(row: TreasuryBalanceRow): Record<string, unknown> {
+  const highBalance = row.event_hint !== "cash.balance_low";
+  return {
+    decide_by: `Based on balance as of ${row.as_of}`,
+    if_wrong: highBalance
+      ? "Sweeping too much can reduce operating cash. Waiting can leave surplus cash under-allocated."
+      : "Treating the alert as urgent can trigger unnecessary cash movement. Waiting can leave operations underfunded.",
+    reversible: {
+      state: highBalance ? "yes" : "na",
+      label: highBalance ? "Yes before transfer execution" : "Advisory alert only",
+    },
+  };
+}
+
 function triggerKeyFor(row: TreasuryBalanceRow, event: DomainEvent): string {
   return `treasury:${event}:balance:${row.balance_id}`;
 }
@@ -341,4 +396,140 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function allocationBeforeFor(row: TreasuryBalanceRow): Record<string, unknown> | undefined {
+  return allocationFromAccounts(row.all_balances);
+}
+
+function allocationAfterFor(
+  row: TreasuryBalanceRow,
+  thresholds: Thresholds,
+): Record<string, unknown> | undefined {
+  if (eventFor(row) !== "cash.balance_high") return undefined;
+  const accounts = row.all_balances;
+  if (accounts === undefined || accounts.length === 0) return undefined;
+  const sweepAmount = numberOrUndefined(row.current_balance) - thresholds.operatingMinimum;
+  if (sweepAmount <= 0) return undefined;
+  const reserveIndex = accounts.findIndex((account) => account.account_type === "bank_savings");
+  if (reserveIndex < 0) return undefined;
+  const projected: TreasuryAllocationAccount[] = accounts.map((account) => {
+    if (account.account_id !== row.account_id) return account;
+    return {
+      ...account,
+      current_balance: (numberOrUndefined(account.current_balance) - sweepAmount).toFixed(2),
+    };
+  });
+  const reserve = projected[reserveIndex];
+  if (reserve !== undefined) {
+    projected[reserveIndex] = {
+      ...reserve,
+      current_balance: (numberOrUndefined(reserve.current_balance) + sweepAmount).toFixed(2),
+    };
+  }
+  return allocationFromAccounts(projected);
+}
+
+function allocationFromAccounts(
+  accounts: readonly TreasuryAllocationAccount[] | undefined,
+): Record<string, unknown> | undefined {
+  if (accounts === undefined || accounts.length === 0) return undefined;
+  let operating: number | undefined;
+  let reserve: number | undefined;
+  const otherAccounts: Array<Record<string, unknown>> = [];
+  for (const account of accounts) {
+    const balance = numberOrUndefined(account.current_balance);
+    if (account.account_type === "bank_checking") {
+      operating = (operating ?? 0) + balance;
+    } else if (account.account_type === "bank_savings") {
+      reserve = (reserve ?? 0) + balance;
+    } else {
+      otherAccounts.push({
+        account_id: account.account_id,
+        name: account.name,
+        current_balance: account.current_balance,
+        currency: account.currency,
+      });
+    }
+  }
+  if (operating === undefined && reserve === undefined && otherAccounts.length === 0) {
+    return undefined;
+  }
+  return {
+    operating: (operating ?? 0).toFixed(2),
+    reserve: (reserve ?? 0).toFixed(2),
+    other_accounts: otherAccounts,
+  };
+}
+
+function safetyMeterFor(
+  row: TreasuryBalanceRow,
+  thresholds: Thresholds,
+): Record<string, unknown> | undefined {
+  if (row.currency !== "USD") return undefined;
+  return {
+    current: row.current_balance,
+    floor: thresholds.lowBalanceFloor.toFixed(2),
+    ceiling: thresholds.surplusFloor.toFixed(2),
+    unit: "USD",
+  };
+}
+
+function estimatedYieldGainFor(
+  row: TreasuryBalanceRow,
+  thresholds: Thresholds,
+): Record<string, unknown> | undefined {
+  if (row.currency !== "USD") return undefined;
+  const currentRate = numberOrNullable(row.current_yield_rate);
+  const recommendedRate = numberOrNullable(row.recommended_yield_rate);
+  if (currentRate === null || recommendedRate === null) return undefined;
+  const recommendedAmount = Math.max(
+    0,
+    numberOrUndefined(row.current_balance) - thresholds.operatingMinimum,
+  );
+  if (recommendedAmount <= 0) return undefined;
+  const gain = recommendedAmount * (recommendedRate - currentRate);
+  return { amount: gain.toFixed(2), currency: "USD" };
+}
+
+function normalizeAllocationAccounts(raw: unknown): TreasuryAllocationAccount[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeAllocationAccount)
+    .filter((row): row is TreasuryAllocationAccount => row !== null);
+}
+
+function normalizeAllocationAccount(raw: unknown): TreasuryAllocationAccount | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const accountId = stringOrNull(row["account_id"]);
+  const currentBalance = stringOrNull(row["current_balance"]);
+  const currency = stringOrNull(row["currency"]);
+  if (accountId === null || currentBalance === null || currency === null) return null;
+  return {
+    account_id: accountId,
+    name: stringOrNull(row["name"]),
+    account_type: stringOrNull(row["account_type"]),
+    current_balance: currentBalance,
+    currency,
+  };
+}
+
+function numberOrUndefined(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function numberOrNullable(value: string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

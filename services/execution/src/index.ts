@@ -14,6 +14,11 @@ export const SERVICE_NAME = "brain-execution" as const;
 export { buildExecutionApp, type BuildExecutionAppOptions } from "./server.js";
 export type { ExecutionDeps } from "./deps.js";
 export * from "./state-machines.js";
+export type {
+  CollectionsEmailSender,
+  CollectionsSendEmailInput,
+  CollectionsSendEmailResult,
+} from "./proposals/decision-service.js";
 
 // Phase 4 — PaymentIntent lifecycle + non-financial agent proposals.
 export { PaymentIntentService } from "./payment-intents/PaymentIntentService.js";
@@ -169,14 +174,64 @@ export type {
 } from "./payment-intents/routes.js";
 export { registerProposalReadRoutes } from "./proposals/routes.js";
 export {
+  RulesEngineService,
+  evaluateJsonLogic,
+  type AgentAuthorityRule,
+  type RuleAuthority,
+  type RuleAgent,
+  type RuleEvaluationResult,
+} from "./rules/rules-engine.js";
+export { registerRulesRoutes } from "./rules/routes.js";
+export {
+  ProposalSnapshotService,
+  insertProposalSnapshot,
+  type ProposalSnapshot,
+} from "./proposal-snapshots/service.js";
+export { registerProposalSnapshotRoutes } from "./proposal-snapshots/routes.js";
+export {
+  DecisionAuditLogService,
+  DecisionAuditLogEmitter,
+  type DecisionAuditLogEntry,
+  type AuditLogFilters,
+  type AuditLogListResult,
+  type AuditLogExportResult,
+} from "./audit-log/service.js";
+export { registerDecisionAuditLogRoutes } from "./audit-log/routes.js";
+export {
   parseProposalDecisionStateQuery,
   queryProposalDecisionStates,
   type ProposalDecisionStateItem,
   type ProposalDecisionStateQuery,
   type ProposalDecisionStateResult,
 } from "./proposals/decision-state.js";
-export { registerEvidenceResolveRoutes } from "./evidence/routes.js";
-export type { EvidenceResolveRoutesDeps } from "./evidence/routes.js";
+export { registerEvidenceResolveRoutes, registerEvidenceRoutes } from "./evidence/routes.js";
+export type { EvidenceResolveRoutesDeps, EvidenceRoutesDeps } from "./evidence/routes.js";
+export {
+  EvidenceStorageService,
+  evidenceRecordToWire,
+  evidenceToWire,
+  type EvidenceGenerateInput,
+  type EvidenceExternalInput,
+  type EvidenceReadResult,
+  type EvidenceUploadInput,
+} from "./evidence/service.js";
+export {
+  InMemoryEvidenceBlobStore,
+  LocalDiskEvidenceBlobStore,
+  S3EvidenceBlobStore,
+  TodoEvidenceBlobStore,
+  type S3EvidenceBlobStoreOptions,
+  sha256Hex as evidenceSha256Hex,
+  type EvidenceBlobPutResult,
+  type EvidenceBlobStore,
+} from "./evidence/blob-store.js";
+export type {
+  EvidenceKind,
+  EvidenceListFilters,
+  EvidenceRecord,
+  EvidenceRetentionClass,
+  EvidenceSource,
+} from "./evidence/repository.js";
 export {
   canonicalEvidenceKind,
   evidenceKindFromRefPrefix,
@@ -213,6 +268,15 @@ export {
 } from "./proposals/read-model.js";
 export { registerMemberRoutes } from "./members/routes.js";
 export type { MemberRoutesDeps } from "./members/routes.js";
+export { registerTeamRoutes, directorySyncProvider } from "./team/routes.js";
+export type { TeamRoutesDeps } from "./team/routes.js";
+export {
+  NoneDirectoryProvider,
+  TodoDirectoryProvider,
+  type DirectoryProvider,
+  type DirectoryProviderKind,
+  type DirectoryUser,
+} from "./team/directory-provider.js";
 
 // P0.5 invoice shortcut resolver + injected lookups.
 export { resolveInvoiceShortcut } from "./payment-intents/invoice-shortcut.js";

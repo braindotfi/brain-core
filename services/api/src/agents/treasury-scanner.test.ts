@@ -59,6 +59,89 @@ describe("runTreasuryScanCycle", () => {
     );
   });
 
+  it("emits allocation, safety, and yield fields when source data is available", async () => {
+    const row = balance({
+      all_balances: [
+        {
+          account_id: "acct_1",
+          name: "Operating",
+          account_type: "bank_checking",
+          current_balance: "120000.00",
+          currency: "USD",
+        },
+        {
+          account_id: "acct_2",
+          name: "Reserve",
+          account_type: "bank_savings",
+          current_balance: "30000.00",
+          currency: "USD",
+        },
+      ],
+      current_yield_rate: "0.01",
+      recommended_yield_rate: "0.04",
+    });
+    const run = vi.fn(
+      async (): Promise<AgentRunResult> => result("treasury", "recommend_cash_sweep"),
+    );
+
+    await runTreasuryScanCycle(
+      { scanPool: scanPoolWith([row]), appPool: cooldownPool(), runService: { run } },
+      {
+        now: new Date("2026-07-19T00:00:00.000Z"),
+        operatingMinimum: 50000,
+        lowBalanceFloor: 25000,
+        surplusFloor: 100000,
+      },
+    );
+
+    expect((run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1]).toMatchObject({
+      context: {
+        allocation_before: {
+          operating: "120000.00",
+          reserve: "30000.00",
+          other_accounts: [],
+        },
+        allocation_after: {
+          operating: "50000.00",
+          reserve: "100000.00",
+          other_accounts: [],
+        },
+        safety_meter: {
+          current: "120000.00",
+          floor: "25000.00",
+          ceiling: "100000.00",
+          unit: "USD",
+        },
+        estimated_annual_yield_gain: { amount: "2100.00", currency: "USD" },
+      },
+    });
+  });
+
+  it("omits allocation and yield fields when source data is unavailable", async () => {
+    const run = vi.fn(
+      async (): Promise<AgentRunResult> => result("treasury", "recommend_cash_sweep"),
+    );
+
+    await runTreasuryScanCycle(
+      {
+        scanPool: scanPoolWith([balance({ currency: "EUR" })]),
+        appPool: cooldownPool(),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (
+      (run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1] as
+        | { context?: Record<string, unknown> }
+        | undefined
+    )?.context;
+    expect(context).not.toHaveProperty("allocation_before");
+    expect(context).not.toHaveProperty("allocation_after");
+    expect(context).not.toHaveProperty("safety_meter");
+    expect(context).not.toHaveProperty("estimated_annual_yield_gain");
+  });
+
   it("reports the true eligible backlog when the global cap is hit", async () => {
     const rows = [
       balance({ tenant_id: tenantA, balance_id: "bal_1" }),

@@ -52,4 +52,6 @@ export interface ServiceCallContext {
   principalType?: "user" | "agent" | "api_partner";
   /** Scopes granted by the JWT. Present on authenticated HTTP routes; absent on background workers. */
   scopes?: ReadonlyArray<string>;
+  /** Optional machine actor reason, such as rule-driven execution. */
+  actorReason?: string;
 }

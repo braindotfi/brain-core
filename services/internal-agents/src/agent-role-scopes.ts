@@ -24,6 +24,8 @@ export const KNOWN_AGENT_ROLES: readonly string[] = [
   "dispute",
   "fraud_anomaly",
   "vendor_risk",
+  "aml_compliance",
+  "subscription_management",
   "reconciliation",
   "payment",
   "anomaly",
@@ -55,6 +57,8 @@ export function scopesForAgentRole(role: string): Scope[] {
     case "dispute":
     case "fraud_anomaly":
     case "vendor_risk":
+    case "aml_compliance":
+    case "subscription_management":
       return [...catalogReadableScopesForRole(role), "execution:propose"];
     case "reconciliation":
       return ["ledger:read", "wiki:read", "raw:write", "execution:propose"];
@@ -110,7 +114,9 @@ export function scopesForAgentRole(role: string): Scope[] {
   }
 }
 
-function catalogReadableScopesForRole(role: "dispute" | "fraud_anomaly" | "vendor_risk"): Scope[] {
+function catalogReadableScopesForRole(
+  role: "dispute" | "fraud_anomaly" | "vendor_risk" | "aml_compliance" | "subscription_management",
+): Scope[] {
   const definition = internalAgentDefinitions[role];
   if (definition === undefined) {
     throw new Error(`${role} must exist in the internal-agent catalog before SIWX can mint it`);

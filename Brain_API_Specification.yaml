@@ -48,6 +48,12 @@ tags:
     description: Normalized financial truth — accounts, balances, transactions, counterparties, obligations, invoices, documents, transfers, reconciliation matches (Layer 2)
   - name: Wiki
     description: Human-readable memory pages, search, Q&A. Pages are derived from Ledger + Raw (Layer 3)
+  - name: Robo
+    description: RobotMoney assistant briefs and context-aware assistant entry points.
+  - name: RobotMoney UI
+    description: RobotMoney UI support endpoints.
+  - name: Integrations
+    description: Tenant provider integration configuration.
   - name: Policy
     description: Rule composition, signing, evaluation against Ledger state (Layer 4)
   - name: Agent
@@ -3049,6 +3055,31 @@ paths:
               schema: { $ref: '#/components/schemas/Transaction' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /ledger/deposit-instructions:
+    post:
+      tags: [Ledger]
+      summary: Get deposit instructions
+      description: Requires `ledger:read`.
+      operationId: getDepositInstructions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id, method]
+              properties:
+                account_id: { type: string }
+                method: { type: string, enum: [wire, ach, onchain] }
+      responses:
+        '200':
+          description: Deposit instructions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepositInstructions' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /ledger/counterparties:
     get:
       tags: [Ledger]
@@ -3998,6 +4029,99 @@ paths:
                 $ref: '#/components/schemas/WikiAnswer'
         '400': { $ref: '#/components/responses/BadRequest' }
         '429': { $ref: '#/components/responses/RateLimited' }
+
+  /robo/brief:
+    post:
+      tags: [Robo]
+      summary: Create or read the cached morning brief
+      description: |
+        Requires `wiki:read`. The brief is idempotent per tenant and date.
+        If the cache already has a brief for the requested date, the cached
+        response is returned unchanged. Otherwise Brain compiles a structured
+        brief from balances, audit events, proposals, and forecast data.
+      operationId: createRoboBrief
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoboBriefRequest' }
+      responses:
+        '200':
+          description: Cached or newly compiled morning brief
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoboBrief' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /robo/brief/{tenant_id}:
+    get:
+      tags: [Robo]
+      summary: Read a cached morning brief
+      description: |
+        Requires `wiki:read`. Reads only the cached brief for the date. It
+        does not compile a missing brief.
+      operationId: getRoboBrief
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Cached morning brief
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoboBrief' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /robo/overnight:
+    get:
+      tags: [Robo]
+      summary: List overnight Robo actions
+      description: Requires `wiki:read`. Returns agent actions recorded in the overnight audit window.
+      operationId: getRoboOvernight
+      responses:
+        '200':
+          description: Overnight agent actions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoboOvernight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /robo/ask-from-context:
+    post:
+      tags: [Robo]
+      summary: Open Robo from a proposal rail
+      description: |
+        Requires `wiki:read`. Creates a new Robo thread, stores the first user
+        turn, attaches a frozen proposal payload snapshot, and answers through
+        the existing assistant answer path.
+      operationId: askRoboFromContext
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoboAskFromContextRequest' }
+      responses:
+        '200':
+          description: Thread id and first response, or an SSE stream when open_thread is true.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoboAskFromContextResponse' }
+            text/event-stream:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /wiki/suggested-questions:
     get:
@@ -5350,7 +5474,7 @@ paths:
         Requires `execution:read`. Batch-resolves proposal evidence refs into
         tenant-scoped display summaries and canonical deep links. Supported in
         this release: counterparty, transaction, obligation, account, invoice,
-        and wiki_entity. Unsupported kinds return `resolvable=false` with
+        wiki_entity, and stored evidence kinds. Unsupported kinds return `resolvable=false` with
         `reason=unsupported_kind`. A supported kind whose record is absent for
         this tenant returns `resolvable=true`, `not_found=true`, `summary=null`,
         and `deep_link=null`.
@@ -5366,6 +5490,152 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EvidenceResolveResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evidence/upload:
+    post:
+      tags: [Evidence]
+      summary: Upload stored evidence
+      description: Requires `execution:write`. Stores content by SHA-256 and returns evidence metadata plus a short-lived URL.
+      operationId: uploadEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvidenceUploadRequest' }
+      responses:
+        '201':
+          description: Evidence uploaded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceReadResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evidence/register-external:
+    post:
+      tags: [Evidence]
+      summary: Register external evidence
+      description: Requires `execution:write`. Registers a URL-backed citation without copying bytes into Brain storage.
+      operationId: registerExternalEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvidenceRegisterExternalRequest' }
+      responses:
+        '201':
+          description: External evidence registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceReadResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evidence/generate:
+    post:
+      tags: [Evidence]
+      summary: Generate evidence
+      description: Requires `execution:write`. Records generated report or data evidence from an internal generator.
+      operationId: generateEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvidenceGenerateRequest' }
+      responses:
+        '201':
+          description: Evidence generated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceReadResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /evidence/{id}:
+    get:
+      tags: [Evidence]
+      summary: Get evidence
+      description: Requires `execution:read`. Stored content is hash-verified before a URL is returned.
+      operationId: getEvidence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Evidence metadata and URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceReadResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stored content failed tamper verification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Evidence]
+      summary: Delete evidence
+      description: Requires `execution:write`. Soft deletes evidence unless it is attached to an open proposal.
+      operationId: deleteEvidence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Evidence deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [evidence]
+                properties:
+                  evidence: { $ref: '#/components/schemas/EvidenceRecord' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Evidence is attached to an open proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /evidence:
+    get:
+      tags: [Evidence]
+      summary: List evidence
+      description: Requires `execution:read`. Lists tenant evidence by proposal, kind, and capture time.
+      operationId: listEvidence
+      parameters:
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+        - name: proposal_id
+          in: query
+          schema: { type: string }
+        - name: kind
+          in: query
+          schema: { $ref: '#/components/schemas/EvidenceKind' }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Evidence list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceListResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -5467,6 +5737,419 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /tenant/profile:
+    get:
+      tags: [RobotMoney UI]
+      summary: Read business profile
+      description: Requires `execution:read`.
+      operationId: getTenantProfile
+      responses:
+        '200':
+          description: Business profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantProfile' }
+    patch:
+      tags: [RobotMoney UI]
+      summary: Update business profile
+      description: Requires `execution:admin`.
+      operationId: updateTenantProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantProfilePatch' }
+      responses:
+        '200':
+          description: Business profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantProfile' }
+
+  /tenant/notification-preferences:
+    get:
+      tags: [RobotMoney UI]
+      summary: Read assistant notification preferences
+      description: Requires `execution:read`.
+      operationId: getNotificationPreferences
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferences' }
+    patch:
+      tags: [RobotMoney UI]
+      summary: Update assistant notification preferences
+      description: Requires `execution:admin`.
+      operationId: updateNotificationPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationPreferencesPatch' }
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferences' }
+
+  /tenant/integrations:
+    get:
+      tags: [Integrations]
+      summary: List tenant provider integrations
+      description: Requires `execution:read`. Provider config values are not returned.
+      operationId: listTenantIntegrations
+      responses:
+        '200':
+          description: Tenant integrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [integrations]
+                properties:
+                  integrations:
+                    type: array
+                    items: { $ref: '#/components/schemas/TenantIntegration' }
+
+  /tenant/integrations/{adapter_kind}:
+    put:
+      tags: [Integrations]
+      summary: Configure a tenant provider integration
+      description: Requires `execution:admin`. Enabling a provider fails if required process env is missing.
+      operationId: putTenantIntegration
+      parameters:
+        - name: adapter_kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ofac, pep, kyc, card_issuer, dispute, reversal, directory, saas_vendor, llm, notification, blob]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantIntegrationInput' }
+      responses:
+        '200':
+          description: Tenant integration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantIntegration' }
+        '409':
+          description: Provider env is missing. Error code `integration_provider_not_configured`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/two-factor:
+    get:
+      tags: [RobotMoney UI]
+      summary: List two-factor methods
+      description: Requires `execution:read` and a user principal.
+      operationId: listTwoFactorMethods
+      responses:
+        '200':
+          description: Two-factor methods
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TwoFactorMethodsResponse' }
+
+  /auth/two-factor/enroll:
+    post:
+      tags: [RobotMoney UI]
+      summary: Start two-factor enrollment
+      description: Requires `execution:admin` and a user principal.
+      operationId: enrollTwoFactorMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string, enum: [authenticator, sms, backup_codes] }
+                phone_number: { type: string }
+      responses:
+        '201':
+          description: Pending enrollment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TwoFactorEnrollment' }
+
+  /auth/two-factor/confirm-enrollment:
+    post:
+      tags: [RobotMoney UI]
+      summary: Confirm two-factor enrollment
+      description: Requires `execution:admin` and a user principal.
+      operationId: confirmTwoFactorEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, code]
+              properties:
+                method: { type: string, enum: [authenticator, sms, backup_codes] }
+                code: { type: string }
+      responses:
+        '200':
+          description: Enabled method
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TwoFactorMethod' }
+
+  /auth/two-factor/{method}:
+    delete:
+      tags: [RobotMoney UI]
+      summary: Remove a two-factor method
+      description: Requires `execution:admin` and a user principal.
+      operationId: removeTwoFactorMethod
+      parameters:
+        - name: method
+          in: path
+          required: true
+          schema: { type: string, enum: [authenticator, sms, backup_codes] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password: { type: string }
+                backup_code: { type: string }
+      responses:
+        '204': { description: Removed }
+
+  /auth/trusted-devices:
+    get:
+      tags: [RobotMoney UI]
+      summary: List trusted devices
+      description: Requires `execution:read` and a user principal.
+      operationId: listTrustedDevices
+      responses:
+        '200':
+          description: Trusted devices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrustedDevice' }
+
+  /auth/trusted-devices/{id}:
+    delete:
+      tags: [RobotMoney UI]
+      summary: Revoke a trusted device
+      description: Requires `execution:admin` and a user principal.
+      operationId: revokeTrustedDevice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Revoked }
+
+  /exchange/quote:
+    post:
+      tags: [RobotMoney UI]
+      summary: Quote an exchange
+      description: Requires `payment_intent:propose`.
+      operationId: createExchangeQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExchangeQuoteRequest' }
+      responses:
+        '201':
+          description: Exchange quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExchangeQuote' }
+
+  /agents/overview:
+    get:
+      tags: [RobotMoney UI]
+      summary: List RobotMoney agent overview rows
+      description: Requires `execution:read`.
+      operationId: listAgentOverview
+      parameters:
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Optional UI context. Authenticated tenant scope remains authoritative.
+      responses:
+        '200':
+          description: Agent overview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentOverviewItem' }
+
+  /accounts:
+    get:
+      tags: [RobotMoney UI]
+      summary: List UI accounts
+      description: Requires `ledger:read`.
+      operationId: listUiAccounts
+      responses:
+        '200':
+          description: Account list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accounts]
+                properties:
+                  accounts:
+                    type: array
+                    items: { $ref: '#/components/schemas/UiAccount' }
+
+  /accounts/{id}:
+    get:
+      tags: [RobotMoney UI]
+      summary: Read UI account with transactions
+      description: Requires `ledger:read`.
+      operationId: getUiAccount
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Account with recent transactions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UiAccountDetail' }
+
+  /contacts:
+    get:
+      tags: [RobotMoney UI]
+      summary: List contacts
+      description: Requires `ledger:read`.
+      operationId: listContacts
+      responses:
+        '200':
+          description: Contact list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contact' }
+    post:
+      tags: [RobotMoney UI]
+      summary: Create a contact
+      description: Requires `ledger:write`.
+      operationId: createContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContactInput' }
+      responses:
+        '201':
+          description: Contact created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+
+  /contacts/{id}:
+    get:
+      tags: [RobotMoney UI]
+      summary: Read a contact
+      description: Requires `ledger:read`.
+      operationId: getContact
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Contact
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+    patch:
+      tags: [RobotMoney UI]
+      summary: Update a contact
+      description: Requires `ledger:write`.
+      operationId: updateContact
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContactPatch' }
+      responses:
+        '200':
+          description: Contact
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+    delete:
+      tags: [RobotMoney UI]
+      summary: Archive a contact
+      description: Requires `ledger:write`.
+      operationId: archiveContact
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Archived }
+
+  /search:
+    post:
+      tags: [RobotMoney UI]
+      summary: Search RobotMoney resources
+      description: Requires `execution:read`.
+      operationId: searchRobotMoney
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GlobalSearchRequest' }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GlobalSearchResult' }
+
   /actions:
     post:
       tags: [Actions]
@@ -5477,11 +6160,8 @@ paths:
         actions, supersedes `/payment-intents` (see the `Deprecation`
         header on those routes), backed by the same underlying storage.
 
-        `type` is translated to an internal action type (`pay_invoice` and
-        `outbound_payment` both map to `ach_outbound`; `ach_inbound`, `wire`,
-        `onchain_transfer`, `erp_writeback`, and `card_payment` pass
-        through). Requires `source_account_id`, `to.counterparty_id`,
-        `amount`, and a 3-letter `currency`.
+        `type` is translated to an internal action type. `invoice_link`
+        creates a receivable invoice link and does not create a PaymentIntent.
       operationId: createAction
       requestBody:
         required: true
@@ -5494,7 +6174,10 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [pay_invoice, outbound_payment, ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment]
+                  enum: [pay_invoice, outbound_payment, ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, invoice_link]
+                action_type:
+                  type: string
+                  enum: [pay_invoice, outbound_payment, ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, invoice_link]
                 agent_id: { type: string, description: 'Only honored for callers with `execution:admin`.' }
                 to:
                   type: object
@@ -5504,6 +6187,9 @@ paths:
                 amount: { type: string, pattern: '^\d+(\.\d+)?$' }
                 currency: { type: string, pattern: '^[A-Z]{3}$' }
                 source_account_id: { type: string }
+                counterparty_id: { type: string }
+                description: { type: string }
+                due_date: { type: string, format: date-time }
                 memo: { type: string }
                 evidence_ids:
                   type: array
@@ -5722,14 +6408,20 @@ paths:
                         Base via the x402 rail) and `escrow_release` (BrainEscrow
                         lock release, RFC 0001 §7.6) are gated but not yet
                         executable (shadow-first).
-                      enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, x402_settle, escrow_release]
+                      enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, exchange, x402_settle, escrow_release]
                     source_account_id: { type: string }
                     destination_counterparty_id: { type: string }
                     amount: { type: string, pattern: '^\d+(\.\d+)?$' }
-                    # ISO-4217 (3-letter) for fiat rails; USDC for x402_settle (D-4, RFC 0001 §7.1).
-                    currency: { type: string, pattern: '^[A-Z]{3}$|^USDC$' }
+                    currency: { type: string, pattern: '^[A-Z0-9]{3,6}$' }
                     obligation_id: { type: string }
                     invoice_id: { type: string }
+                    rate_lock_reference:
+                      type: string
+                      description: Required when action_type is exchange.
+                    destination_currency:
+                      type: string
+                      pattern: '^[A-Z0-9]{3,6}$'
+                      description: Required when action_type is exchange.
                     agent_id: { type: string }
                     evidence_ids:
                       type: array
@@ -6005,6 +6697,141 @@ paths:
   # MEMBERS — tenant approval authority model
   #############################################################################
 
+  /team:
+    get:
+      tags: [Members]
+      summary: List tenant team users
+      description: Requires `execution:read` and an active member session.
+      operationId: listTeam
+      parameters:
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Team users with per-agent authority summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, directory_provider]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/TeamUser' }
+                  directory_provider:
+                    type: string
+                    enum: [none, okta, google_workspace, microsoft_entra]
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /team/invite:
+    post:
+      tags: [Members]
+      summary: Invite a team user
+      description: Requires `execution:admin` and an owner or admin member.
+      operationId: inviteTeamUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TeamInviteRequest' }
+      responses:
+        '201':
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, invite_token_url, invite_token]
+                properties:
+                  user: { $ref: '#/components/schemas/TeamUser' }
+                  invite_token_url: { type: string }
+                  invite_token: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /team/accept:
+    post:
+      tags: [Members]
+      summary: Accept a team invite
+      description: Confirms a pending team invite and activates the member.
+      operationId: acceptTeamInvite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invite_token, display_name]
+              properties:
+                invite_token: { type: string }
+                display_name: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/TeamUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /team/{user_id}:
+    patch:
+      tags: [Members]
+      summary: Update a team user
+      description: Requires `execution:admin` and an owner or admin member.
+      operationId: updateTeamUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TeamPatchRequest' }
+      responses:
+        '200':
+          description: Team user updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/TeamUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Members]
+      summary: Deactivate a team user
+      description: Soft deletes the user by deactivating the member row.
+      operationId: deleteTeamUser
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Team user deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/TeamUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /members:
     get:
       tags: [Members]
@@ -6019,7 +6846,7 @@ paths:
       parameters:
         - name: role
           in: query
-          schema: { type: string, enum: [admin, approver, viewer] }
+          schema: { $ref: '#/components/schemas/TeamRole' }
         - name: domain
           in: query
           schema: { type: string, enum: [ap, ar, treasury, payroll, reconciliation] }
@@ -7886,6 +8713,208 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /rules:
+    get:
+      summary: List agent authority rules
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:read] }]
+      parameters:
+        - in: query
+          name: tenant_id
+          schema: { type: string }
+        - in: query
+          name: agent
+          schema: { type: string }
+      responses:
+        '200':
+          description: Tenant rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentAuthorityRule' }
+    post:
+      summary: Create an agent authority rule
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:admin] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentAuthorityRuleInput' }
+      responses:
+        '201':
+          description: Created rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentAuthorityRule' }
+
+  /rules/{id}:
+    get:
+      summary: Get an agent authority rule
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:read] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentAuthorityRule' }
+    patch:
+      summary: Update an agent authority rule
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:admin] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentAuthorityRulePatch' }
+      responses:
+        '200':
+          description: Updated rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentAuthorityRule' }
+    delete:
+      summary: Soft delete an agent authority rule
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:admin] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Deleted. }
+
+  /rules/preview:
+    post:
+      summary: Preview agent authority rules
+      tags: [Rules]
+      security: [{ bearerAuth: [execution:read] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent, payload]
+              properties:
+                agent: { type: string }
+                payload: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Preview result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuleEvaluationResult' }
+
+  /proposal-snapshots:
+    post:
+      summary: Create a proposal payload snapshot
+      tags: [Proposal Snapshots]
+      security: [{ bearerAuth: [execution:write] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { type: object, additionalProperties: true }
+      responses:
+        '201':
+          description: Created snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProposalPayloadSnapshot' }
+
+  /proposal-snapshots/{id}:
+    get:
+      summary: Get a proposal payload snapshot
+      tags: [Proposal Snapshots]
+      security: [{ bearerAuth: [execution:read] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProposalPayloadSnapshot' }
+
+  /audit-log:
+    get:
+      summary: List decision audit log entries
+      tags: [Audit Log]
+      security: [{ bearerAuth: [execution:read] }]
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: actor_type, schema: { type: string, enum: [user, system, agent] } }
+        - { in: query, name: agent, schema: { type: string } }
+        - { in: query, name: decision, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 500 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        '200':
+          description: Audit log page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, next_cursor]
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/DecisionAuditLogEntry' }
+                  next_cursor:
+                    type: [string, "null"]
+
+  /audit-log/{id}:
+    get:
+      summary: Get a decision audit log entry
+      tags: [Audit Log]
+      security: [{ bearerAuth: [execution:read] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Audit log entry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DecisionAuditLogEntry' }
+
+  /audit-log/export:
+    post:
+      summary: Export decision audit log entries as CSV
+      tags: [Audit Log]
+      security: [{ bearerAuth: [execution:read] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuditLogExportRequest' }
+      responses:
+        '200':
+          description: Signed CSV export URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, path, count]
+                properties:
+                  url: { type: string, format: uri }
+                  path: { type: string }
+                  count: { type: integer }
+
 components:
 
   securitySchemes:
@@ -8009,6 +9038,154 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    AgentAuthorityRule:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - agent
+        - decision
+        - condition
+        - authority
+        - priority
+        - created_by
+        - created_at
+        - updated_by
+        - updated_at
+        - enabled
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        agent: { $ref: '#/components/schemas/AgentAuthorityRuleAgent' }
+        decision: { type: string }
+        condition: { type: object, additionalProperties: true }
+        authority: { $ref: '#/components/schemas/AgentAuthority' }
+        priority: { type: integer }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_by: { type: string }
+        updated_at: { type: string, format: date-time }
+        enabled: { type: boolean }
+
+    AgentAuthorityRuleInput:
+      type: object
+      required: [agent, decision, condition, authority]
+      properties:
+        agent: { $ref: '#/components/schemas/AgentAuthorityRuleAgent' }
+        decision: { type: string }
+        condition: { type: object, additionalProperties: true }
+        authority: { $ref: '#/components/schemas/AgentAuthority' }
+        priority: { type: integer }
+        enabled: { type: boolean }
+
+    AgentAuthorityRulePatch:
+      type: object
+      properties:
+        agent: { $ref: '#/components/schemas/AgentAuthorityRuleAgent' }
+        decision: { type: string }
+        condition: { type: object, additionalProperties: true }
+        authority: { $ref: '#/components/schemas/AgentAuthority' }
+        priority: { type: integer }
+        enabled: { type: boolean }
+
+    AgentAuthorityRuleAgent:
+      type: string
+      enum:
+        - fraud_anomaly
+        - vendor_risk
+        - dispute
+        - aml_compliance
+        - payment
+        - collections
+        - treasury
+        - subscription_management
+        - invoice_integrity
+        - reconciliation
+        - cash_forecast
+        - revenue_intel
+
+    AgentAuthority:
+      type: string
+      enum: [auto, propose, deny]
+
+    RuleEvaluationResult:
+      type: object
+      required: [authority, decision, rule_id, matched]
+      properties:
+        authority: { $ref: '#/components/schemas/AgentAuthority' }
+        decision:
+          type: [string, "null"]
+        rule_id:
+          type: [string, "null"]
+          format: uuid
+        matched: { type: boolean }
+
+    ProposalPayloadSnapshot:
+      type: object
+      required: [id, tenant_id, payload, payload_sha256, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        payload: { type: object, additionalProperties: true }
+        payload_sha256: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    DecisionAuditLogEntry:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - occurred_at
+        - actor
+        - proposal_id
+        - agent
+        - decision
+        - outcome
+        - policy_context
+        - payload_snapshot_id
+        - event_id
+        - event_action
+        - archived_at
+        - cold_storage_uri
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        actor:
+          type: object
+          required: [type, id, display_name]
+          properties:
+            type: { type: string, enum: [user, system, agent] }
+            id: { type: string }
+            display_name:
+              type: [string, "null"]
+        proposal_id: { type: string }
+        agent: { type: string }
+        decision: { type: string }
+        outcome: { type: object, additionalProperties: true }
+        policy_context: { type: object, additionalProperties: true }
+        payload_snapshot_id: { type: string, format: uuid }
+        event_id: { type: string }
+        event_action: { type: string }
+        archived_at:
+          type: [string, "null"]
+          format: date-time
+        cold_storage_uri:
+          type: [string, "null"]
+        created_at: { type: string, format: date-time }
+
+    AuditLogExportRequest:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        actor_type: { type: string, enum: [user, system, agent] }
+        agent: { type: string }
+        decision: { type: string }
+
     X402Receipt:
       type: object
       required:
@@ -8777,6 +9954,220 @@ components:
                 type: array
                 items: { type: string }
 
+    RoboBriefRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        as_of:
+          type: string
+          description: Date or ISO timestamp. Defaults to the server current date when omitted.
+
+    RoboBriefSignal:
+      oneOf:
+        - type: object
+          required: [key, value_cents, currency]
+          properties:
+            key: { type: string, enum: [cash_on_hand] }
+            value_cents: { type: integer }
+            currency: { type: string }
+            delta_cents_7d: { type: integer }
+            sparkline:
+              type: array
+              items:
+                type: object
+                required: [date, value_cents]
+                properties:
+                  date: { type: string, format: date }
+                  value_cents: { type: integer }
+        - type: object
+          required: [key, value_cents, currency]
+          properties:
+            key: { type: string, enum: [net_30_day] }
+            value_cents: { type: integer }
+            currency: { type: string }
+            delta_pct: { type: number }
+        - type: object
+          required: [key]
+          properties:
+            key: { type: string, enum: [runway_months] }
+            value_months: { type: number }
+            at_burn_cents: { type: integer }
+            extends_to_months_if_forecast: { type: number }
+
+    RoboBriefHighlight:
+      type: object
+      required: [proposal_id, agent, title, urgency]
+      properties:
+        proposal_id: { type: string }
+        agent: { type: string }
+        title: { type: string }
+        amount_cents: { type: integer }
+        currency: { type: string }
+        urgency: { type: string, enum: [urgent, attention, info] }
+
+    RoboPromptAction:
+      type: object
+      required: [kind, target_id_or_prompt]
+      properties:
+        kind: { type: string, enum: [ask_robo, open_proposal] }
+        target_id_or_prompt: { type: string }
+
+    RoboBriefNextPrompt:
+      type: object
+      required: [label, action]
+      properties:
+        label: { type: string }
+        action: { $ref: '#/components/schemas/RoboPromptAction' }
+
+    RoboBrief:
+      type: object
+      required: [tenant_id, date, prepared_at, signals, body_markdown, highlights, next_prompts]
+      properties:
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        date: { type: string, format: date }
+        prepared_at: { type: string, format: date-time }
+        signals:
+          type: array
+          items: { $ref: '#/components/schemas/RoboBriefSignal' }
+        body_markdown: { type: string }
+        highlights:
+          type: array
+          items: { $ref: '#/components/schemas/RoboBriefHighlight' }
+        next_prompts:
+          type: array
+          items: { $ref: '#/components/schemas/RoboBriefNextPrompt' }
+
+    RoboOvernightAction:
+      type: object
+      required: [agent, summary, related_proposal_ids, occurred_at]
+      properties:
+        agent: { type: string }
+        summary: { type: string }
+        related_proposal_ids:
+          type: array
+          items: { type: string }
+        occurred_at: { type: string, format: date-time }
+
+    RoboOvernight:
+      type: object
+      required: [window, action_count, actions]
+      properties:
+        window:
+          type: object
+          required: [start, end]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        action_count: { type: integer }
+        actions:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/RoboOvernightAction' }
+
+    RoboContextSource:
+      type: object
+      required: [kind, agent, rail, proposal_id]
+      properties:
+        kind: { type: string, enum: [proposal_rail] }
+        agent: { type: string }
+        rail: { type: string }
+        proposal_id: { type: string }
+
+    RoboAskFromContextRequest:
+      type: object
+      required: [tenant_id, source, prompt]
+      properties:
+        tenant_id: { type: string, pattern: '^tnt_[0-9A-HJKMNP-TV-Z]{26}$' }
+        source: { $ref: '#/components/schemas/RoboContextSource' }
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        open_thread:
+          type: boolean
+          default: true
+
+    RoboDataCard:
+      type: object
+      required: [title, rows]
+      properties:
+        title: { type: string }
+        total: true
+        rows:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+              sub: { type: string }
+              meta: true
+              amount: true
+              status: { type: string }
+
+    RoboChart:
+      type: object
+      required: [kind, series]
+      properties:
+        kind: { type: string, enum: [line, bar, forecast] }
+        series:
+          type: array
+          items:
+            type: object
+            required: [label, points]
+            properties:
+              label: { type: string }
+              points:
+                type: array
+                items:
+                  type: object
+                  required: [x, y]
+                  properties:
+                    x:
+                      oneOf:
+                        - type: string
+                        - type: number
+                    y: { type: number }
+        x_axis: true
+        annotations: true
+
+    RoboAnswer:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+        data_cards:
+          type: array
+          items: { $ref: '#/components/schemas/RoboDataCard' }
+        charts:
+          type: array
+          items: { $ref: '#/components/schemas/RoboChart' }
+        follow_ups:
+          type: array
+          items:
+            type: object
+            required: [label, action]
+            properties:
+              label: { type: string }
+              action: true
+        refs:
+          type: array
+          items:
+            type: object
+            required: [kind, id, display_name]
+            properties:
+              kind: { type: string, enum: [proposal, record, invoice, url] }
+              id: { type: string }
+              display_name: { type: string }
+
+    RoboAskFromContextResponse:
+      type: object
+      required: [thread_id, first_response]
+      properties:
+        thread_id: { type: string, format: uuid }
+        first_response: { $ref: '#/components/schemas/RoboAnswer' }
+
     WikiAnswer:
       type: object
       required: [question, answered, answer, evidence, model, usage]
@@ -9032,11 +10423,26 @@ components:
         - cancelled
         - undone
         - superseded
+        - blocked
         - unknown
 
     ProposalDecision:
       type: string
-      enum: [approve, reject, acknowledge, undo]
+      enum:
+        - approve
+        - reject
+        - acknowledge
+        - undo
+        - confirm_legit
+        - block_merchant
+        - freeze_card
+        - fight
+        - refund
+        - confirm_all_matches
+        - escalate_to_accountant
+        - approve_as_new
+        - reject_duplicate
+        - hold_and_verify
 
     ProposalDecisionResult:
       type: object
@@ -9485,6 +10891,106 @@ components:
               type: [string, "null"]
               enum: [unreconciled, matched, partial, disputed]
 
+    TeamRole:
+      type: string
+      enum: [owner, admin, approver, analyst, viewer]
+
+    UserAgentAuthority:
+      type: object
+      required: [agent, can_approve, can_edit, can_reject, can_delegate]
+      properties:
+        id: { type: string }
+        agent:
+          type: string
+          enum:
+            - fraud_anomaly
+            - vendor_risk
+            - dispute
+            - aml_compliance
+            - payment
+            - collections
+            - treasury
+            - subscription_management
+            - invoice_integrity
+            - reconciliation
+            - cash_forecast
+            - revenue_intel
+        can_approve: { type: boolean, default: true }
+        can_edit: { type: boolean, default: true }
+        can_reject: { type: boolean, default: true }
+        max_amount_cents: { type: [integer, "null"] }
+        can_delegate: { type: boolean, default: false }
+
+    UserAgentAuthorityInput:
+      type: object
+      required: [agent]
+      properties:
+        agent:
+          type: string
+          enum:
+            - fraud_anomaly
+            - vendor_risk
+            - dispute
+            - aml_compliance
+            - payment
+            - collections
+            - treasury
+            - subscription_management
+            - invoice_integrity
+            - reconciliation
+            - cash_forecast
+            - revenue_intel
+        can_approve: { type: boolean, default: true }
+        can_edit: { type: boolean, default: true }
+        can_reject: { type: boolean, default: true }
+        max_amount_cents: { type: [integer, "null"] }
+        can_delegate: { type: boolean, default: false }
+
+    TeamUser:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - email
+        - display_name
+        - role
+        - active
+        - status
+        - last_active_at
+        - agent_authority
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        role: { $ref: '#/components/schemas/TeamRole' }
+        active: { type: boolean }
+        status: { type: string, enum: [invited, active, deactivated] }
+        last_active_at: { type: [string, "null"], format: date-time }
+        agent_authority:
+          type: array
+          items: { $ref: '#/components/schemas/UserAgentAuthority' }
+
+    TeamInviteRequest:
+      type: object
+      required: [tenant_id, email, role]
+      properties:
+        tenant_id: { type: string }
+        email: { type: string }
+        role: { $ref: '#/components/schemas/TeamRole' }
+        agent_authority:
+          type: array
+          items: { $ref: '#/components/schemas/UserAgentAuthorityInput' }
+
+    TeamPatchRequest:
+      type: object
+      properties:
+        role: { $ref: '#/components/schemas/TeamRole' }
+        active: { type: boolean }
+        agent_authority:
+          type: array
+          items: { $ref: '#/components/schemas/UserAgentAuthorityInput' }
+
     Member:
       type: object
       required: [id, tenantId, email, displayName, role, status, active, approval]
@@ -9499,8 +11005,7 @@ components:
         email: { type: string }
         displayName: { type: string }
         role:
-          type: string
-          enum: [admin, approver, viewer]
+          $ref: '#/components/schemas/TeamRole'
         status:
           type: string
           enum: [invited, active, deactivated]
@@ -9560,8 +11065,7 @@ components:
         email: { type: string }
         display_name: { type: string, description: Defaults to email if omitted. }
         role:
-          type: string
-          enum: [admin, approver, viewer]
+          $ref: '#/components/schemas/TeamRole'
         invite:
           type: boolean
           default: false
@@ -9591,8 +11095,7 @@ components:
         email: { type: string }
         display_name: { type: string }
         role:
-          type: string
-          enum: [admin, approver, viewer]
+          $ref: '#/components/schemas/TeamRole'
         status:
           type: string
           enum: [invited, active, deactivated]
@@ -9772,9 +11275,12 @@ components:
         - cash_forecast
         - dispute
         - compliance
+        - invoice_integrity
+        - aml_compliance
         - revenue_intel
         - reconciliation
         - subscription
+        - subscription_management
         - fraud_anomaly
         - personal_budget
         - financial_health
@@ -9823,13 +11329,292 @@ components:
       properties:
         id:
           type: string
-          enum: [approve, reject, acknowledge, undo]
+          enum:
+            - approve
+            - reject
+            - acknowledge
+            - undo
+            - confirm_legit
+            - block_merchant
+            - freeze_card
+            - fight
+            - refund
+            - confirm_all_matches
+            - escalate_to_accountant
+            - approve_as_new
+            - reject_duplicate
+            - hold_and_verify
         label:
           type: string
           description: Domain label for the decision, such as Clear vendor, Hold transaction, or Accept match.
         meaning:
           type: string
           description: Human-readable consequence summary for this decision.
+
+    ProposalDomainDecision:
+      type: object
+      required: [id, label, meaning]
+      properties:
+        id:
+          type: string
+          enum:
+            - confirm_legit
+            - block_merchant
+            - freeze_card
+            - gather_evidence
+            - contest
+            - accept
+            - fight
+            - refund
+            - confirm_all_matches
+            - escalate_to_accountant
+            - approve_as_new
+            - reject_duplicate
+            - hold_and_verify
+        label: { type: string }
+        meaning: { type: string }
+
+    FraudAnomalySignals:
+      type: object
+      properties:
+        geo_mismatch:
+          type: object
+          required: [normal_regions, observed_region]
+          properties:
+            normal_regions:
+              type: array
+              items: { type: string }
+            observed_region: { type: string }
+        off_hours:
+          type: object
+          required: [typical_window, observed_hour]
+          properties:
+            typical_window: { type: string }
+            observed_hour: { type: string }
+        normal_vs_current:
+          type: object
+          required: [avg_amount, typical_hours, typical_merchant_type, geo]
+          properties:
+            avg_amount: {}
+            typical_hours: {}
+            typical_merchant_type: {}
+            geo: {}
+
+    VendorRiskComparison:
+      type: object
+      properties:
+        bank_on_file:
+          $ref: '#/components/schemas/BankComparisonEntry'
+        bank_on_invoice:
+          $ref: '#/components/schemas/BankComparisonEntry'
+        quantity_a: {}
+        quantity_b: {}
+        po_ref_a: { type: string }
+        po_ref_b: { type: string }
+
+    ProposalDecisionContext:
+      type: object
+      required: [decide_by, if_wrong, reversible]
+      properties:
+        decide_by: { type: string }
+        if_wrong: { type: string }
+        reversible:
+          type: object
+          required: [state, label]
+          properties:
+            state:
+              type: string
+              enum: [yes, no, na]
+            label: { type: string }
+
+    CollectionsDraftEmail:
+      type: object
+      required: [to, from, subject, body, edit_actions]
+      properties:
+        to: { type: string }
+        from: { type: string }
+        subject: { type: string }
+        body:
+          type: array
+          items: { type: string }
+        edit_actions:
+          type: array
+          items: { type: string }
+
+    PayableCashImpact:
+      type: object
+      required: [source_account_id, balance_before, balance_after]
+      properties:
+        source_account_id: { type: string }
+        balance_before: { type: number }
+        balance_after: { type: number }
+
+    BankComparisonEntry:
+      type: object
+      properties:
+        bank_name: { type: string }
+        routing_masked: { type: string }
+        account_masked: { type: string }
+        beneficiary: { type: string }
+
+    DisputeHistoricalWinRate:
+      type: object
+      required: [pct, sample_size, time_window]
+      properties:
+        pct: { type: number }
+        sample_size: { type: integer }
+        time_window: { type: string }
+
+    TreasuryAllocation:
+      type: object
+      required: [operating, reserve, other_accounts]
+      properties:
+        operating: {}
+        reserve: {}
+        other_accounts: {}
+
+    TreasurySafetyMeter:
+      type: object
+      required: [current, floor, ceiling, unit]
+      properties:
+        current: {}
+        floor: {}
+        ceiling: {}
+        unit: { type: string }
+
+    ProposalMoneyAmount:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: string }
+        currency: { type: string }
+
+    ReconciliationCloseAggregate:
+      type: object
+      required:
+        - period_start
+        - period_end
+        - matched_count
+        - unmatched_count
+        - matched_total
+        - unmatched_total
+        - drift
+      properties:
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        matched_count: { type: integer }
+        unmatched_count: { type: integer }
+        matched_total: {}
+        unmatched_total: {}
+        drift: {}
+
+    ReconciliationAccountant:
+      type: object
+      required: [name, org, email]
+      properties:
+        name: { type: string }
+        org: { type: string }
+        email: { type: string }
+
+    ReconciliationMateriality:
+      type: object
+      required: [unmatched_amount, monthly_revenue, pct]
+      properties:
+        unmatched_amount: { type: number }
+        monthly_revenue: { type: number }
+        pct: { type: number }
+
+    CashForecastDriver:
+      type: object
+      required: [name, category, monthly_impact, direction]
+      properties:
+        name: { type: string }
+        category: { type: string }
+        monthly_impact: {}
+        direction: { type: string }
+
+    CashForecastRunwayPoint:
+      type: object
+      required: [date, projected_balance, projected_runway_months]
+      properties:
+        date: { type: string, format: date }
+        projected_balance: {}
+        projected_runway_months: {}
+
+    RevenueConcentration:
+      type: object
+      required: [top_customer_pct, top_customer_amount, breakdown]
+      properties:
+        top_customer_pct: { type: number }
+        top_customer_amount: {}
+        breakdown:
+          type: array
+          items:
+            type: object
+            required: [name, amount, pct]
+            properties:
+              name: { type: string }
+              amount: {}
+              pct: { type: number }
+
+    HistoricalConcentrationPoint:
+      type: object
+      required: [period, top_customer_pct]
+      properties:
+        period: { type: string }
+        top_customer_pct: { type: number }
+
+    PipelineCoverage:
+      type: object
+      required: [quarter, plan, weighted_pipeline, coverage_pct]
+      properties:
+        quarter: { type: string }
+        plan: {}
+        weighted_pipeline: {}
+        coverage_pct: { type: number }
+
+    SubscriptionAlternative:
+      type: object
+      required: [name, note, price]
+      properties:
+        name: { type: string }
+        note: { type: string }
+        price: { type: string }
+
+    FlaggedInvoice:
+      type: object
+      required: [id, amount, currency, invoice_date, line_items_hash, vendor]
+      properties:
+        id: { type: string }
+        amount: {}
+        currency: { type: string }
+        invoice_date: { type: string, format: date }
+        line_items_hash: { type: string }
+        vendor: {}
+
+    SuspectedOriginalInvoice:
+      type: object
+      required: [id, amount, currency, invoice_date, line_items_hash, payment_status]
+      properties:
+        id: { type: string }
+        amount: {}
+        currency: { type: string }
+        invoice_date: { type: string, format: date }
+        line_items_hash: { type: string }
+        payment_status: { type: string }
+
+    InvoiceIntegrityMatchConfidence:
+      type: object
+      required: [pct, signals]
+      properties:
+        pct: { type: number }
+        signals:
+          type: array
+          items: { type: string }
+
+    InvoiceIntegrityFindingKind:
+      type: string
+      enum: [duplicate, structuring, threshold_avoidance, high_value_new_vendor]
 
     ProposalKeyFact:
       type: object
@@ -9911,7 +11696,7 @@ components:
       properties:
         kind:
           type: string
-          description: Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch.
+          description: Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, wiki_entity, pdf, record, mail, image, external, report, and data. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch.
         ref:
           type: string
           description: Stored evidence reference. Never a `brain://` placeholder.
@@ -9956,6 +11741,122 @@ components:
         results:
           type: array
           items: { $ref: '#/components/schemas/EvidenceResolveResult' }
+
+    EvidenceKind:
+      type: string
+      enum: [pdf, record, mail, image, external, report, data]
+
+    EvidenceSource:
+      type: string
+      enum: [uploaded, emailed, synced, generated, external_link]
+
+    EvidenceRetentionClass:
+      type: string
+      enum: [standard, compliance_7yr, permanent]
+
+    EvidenceRecord:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - kind
+        - name
+        - source
+        - storage_ref
+        - sha256
+        - mime_type
+        - byte_size
+        - captured_at
+        - captured_by
+        - retention_class
+        - metadata
+        - archived_at
+        - deleted_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string }
+        kind: { $ref: '#/components/schemas/EvidenceKind' }
+        name: { type: string }
+        source: { $ref: '#/components/schemas/EvidenceSource' }
+        storage_ref: { type: string }
+        sha256:
+          type: [string, "null"]
+          pattern: '^[0-9a-f]{64}$'
+        mime_type: { type: string }
+        byte_size: { type: integer, minimum: 0 }
+        captured_at: { type: string, format: date-time }
+        captured_by: { type: string }
+        retention_class: { $ref: '#/components/schemas/EvidenceRetentionClass' }
+        metadata:
+          type: object
+          additionalProperties: true
+        archived_at: { type: [string, "null"], format: date-time }
+        deleted_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        signed_url:
+          type: [string, "null"]
+          description: Present on read responses. External links return the external URL.
+
+    EvidenceUploadRequest:
+      type: object
+      required: [kind, name, content_base64, mime_type]
+      properties:
+        tenant_id: { type: string }
+        kind: { $ref: '#/components/schemas/EvidenceKind' }
+        name: { type: string }
+        content_base64: { type: string, format: byte }
+        mime_type: { type: string }
+        retention_class: { $ref: '#/components/schemas/EvidenceRetentionClass' }
+        metadata:
+          type: object
+          additionalProperties: true
+        proposal_id: { type: string }
+
+    EvidenceRegisterExternalRequest:
+      type: object
+      required: [kind, name, url]
+      properties:
+        tenant_id: { type: string }
+        kind:
+          type: string
+          enum: [external_link]
+        name: { type: string }
+        url: { type: string, format: uri }
+        metadata:
+          type: object
+          additionalProperties: true
+        proposal_id: { type: string }
+
+    EvidenceGenerateRequest:
+      type: object
+      required: [kind, name, generator]
+      properties:
+        tenant_id: { type: string }
+        kind:
+          type: string
+          enum: [report, data]
+        name: { type: string }
+        generator: { type: string }
+        input_ref: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+        proposal_id: { type: string }
+
+    EvidenceReadResponse:
+      type: object
+      required: [evidence]
+      properties:
+        evidence: { $ref: '#/components/schemas/EvidenceRecord' }
+
+    EvidenceListResponse:
+      type: object
+      required: [evidence]
+      properties:
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/EvidenceRecord' }
 
     AgentOutputProposal:
       type: object
@@ -10015,6 +11916,453 @@ components:
         available_decisions:
           type: array
           items: { $ref: '#/components/schemas/ProposalDecisionAction' }
+        decision_context:
+          $ref: '#/components/schemas/ProposalDecisionContext'
+        signals:
+          $ref: '#/components/schemas/FraudAnomalySignals'
+        comparison:
+          $ref: '#/components/schemas/VendorRiskComparison'
+        draft_email:
+          $ref: '#/components/schemas/CollectionsDraftEmail'
+        cash_impact:
+          $ref: '#/components/schemas/PayableCashImpact'
+        historical_win_rate:
+          $ref: '#/components/schemas/DisputeHistoricalWinRate'
+        allocation_before:
+          $ref: '#/components/schemas/TreasuryAllocation'
+        allocation_after:
+          $ref: '#/components/schemas/TreasuryAllocation'
+        safety_meter:
+          $ref: '#/components/schemas/TreasurySafetyMeter'
+        estimated_annual_yield_gain:
+          $ref: '#/components/schemas/ProposalMoneyAmount'
+        close_aggregate:
+          $ref: '#/components/schemas/ReconciliationCloseAggregate'
+        accountant:
+          $ref: '#/components/schemas/ReconciliationAccountant'
+        materiality:
+          $ref: '#/components/schemas/ReconciliationMateriality'
+        horizon_days:
+          type: integer
+        drivers:
+          type: array
+          items: { $ref: '#/components/schemas/CashForecastDriver' }
+        runway_projection:
+          type: array
+          items: { $ref: '#/components/schemas/CashForecastRunwayPoint' }
+        concentration:
+          $ref: '#/components/schemas/RevenueConcentration'
+        historical_concentration:
+          type: array
+          items: { $ref: '#/components/schemas/HistoricalConcentrationPoint' }
+        pipeline_coverage:
+          $ref: '#/components/schemas/PipelineCoverage'
+        alternatives:
+          type: array
+          items: { $ref: '#/components/schemas/SubscriptionAlternative' }
+        flagged_invoice:
+          $ref: '#/components/schemas/FlaggedInvoice'
+        suspected_original:
+          $ref: '#/components/schemas/SuspectedOriginalInvoice'
+        match_confidence:
+          $ref: '#/components/schemas/InvoiceIntegrityMatchConfidence'
+        finding_kind:
+          $ref: '#/components/schemas/InvoiceIntegrityFindingKind'
+        screenings:
+          type: object
+          additionalProperties: true
+        required_documents:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        regulatory_context:
+          type: object
+          additionalProperties: true
+        jurisdictions_involved:
+          type: array
+          items: { type: string }
+        deadline:
+          type: string
+          format: date-time
+        seats:
+          type: object
+          additionalProperties: true
+        underutilization:
+          type: object
+          additionalProperties: true
+        options:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        decisions:
+          type: array
+          items: { $ref: '#/components/schemas/ProposalDomainDecision' }
+
+    TenantProfile:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        legal_name: { type: [string, "null"] }
+        dba_name: { type: [string, "null"] }
+        address_line1: { type: [string, "null"] }
+        address_line2: { type: [string, "null"] }
+        city: { type: [string, "null"] }
+        state: { type: [string, "null"] }
+        postal_code: { type: [string, "null"] }
+        country: { type: [string, "null"] }
+        tax_id: { type: [string, "null"] }
+        industry: { type: [string, "null"] }
+        jurisdiction: { type: [string, "null"] }
+        fiscal_year_end: { type: [string, "null"] }
+        accountant:
+          oneOf:
+            - $ref: '#/components/schemas/TenantAccountant'
+            - type: "null"
+        operating_account_id: { type: [string, "null"] }
+        net_burn_per_day: { type: [string, number, "null"] }
+        updated_at: { type: [string, "null"], format: date-time }
+
+    TenantAccountant:
+      type: object
+      required: [name, org, email]
+      properties:
+        name: { type: string }
+        org: { type: string }
+        email: { type: string }
+
+    TenantProfilePatch:
+      type: object
+      properties:
+        legal_name: { type: string }
+        dba_name: { type: string }
+        address_line1: { type: string }
+        address_line2: { type: string }
+        city: { type: string }
+        state: { type: string }
+        postal_code: { type: string }
+        country: { type: string }
+        tax_id: { type: string }
+        ein: { type: string }
+        industry: { type: string }
+        jurisdiction: { type: string }
+        fiscal_year_end: { type: string }
+        accountant:
+          $ref: '#/components/schemas/TenantAccountant'
+        operating_account_id: { type: string }
+        net_burn_per_day: { type: [string, number] }
+
+    NotificationPreferences:
+      type: object
+      required: [tenant_id, proactive_briefs_enabled, proactive_alerts_enabled, proactive_alert_channels, agent_mute_list]
+      properties:
+        tenant_id: { type: string }
+        proactive_briefs_enabled: { type: boolean }
+        proactive_alerts_enabled: { type: boolean }
+        proactive_alert_channels:
+          type: array
+          items: { type: string, enum: [email, push, slack] }
+        quiet_hours:
+          type: [object, "null"]
+          additionalProperties: true
+        agent_mute_list:
+          type: array
+          items: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    NotificationPreferencesPatch:
+      type: object
+      properties:
+        proactive_briefs_enabled: { type: boolean }
+        proactive_alerts_enabled: { type: boolean }
+        proactive_alert_channels:
+          type: array
+          items: { type: string, enum: [email, push, slack] }
+        quiet_hours:
+          type: object
+          additionalProperties: true
+        agent_mute_list:
+          type: array
+          items: { type: string }
+
+    TenantIntegration:
+      type: object
+      required: [tenant_id, adapter_kind, provider, enabled, requires_setup, missing_env, config_keys, created_at, updated_at]
+      properties:
+        tenant_id: { type: string }
+        adapter_kind:
+          type: string
+          enum: [ofac, pep, kyc, card_issuer, dispute, reversal, directory, saas_vendor, llm, notification, blob]
+        provider: { type: string }
+        enabled: { type: boolean }
+        requires_setup: { type: boolean }
+        missing_env:
+          type: array
+          items: { type: string }
+        config_keys:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TenantIntegrationInput:
+      type: object
+      required: [provider]
+      properties:
+        provider: { type: string }
+        enabled: { type: boolean }
+        config:
+          type: object
+          additionalProperties: true
+
+    TwoFactorMethod:
+      type: object
+      required: [method, status]
+      properties:
+        method: { type: string, enum: [authenticator, sms, backup_codes] }
+        status: { type: string, enum: [pending, enabled] }
+        phone_number: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TwoFactorMethodsResponse:
+      type: object
+      required: [enabled, methods]
+      properties:
+        enabled: { type: boolean }
+        methods:
+          type: array
+          items: { type: string, enum: [authenticator, sms, backup_codes] }
+        method_details:
+          type: array
+          items: { $ref: '#/components/schemas/TwoFactorMethod' }
+
+    TwoFactorEnrollment:
+      allOf:
+        - $ref: '#/components/schemas/TwoFactorMethod'
+        - type: object
+          properties:
+            enrollment_id: { type: string }
+            qr_uri: { type: string }
+            backup_codes:
+              type: array
+              items: { type: string }
+
+    TrustedDevice:
+      type: object
+      required: [id, label, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        last_used_at: { type: [string, "null"], format: date-time }
+        ip: { type: [string, "null"] }
+        user_agent: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ExchangeQuoteRequest:
+      type: object
+      required: [source_currency, destination_currency, amount]
+      properties:
+        source_currency: { type: string, pattern: '^[A-Z0-9]{3,6}$' }
+        destination_currency: { type: string, pattern: '^[A-Z0-9]{3,6}$' }
+        amount: { type: string, pattern: '^\d+(\.\d+)?$' }
+
+    ExchangeQuote:
+      type: object
+      required: [quote_id, rate_lock_reference, source_currency, destination_currency, amount, rate, fee_cents, expires_at]
+      properties:
+        quote_id: { type: string, format: uuid }
+        rate_lock_reference: { type: string, format: uuid }
+        source_currency: { type: string }
+        destination_currency: { type: string }
+        amount: { type: string }
+        rate: { type: string }
+        fee_cents: { type: integer }
+        expires_at: { type: string, format: date-time }
+
+    AgentOverviewItem:
+      type: object
+      required: [agent_key, display_name, description, authority_summary, weekly_decision_count, weekly_auto_count, weekly_needed_you_count, active_rules_count]
+      properties:
+        agent_key: { $ref: '#/components/schemas/AgentAuthorityRuleAgent' }
+        display_name: { type: string }
+        description: { type: string }
+        authority_summary:
+          type: object
+          required: [default, auto_conditions, per_user_overrides_count]
+          properties:
+            default: { type: string, enum: [auto, propose, notify_only] }
+            auto_conditions:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            per_user_overrides_count: { type: integer }
+        weekly_decision_count: { type: integer }
+        weekly_auto_count: { type: integer }
+        weekly_needed_you_count: { type: integer }
+        active_rules_count: { type: integer }
+        last_activity_at: { type: [string, "null"], format: date-time }
+
+    UiAccount:
+      type: object
+      required: [id, type, name, balance, currency, last_sync, trend, safety_floor]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [checking, savings, card, wallet] }
+        name: { type: string }
+        institution: { type: [string, "null"] }
+        balance: { type: [string, number, "null"] }
+        currency: { type: string }
+        last_sync: { type: [string, "null"], format: date-time }
+        trend:
+          type: object
+          required: [delta_amount, delta_display, direction, window, sparkline, note]
+          properties:
+            delta_amount: { type: number }
+            delta_display: { type: string }
+            direction: { type: string, enum: [up, down, flat] }
+            window: { type: string }
+            sparkline:
+              type: array
+              minItems: 0
+              maxItems: 12
+              items: { type: number }
+            note: { type: string }
+        safety_floor:
+          oneOf:
+            - type: object
+              required: [label, current_amount, floor_amount, headroom_amount, headroom_display, state]
+              properties:
+                label: { type: string }
+                current_amount: { type: number }
+                floor_amount: { type: number }
+                headroom_amount: { type: number }
+                headroom_display: { type: string }
+                state: { type: string, enum: [above, at, below] }
+            - type: "null"
+
+    UiTransaction:
+      type: object
+      required: [id, amount, currency, direction, transaction_date, status]
+      properties:
+        id: { type: string }
+        amount: { type: [string, number] }
+        currency: { type: string }
+        direction: { type: string, enum: [inflow, outflow, transfer, adjustment] }
+        transaction_date: { type: string, format: date-time }
+        posted_date: { type: [string, "null"], format: date-time }
+        counterparty_id: { type: [string, "null"] }
+        status: { type: string }
+        description_raw: { type: [string, "null"] }
+        description_normalized: { type: [string, "null"] }
+
+    UiAccountDetail:
+      type: object
+      required: [account, transactions, next_cursor]
+      properties:
+        account: { $ref: '#/components/schemas/UiAccount' }
+        transactions:
+          type: array
+          items: { $ref: '#/components/schemas/UiTransaction' }
+        next_cursor: { type: [string, "null"] }
+
+    Contact:
+      type: object
+      required: [id, name, type]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string }
+        risk_level: { type: [string, "null"] }
+        verified_status: { type: [string, "null"] }
+        aliases:
+          type: array
+          items: { type: string }
+        linked_accounts:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+        status: { type: string, enum: [active, archived] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ContactInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        risk_level: { type: string }
+        verified_status: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        linked_accounts:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ContactPatch:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string }
+        risk_level: { type: string }
+        verified_status: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        linked_accounts:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    DepositInstructions:
+      type: object
+      required: [account_id, method]
+      properties:
+        account_id: { type: string }
+        method: { type: string, enum: [wire, ach, onchain] }
+        bank_name: { type: [string, "null"] }
+        routing_number: { type: [string, "null"] }
+        account_number: { type: [string, "null"] }
+        memo_reference: { type: [string, "null"] }
+        onchain_address: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+
+    GlobalSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string, minLength: 2 }
+        q: { type: string, minLength: 2 }
+        kinds:
+          type: array
+          items: { type: string, enum: [proposal, thread, account, counterparty, audit_entry] }
+        limit: { type: integer, minimum: 1, maximum: 20 }
+
+    GlobalSearchResult:
+      type: object
+      required: [kind, id, title, score]
+      properties:
+        kind: { type: string, enum: [proposal, thread, account, counterparty, audit_entry] }
+        id: { type: string }
+        title: { type: string }
+        subtitle: { type: [string, "null"] }
+        meta:
+          type: object
+          additionalProperties: true
+        ref_url: { type: string }
+        score: { type: number }
 
     PaymentIntent:
       allOf:
@@ -10029,7 +12377,7 @@ components:
                 `x402_settle` (USDC on Base) and `escrow_release` (BrainEscrow
                 lock release, RFC 0001 §7.6) are gated but not yet executable
                 (shadow-first).
-              enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, x402_settle, escrow_release, other]
+              enum: [ach_outbound, ach_inbound, wire, onchain_transfer, erp_writeback, card_payment, exchange, x402_settle, escrow_release, other]
             source_account_id: { type: string }
             destination_counterparty_id: { type: string }
             amount: { type: string }
@@ -10039,10 +12387,11 @@ components:
                 - type: "null"
             decision_audit_id: { type: [string, "null"] }
             decided_at: { type: [string, "null"], format: date-time }
-            # ISO-4217 (3-letter) for fiat rails; USDC for x402_settle (D-4, RFC 0001 §7.1).
-            currency: { type: string, pattern: '^[A-Z]{3}$|^USDC$' }
+            currency: { type: string, pattern: '^[A-Z0-9]{3,6}$' }
             obligation_id: { type: [string, "null"] }
             invoice_id: { type: [string, "null"] }
+            rate_lock_reference: { type: [string, "null"] }
+            destination_currency: { type: [string, "null"], pattern: '^[A-Z0-9]{3,6}$' }
             status:
               type: string
               description: |

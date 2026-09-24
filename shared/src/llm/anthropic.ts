@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import type { AuditEmitter } from "../audit/emitter.js";
 import { brainError } from "../errors.js";
 import type { LlmAdapter, LlmCompletion, LlmCompletionOptions } from "./types.js";
 
@@ -71,5 +72,51 @@ export class AnthropicAdapter implements LlmAdapter {
     } finally {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
     }
+  }
+}
+
+export interface RoboAnthropicAdapterOptions extends AnthropicAdapterOptions {
+  readonly audit?: AuditEmitter;
+  readonly tenantId?: string;
+  readonly actor?: string;
+}
+
+export class RoboAnthropicAdapter implements LlmAdapter {
+  public static readonly complexModel = "claude-opus-4-5";
+  public static readonly simpleModel = "claude-sonnet-4";
+  private readonly delegate: AnthropicAdapter;
+
+  public constructor(private readonly opts: RoboAnthropicAdapterOptions) {
+    this.delegate = new AnthropicAdapter(opts);
+  }
+
+  public async complete(opts: LlmCompletionOptions): Promise<LlmCompletion> {
+    const model = opts.model === "auto" ? this.modelFor(opts) : opts.model;
+    const started = Date.now();
+    const result = await this.delegate.complete({ ...opts, model });
+    if (this.opts.audit !== undefined && this.opts.tenantId !== undefined) {
+      await this.opts.audit.emit({
+        tenantId: this.opts.tenantId,
+        layer: "wiki",
+        actor: this.opts.actor ?? "system_robo",
+        action: "robo.llm.usage",
+        inputs: { provider: "anthropic", model: result.model },
+        outputs: {
+          input_tokens: result.usage.inputTokens,
+          output_tokens: result.usage.outputTokens,
+          latency_ms: Date.now() - started,
+        },
+        outcome: "allow",
+      });
+    }
+    return result;
+  }
+
+  private modelFor(opts: LlmCompletionOptions): string {
+    const contentLength = opts.messages.reduce((sum, message) => sum + message.content.length, 0);
+    if (opts.jsonSchema !== undefined || contentLength > 4000 || (opts.maxTokens ?? 0) > 2048) {
+      return RoboAnthropicAdapter.complexModel;
+    }
+    return RoboAnthropicAdapter.simpleModel;
   }
 }

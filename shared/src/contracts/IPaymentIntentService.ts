@@ -28,6 +28,7 @@ export type PaymentIntentActionType =
   | "onchain_transfer"
   | "erp_writeback"
   | "card_payment"
+  | "exchange"
   // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-gated end-to-end.
   | "x402_settle"
   // Release of an on-chain BrainEscrow lock (RFC 0001 §7.6). Shadow-gated.
@@ -55,6 +56,8 @@ export interface PaymentIntent extends LedgerCommonFields {
   currency: Currency;
   obligation_id: string | null;
   invoice_id: string | null;
+  rate_lock_reference?: string | null;
+  destination_currency?: Currency | null;
   status: PaymentIntentStatus;
   policy_decision_id: string | null;
   approval_ids: string[];
@@ -74,6 +77,8 @@ export interface CreatePaymentIntentInput {
   currency: Currency;
   obligation_id?: string;
   invoice_id?: string;
+  rate_lock_reference?: string;
+  destination_currency?: Currency;
   agent_id?: string;
   evidence_ids?: string[];
   /**

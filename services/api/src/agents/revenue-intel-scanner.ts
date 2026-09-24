@@ -28,6 +28,9 @@ export interface RevenueIntelCandidateRow {
   readonly prior_dso: string;
   readonly event_hint: string;
   readonly detected_at: string;
+  readonly concentration?: unknown;
+  readonly historical_concentration?: unknown;
+  readonly pipeline_coverage?: unknown;
 }
 
 export interface RevenueIntelScannerDeps {
@@ -134,6 +137,12 @@ export async function runRevenueIntelScanCycle(
           prior_period_revenue: row.prior_period_revenue,
           current_dso: row.current_dso,
           prior_dso: row.prior_dso,
+          decision_context: advisoryDecisionContext(),
+          ...definedContext({
+            concentration: objectOrUndefined(row.concentration),
+            historical_concentration: arrayOrUndefined(row.historical_concentration),
+            pipeline_coverage: objectOrUndefined(row.pipeline_coverage),
+          }),
         },
       });
       status = result.status;
@@ -232,11 +241,140 @@ async function listRevenueIntelCandidates(
         WHERE ABS(COALESCE(p.current_revenue, 0) - COALESCE(p.prior_revenue, 0)) > 0
            OR COALESCE(p.current_dso, 0) - COALESCE(p.prior_dso, 0) >= 10
      ),
+     enriched_candidates AS (
+       SELECT c.*,
+              concentration.payload AS concentration,
+              historical.payload AS historical_concentration,
+              pipeline.payload AS pipeline_coverage
+         FROM candidates c
+         LEFT JOIN LATERAL (
+           WITH customer_revenue AS (
+             SELECT cp.name,
+                    i.counterparty_id,
+                    SUM(i.amount_paid) AS amount
+               FROM ledger_invoices i
+               JOIN ledger_counterparties cp
+                 ON cp.id = i.counterparty_id AND cp.owner_id = i.owner_id
+              WHERE i.owner_id = c.tenant_id
+                AND i.currency = c.currency
+                AND i.issue_date >= $2::timestamptz - interval '30 days'
+                AND i.status IN ('sent', 'partial', 'paid', 'overdue')
+              GROUP BY cp.name, i.counterparty_id
+           ),
+           totals AS (
+             SELECT SUM(amount) AS total_amount FROM customer_revenue
+           ),
+           ranked AS (
+             SELECT cr.*,
+                    row_number() OVER (ORDER BY cr.amount DESC, cr.counterparty_id ASC) AS revenue_rank
+               FROM customer_revenue cr
+           )
+           SELECT CASE
+                    WHEN totals.total_amount > 0 THEN jsonb_build_object(
+                      'top_customer_pct',
+                      ROUND(100.0 * top.amount / totals.total_amount, 2),
+                      'top_customer_amount',
+                      top.amount::text,
+                      'breakdown',
+                      COALESCE(
+                        jsonb_agg(
+                          jsonb_build_object(
+                            'name', ranked.name,
+                            'amount', ranked.amount::text,
+                            'pct', ROUND(100.0 * ranked.amount / totals.total_amount, 2)
+                          )
+                          ORDER BY ranked.amount DESC, ranked.counterparty_id ASC
+                        ),
+                        '[]'::jsonb
+                      )
+                    )
+                    ELSE NULL
+                  END AS payload
+             FROM totals
+             LEFT JOIN ranked top ON top.revenue_rank = 1
+             LEFT JOIN ranked ON true
+            GROUP BY totals.total_amount, top.amount
+         ) concentration ON true
+         LEFT JOIN LATERAL (
+           WITH quarterly AS (
+             SELECT to_char(date_trunc('quarter', i.issue_date), 'YYYY-"Q"Q') AS period,
+                    i.counterparty_id,
+                    SUM(i.amount_paid) AS amount
+               FROM ledger_invoices i
+              WHERE i.owner_id = c.tenant_id
+                AND i.currency = c.currency
+                AND i.issue_date >= date_trunc('quarter', $2::timestamptz) - interval '21 months'
+                AND i.issue_date < date_trunc('quarter', $2::timestamptz) + interval '3 months'
+                AND i.status IN ('sent', 'partial', 'paid', 'overdue')
+              GROUP BY period, i.counterparty_id
+           ),
+           totals AS (
+             SELECT period,
+                    counterparty_id,
+                    amount,
+                    SUM(amount) OVER (PARTITION BY period) AS total_amount,
+                    row_number() OVER (
+                      PARTITION BY period
+                      ORDER BY amount DESC, counterparty_id ASC
+                    ) AS revenue_rank
+               FROM quarterly
+           )
+           SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'period', period,
+                      'top_customer_pct', ROUND(100.0 * amount / total_amount, 2)
+                    )
+                    ORDER BY period ASC
+                  ) AS payload
+             FROM totals
+            WHERE revenue_rank = 1
+              AND total_amount > 0
+         ) historical ON true
+         LEFT JOIN LATERAL (
+           WITH source AS (
+             SELECT COALESCE(
+                      i.metadata #>> '{pipeline,quarter}',
+                      i.metadata->>'pipeline_quarter',
+                      to_char(date_trunc('quarter', $2::timestamptz), 'YYYY-"Q"Q')
+                    ) AS quarter,
+                    CASE
+                      WHEN COALESCE(i.metadata #>> '{pipeline,plan}', i.metadata->>'plan') ~ '^[0-9]+(\\.[0-9]+)?$'
+                      THEN COALESCE(i.metadata #>> '{pipeline,plan}', i.metadata->>'plan')::numeric
+                      ELSE NULL
+                    END AS plan,
+                    CASE
+                      WHEN COALESCE(i.metadata #>> '{pipeline,weighted_pipeline}', i.metadata->>'weighted_pipeline') ~ '^[0-9]+(\\.[0-9]+)?$'
+                      THEN COALESCE(i.metadata #>> '{pipeline,weighted_pipeline}', i.metadata->>'weighted_pipeline')::numeric
+                      ELSE NULL
+                    END AS weighted_pipeline
+               FROM ledger_invoices i
+              WHERE i.owner_id = c.tenant_id
+                AND i.currency = c.currency
+                AND i.issue_date >= date_trunc('quarter', $2::timestamptz)
+                AND i.issue_date < date_trunc('quarter', $2::timestamptz) + interval '3 months'
+           )
+           SELECT CASE
+                    WHEN MAX(plan) IS NOT NULL OR SUM(weighted_pipeline) IS NOT NULL THEN
+                      jsonb_build_object(
+                        'quarter', COALESCE(MAX(quarter), to_char(date_trunc('quarter', $2::timestamptz), 'YYYY-"Q"Q')),
+                        'plan', MAX(plan)::text,
+                        'weighted_pipeline', COALESCE(SUM(weighted_pipeline), 0)::text,
+                        'coverage_pct',
+                        CASE
+                          WHEN MAX(plan) > 0 THEN ROUND(100.0 * COALESCE(SUM(weighted_pipeline), 0) / MAX(plan), 2)
+                          ELSE NULL
+                        END
+                      )
+                    ELSE NULL
+                  END AS payload
+             FROM source
+         ) pipeline ON true
+     ),
      eligible AS (
        SELECT c.*,
               row_number() OVER (PARTITION BY c.tenant_id ORDER BY c.detected_at DESC, c.counterparty_id ASC) AS tenant_rank,
               COUNT(*) OVER() AS eligible_count
-         FROM candidates c
+         FROM enriched_candidates c
          LEFT JOIN agent_trigger_cooldowns cd
            ON cd.tenant_id = c.tenant_id
           AND cd.agent_key = 'revenue_intel'
@@ -330,6 +468,18 @@ function eventFor(row: RevenueIntelCandidateRow): DomainEvent {
     : "revenue.changed";
 }
 
+function advisoryDecisionContext(): Record<string, unknown> {
+  return {
+    decide_by: "Advisory · no action required today",
+    if_wrong:
+      "Overreacting to revenue movement can distract from healthy accounts. Ignoring it can miss concentration or pipeline risk.",
+    reversible: {
+      state: "na",
+      label: "Advisory only",
+    },
+  };
+}
+
 function normalizeCount(value: number | string | undefined, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -337,4 +487,19 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function arrayOrUndefined(value: unknown): readonly unknown[] | undefined {
+  return Array.isArray(value) && value.length > 0 ? value : undefined;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

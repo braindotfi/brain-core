@@ -39,6 +39,12 @@ export interface FraudAnomalyTransactionRow {
   readonly merchant_risk_score: string | null;
   readonly anomaly_score: string;
   readonly event_hint: string;
+  readonly observed_region?: string | null;
+  readonly normal_regions?: readonly string[];
+  readonly observed_hour?: string | null;
+  readonly typical_window?: string | null;
+  readonly avg_amount_90d?: string | null;
+  readonly typical_merchant_type?: string | null;
 }
 
 export interface FraudAnomalyScannerDeps {
@@ -159,6 +165,10 @@ export async function runFraudAnomalyScanCycle(
           velocity_count_24h: row.velocity_count_24h,
           account_daily_count_avg: row.account_daily_count_avg,
           merchant_risk_score: row.merchant_risk_score,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            signals: signalsFor(row),
+          }),
         },
       });
       status = result.status;
@@ -210,6 +220,12 @@ async function listAnomalousTransactions(
               tx.transaction_date,
               tx.counterparty_id,
               cp.name AS counterparty_name,
+              COALESCE(
+                cp.metadata->>'region',
+                cp.metadata->>'country',
+                cp.metadata #>> '{location,region}',
+                cp.metadata #>> '{location,country}'
+              ) AS observed_region,
               COALESCE(tx.description_normalized, tx.description_raw) AS description,
               cp.risk_level AS counterparty_risk_level
          FROM ledger_transactions tx
@@ -232,6 +248,11 @@ async function listAnomalousTransactions(
               COALESCE(duplicates.duplicate_ids, '[]'::jsonb) AS duplicate_transaction_ids,
               COALESCE(velocity.velocity_count, 1) AS velocity_count_24h,
               account_history.daily_count_avg AS account_daily_count_avg,
+              COALESCE(activity_history.normal_regions, '[]'::jsonb) AS normal_regions,
+              activity_history.observed_hour,
+              activity_history.typical_window,
+              activity_history.avg_amount_90d,
+              activity_history.typical_merchant_type,
               CASE
                 WHEN b.counterparty_risk_level = 'sanctioned' THEN 1.0
                 WHEN b.counterparty_risk_level = 'high' THEN 0.85
@@ -290,6 +311,48 @@ async function listAnomalousTransactions(
               AND v.transaction_date >= b.transaction_date - interval '24 hours'
               AND v.transaction_date <= b.transaction_date
          ) velocity ON true
+         LEFT JOIN LATERAL (
+           WITH history AS (
+             SELECT h.amount,
+                    EXTRACT(HOUR FROM h.transaction_date AT TIME ZONE 'UTC')::int AS hour_utc,
+                    COALESCE(
+                      hcp.metadata->>'region',
+                      hcp.metadata->>'country',
+                      hcp.metadata #>> '{location,region}',
+                      hcp.metadata #>> '{location,country}'
+                    ) AS region,
+                    hcp.type AS merchant_type
+               FROM ledger_transactions h
+               LEFT JOIN ledger_counterparties hcp
+                 ON hcp.id = h.counterparty_id AND hcp.owner_id = h.owner_id
+              WHERE h.owner_id = b.tenant_id
+                AND h.account_id = b.account_id
+                AND h.id <> b.transaction_id
+                AND h.status IN ('posted', 'cleared')
+                AND h.direction = b.direction
+                AND h.transaction_date < b.transaction_date
+                AND h.transaction_date >= b.transaction_date - interval '90 days'
+           ),
+           merchant_type_counts AS (
+             SELECT merchant_type, COUNT(*) AS count
+               FROM history
+              WHERE merchant_type IS NOT NULL
+              GROUP BY merchant_type
+              ORDER BY count DESC, merchant_type ASC
+              LIMIT 1
+           )
+           SELECT jsonb_agg(DISTINCT h.region) FILTER (WHERE h.region IS NOT NULL) AS normal_regions,
+                  to_char(b.transaction_date AT TIME ZONE 'UTC', 'HH24:MI') AS observed_hour,
+                  CASE
+                    WHEN COUNT(h.hour_utc) > 0 THEN
+                      lpad(MIN(h.hour_utc)::text, 2, '0') || ':00-' ||
+                      lpad(MAX(h.hour_utc)::text, 2, '0') || ':59'
+                    ELSE NULL
+                  END AS typical_window,
+                  AVG(h.amount)::text AS avg_amount_90d,
+                  (SELECT merchant_type FROM merchant_type_counts) AS typical_merchant_type
+             FROM history h
+         ) activity_history ON true
      ),
      scored AS (
        SELECT e.*,
@@ -356,6 +419,7 @@ async function listAnomalousTransactions(
             transaction_date::text AS transaction_date,
             counterparty_id,
             counterparty_name,
+            observed_region,
             description,
             history_count::text AS history_count,
             account_mean_amount::text AS account_mean_amount,
@@ -369,6 +433,11 @@ async function listAnomalousTransactions(
             merchant_risk_score::text AS merchant_risk_score,
             anomaly_score::text AS anomaly_score,
             event_hint,
+            normal_regions,
+            observed_hour,
+            typical_window,
+            avg_amount_90d,
+            typical_merchant_type,
             eligible_count,
             COUNT(*) OVER() AS fair_count
        FROM fair
@@ -382,6 +451,7 @@ async function listAnomalousTransactions(
     rows: rows.map((row) => ({
       ...row,
       duplicate_transaction_ids: normalizeStringArray(row.duplicate_transaction_ids),
+      normal_regions: normalizeStringArray(row.normal_regions),
     })),
     totalEligible,
     totalFair,
@@ -466,6 +536,18 @@ function eventFor(row: FraudAnomalyTransactionRow): DomainEvent {
   return "transaction.unusual";
 }
 
+function decisionContextFor(row: FraudAnomalyTransactionRow): Record<string, unknown> {
+  return {
+    decide_by: `Review transaction posted ${row.transaction_date}`,
+    if_wrong:
+      "Blocking a legitimate merchant can interrupt future purchases. Confirming a fraudulent charge can leave loss exposure open.",
+    reversible: {
+      state: "yes",
+      label: "Yes while dispute and card controls remain editable",
+    },
+  };
+}
+
 function triggerKeyFor(row: FraudAnomalyTransactionRow, event: DomainEvent): string {
   return `fraud_anomaly:${event}:transaction:${row.transaction_id}:${COOLDOWN_TIER}`;
 }
@@ -492,4 +574,53 @@ function normalizeStringArray(value: unknown): readonly string[] {
     }
   }
   return [];
+}
+
+function signalsFor(row: FraudAnomalyTransactionRow): Record<string, unknown> | undefined {
+  const signals = definedContext({
+    geo_mismatch: geoMismatchFor(row),
+    off_hours: offHoursFor(row),
+    normal_vs_current: normalVsCurrentFor(row),
+  });
+  return Object.keys(signals).length > 0 ? signals : undefined;
+}
+
+function geoMismatchFor(row: FraudAnomalyTransactionRow): Record<string, unknown> | undefined {
+  const observedRegion = nonEmpty(row.observed_region);
+  const normalRegions = row.normal_regions?.filter((region) => region.length > 0) ?? [];
+  if (observedRegion === undefined || normalRegions.length === 0) return undefined;
+  if (normalRegions.includes(observedRegion)) return undefined;
+  return { normal_regions: normalRegions, observed_region: observedRegion };
+}
+
+function offHoursFor(row: FraudAnomalyTransactionRow): Record<string, unknown> | undefined {
+  const typicalWindow = nonEmpty(row.typical_window);
+  const observedHour = nonEmpty(row.observed_hour);
+  if (typicalWindow === undefined || observedHour === undefined) return undefined;
+  const observed = Number(observedHour.slice(0, 2));
+  const bounds = /^(\d{2}):\d{2}-(\d{2}):\d{2}$/.exec(typicalWindow);
+  if (!Number.isFinite(observed) || bounds === null) return undefined;
+  const start = Number(bounds[1] ?? Number.NaN);
+  const end = Number(bounds[2] ?? Number.NaN);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
+  if (observed >= start && observed <= end) return undefined;
+  return { typical_window: typicalWindow, observed_hour: observedHour };
+}
+
+function normalVsCurrentFor(row: FraudAnomalyTransactionRow): Record<string, unknown> | undefined {
+  const value = definedContext({
+    avg_amount: nonEmpty(row.avg_amount_90d),
+    typical_hours: nonEmpty(row.typical_window),
+    typical_merchant_type: nonEmpty(row.typical_merchant_type),
+    geo: nonEmpty(row.observed_region),
+  });
+  return Object.keys(value).length > 0 ? value : undefined;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+}
+
+function nonEmpty(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

@@ -292,7 +292,7 @@ GRANT SELECT ON webhook_endpoints, webhook_dead_letters, webhook_delivery_receip
 -- through an already-tenant-scoped code or refresh token, never a pre-tenant
 -- lookup.
 GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,
-  member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,
+  member_invites, pending_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,
   tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,
   oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;
 GRANT SELECT (id, tenant_id) ON agent_api_keys TO brain_resolver;

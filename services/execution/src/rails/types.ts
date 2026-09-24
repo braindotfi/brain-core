@@ -13,6 +13,7 @@ export type RailKind =
   | "erp_writeback"
   | "onchain_base"
   | "notification"
+  | "exchange"
   | "x402_base"
   | "escrow_base";
 

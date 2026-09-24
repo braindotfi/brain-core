@@ -9,7 +9,9 @@
       "@brain/shared/*": ["../../shared/src/*.ts"],
       "@brain/schemas": ["../../schemas/index.ts"],
       "@brain/schemas/*": ["../../schemas/*.ts"],
-      "@brain/policy": ["../../services/policy/src/index.ts"]
+      "@brain/policy": ["../../services/policy/src/index.ts"],
+      "@brain/internal-agents": ["../../services/internal-agents/src/index.ts"],
+      "@brain/agent-router": ["../../services/agent-router/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "eval/**/*.ts"]

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { withTenantScope, type KeysetCursor, type TenantScopedClient } from "@brain/shared";
 import type { Pool } from "pg";
 import type {
   ApprovalDomain,
   MemberAuthority,
   MemberIdentitySurface,
+  MemberRole,
   MemberStatus,
   MemberLookup,
+  UserAgentAuthority,
 } from "./types.js";
 
 interface MemberRow {
@@ -13,7 +16,7 @@ interface MemberRow {
   id: string;
   email: string;
   display_name: string;
-  role: "admin" | "approver" | "viewer";
+  role: MemberRole;
   status: MemberStatus;
   active: boolean;
   approval_domains: ApprovalDomain[];
@@ -100,7 +103,7 @@ export async function insertMember(
     id: string;
     email: string;
     displayName: string;
-    role: "admin" | "approver" | "viewer";
+    role: MemberRole;
     approvalDomains: ApprovalDomain[];
     perItemLimitCents: bigint;
     requiresSecondApproverAboveCents: bigint | null;
@@ -140,7 +143,7 @@ export async function updateMember(
     id: string;
     email?: string;
     displayName?: string;
-    role?: "admin" | "approver" | "viewer";
+    role?: MemberRole;
     status?: MemberStatus;
     active?: boolean;
     approvalDomains?: ApprovalDomain[];
@@ -200,9 +203,128 @@ export async function updateMember(
   return rows[0] === undefined ? null : toMember(rows[0]);
 }
 
+interface UserAgentAuthorityRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  agent: string;
+  can_approve: boolean;
+  can_edit: boolean;
+  can_reject: boolean;
+  max_amount_cents: string | number | bigint | null;
+  can_delegate: boolean;
+}
+
+export interface UserAgentAuthorityInput {
+  id?: string;
+  userId: string;
+  agent: string;
+  canApprove?: boolean;
+  canEdit?: boolean;
+  canReject?: boolean;
+  maxAmountCents?: bigint | null;
+  canDelegate?: boolean;
+}
+
+export async function listUserAgentAuthority(
+  client: TenantScopedClient,
+  userId?: string,
+): Promise<UserAgentAuthority[]> {
+  const values: unknown[] = [];
+  let userClause = "";
+  if (userId !== undefined) {
+    values.push(userId);
+    userClause = "AND user_id = $1";
+  }
+  const { rows } = await client.query<UserAgentAuthorityRow>(
+    `SELECT *
+       FROM user_agent_authority
+      WHERE tenant_id = current_setting('app.tenant_id', true)
+        ${userClause}
+      ORDER BY user_id ASC, agent ASC`,
+    values,
+  );
+  return rows.map(authorityFromRow);
+}
+
+export async function findUserAgentAuthority(
+  client: TenantScopedClient,
+  userId: string,
+  agent: string,
+): Promise<UserAgentAuthority | null> {
+  const { rows } = await client.query<UserAgentAuthorityRow>(
+    `SELECT *
+       FROM user_agent_authority
+      WHERE tenant_id = current_setting('app.tenant_id', true)
+        AND user_id = $1
+        AND agent = $2
+      LIMIT 1`,
+    [userId, agent],
+  );
+  return rows[0] === undefined ? null : authorityFromRow(rows[0]);
+}
+
+export async function replaceUserAgentAuthority(
+  client: TenantScopedClient,
+  userId: string,
+  rows: readonly Omit<UserAgentAuthorityInput, "userId">[],
+): Promise<UserAgentAuthority[]> {
+  await client.query(
+    `DELETE FROM user_agent_authority
+      WHERE tenant_id = current_setting('app.tenant_id', true)
+        AND user_id = $1`,
+    [userId],
+  );
+  const inserted: UserAgentAuthority[] = [];
+  for (const row of rows) {
+    inserted.push(
+      await upsertUserAgentAuthority(client, {
+        userId,
+        ...row,
+      }),
+    );
+  }
+  return inserted;
+}
+
+export async function upsertUserAgentAuthority(
+  client: TenantScopedClient,
+  input: UserAgentAuthorityInput,
+): Promise<UserAgentAuthority> {
+  const { rows } = await client.query<UserAgentAuthorityRow>(
+    `INSERT INTO user_agent_authority (
+       id, tenant_id, user_id, agent, can_approve, can_edit, can_reject,
+       max_amount_cents, can_delegate
+     )
+     VALUES ($1, current_setting('app.tenant_id', true), $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (tenant_id, user_id, agent) DO UPDATE
+       SET can_approve = EXCLUDED.can_approve,
+           can_edit = EXCLUDED.can_edit,
+           can_reject = EXCLUDED.can_reject,
+           max_amount_cents = EXCLUDED.max_amount_cents,
+           can_delegate = EXCLUDED.can_delegate,
+           updated_at = now()
+     RETURNING *`,
+    [
+      input.id ?? randomUUID(),
+      input.userId,
+      input.agent,
+      input.canApprove ?? true,
+      input.canEdit ?? true,
+      input.canReject ?? true,
+      input.maxAmountCents?.toString() ?? null,
+      input.canDelegate ?? false,
+    ],
+  );
+  return authorityFromRow(rows[0]!);
+}
+
 export async function countActiveAdmins(client: TenantScopedClient): Promise<number> {
   const { rows } = await client.query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM members WHERE role = 'admin' AND status = 'active'`,
+    `SELECT count(*)::text AS count
+       FROM members
+      WHERE role IN ('owner', 'admin')
+        AND status = 'active'`,
   );
   return Number(rows[0]?.count ?? "0");
 }
@@ -287,5 +409,19 @@ function toMember(row: MemberRow): MemberAuthority {
       row.requires_second_approver_above_cents === null
         ? null
         : BigInt(row.requires_second_approver_above_cents),
+  };
+}
+
+function authorityFromRow(row: UserAgentAuthorityRow): UserAgentAuthority {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    userId: row.user_id,
+    agent: row.agent,
+    canApprove: row.can_approve,
+    canEdit: row.can_edit,
+    canReject: row.can_reject,
+    maxAmountCents: row.max_amount_cents === null ? null : BigInt(row.max_amount_cents.toString()),
+    canDelegate: row.can_delegate,
   };
 }

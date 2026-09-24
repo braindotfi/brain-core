@@ -451,6 +451,7 @@ describe("AgentService.propose", () => {
       expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(0);
       expect((deps.audit as InMemoryAuditEmitter).events.map((event) => event.action)).toEqual([
         "agent.action.proposed",
+        "decision.proposed",
       ]);
     },
   );
@@ -484,6 +485,7 @@ describe("AgentService.propose", () => {
     expect(queries.filter((sql) => sql.startsWith("UPDATE proposals"))).toHaveLength(0);
     expect((deps.audit as InMemoryAuditEmitter).events.map((event) => event.action)).toEqual([
       "agent.action.proposed",
+      "decision.proposed",
     ]);
   });
 

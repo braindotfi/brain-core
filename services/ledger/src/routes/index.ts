@@ -105,6 +105,31 @@ export async function registerLedgerRoutes(
     },
   );
 
+  app.post(
+    "/ledger/deposit-instructions",
+    async (
+      request: FastifyRequest<{
+        Body: { tenant_id?: unknown; account_id?: unknown; method?: unknown };
+      }>,
+      reply,
+    ) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, READ);
+      const body = request.body ?? {};
+      rejectTenantOverride(optionalString(body.tenant_id), ctx.tenantId);
+      const accountId = requireNonEmptyString(body.account_id, "account_id");
+      if (!isBrainId(accountId, "acct")) {
+        throw brainError("request_body_invalid", "malformed account_id");
+      }
+      const result = await service.getDepositInstructions(ctx, {
+        account_id: accountId,
+        method: parseDepositMethod(body.method),
+      });
+      reply.status(200);
+      return result;
+    },
+  );
+
   app.get(
     "/ledger/transactions",
     async (
@@ -244,6 +269,24 @@ export async function registerLedgerRoutes(
       );
       reply.status(200);
       return { counterparty: result.counterparty };
+    },
+  );
+
+  app.delete(
+    "/ledger/counterparties/:counterparty_id",
+    async (request: FastifyRequest<{ Params: { counterparty_id: string } }>, reply) => {
+      const ctx = principalCtx(request);
+      requireScope(request.principal!.scopes, WRITE);
+      requireUserPrincipal(ctx);
+      if (!isBrainId(request.params.counterparty_id, "cp")) {
+        throw brainError("request_params_invalid", "malformed counterparty_id");
+      }
+      const counterparty = await service.deactivateCounterparty(
+        ctx,
+        request.params.counterparty_id,
+      );
+      reply.status(200);
+      return { counterparty };
     },
   );
 
@@ -492,6 +535,21 @@ function parseLimit(raw: string | undefined): number | undefined {
   return n;
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function rejectTenantOverride(queryTenantId: string | undefined, ctxTenantId: string): void {
+  if (queryTenantId !== undefined && queryTenantId !== ctxTenantId) {
+    throw brainError("auth_tenant_mismatch", "tenant_id must match authenticated tenant");
+  }
+}
+
+function parseDepositMethod(value: unknown): "wire" | "ach" | "onchain" {
+  if (value === "wire" || value === "ach" || value === "onchain") return value;
+  throw brainError("request_body_invalid", "method must be wire, ach, or onchain");
+}
+
 const COUNTERPARTY_TYPES = new Set<ManualCounterpartyType>([
   "merchant",
   "vendor",
@@ -525,6 +583,7 @@ const PATCH_FIELDS = new Set([
   "country",
   "tax_id",
   "aliases",
+  "status",
 ]);
 const TRUST_FIELDS = new Set([
   "provenance",
@@ -566,6 +625,7 @@ function parseCounterpartyPatchBody(body: Record<string, unknown>): ManualCounte
   rejectUnknownFields(body, PATCH_FIELDS);
   const patch: ManualCounterpartyPatchInput = optionalIdentityFields(body);
   if (body["name"] !== undefined) patch.name = requireNonEmptyString(body["name"], "name");
+  if (body["status"] !== undefined) patch.status = parseCounterpartyStatus(body["status"]);
   if (Object.keys(patch).length === 0) {
     throw brainError("request_body_invalid", "at least one editable field required");
   }
@@ -608,6 +668,11 @@ function parseCounterpartyType(value: unknown): ManualCounterpartyType {
     });
   }
   return value as ManualCounterpartyType;
+}
+
+function parseCounterpartyStatus(value: unknown): "active" | "archived" {
+  if (value === "active" || value === "archived") return value;
+  throw brainError("request_body_invalid", "status must be active or archived");
 }
 
 function parseVerifiedStatus(value: string): NonNullable<Counterparty["verified_status"]> {

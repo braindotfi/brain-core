@@ -105,7 +105,7 @@ interface MemberRow {
   id: string;
   email: string;
   display_name: string;
-  role: "admin" | "approver" | "viewer";
+  role: "owner" | "admin" | "approver" | "analyst" | "viewer";
   status: "invited" | "active" | "deactivated";
   active: boolean;
   approval_domains: string[];
@@ -134,7 +134,7 @@ interface InviteRow {
   member_status: "invited" | "active" | "deactivated";
   email: string;
   display_name: string;
-  role: "admin" | "approver" | "viewer";
+  role: "owner" | "admin" | "approver" | "analyst" | "viewer";
   approval_domains: string[];
   per_item_limit_cents: string | number | bigint;
   requires_second_approver_above_cents: string | number | bigint | null;

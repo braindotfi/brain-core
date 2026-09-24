@@ -1,0 +1,152 @@
+diff --git a/Brain_API_Specification.yaml b/Brain_API_Specification.yaml
+--- a/Brain_API_Specification.yaml
++++ b/Brain_API_Specification.yaml
+@@
+     ProposalType:
+       type: string
+       enum:
+         - vendor_risk
+         - payment
+         - collections
+         - treasury
+         - cash_forecast
+         - dispute
+         - compliance
++        - aml_compliance
+         - revenue_intel
+         - reconciliation
+         - subscription
++        - subscription_management
+         - fraud_anomaly
+         - personal_budget
+         - financial_health
+@@
++    AmlComplianceProposalDetails:
++      type: object
++      required:
++        - payment_id
++        - beneficiary_id
++        - amount
++        - currency
++        - jurisdictions_involved
++        - screenings
++        - required_documents
++        - regulatory_context
++        - recommended_action
++        - deadline
++      properties:
++        payment_id: { type: string }
++        beneficiary_id: { type: string }
++        amount: { type: string }
++        currency: { type: string }
++        jurisdictions_involved:
++          type: array
++          items: { type: string }
++        screenings:
++          type: object
++          required: [ofac, pep, kyc_freshness]
++          properties:
++            ofac:
++              type: object
++              required: [status, lists_checked, timestamp]
++              properties:
++                status: { type: string, enum: [clear, possible_match, match, unknown] }
++                lists_checked:
++                  type: array
++                  items: { type: string }
++                timestamp: { type: string, format: date-time }
++            pep:
++              type: object
++              required: [status, matches]
++              properties:
++                status: { type: string, enum: [clear, possible_match, match, unknown] }
++                matches:
++                  type: array
++                  items: { type: object, additionalProperties: true }
++            kyc_freshness:
++              type: object
++              required: [last_refreshed, expires]
++              properties:
++                last_refreshed: { type: string, format: date-time }
++                expires: { type: string, format: date-time }
++        required_documents:
++          type: array
++          items:
++            type: object
++            required: [type, status, description]
++            properties:
++              type: { type: string }
++              status: { type: string, enum: [cleared, needed, pending] }
++              description: { type: string }
++              template_url: { type: string, format: uri }
++        regulatory_context:
++          type: object
++          required: [jurisdiction, regulation_id, threshold, purpose_code_required]
++          properties:
++            jurisdiction: { type: string }
++            regulation_id: { type: string }
++            threshold: { type: string }
++            purpose_code_required: { type: boolean }
++        recommended_action:
++          type: string
++          enum: [provide_docs, delegate, hold]
++        deadline: { type: string, format: date-time }
++
++    SubscriptionManagementProposalDetails:
++      type: object
++      required:
++        - subscription_id
++        - merchant
++        - current_plan
++        - renewal_date
++        - currency
++        - current_price
++        - seats
++        - underutilization
++        - options
++        - recommended_action
++      properties:
++        subscription_id: { type: string }
++        merchant: { type: string }
++        current_plan: { type: string }
++        renewal_date: { type: [string, "null"], format: date }
++        currency: { type: string }
++        current_price: { type: string }
++        seats:
++          type: object
++          required: [licensed, active_30d, active_users]
++          properties:
++            licensed: { type: integer, minimum: 0 }
++            active_30d: { type: integer, minimum: 0 }
++            active_users:
++              type: array
++              items:
++                type: object
++                required: [name, email, last_active, apps_used]
++                properties:
++                  name: { type: string }
++                  email: { type: string, format: email }
++                  last_active: { type: string, format: date-time }
++                  apps_used:
++                    type: array
++                    items: { type: string }
++        underutilization:
++          type: object
++          required: [percent, dollar_value]
++          properties:
++            percent: { type: number, minimum: 0, maximum: 100 }
++            dollar_value: { type: string }
++        options:
++          type: array
++          items:
++            type: object
++            required: [label, price, seats, savings_vs_current, recommended]
++            properties:
++              label: { type: string }
++              price: { type: string }
++              seats: { type: integer, minimum: 0 }
++              savings_vs_current: { type: string }
++              recommended: { type: boolean }
++        recommended_action:
++          type: string
++          enum: [downgrade, renegotiate, cancel, renew]

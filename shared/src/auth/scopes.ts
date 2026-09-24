@@ -180,6 +180,17 @@ export const PAYMENT_AGENT_SCOPES: readonly Scope[] = [
  * intents, none of which a read-only role should ever hold, however briefly.
  */
 export const MEMBER_ROLE_SCOPES = {
+  owner: [
+    "ledger:read",
+    "ledger:write",
+    "wiki:read",
+    "raw:read",
+    "policy:read",
+    "execution:read",
+    "execution:admin",
+    "payment_intent:approve",
+    "audit:read",
+  ],
   admin: [
     "ledger:read",
     "ledger:write",
@@ -201,8 +212,12 @@ export const MEMBER_ROLE_SCOPES = {
     "payment_intent:approve",
     "audit:read",
   ],
-  viewer: ["ledger:read", "wiki:read", "raw:read", "policy:read", "execution:read", "audit:read"],
-} as const satisfies Record<"admin" | "approver" | "viewer", readonly Scope[]>;
+  analyst: ["ledger:read", "wiki:read", "raw:read", "policy:read", "execution:read", "audit:read"],
+  viewer: ["ledger:read", "wiki:read", "raw:read", "policy:read", "execution:read"],
+} as const satisfies Record<
+  "owner" | "admin" | "approver" | "analyst" | "viewer",
+  readonly Scope[]
+>;
 
 export type MemberSessionRole = keyof typeof MEMBER_ROLE_SCOPES;
 

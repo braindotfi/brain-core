@@ -30,8 +30,11 @@
     "@brain/shared": "workspace:*",
     "@brain/internal-agents": "workspace:*",
     "@brain/schemas": "workspace:*",
+    "@brain/proposals": "workspace:*",
     "@brain/policy": "workspace:*",
     "@brain/ledger": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1101.0",
+    "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "fastify": "^5.11.0",
     "pg": "^8.22.0",
     "viem": "^2.55.11"

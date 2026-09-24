@@ -118,6 +118,8 @@ function paymentIntentRow(): PaymentIntentRow {
     destination_counterparty_id: newCounterpartyId(),
     amount: "10.00",
     currency: "USD",
+    rate_lock_reference: null,
+    destination_currency: null,
     obligation_id: null,
     invoice_id: null,
     status: "pending_approval",

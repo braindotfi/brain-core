@@ -149,5 +149,8 @@ propose-mode `fraud_anomaly` rows. Those labels apply only when a stored fraud
 proposal is actually in `mode: "propose"`; they are not available on
 background-triggered `flag_transaction` findings.
 
-Vendor Risk uses domain labels for its propose-mode decisions, but the write
-route remains `approve`, `reject`, `acknowledge`, or `undo` for compatibility.
+Vendor Risk edit proposals still use `approve` or `reject` for compatibility.
+Other executable domain outcomes use first-class decision ids on the same
+`/v1/proposals/{id}/decide` route, such as `freeze_card`, `fight`, `refund`,
+`confirm_all_matches`, `escalate_to_accountant`, `approve_as_new`,
+`reject_duplicate`, and `hold_and_verify`.

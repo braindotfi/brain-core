@@ -69,6 +69,8 @@ function buildVendorRiskProposal(input: HandlerInput): ProposedAction {
         label: signal.label,
         score: signal.score,
       })),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("comparison", input.context.comparison),
       recommended_action: score.recommendedAction,
       narrative:
         `${vendorName} scored ${score.riskScore.toFixed(2)} vendor risk with ` +
@@ -235,6 +237,12 @@ function startOfDay(value: Date): Date {
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function normalizeText(value: string): string {

@@ -88,7 +88,7 @@ describe("runVendorRiskScanCycle", () => {
     });
   });
 
-  it("uses payment.destination_changed when the row is marked as a payment destination event", async () => {
+  it("uses payment.destination_changed for payment destination rows", async () => {
     const row = vendor({ event_hint: "payment.destination_changed" });
     const run = vi.fn(
       async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
@@ -108,6 +108,80 @@ describe("runVendorRiskScanCycle", () => {
     );
 
     expect(run.mock.calls[0]?.[1]).toMatchObject({ event: "payment.destination_changed" });
+  });
+
+  it("emits display-safe vendor bank comparison when source data is available", async () => {
+    const row = vendor({
+      bank_on_file: {
+        bank_name: "Acme Bank",
+        routing_masked: "111000025",
+        account_masked: "123456789012",
+        beneficiary: "Acme",
+      },
+      bank_on_invoice: {
+        bank_name: "Invoice Bank",
+        routing_masked: "****4321",
+        account_masked: "0000111122223333",
+        beneficiary: "Acme",
+      },
+    });
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "vendor_risk",
+        action: "flag_vendor_risk",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runVendorRiskScanCycle(
+      { scanPool: scanPoolWith([row]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    expect(run.mock.calls[0]?.[1]).toMatchObject({
+      context: {
+        comparison: {
+          bank_on_file: {
+            bank_name: "Acme Bank",
+            routing_masked: "****0025",
+            account_masked: "****9012",
+            beneficiary: "Acme",
+          },
+          bank_on_invoice: {
+            bank_name: "Invoice Bank",
+            routing_masked: "****4321",
+            account_masked: "****3333",
+            beneficiary: "Acme",
+          },
+        },
+      },
+    });
+  });
+
+  it("omits vendor bank comparison when no source data is available", async () => {
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "vendor_risk",
+        action: "flag_vendor_risk",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runVendorRiskScanCycle(
+      { scanPool: scanPoolWith([vendor({})]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (run.mock.calls[0]?.[1] as { context?: Record<string, unknown> }).context;
+    expect(context).not.toHaveProperty("comparison");
   });
 
   it("falls back to vendor.created for an unknown event hint", async () => {

@@ -1113,6 +1113,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/deposit-instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get deposit instructions
+         * @description Requires `ledger:read`.
+         */
+        post: operations["getDepositInstructions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/counterparties": {
         parameters: {
             query?: never;
@@ -1710,6 +1730,92 @@ export interface paths {
          *     Costs apply only when the LLM path runs; see pricing documentation.
          */
         post: operations["askWiki"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/robo/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create or read the cached morning brief
+         * @description Requires `wiki:read`. The brief is idempotent per tenant and date.
+         *     If the cache already has a brief for the requested date, the cached
+         *     response is returned unchanged. Otherwise Brain compiles a structured
+         *     brief from balances, audit events, proposals, and forecast data.
+         */
+        post: operations["createRoboBrief"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/robo/brief/{tenant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a cached morning brief
+         * @description Requires `wiki:read`. Reads only the cached brief for the date. It
+         *     does not compile a missing brief.
+         */
+        get: operations["getRoboBrief"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/robo/overnight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List overnight Robo actions
+         * @description Requires `wiki:read`. Returns agent actions recorded in the overnight audit window.
+         */
+        get: operations["getRoboOvernight"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/robo/ask-from-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Robo from a proposal rail
+         * @description Requires `wiki:read`. Creates a new Robo thread, stores the first user
+         *     turn, attaches a frozen proposal payload snapshot, and answers through
+         *     the existing assistant answer path.
+         */
+        post: operations["askRoboFromContext"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2556,12 +2662,116 @@ export interface paths {
          * @description Requires `execution:read`. Batch-resolves proposal evidence refs into
          *     tenant-scoped display summaries and canonical deep links. Supported in
          *     this release: counterparty, transaction, obligation, account, invoice,
-         *     and wiki_entity. Unsupported kinds return `resolvable=false` with
+         *     wiki_entity, and stored evidence kinds. Unsupported kinds return `resolvable=false` with
          *     `reason=unsupported_kind`. A supported kind whose record is absent for
          *     this tenant returns `resolvable=true`, `not_found=true`, `summary=null`,
          *     and `deep_link=null`.
          */
         post: operations["resolveEvidenceRefs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload stored evidence
+         * @description Requires `execution:write`. Stores content by SHA-256 and returns evidence metadata plus a short-lived URL.
+         */
+        post: operations["uploadEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/register-external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register external evidence
+         * @description Requires `execution:write`. Registers a URL-backed citation without copying bytes into Brain storage.
+         */
+        post: operations["registerExternalEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate evidence
+         * @description Requires `execution:write`. Records generated report or data evidence from an internal generator.
+         */
+        post: operations["generateEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get evidence
+         * @description Requires `execution:read`. Stored content is hash-verified before a URL is returned.
+         */
+        get: operations["getEvidence"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete evidence
+         * @description Requires `execution:write`. Soft deletes evidence unless it is attached to an open proposal.
+         */
+        delete: operations["deleteEvidence"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List evidence
+         * @description Requires `execution:read`. Lists tenant evidence by proposal, kind, and capture time.
+         */
+        get: operations["listEvidence"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2644,6 +2854,366 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tenant/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read business profile
+         * @description Requires `execution:read`.
+         */
+        get: operations["getTenantProfile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update business profile
+         * @description Requires `execution:admin`.
+         */
+        patch: operations["updateTenantProfile"];
+        trace?: never;
+    };
+    "/tenant/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read assistant notification preferences
+         * @description Requires `execution:read`.
+         */
+        get: operations["getNotificationPreferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update assistant notification preferences
+         * @description Requires `execution:admin`.
+         */
+        patch: operations["updateNotificationPreferences"];
+        trace?: never;
+    };
+    "/tenant/integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tenant provider integrations
+         * @description Requires `execution:read`. Provider config values are not returned.
+         */
+        get: operations["listTenantIntegrations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenant/integrations/{adapter_kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Configure a tenant provider integration
+         * @description Requires `execution:admin`. Enabling a provider fails if required process env is missing.
+         */
+        put: operations["putTenantIntegration"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/two-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List two-factor methods
+         * @description Requires `execution:read` and a user principal.
+         */
+        get: operations["listTwoFactorMethods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/two-factor/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start two-factor enrollment
+         * @description Requires `execution:admin` and a user principal.
+         */
+        post: operations["enrollTwoFactorMethod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/two-factor/confirm-enrollment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm two-factor enrollment
+         * @description Requires `execution:admin` and a user principal.
+         */
+        post: operations["confirmTwoFactorEnrollment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/two-factor/{method}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a two-factor method
+         * @description Requires `execution:admin` and a user principal.
+         */
+        delete: operations["removeTwoFactorMethod"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/trusted-devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List trusted devices
+         * @description Requires `execution:read` and a user principal.
+         */
+        get: operations["listTrustedDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/trusted-devices/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a trusted device
+         * @description Requires `execution:admin` and a user principal.
+         */
+        delete: operations["revokeTrustedDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exchange/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quote an exchange
+         * @description Requires `payment_intent:propose`.
+         */
+        post: operations["createExchangeQuote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List RobotMoney agent overview rows
+         * @description Requires `execution:read`.
+         */
+        get: operations["listAgentOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List UI accounts
+         * @description Requires `ledger:read`.
+         */
+        get: operations["listUiAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read UI account with transactions
+         * @description Requires `ledger:read`.
+         */
+        get: operations["getUiAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List contacts
+         * @description Requires `ledger:read`.
+         */
+        get: operations["listContacts"];
+        put?: never;
+        /**
+         * Create a contact
+         * @description Requires `ledger:write`.
+         */
+        post: operations["createContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/contacts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a contact
+         * @description Requires `ledger:read`.
+         */
+        get: operations["getContact"];
+        put?: never;
+        post?: never;
+        /**
+         * Archive a contact
+         * @description Requires `ledger:write`.
+         */
+        delete: operations["archiveContact"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a contact
+         * @description Requires `ledger:write`.
+         */
+        patch: operations["updateContact"];
+        trace?: never;
+    };
+    "/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search RobotMoney resources
+         * @description Requires `execution:read`.
+         */
+        post: operations["searchRobotMoney"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions": {
         parameters: {
             query?: never;
@@ -2667,11 +3237,8 @@ export interface paths {
          *     actions, supersedes `/payment-intents` (see the `Deprecation`
          *     header on those routes), backed by the same underlying storage.
          *
-         *     `type` is translated to an internal action type (`pay_invoice` and
-         *     `outbound_payment` both map to `ach_outbound`; `ach_inbound`, `wire`,
-         *     `onchain_transfer`, `erp_writeback`, and `card_payment` pass
-         *     through). Requires `source_account_id`, `to.counterparty_id`,
-         *     `amount`, and a 3-letter `currency`.
+         *     `type` is translated to an internal action type. `invoice_link`
+         *     creates a receivable invoice link and does not create a PaymentIntent.
          */
         post: operations["createAction"];
         delete?: never;
@@ -2944,6 +3511,90 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/team": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tenant team users
+         * @description Requires `execution:read` and an active member session.
+         */
+        get: operations["listTeam"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invite a team user
+         * @description Requires `execution:admin` and an owner or admin member.
+         */
+        post: operations["inviteTeamUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a team invite
+         * @description Confirms a pending team invite and activates the member.
+         */
+        post: operations["acceptTeamInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Deactivate a team user
+         * @description Soft deletes the user by deactivating the member row.
+         */
+        delete: operations["deleteTeamUser"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a team user
+         * @description Requires `execution:admin` and an owner or admin member.
+         */
+        patch: operations["updateTeamUser"];
         trace?: never;
     };
     "/members": {
@@ -4051,10 +4702,521 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agent authority rules */
+        get: {
+            parameters: {
+                query?: {
+                    tenant_id?: string;
+                    agent?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tenant rules. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            rules: components["schemas"]["AgentAuthorityRule"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an agent authority rule */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentAuthorityRuleInput"];
+                };
+            };
+            responses: {
+                /** @description Created rule. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentAuthorityRule"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an agent authority rule */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rule. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentAuthorityRule"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Soft delete an agent authority rule */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update an agent authority rule */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentAuthorityRulePatch"];
+                };
+            };
+            responses: {
+                /** @description Updated rule. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentAuthorityRule"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/rules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview agent authority rules */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        agent: string;
+                        payload: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            responses: {
+                /** @description Preview result. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleEvaluationResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposal-snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a proposal payload snapshot */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        payload: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            responses: {
+                /** @description Created snapshot. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProposalPayloadSnapshot"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposal-snapshots/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a proposal payload snapshot */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Snapshot. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProposalPayloadSnapshot"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List decision audit log entries */
+        get: {
+            parameters: {
+                query?: {
+                    tenant_id?: string;
+                    from?: string;
+                    to?: string;
+                    actor_type?: "user" | "system" | "agent";
+                    agent?: string;
+                    decision?: string;
+                    limit?: number;
+                    cursor?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Audit log page. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            entries: components["schemas"]["DecisionAuditLogEntry"][];
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-log/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a decision audit log entry */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Audit log entry. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DecisionAuditLogEntry"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit-log/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export decision audit log entries as CSV */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AuditLogExportRequest"];
+                };
+            };
+            responses: {
+                /** @description Signed CSV export URL. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** Format: uri */
+                            url: string;
+                            path: string;
+                            count: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentAuthorityRule: {
+            /** Format: uuid */
+            id: string;
+            tenant_id: string;
+            agent: components["schemas"]["AgentAuthorityRuleAgent"];
+            decision: string;
+            condition: {
+                [key: string]: unknown;
+            };
+            authority: components["schemas"]["AgentAuthority"];
+            priority: number;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            updated_by: string;
+            /** Format: date-time */
+            updated_at: string;
+            enabled: boolean;
+        };
+        AgentAuthorityRuleInput: {
+            agent: components["schemas"]["AgentAuthorityRuleAgent"];
+            decision: string;
+            condition: {
+                [key: string]: unknown;
+            };
+            authority: components["schemas"]["AgentAuthority"];
+            priority?: number;
+            enabled?: boolean;
+        };
+        AgentAuthorityRulePatch: {
+            agent?: components["schemas"]["AgentAuthorityRuleAgent"];
+            decision?: string;
+            condition?: {
+                [key: string]: unknown;
+            };
+            authority?: components["schemas"]["AgentAuthority"];
+            priority?: number;
+            enabled?: boolean;
+        };
+        /** @enum {string} */
+        AgentAuthorityRuleAgent: "fraud_anomaly" | "vendor_risk" | "dispute" | "aml_compliance" | "payment" | "collections" | "treasury" | "subscription_management" | "invoice_integrity" | "reconciliation" | "cash_forecast" | "revenue_intel";
+        /** @enum {string} */
+        AgentAuthority: "auto" | "propose" | "deny";
+        RuleEvaluationResult: {
+            authority: components["schemas"]["AgentAuthority"];
+            decision: string | null;
+            /** Format: uuid */
+            rule_id: string | null;
+            matched: boolean;
+        };
+        ProposalPayloadSnapshot: {
+            /** Format: uuid */
+            id: string;
+            tenant_id: string;
+            payload: {
+                [key: string]: unknown;
+            };
+            payload_sha256: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DecisionAuditLogEntry: {
+            /** Format: uuid */
+            id: string;
+            tenant_id: string;
+            /** Format: date-time */
+            occurred_at: string;
+            actor: {
+                /** @enum {string} */
+                type: "user" | "system" | "agent";
+                id: string;
+                display_name: string | null;
+            };
+            proposal_id: string;
+            agent: string;
+            decision: string;
+            outcome: {
+                [key: string]: unknown;
+            };
+            policy_context: {
+                [key: string]: unknown;
+            };
+            /** Format: uuid */
+            payload_snapshot_id: string;
+            event_id: string;
+            event_action: string;
+            /** Format: date-time */
+            archived_at: string | null;
+            cold_storage_uri: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AuditLogExportRequest: {
+            tenant_id?: string;
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+            /** @enum {string} */
+            actor_type?: "user" | "system" | "agent";
+            agent?: string;
+            decision?: string;
+        };
         X402Receipt: {
             receipt_id: string;
             logical_operation_id: string;
@@ -4597,6 +5759,139 @@ export interface components {
                 extracted_fields?: string[];
             }[];
         };
+        RoboBriefRequest: {
+            tenant_id: string;
+            /** @description Date or ISO timestamp. Defaults to the server current date when omitted. */
+            as_of?: string;
+        };
+        RoboBriefSignal: {
+            /** @enum {string} */
+            key: "cash_on_hand";
+            value_cents: number;
+            currency: string;
+            delta_cents_7d?: number;
+            sparkline?: {
+                /** Format: date */
+                date: string;
+                value_cents: number;
+            }[];
+        } | {
+            /** @enum {string} */
+            key: "net_30_day";
+            value_cents: number;
+            currency: string;
+            delta_pct?: number;
+        } | {
+            /** @enum {string} */
+            key: "runway_months";
+            value_months?: number;
+            at_burn_cents?: number;
+            extends_to_months_if_forecast?: number;
+        };
+        RoboBriefHighlight: {
+            proposal_id: string;
+            agent: string;
+            title: string;
+            amount_cents?: number;
+            currency?: string;
+            /** @enum {string} */
+            urgency: "urgent" | "attention" | "info";
+        };
+        RoboPromptAction: {
+            /** @enum {string} */
+            kind: "ask_robo" | "open_proposal";
+            target_id_or_prompt: string;
+        };
+        RoboBriefNextPrompt: {
+            label: string;
+            action: components["schemas"]["RoboPromptAction"];
+        };
+        RoboBrief: {
+            tenant_id: string;
+            /** Format: date */
+            date: string;
+            /** Format: date-time */
+            prepared_at: string;
+            signals: components["schemas"]["RoboBriefSignal"][];
+            body_markdown: string;
+            highlights: components["schemas"]["RoboBriefHighlight"][];
+            next_prompts: components["schemas"]["RoboBriefNextPrompt"][];
+        };
+        RoboOvernightAction: {
+            agent: string;
+            summary: string;
+            related_proposal_ids: string[];
+            /** Format: date-time */
+            occurred_at: string;
+        };
+        RoboOvernight: {
+            window: {
+                /** Format: date-time */
+                start: string;
+                /** Format: date-time */
+                end: string;
+            };
+            action_count: number;
+            actions: components["schemas"]["RoboOvernightAction"][];
+        };
+        RoboContextSource: {
+            /** @enum {string} */
+            kind: "proposal_rail";
+            agent: string;
+            rail: string;
+            proposal_id: string;
+        };
+        RoboAskFromContextRequest: {
+            tenant_id: string;
+            source: components["schemas"]["RoboContextSource"];
+            prompt: string;
+            /** @default true */
+            open_thread: boolean;
+        };
+        RoboDataCard: {
+            title: string;
+            total?: unknown;
+            rows: {
+                name: string;
+                sub?: string;
+                meta?: unknown;
+                amount?: unknown;
+                status?: string;
+            }[];
+        };
+        RoboChart: {
+            /** @enum {string} */
+            kind: "line" | "bar" | "forecast";
+            series: {
+                label: string;
+                points: {
+                    x: string | number;
+                    y: number;
+                }[];
+            }[];
+            x_axis?: unknown;
+            annotations?: unknown;
+        };
+        RoboAnswer: {
+            text: string;
+            data_cards?: components["schemas"]["RoboDataCard"][];
+            charts?: components["schemas"]["RoboChart"][];
+            follow_ups?: {
+                label: string;
+                action: unknown;
+            }[];
+            refs?: {
+                /** @enum {string} */
+                kind: "proposal" | "record" | "invoice" | "url";
+                id: string;
+                display_name: string;
+            }[];
+        };
+        RoboAskFromContextResponse: {
+            /** Format: uuid */
+            thread_id: string;
+            first_response: components["schemas"]["RoboAnswer"];
+        };
         WikiAnswer: {
             question: string;
             /** @description True when Brain produced a grounded or deterministic answer. False means `answer` is a refusal or cannot be grounded from the available data. */
@@ -4759,9 +6054,9 @@ export interface components {
          *     refetch and never assume success.
          * @enum {string}
          */
-        ProposalStatus: "proposed" | "pending" | "pending_approval" | "awaiting_second_approval" | "approved" | "acknowledged" | "reconciling" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "undone" | "superseded" | "unknown";
+        ProposalStatus: "proposed" | "pending" | "pending_approval" | "awaiting_second_approval" | "approved" | "acknowledged" | "reconciling" | "paused" | "dispatching" | "rejected" | "executed" | "failed" | "cancelled" | "undone" | "superseded" | "blocked" | "unknown";
         /** @enum {string} */
-        ProposalDecision: "approve" | "reject" | "acknowledge" | "undo";
+        ProposalDecision: "approve" | "reject" | "acknowledge" | "undo" | "confirm_legit" | "block_merchant" | "freeze_card" | "fight" | "refund" | "confirm_all_matches" | "escalate_to_accountant" | "approve_as_new" | "reject_duplicate" | "hold_and_verify";
         ProposalDecisionResult: {
             id: string;
             decision: components["schemas"]["ProposalDecision"];
@@ -5053,6 +6348,59 @@ export interface components {
             /** @enum {string|null} */
             reconciliation_status?: "unreconciled" | "matched" | "partial" | "disputed" | null;
         };
+        /** @enum {string} */
+        TeamRole: "owner" | "admin" | "approver" | "analyst" | "viewer";
+        UserAgentAuthority: {
+            id?: string;
+            /** @enum {string} */
+            agent: "fraud_anomaly" | "vendor_risk" | "dispute" | "aml_compliance" | "payment" | "collections" | "treasury" | "subscription_management" | "invoice_integrity" | "reconciliation" | "cash_forecast" | "revenue_intel";
+            /** @default true */
+            can_approve: boolean;
+            /** @default true */
+            can_edit: boolean;
+            /** @default true */
+            can_reject: boolean;
+            max_amount_cents?: number | null;
+            /** @default false */
+            can_delegate: boolean;
+        };
+        UserAgentAuthorityInput: {
+            /** @enum {string} */
+            agent: "fraud_anomaly" | "vendor_risk" | "dispute" | "aml_compliance" | "payment" | "collections" | "treasury" | "subscription_management" | "invoice_integrity" | "reconciliation" | "cash_forecast" | "revenue_intel";
+            /** @default true */
+            can_approve: boolean;
+            /** @default true */
+            can_edit: boolean;
+            /** @default true */
+            can_reject: boolean;
+            max_amount_cents?: number | null;
+            /** @default false */
+            can_delegate: boolean;
+        };
+        TeamUser: {
+            id: string;
+            tenant_id: string;
+            email: string;
+            display_name: string;
+            role: components["schemas"]["TeamRole"];
+            active: boolean;
+            /** @enum {string} */
+            status: "invited" | "active" | "deactivated";
+            /** Format: date-time */
+            last_active_at: string | null;
+            agent_authority: components["schemas"]["UserAgentAuthority"][];
+        };
+        TeamInviteRequest: {
+            tenant_id: string;
+            email: string;
+            role: components["schemas"]["TeamRole"];
+            agent_authority?: components["schemas"]["UserAgentAuthorityInput"][];
+        };
+        TeamPatchRequest: {
+            role?: components["schemas"]["TeamRole"];
+            active?: boolean;
+            agent_authority?: components["schemas"]["UserAgentAuthorityInput"][];
+        };
         /**
          * @description A tenant approval-authority actor. Response field names are
          *     camelCase, unlike the snake_case request bodies below and most
@@ -5064,8 +6412,7 @@ export interface components {
             tenantId: string;
             email: string;
             displayName: string;
-            /** @enum {string} */
-            role: "admin" | "approver" | "viewer";
+            role: components["schemas"]["TeamRole"];
             /** @enum {string} */
             status: "invited" | "active" | "deactivated";
             active: boolean;
@@ -5103,8 +6450,7 @@ export interface components {
             email: string;
             /** @description Defaults to email if omitted. */
             display_name?: string;
-            /** @enum {string} */
-            role: "admin" | "approver" | "viewer";
+            role: components["schemas"]["TeamRole"];
             /**
              * @description When true, member is created with status:invited and an invite_token is returned instead of being immediately active. A caller-supplied `status` field is accepted by the schema but ignored by create — only `invite` controls initial status.
              * @default false
@@ -5125,8 +6471,7 @@ export interface components {
         MemberUpdateRequest: {
             email?: string;
             display_name?: string;
-            /** @enum {string} */
-            role?: "admin" | "approver" | "viewer";
+            role?: components["schemas"]["TeamRole"];
             /** @enum {string} */
             status?: "invited" | "active" | "deactivated";
             active?: boolean;
@@ -5239,7 +6584,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "revenue_intel" | "reconciliation" | "subscription" | "fraud_anomaly" | "personal_budget" | "financial_health" | "purchase_advisor" | "tax_prep" | "travel_finance" | "bill_management" | "debt_optimization" | "savings";
+        ProposalType: "vendor_risk" | "payment" | "collections" | "treasury" | "cash_forecast" | "dispute" | "compliance" | "invoice_integrity" | "aml_compliance" | "revenue_intel" | "reconciliation" | "subscription" | "subscription_management" | "fraud_anomaly" | "personal_budget" | "financial_health" | "purchase_advisor" | "tax_prep" | "travel_finance" | "bill_management" | "debt_optimization" | "savings";
         /** @enum {string} */
         ProposalRiskBand: "low" | "standard" | "elevated" | "high";
         /** @enum {string} */
@@ -5260,12 +6605,170 @@ export interface components {
         };
         ProposalDecisionAction: {
             /** @enum {string} */
-            id: "approve" | "reject" | "acknowledge" | "undo";
+            id: "approve" | "reject" | "acknowledge" | "undo" | "confirm_legit" | "block_merchant" | "freeze_card" | "fight" | "refund" | "confirm_all_matches" | "escalate_to_accountant" | "approve_as_new" | "reject_duplicate" | "hold_and_verify";
             /** @description Domain label for the decision, such as Clear vendor, Hold transaction, or Accept match. */
             label: string;
             /** @description Human-readable consequence summary for this decision. */
             meaning: string;
         };
+        ProposalDomainDecision: {
+            /** @enum {string} */
+            id: "confirm_legit" | "block_merchant" | "freeze_card" | "gather_evidence" | "contest" | "accept" | "fight" | "refund" | "confirm_all_matches" | "escalate_to_accountant" | "approve_as_new" | "reject_duplicate" | "hold_and_verify";
+            label: string;
+            meaning: string;
+        };
+        FraudAnomalySignals: {
+            geo_mismatch?: {
+                normal_regions: string[];
+                observed_region: string;
+            };
+            off_hours?: {
+                typical_window: string;
+                observed_hour: string;
+            };
+            normal_vs_current?: {
+                avg_amount: unknown;
+                typical_hours: unknown;
+                typical_merchant_type: unknown;
+                geo: unknown;
+            };
+        };
+        VendorRiskComparison: {
+            bank_on_file?: components["schemas"]["BankComparisonEntry"];
+            bank_on_invoice?: components["schemas"]["BankComparisonEntry"];
+            quantity_a?: unknown;
+            quantity_b?: unknown;
+            po_ref_a?: string;
+            po_ref_b?: string;
+        };
+        ProposalDecisionContext: {
+            decide_by: string;
+            if_wrong: string;
+            reversible: {
+                /** @enum {string} */
+                state: "yes" | "no" | "na";
+                label: string;
+            };
+        };
+        CollectionsDraftEmail: {
+            to: string;
+            from: string;
+            subject: string;
+            body: string[];
+            edit_actions: string[];
+        };
+        PayableCashImpact: {
+            source_account_id: string;
+            balance_before: number;
+            balance_after: number;
+        };
+        BankComparisonEntry: {
+            bank_name?: string;
+            routing_masked?: string;
+            account_masked?: string;
+            beneficiary?: string;
+        };
+        DisputeHistoricalWinRate: {
+            pct: number;
+            sample_size: number;
+            time_window: string;
+        };
+        TreasuryAllocation: {
+            operating: unknown;
+            reserve: unknown;
+            other_accounts: unknown;
+        };
+        TreasurySafetyMeter: {
+            current: unknown;
+            floor: unknown;
+            ceiling: unknown;
+            unit: string;
+        };
+        ProposalMoneyAmount: {
+            amount: string;
+            currency: string;
+        };
+        ReconciliationCloseAggregate: {
+            /** Format: date */
+            period_start: string;
+            /** Format: date */
+            period_end: string;
+            matched_count: number;
+            unmatched_count: number;
+            matched_total: unknown;
+            unmatched_total: unknown;
+            drift: unknown;
+        };
+        ReconciliationAccountant: {
+            name: string;
+            org: string;
+            email: string;
+        };
+        ReconciliationMateriality: {
+            unmatched_amount: number;
+            monthly_revenue: number;
+            pct: number;
+        };
+        CashForecastDriver: {
+            name: string;
+            category: string;
+            monthly_impact: unknown;
+            direction: string;
+        };
+        CashForecastRunwayPoint: {
+            /** Format: date */
+            date: string;
+            projected_balance: unknown;
+            projected_runway_months: unknown;
+        };
+        RevenueConcentration: {
+            top_customer_pct: number;
+            top_customer_amount: unknown;
+            breakdown: {
+                name: string;
+                amount: unknown;
+                pct: number;
+            }[];
+        };
+        HistoricalConcentrationPoint: {
+            period: string;
+            top_customer_pct: number;
+        };
+        PipelineCoverage: {
+            quarter: string;
+            plan: unknown;
+            weighted_pipeline: unknown;
+            coverage_pct: number;
+        };
+        SubscriptionAlternative: {
+            name: string;
+            note: string;
+            price: string;
+        };
+        FlaggedInvoice: {
+            id: string;
+            amount: unknown;
+            currency: string;
+            /** Format: date */
+            invoice_date: string;
+            line_items_hash: string;
+            vendor: unknown;
+        };
+        SuspectedOriginalInvoice: {
+            id: string;
+            amount: unknown;
+            currency: string;
+            /** Format: date */
+            invoice_date: string;
+            line_items_hash: string;
+            payment_status: string;
+        };
+        InvoiceIntegrityMatchConfidence: {
+            pct: number;
+            signals: string[];
+        };
+        /** @enum {string} */
+        InvoiceIntegrityFindingKind: "duplicate" | "structuring" | "threshold_avoidance" | "high_value_new_vendor";
         ProposalKeyFact: {
             label: string;
             /** @description Typed value copied from stored proposal details. */
@@ -5314,7 +6817,7 @@ export interface components {
             };
         };
         EvidenceResolveRef: {
-            /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, and wiki_entity. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch. */
+            /** @description Evidence kind. Supported kinds are counterparty, transaction, obligation, account, invoice, wiki_entity, pdf, record, mail, image, external, report, and data. If the ref has a recognized Brain id prefix, the resolver uses the prefix-inferred kind for dispatch. */
             kind: string;
             /** @description Stored evidence reference. Never a `brain://` placeholder. */
             ref: string;
@@ -5339,6 +6842,82 @@ export interface components {
         };
         EvidenceResolveResponse: {
             results: components["schemas"]["EvidenceResolveResult"][];
+        };
+        /** @enum {string} */
+        EvidenceKind: "pdf" | "record" | "mail" | "image" | "external" | "report" | "data";
+        /** @enum {string} */
+        EvidenceSource: "uploaded" | "emailed" | "synced" | "generated" | "external_link";
+        /** @enum {string} */
+        EvidenceRetentionClass: "standard" | "compliance_7yr" | "permanent";
+        EvidenceRecord: {
+            /** Format: uuid */
+            id: string;
+            tenant_id: string;
+            kind: components["schemas"]["EvidenceKind"];
+            name: string;
+            source: components["schemas"]["EvidenceSource"];
+            storage_ref: string;
+            sha256: string | null;
+            mime_type: string;
+            byte_size: number;
+            /** Format: date-time */
+            captured_at: string;
+            captured_by: string;
+            retention_class: components["schemas"]["EvidenceRetentionClass"];
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            archived_at: string | null;
+            /** Format: date-time */
+            deleted_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Present on read responses. External links return the external URL. */
+            signed_url?: string | null;
+        };
+        EvidenceUploadRequest: {
+            tenant_id?: string;
+            kind: components["schemas"]["EvidenceKind"];
+            name: string;
+            /** Format: byte */
+            content_base64: string;
+            mime_type: string;
+            retention_class?: components["schemas"]["EvidenceRetentionClass"];
+            metadata?: {
+                [key: string]: unknown;
+            };
+            proposal_id?: string;
+        };
+        EvidenceRegisterExternalRequest: {
+            tenant_id?: string;
+            /** @enum {string} */
+            kind: "external_link";
+            name: string;
+            /** Format: uri */
+            url: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
+            proposal_id?: string;
+        };
+        EvidenceGenerateRequest: {
+            tenant_id?: string;
+            /** @enum {string} */
+            kind: "report" | "data";
+            name: string;
+            generator: string;
+            input_ref?: string;
+            metadata?: {
+                [key: string]: unknown;
+            };
+            proposal_id?: string;
+        };
+        EvidenceReadResponse: {
+            evidence: components["schemas"]["EvidenceRecord"];
+        };
+        EvidenceListResponse: {
+            evidence: components["schemas"]["EvidenceRecord"][];
         };
         AgentOutputProposal: {
             id: string;
@@ -5366,6 +6945,327 @@ export interface components {
             policy: components["schemas"]["ProposalPolicySummary"];
             presentation: components["schemas"]["ProposalPresentation"];
             available_decisions: components["schemas"]["ProposalDecisionAction"][];
+            decision_context?: components["schemas"]["ProposalDecisionContext"];
+            signals?: components["schemas"]["FraudAnomalySignals"];
+            comparison?: components["schemas"]["VendorRiskComparison"];
+            draft_email?: components["schemas"]["CollectionsDraftEmail"];
+            cash_impact?: components["schemas"]["PayableCashImpact"];
+            historical_win_rate?: components["schemas"]["DisputeHistoricalWinRate"];
+            allocation_before?: components["schemas"]["TreasuryAllocation"];
+            allocation_after?: components["schemas"]["TreasuryAllocation"];
+            safety_meter?: components["schemas"]["TreasurySafetyMeter"];
+            estimated_annual_yield_gain?: components["schemas"]["ProposalMoneyAmount"];
+            close_aggregate?: components["schemas"]["ReconciliationCloseAggregate"];
+            accountant?: components["schemas"]["ReconciliationAccountant"];
+            materiality?: components["schemas"]["ReconciliationMateriality"];
+            horizon_days?: number;
+            drivers?: components["schemas"]["CashForecastDriver"][];
+            runway_projection?: components["schemas"]["CashForecastRunwayPoint"][];
+            concentration?: components["schemas"]["RevenueConcentration"];
+            historical_concentration?: components["schemas"]["HistoricalConcentrationPoint"][];
+            pipeline_coverage?: components["schemas"]["PipelineCoverage"];
+            alternatives?: components["schemas"]["SubscriptionAlternative"][];
+            flagged_invoice?: components["schemas"]["FlaggedInvoice"];
+            suspected_original?: components["schemas"]["SuspectedOriginalInvoice"];
+            match_confidence?: components["schemas"]["InvoiceIntegrityMatchConfidence"];
+            finding_kind?: components["schemas"]["InvoiceIntegrityFindingKind"];
+            screenings?: {
+                [key: string]: unknown;
+            };
+            required_documents?: {
+                [key: string]: unknown;
+            }[];
+            regulatory_context?: {
+                [key: string]: unknown;
+            };
+            jurisdictions_involved?: string[];
+            /** Format: date-time */
+            deadline?: string;
+            seats?: {
+                [key: string]: unknown;
+            };
+            underutilization?: {
+                [key: string]: unknown;
+            };
+            options?: {
+                [key: string]: unknown;
+            }[];
+            decisions?: components["schemas"]["ProposalDomainDecision"][];
+        };
+        TenantProfile: {
+            tenant_id?: string;
+            legal_name?: string | null;
+            dba_name?: string | null;
+            address_line1?: string | null;
+            address_line2?: string | null;
+            city?: string | null;
+            state?: string | null;
+            postal_code?: string | null;
+            country?: string | null;
+            tax_id?: string | null;
+            industry?: string | null;
+            jurisdiction?: string | null;
+            fiscal_year_end?: string | null;
+            accountant?: components["schemas"]["TenantAccountant"] | null;
+            operating_account_id?: string | null;
+            net_burn_per_day?: string | number | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        TenantAccountant: {
+            name: string;
+            org: string;
+            email: string;
+        };
+        TenantProfilePatch: {
+            legal_name?: string;
+            dba_name?: string;
+            address_line1?: string;
+            address_line2?: string;
+            city?: string;
+            state?: string;
+            postal_code?: string;
+            country?: string;
+            tax_id?: string;
+            ein?: string;
+            industry?: string;
+            jurisdiction?: string;
+            fiscal_year_end?: string;
+            accountant?: components["schemas"]["TenantAccountant"];
+            operating_account_id?: string;
+            net_burn_per_day?: string | number;
+        };
+        NotificationPreferences: {
+            tenant_id: string;
+            proactive_briefs_enabled: boolean;
+            proactive_alerts_enabled: boolean;
+            proactive_alert_channels: ("email" | "push" | "slack")[];
+            quiet_hours?: {
+                [key: string]: unknown;
+            } | null;
+            agent_mute_list: string[];
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        NotificationPreferencesPatch: {
+            proactive_briefs_enabled?: boolean;
+            proactive_alerts_enabled?: boolean;
+            proactive_alert_channels?: ("email" | "push" | "slack")[];
+            quiet_hours?: {
+                [key: string]: unknown;
+            };
+            agent_mute_list?: string[];
+        };
+        TenantIntegration: {
+            tenant_id: string;
+            /** @enum {string} */
+            adapter_kind: "ofac" | "pep" | "kyc" | "card_issuer" | "dispute" | "reversal" | "directory" | "saas_vendor" | "llm" | "notification" | "blob";
+            provider: string;
+            enabled: boolean;
+            requires_setup: boolean;
+            missing_env: string[];
+            config_keys: string[];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        TenantIntegrationInput: {
+            provider: string;
+            enabled?: boolean;
+            config?: {
+                [key: string]: unknown;
+            };
+        };
+        TwoFactorMethod: {
+            /** @enum {string} */
+            method: "authenticator" | "sms" | "backup_codes";
+            /** @enum {string} */
+            status: "pending" | "enabled";
+            phone_number?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        TwoFactorMethodsResponse: {
+            enabled: boolean;
+            methods: ("authenticator" | "sms" | "backup_codes")[];
+            method_details?: components["schemas"]["TwoFactorMethod"][];
+        };
+        TwoFactorEnrollment: components["schemas"]["TwoFactorMethod"] & {
+            enrollment_id?: string;
+            qr_uri?: string;
+            backup_codes?: string[];
+        };
+        TrustedDevice: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            ip?: string | null;
+            user_agent?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        ExchangeQuoteRequest: {
+            source_currency: string;
+            destination_currency: string;
+            amount: string;
+        };
+        ExchangeQuote: {
+            /** Format: uuid */
+            quote_id: string;
+            /** Format: uuid */
+            rate_lock_reference: string;
+            source_currency: string;
+            destination_currency: string;
+            amount: string;
+            rate: string;
+            fee_cents: number;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        AgentOverviewItem: {
+            agent_key: components["schemas"]["AgentAuthorityRuleAgent"];
+            display_name: string;
+            description: string;
+            authority_summary: {
+                /** @enum {string} */
+                default: "auto" | "propose" | "notify_only";
+                auto_conditions: {
+                    [key: string]: unknown;
+                }[];
+                per_user_overrides_count: number;
+            };
+            weekly_decision_count: number;
+            weekly_auto_count: number;
+            weekly_needed_you_count: number;
+            active_rules_count: number;
+            /** Format: date-time */
+            last_activity_at?: string | null;
+        };
+        UiAccount: {
+            id: string;
+            /** @enum {string} */
+            type: "checking" | "savings" | "card" | "wallet";
+            name: string;
+            institution?: string | null;
+            balance: string | number | null;
+            currency: string;
+            /** Format: date-time */
+            last_sync: string | null;
+            trend: {
+                delta_amount: number;
+                delta_display: string;
+                /** @enum {string} */
+                direction: "up" | "down" | "flat";
+                window: string;
+                sparkline: number[];
+                note: string;
+            };
+            safety_floor: {
+                label: string;
+                current_amount: number;
+                floor_amount: number;
+                headroom_amount: number;
+                headroom_display: string;
+                /** @enum {string} */
+                state: "above" | "at" | "below";
+            } | null;
+        };
+        UiTransaction: {
+            id: string;
+            amount: string | number;
+            currency: string;
+            /** @enum {string} */
+            direction: "inflow" | "outflow" | "transfer" | "adjustment";
+            /** Format: date-time */
+            transaction_date: string;
+            /** Format: date-time */
+            posted_date?: string | null;
+            counterparty_id?: string | null;
+            status: string;
+            description_raw?: string | null;
+            description_normalized?: string | null;
+        };
+        UiAccountDetail: {
+            account: components["schemas"]["UiAccount"];
+            transactions: components["schemas"]["UiTransaction"][];
+            next_cursor: string | null;
+        };
+        Contact: {
+            id: string;
+            name: string;
+            type: string;
+            risk_level?: string | null;
+            verified_status?: string | null;
+            aliases?: string[];
+            linked_accounts?: string[];
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status?: "active" | "archived";
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        ContactInput: {
+            name: string;
+            type?: string;
+            risk_level?: string;
+            verified_status?: string;
+            aliases?: string[];
+            linked_accounts?: string[];
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        ContactPatch: {
+            name?: string;
+            type?: string;
+            risk_level?: string;
+            verified_status?: string;
+            aliases?: string[];
+            linked_accounts?: string[];
+            metadata?: {
+                [key: string]: unknown;
+            };
+        };
+        DepositInstructions: {
+            account_id: string;
+            /** @enum {string} */
+            method: "wire" | "ach" | "onchain";
+            bank_name?: string | null;
+            routing_number?: string | null;
+            account_number?: string | null;
+            memo_reference?: string | null;
+            onchain_address?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        GlobalSearchRequest: {
+            query: string;
+            q?: string;
+            kinds?: ("proposal" | "thread" | "account" | "counterparty" | "audit_entry")[];
+            limit?: number;
+        };
+        GlobalSearchResult: {
+            /** @enum {string} */
+            kind: "proposal" | "thread" | "account" | "counterparty" | "audit_entry";
+            id: string;
+            title: string;
+            subtitle?: string | null;
+            meta?: {
+                [key: string]: unknown;
+            };
+            ref_url?: string;
+            score: number;
         };
         PaymentIntent: components["schemas"]["LedgerCommonFields"] & {
             created_by_agent_id?: string;
@@ -5373,7 +7273,7 @@ export interface components {
              * @description `x402_settle` (USDC on Base) and `escrow_release` (BrainEscrow lock release, RFC 0001 §7.6) are gated but not yet executable (shadow-first).
              * @enum {string}
              */
-            action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "x402_settle" | "escrow_release" | "other";
+            action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "exchange" | "x402_settle" | "escrow_release" | "other";
             source_account_id: string;
             destination_counterparty_id: string;
             amount: string;
@@ -5384,6 +7284,8 @@ export interface components {
             currency: string;
             obligation_id?: string | null;
             invoice_id?: string | null;
+            rate_lock_reference?: string | null;
+            destination_currency?: string | null;
             /**
              * @description Complete PaymentIntent status enum. Clients that see `unknown`
              *     must refetch and never assume success.
@@ -8164,6 +10066,36 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getDepositInstructions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    account_id: string;
+                    /** @enum {string} */
+                    method: "wire" | "ach" | "onchain";
+                };
+            };
+        };
+        responses: {
+            /** @description Deposit instructions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepositInstructions"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listCounterparties: {
         parameters: {
             query?: {
@@ -9070,6 +11002,112 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    createRoboBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoboBriefRequest"];
+            };
+        };
+        responses: {
+            /** @description Cached or newly compiled morning brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoboBrief"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getRoboBrief: {
+        parameters: {
+            query: {
+                date: string;
+            };
+            header?: never;
+            path: {
+                tenant_id: components["parameters"]["TenantId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cached morning brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoboBrief"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getRoboOvernight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Overnight agent actions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoboOvernight"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    askRoboFromContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoboAskFromContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Thread id and first response, or an SSE stream when open_thread is true. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoboAskFromContextResponse"];
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listSuggestedWikiQuestions: {
@@ -10435,6 +12473,181 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    uploadEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Evidence uploaded */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceReadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    registerExternalEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceRegisterExternalRequest"];
+            };
+        };
+        responses: {
+            /** @description External evidence registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceReadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    generateEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Evidence generated */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceReadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence metadata and URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceReadResponse"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Stored content failed tamper verification */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        evidence: components["schemas"]["EvidenceRecord"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Evidence is attached to an open proposal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listEvidence: {
+        parameters: {
+            query?: {
+                tenant_id?: string;
+                proposal_id?: string;
+                kind?: components["schemas"]["EvidenceKind"];
+                from?: string;
+                to?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     queryProposalDecisionStates: {
         parameters: {
             query?: never;
@@ -10533,6 +12746,530 @@ export interface operations {
             };
         };
     };
+    getTenantProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Business profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantProfile"];
+                };
+            };
+        };
+    };
+    updateTenantProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantProfilePatch"];
+            };
+        };
+        responses: {
+            /** @description Business profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantProfile"];
+                };
+            };
+        };
+    };
+    getNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+        };
+    };
+    updateNotificationPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferencesPatch"];
+            };
+        };
+        responses: {
+            /** @description Notification preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreferences"];
+                };
+            };
+        };
+    };
+    listTenantIntegrations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant integrations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        integrations: components["schemas"]["TenantIntegration"][];
+                    };
+                };
+            };
+        };
+    };
+    putTenantIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                adapter_kind: "ofac" | "pep" | "kyc" | "card_issuer" | "dispute" | "reversal" | "directory" | "saas_vendor" | "llm" | "notification" | "blob";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantIntegrationInput"];
+            };
+        };
+        responses: {
+            /** @description Tenant integration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantIntegration"];
+                };
+            };
+            /** @description Provider env is missing. Error code `integration_provider_not_configured`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listTwoFactorMethods: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Two-factor methods */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoFactorMethodsResponse"];
+                };
+            };
+        };
+    };
+    enrollTwoFactorMethod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    method: "authenticator" | "sms" | "backup_codes";
+                    phone_number?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Pending enrollment */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoFactorEnrollment"];
+                };
+            };
+        };
+    };
+    confirmTwoFactorEnrollment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    method: "authenticator" | "sms" | "backup_codes";
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Enabled method */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoFactorMethod"];
+                };
+            };
+        };
+    };
+    removeTwoFactorMethod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                method: "authenticator" | "sms" | "backup_codes";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    current_password?: string;
+                    backup_code?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listTrustedDevices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trusted devices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        devices: components["schemas"]["TrustedDevice"][];
+                    };
+                };
+            };
+        };
+    };
+    revokeTrustedDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createExchangeQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExchangeQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Exchange quote */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExchangeQuote"];
+                };
+            };
+        };
+    };
+    listAgentOverview: {
+        parameters: {
+            query?: {
+                /** @description Optional UI context. Authenticated tenant scope remains authoritative. */
+                tenant_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agents: components["schemas"]["AgentOverviewItem"][];
+                    };
+                };
+            };
+        };
+    };
+    listUiAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        accounts: components["schemas"]["UiAccount"][];
+                    };
+                };
+            };
+        };
+    };
+    getUiAccount: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account with recent transactions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiAccountDetail"];
+                };
+            };
+        };
+    };
+    listContacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contact list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Contact"][];
+                    };
+                };
+            };
+        };
+    };
+    createContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactInput"];
+            };
+        };
+        responses: {
+            /** @description Contact created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contact"];
+                };
+            };
+        };
+    };
+    getContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contact"];
+                };
+            };
+        };
+    };
+    archiveContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContactPatch"];
+            };
+        };
+        responses: {
+            /** @description Contact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contact"];
+                };
+            };
+        };
+    };
+    searchRobotMoney: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Search results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSearchResult"][];
+                };
+            };
+        };
+    };
     listActions: {
         parameters: {
             query?: {
@@ -10574,7 +13311,9 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    type: "pay_invoice" | "outbound_payment" | "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment";
+                    type: "pay_invoice" | "outbound_payment" | "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "invoice_link";
+                    /** @enum {string} */
+                    action_type?: "pay_invoice" | "outbound_payment" | "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "invoice_link";
                     /** @description Only honored for callers with `execution:admin`. */
                     agent_id?: string;
                     to: {
@@ -10583,6 +13322,10 @@ export interface operations {
                     amount: string;
                     currency: string;
                     source_account_id: string;
+                    counterparty_id?: string;
+                    description?: string;
+                    /** Format: date-time */
+                    due_date?: string;
                     memo?: string;
                     evidence_ids?: string[];
                 };
@@ -10796,13 +13539,17 @@ export interface operations {
                      * @description Settlement rail for the intent. `x402_settle` (USDC on Base via the x402 rail) and `escrow_release` (BrainEscrow lock release, RFC 0001 §7.6) are gated but not yet executable (shadow-first).
                      * @enum {string}
                      */
-                    action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "x402_settle" | "escrow_release";
+                    action_type: "ach_outbound" | "ach_inbound" | "wire" | "onchain_transfer" | "erp_writeback" | "card_payment" | "exchange" | "x402_settle" | "escrow_release";
                     source_account_id: string;
                     destination_counterparty_id: string;
                     amount: string;
                     currency: string;
                     obligation_id?: string;
                     invoice_id?: string;
+                    /** @description Required when action_type is exchange. */
+                    rate_lock_reference?: string;
+                    /** @description Required when action_type is exchange. */
+                    destination_currency?: string;
                     agent_id?: string;
                     evidence_ids?: string[];
                     /** @description x402 settlement recipient on-chain address. Required when action_type=x402_settle; ignored otherwise (RFC 0001 §6.1). */
@@ -11100,10 +13847,156 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listTeam: {
+        parameters: {
+            query?: {
+                tenant_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Team users with per-agent authority summaries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users: components["schemas"]["TeamUser"][];
+                        /** @enum {string} */
+                        directory_provider: "none" | "okta" | "google_workspace" | "microsoft_entra";
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    inviteTeamUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamInviteRequest"];
+            };
+        };
+        responses: {
+            /** @description Invite created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        user: components["schemas"]["TeamUser"];
+                        invite_token_url: string;
+                        invite_token: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    acceptTeamInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    invite_token: string;
+                    display_name: string;
+                    password?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Invite accepted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        user: components["schemas"]["TeamUser"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteTeamUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Team user deactivated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        user: components["schemas"]["TeamUser"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateTeamUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Team user updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        user: components["schemas"]["TeamUser"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listMembers: {
         parameters: {
             query?: {
-                role?: "admin" | "approver" | "viewer";
+                role?: components["schemas"]["TeamRole"];
                 domain?: "ap" | "ar" | "treasury" | "payroll" | "reconciliation";
                 limit?: number;
                 cursor?: string;

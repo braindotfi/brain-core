@@ -24,8 +24,15 @@ export const MAX_EVIDENCE_RESOLVE_REFS = 50;
 export const RESOLVABLE_EVIDENCE_KINDS = [
   "account",
   "counterparty",
+  "data",
+  "external",
+  "image",
   "invoice",
+  "mail",
   "obligation",
+  "pdf",
+  "record",
+  "report",
   "transaction",
   "wiki_entity",
 ] as const;
@@ -68,6 +75,16 @@ interface WikiEntitySummaryRow {
   id: string;
   kind: string;
   attributes: Record<string, unknown>;
+}
+
+interface StoredEvidenceSummaryRow {
+  id: string;
+  kind: string;
+  name: string;
+  source: string;
+  mime_type: string;
+  byte_size: string | number | bigint;
+  archived_at: Date | null;
 }
 
 export function isEvidenceKindResolvable(kind: string): boolean {
@@ -179,6 +196,18 @@ async function resolveOne(
         ? notFound(canonical)
         : found(canonical, accountSummary(row), `/ledger/accounts/${item.ref}`);
     }
+    case "data":
+    case "external":
+    case "image":
+    case "mail":
+    case "pdf":
+    case "record":
+    case "report": {
+      const row = await findStoredEvidence(client, item.ref);
+      return row === null
+        ? notFound(canonical)
+        : found(canonical, storedEvidenceSummary(row), `/evidence/${item.ref}`);
+    }
     case "counterparty": {
       const row = await findCounterpartyById(client, item.ref);
       return row === null
@@ -248,7 +277,19 @@ function hasExpectedPrefix(kind: ResolvableEvidenceKind, ref: string): boolean {
       return isBrainId(ref, "tx");
     case "wiki_entity":
       return isBrainId(ref, "ent");
+    case "data":
+    case "external":
+    case "image":
+    case "mail":
+    case "pdf":
+    case "record":
+    case "report":
+      return isUuid(ref);
   }
+}
+
+function isUuid(ref: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ref);
 }
 
 async function findWikiEntity(
@@ -259,6 +300,22 @@ async function findWikiEntity(
     `SELECT id, kind, attributes
        FROM wiki_entities
       WHERE id = $1 AND valid_to IS NULL
+      LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+async function findStoredEvidence(
+  client: TenantScopedClient,
+  id: string,
+): Promise<StoredEvidenceSummaryRow | null> {
+  const { rows } = await client.query<StoredEvidenceSummaryRow>(
+    `SELECT id, kind, name, source, mime_type, byte_size, archived_at
+       FROM evidence
+      WHERE id = $1
+        AND tenant_id = current_setting('app.tenant_id', true)
+        AND deleted_at IS NULL
       LIMIT 1`,
     [id],
   );
@@ -290,6 +347,11 @@ function invoiceSummary(row: InvoiceRow): string {
 function wikiSummary(row: WikiEntitySummaryRow): string {
   const label = firstAttributeString(row.attributes, ["name", "title", "display_name"]);
   return label === null ? `Wiki ${row.kind} entity` : `Wiki ${row.kind}: ${label}`;
+}
+
+function storedEvidenceSummary(row: StoredEvidenceSummaryRow): string {
+  const archived = row.archived_at === null ? "" : " archived";
+  return `${row.name} (${row.kind}, ${row.mime_type}, ${row.byte_size} bytes${archived})`;
 }
 
 function firstAttributeString(

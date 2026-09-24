@@ -4,7 +4,7 @@ import type { Pool } from "pg";
 import { getProposal, listProposals, parseListProposalsQuery } from "./read-model.js";
 import { parseProposalDecisionStateQuery, queryProposalDecisionStates } from "./decision-state.js";
 import {
-  PROPOSAL_DECISIONS,
+  ALL_PROPOSAL_DECISIONS,
   ProposalDecisionService,
   type ProposalDecision,
   type ProposalDecisionServiceDeps,
@@ -119,10 +119,10 @@ function parseDecision(value: string | undefined): ProposalDecision {
   if (value === undefined) {
     throw brainError("request_body_invalid", "decision is required");
   }
-  if (!PROPOSAL_DECISIONS.includes(value as ProposalDecision)) {
+  if (!ALL_PROPOSAL_DECISIONS.includes(value as ProposalDecision)) {
     throw brainError(
       "request_body_invalid",
-      "decision must be approve, reject, acknowledge, or undo",
+      `decision must be one of ${ALL_PROPOSAL_DECISIONS.join(", ")}`,
     );
   }
   return value as ProposalDecision;

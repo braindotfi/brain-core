@@ -125,6 +125,7 @@ export const BRAIN_ERROR_CODES = [
   "invoice_shortcut_not_payable",
   "invoice_shortcut_no_evidence",
   "invoice_shortcut_source_account_unresolved",
+  "invoice_link_unavailable",
   // Phase 4 open-ecosystem (4337 / Coinbase Smart Wallet) settlement resolution.
   "open_ecosystem_invalid_permission",
   "open_ecosystem_unknown_payee",
@@ -136,6 +137,22 @@ export const BRAIN_ERROR_CODES = [
   "agent_idempotency_conflict",
   // Agent Autonomy v3 — proposal-layer idempotency collision (1a.5).
   "agent_proposal_duplicate",
+
+  // Team management.
+  "team_invite_invalid",
+  "team_invite_expired",
+  "team_user_not_found",
+  "auth_forbidden",
+  "account_not_found",
+  "contact_not_found",
+  "integration_provider_not_configured",
+  "robo_brief_not_found",
+  "two_factor_method_not_found",
+
+  // Evidence
+  "evidence_not_found",
+  "evidence_delete_blocked",
+  "evidence_tamper_detected",
 
   // Audit
   "audit_event_not_found",
@@ -324,6 +341,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   execution_proposal_not_found: 404,
   payment_intent_not_found: 404,
   obligation_not_found: 404,
+  evidence_not_found: 404,
   audit_event_not_found: 404,
 
   // 400 — domain validation
@@ -356,6 +374,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   ledger_reconciliation_conflict: 409,
   agent_proposal_invalid_state: 409, // alias of execution_proposal_invalid_state (409)
   agent_idempotency_conflict: 409, // alias of execution_idempotency_conflict (409)
+  evidence_delete_blocked: 409,
+  evidence_tamper_detected: 409,
   audit_anchor_not_yet_published: 409,
   audit_anchor_db_only: 409,
   signup_email_taken: 409,
@@ -373,9 +393,18 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   invite_expired: 403,
   invite_consumed: 403,
   invite_revoked: 403,
+  team_invite_invalid: 403,
+  team_invite_expired: 403,
+  auth_forbidden: 403,
+  contact_not_found: 404,
+  account_not_found: 404,
+  robo_brief_not_found: 404,
+  two_factor_method_not_found: 404,
   api_key_not_found: 404,
   commercial_x402_receipt_not_found: 404,
   governance_report_not_found: 404,
+  team_user_not_found: 404,
+  integration_provider_not_configured: 409,
 
   // 422 — semantic precondition unsatisfiable (ledger evidence/balance, gate
   // approval/decision preconditions)
@@ -410,6 +439,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<BrainErrorCode, number>> = {
   execution_rail_unavailable: 503,
   execution_rail_misconfigured: 503,
   agent_rail_unavailable: 503,
+  invoice_link_unavailable: 503,
   dependency_unavailable: 503,
 
   // 429 — rate limit

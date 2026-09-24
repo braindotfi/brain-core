@@ -349,6 +349,39 @@ const envSchema = z.object({
   // ---- LLM (Anthropic, legacy / tests only) ----
   ANTHROPIC_API_KEY: optionalNonEmptyString(),
 
+  // ---- Provider adapters ----
+  COMPLY_ADVANTAGE_API_KEY: optionalNonEmptyString(),
+  COMPLY_ADVANTAGE_ENDPOINT: optionalNonEmptyString(),
+  SUMSUB_APP_TOKEN: optionalNonEmptyString(),
+  SUMSUB_SECRET: optionalNonEmptyString(),
+  STRIPE_ISSUING_API_KEY: optionalNonEmptyString(),
+  CHARGEFLOW_API_KEY: optionalNonEmptyString(),
+  FIRST_MERIDIAN_API_KEY: optionalNonEmptyString(),
+  FIRST_MERIDIAN_ENDPOINT: optionalNonEmptyString(),
+  GOOGLE_DIRECTORY_SERVICE_ACCOUNT_KEY: optionalNonEmptyString(),
+  ENTRA_CLIENT_ID: optionalNonEmptyString(),
+  ENTRA_CLIENT_SECRET: optionalNonEmptyString(),
+  ENTRA_TENANT_ID: optionalNonEmptyString(),
+  OKTA_API_TOKEN: optionalNonEmptyString(),
+  OKTA_DOMAIN: optionalNonEmptyString(),
+  POSTMARK_API_KEY: optionalNonEmptyString(),
+  POSTMARK_FROM_EMAIL: optionalNonEmptyString(),
+  NYLAS_CLIENT_ID: optionalNonEmptyString(),
+  NYLAS_API_KEY: optionalNonEmptyString(),
+  NYLAS_API_URI: z.string().url().default("https://api.us.nylas.com"),
+  NYLAS_WEBHOOK_SECRET: optionalNonEmptyString(),
+  NYLAS_REDIRECT_URI: optionalNonEmptyString().pipe(z.string().url().optional()),
+  NYLAS_REDIRECT_URI_DEV: optionalNonEmptyString().pipe(z.string().url().optional()),
+  NYLAS_REDIRECT_URI_PROD: optionalNonEmptyString().pipe(z.string().url().optional()),
+  NYLAS_ADAPTER_MODE: z.enum(["real", "mock"]).optional(),
+  TWILIO_ACCOUNT_SID: optionalNonEmptyString(),
+  TWILIO_AUTH_TOKEN: optionalNonEmptyString(),
+  TWILIO_FROM_NUMBER: optionalNonEmptyString(),
+  AWS_ACCESS_KEY_ID: optionalNonEmptyString(),
+  AWS_SECRET_ACCESS_KEY: optionalNonEmptyString(),
+  AWS_S3_BUCKET: optionalNonEmptyString(),
+  AWS_REGION: optionalNonEmptyString(),
+
   // ---- Sandbox / demo mode ----
   /** Set to "true" to enable sandbox-friendly stub overrides (no live credentials required). */
   BRAIN_DEMO_MODE: z

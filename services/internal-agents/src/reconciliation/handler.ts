@@ -44,6 +44,11 @@ const CONFIDENCE_FLOOR = 0.7;
 const INFORMATIONAL_CONFIDENCE_THRESHOLD = 0.3;
 
 function buildReconciliationProposal(input: HandlerInput): ProposedAction {
+  const closeAggregate = readCloseAggregate(input.context.close_aggregate);
+  if (closeAggregate !== null) {
+    return buildCloseAggregateProposal(input, closeAggregate);
+  }
+
   const transactionId = requireStringField(input.context, "transaction_id");
   const amount = requireDecimalAmount(input.context, "amount");
   const currency = requireCurrency(input.context, "currency");
@@ -108,6 +113,9 @@ function buildReconciliationProposal(input: HandlerInput): ProposedAction {
         score: candidate.score,
         match_basis: candidate.match_basis,
       })),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("accountant", input.context.accountant),
+      ...optionalRecordField("materiality", input.context.materiality),
       explanation,
       narrative:
         `${counterpartyName} ${direction} transaction ${transactionId} for ${amount} ${currency} ` +
@@ -124,6 +132,89 @@ function buildReconciliationProposal(input: HandlerInput): ProposedAction {
       critical_missing: input.evidence.critical_missing,
       mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
     },
+  };
+}
+
+interface ReconciliationCloseAggregate {
+  readonly period_start: string;
+  readonly period_end: string;
+  readonly matched_count: number;
+  readonly unmatched_count: number;
+  readonly matched_total: string;
+  readonly unmatched_total: string;
+  readonly drift: string;
+}
+
+function buildCloseAggregateProposal(
+  input: HandlerInput,
+  closeAggregate: ReconciliationCloseAggregate,
+): ProposedAction {
+  const transactionId = readOptionalString(input.context.transaction_id);
+  const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
+  return {
+    channel: "agent",
+    informational: false,
+    action: {
+      type: "reconciliation",
+      kind: "agent_action",
+      transaction_id: transactionId,
+      recommended_action: "propose_match",
+      match_type: "close_aggregate",
+      close_aggregate: closeAggregate,
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("accountant", input.context.accountant),
+      ...optionalRecordField("materiality", input.context.materiality),
+      confidence_score: confidence,
+      explanation:
+        `Close period ${closeAggregate.period_start} to ${closeAggregate.period_end} has ` +
+        `${closeAggregate.matched_count} candidate matches and ${closeAggregate.unmatched_count} exceptions.`,
+      narrative:
+        `Reconciliation close aggregate has ${closeAggregate.matched_count} matched transactions ` +
+        `and ${closeAggregate.unmatched_count} unmatched transactions.`,
+      summary: `${closeAggregate.matched_count} matched and ${closeAggregate.unmatched_count} unmatched transactions need close review.`,
+      risk_band: closeAggregate.unmatched_count > 0 ? "elevated" : "standard",
+      confidence,
+      evidence_score: input.evidence.evidence_score,
+      risk_level: input.definition?.risk_level ?? null,
+      agent_id: input.definition?.agent_key ?? "reconciliation",
+      agent_role: input.definition?.agent_key ?? "reconciliation",
+      evidence_refs: evidenceRefsForAction(input.evidence.items),
+      missing_required_evidence: [...input.evidence.missing_required_evidence],
+      critical_missing: input.evidence.critical_missing,
+      mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
+    },
+  };
+}
+
+function readCloseAggregate(raw: unknown): ReconciliationCloseAggregate | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
+  const periodStart = readString(row.period_start);
+  const periodEnd = readString(row.period_end);
+  const matchedCount = readNumber(row.matched_count);
+  const unmatchedCount = readNumber(row.unmatched_count);
+  const matchedTotal = readString(row.matched_total);
+  const unmatchedTotal = readString(row.unmatched_total);
+  const drift = readString(row.drift);
+  if (
+    periodStart.length === 0 ||
+    periodEnd.length === 0 ||
+    matchedCount === null ||
+    unmatchedCount === null ||
+    matchedTotal.length === 0 ||
+    unmatchedTotal.length === 0 ||
+    drift.length === 0
+  ) {
+    return null;
+  }
+  return {
+    period_start: periodStart,
+    period_end: periodEnd,
+    matched_count: matchedCount,
+    unmatched_count: unmatchedCount,
+    matched_total: matchedTotal,
+    unmatched_total: unmatchedTotal,
+    drift,
   };
 }
 
@@ -218,6 +309,21 @@ function roundScore(value: number): number {
 
 function readOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function noMatchExplanation(transactionId: string, best: RankedCandidate | undefined): string {

@@ -289,6 +289,12 @@ interface DemoFakeSourceSpec {
 const NOW = new Date();
 const DEMO_BOOTSTRAP_DISPLAY_NAME = "Demo Owner";
 const DEMO_COMPANY_NAME = "Brightline Systems Inc.";
+const DEMO_NET_BURN_PER_DAY = "4900.00";
+const DEMO_ACCOUNTANT = {
+  name: "Priya Sharma",
+  org: "Ledger.io",
+  email: "priya@ledger.io",
+} as const;
 function daysAgo(n: number): Date {
   const d = new Date(NOW);
   d.setUTCDate(d.getUTCDate() - n);
@@ -458,6 +464,25 @@ export async function seedBrainSaasDemo(
       email: null,
       displayName: DEMO_BOOTSTRAP_DISPLAY_NAME,
     });
+    await c.query(
+      `INSERT INTO tenant_profiles (
+         tenant_id, legal_name, accountant, operating_account_id, net_burn_per_day
+       )
+       VALUES ($1,$2,$3::jsonb,$4,$5::numeric)
+       ON CONFLICT (tenant_id) DO UPDATE SET
+         legal_name = COALESCE(tenant_profiles.legal_name, EXCLUDED.legal_name),
+         accountant = COALESCE(tenant_profiles.accountant, EXCLUDED.accountant),
+         operating_account_id = EXCLUDED.operating_account_id,
+         net_burn_per_day = EXCLUDED.net_burn_per_day,
+         updated_at = now()`,
+      [
+        tenantId,
+        DEMO_COMPANY_NAME,
+        JSON.stringify(DEMO_ACCOUNTANT),
+        operating.id,
+        DEMO_NET_BURN_PER_DAY,
+      ],
+    );
   });
 
   // ---------- Invoices (AP inbox + AR receivables) + per-AP-invoice docs ----------

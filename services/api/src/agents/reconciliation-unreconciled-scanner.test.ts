@@ -11,7 +11,7 @@ const tenantA = newTenantId();
 const tenantB = newTenantId();
 
 describe("runReconciliationUnreconciledScanCycle", () => {
-  it("runs one reconciliation proposal per unreconciled transaction and respects cooldown", async () => {
+  it("runs a transaction proposal and respects cooldown", async () => {
     const tx = transaction({ tenant_id: tenantA, transaction_id: "tx_1", counterparty_id: "cp_1" });
     const scanPool = scanPoolWith([tx]);
     const appPool = cooldownPool();
@@ -38,7 +38,25 @@ describe("runReconciliationUnreconciledScanCycle", () => {
       { now: new Date("2026-07-19T01:00:00.000Z"), cooldownMs: 86_400_000 },
     );
 
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: tenantA, actor: "reconciliation_unreconciled_scanner" }),
+      expect.objectContaining({
+        tenant_id: tenantA,
+        event: "statement.imported",
+        context: expect.objectContaining({
+          close_aggregate: {
+            period_start: "2026-07-18",
+            period_end: "2026-07-18",
+            matched_count: 1,
+            unmatched_count: 0,
+            matched_total: "900.00",
+            unmatched_total: "0.00",
+            drift: "900.00",
+          },
+        }),
+      }),
+    );
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: tenantA, actor: "reconciliation_unreconciled_scanner" }),
       expect.objectContaining({
@@ -80,7 +98,80 @@ describe("runReconciliationUnreconciledScanCycle", () => {
       { now: new Date("2026-07-19T00:00:00.000Z"), cooldownMs: 86_400_000 },
     );
 
-    expect(run.mock.calls[0]?.[1]).toMatchObject({ event: "transaction.unreconciled" });
+    expect(run.mock.calls.some((call) => matchEvent(call[1], "transaction.unreconciled"))).toBe(
+      true,
+    );
+  });
+
+  it("populates accountant when tenant profile has one", async () => {
+    const tx = transaction({ tenant_id: tenantA, transaction_id: "tx_accountant" });
+    const run = vi.fn(
+      async (): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "reconciliation",
+        action: "propose_match",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runReconciliationUnreconciledScanCycle(
+      {
+        scanPool: scanPoolWith([tx]),
+        appPool: cooldownPool({
+          [tenantA]: { name: "Sam Lee", org: "Ledger CPA", email: "sam@example.com" },
+        }),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z"), cooldownMs: 86_400_000 },
+    );
+
+    expect(
+      (run.mock.calls as unknown as Array<[unknown, unknown]>).some((call) =>
+        contextMatches(call[1], {
+          accountant: { name: "Sam Lee", org: "Ledger CPA", email: "sam@example.com" },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("omits accountant when tenant profile has none", async () => {
+    const tx = transaction({ tenant_id: tenantA, transaction_id: "tx_no_accountant" });
+    const run = vi.fn(
+      async (): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "reconciliation",
+        action: "propose_match",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runReconciliationUnreconciledScanCycle(
+      { scanPool: scanPoolWith([tx]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z"), cooldownMs: 86_400_000 },
+    );
+
+    expect(
+      (run.mock.calls as unknown as Array<[unknown, unknown]>).some((call) =>
+        contextHasKey(call[1], "accountant"),
+      ),
+    ).toBe(false);
+  });
+
+  it("omits reconciliation aggregate when no rows are eligible", async () => {
+    const run = vi.fn();
+
+    await runReconciliationUnreconciledScanCycle(
+      { scanPool: scanPoolWith([]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z"), cooldownMs: 86_400_000 },
+    );
+
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("reports the true eligible backlog when the global cap is hit", async () => {
@@ -115,7 +206,7 @@ describe("runReconciliationUnreconciledScanCycle", () => {
       },
     );
 
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(3);
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         batchSize: 2,
@@ -149,6 +240,7 @@ function transaction(
     counterparty_id: "cp_1",
     counterparty_name: "Acme",
     description: "Acme payment",
+    monthly_revenue: "10000.00",
     candidates: [
       {
         kind: "invoice",
@@ -180,15 +272,23 @@ function scanPoolWith(
   } as unknown as Pool;
 }
 
-function cooldownPool(): Pool {
+function cooldownPool(accountants: Record<string, unknown> = {}): Pool {
   const keys = new Set<string>();
+  let currentTenant: string | null = null;
   const client = {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
       }
       if (text.startsWith("SELECT set_config")) {
+        currentTenant = String(values[0]);
         return { rows: [], rowCount: 0 };
+      }
+      if (text.includes("FROM tenant_profiles")) {
+        const accountant = currentTenant === null ? undefined : accountants[currentTenant];
+        return accountant === undefined
+          ? { rows: [], rowCount: 0 }
+          : { rows: [{ accountant }], rowCount: 1 };
       }
       if (text.includes("INSERT INTO agent_trigger_cooldowns")) {
         const key = String(values[0]);
@@ -204,4 +304,26 @@ function cooldownPool(): Pool {
     release: vi.fn(),
   };
   return { connect: async () => client } as unknown as Pool;
+}
+
+function matchEvent(input: unknown, event: string): boolean {
+  return (
+    typeof input === "object" && input !== null && (input as { event?: unknown }).event === event
+  );
+}
+
+function contextMatches(input: unknown, expected: Record<string, unknown>): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const context = (input as { context?: unknown }).context;
+  if (typeof context !== "object" || context === null) return false;
+  return Object.entries(expected).every(
+    ([key, value]) =>
+      JSON.stringify((context as Record<string, unknown>)[key]) === JSON.stringify(value),
+  );
+}
+
+function contextHasKey(input: unknown, key: string): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const context = (input as { context?: unknown }).context;
+  return typeof context === "object" && context !== null && key in context;
 }

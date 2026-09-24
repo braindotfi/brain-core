@@ -47,6 +47,8 @@ function baseRow(status: string): PaymentIntentRow {
     destination_counterparty_id: CP,
     amount: "100.00",
     currency: "USD",
+    rate_lock_reference: null,
+    destination_currency: null,
     obligation_id: null,
     invoice_id: null,
     status,

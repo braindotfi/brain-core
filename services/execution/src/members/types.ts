@@ -1,6 +1,6 @@
 import type { ServiceCallContext } from "@brain/shared";
 
-export type MemberRole = "admin" | "approver" | "viewer";
+export type MemberRole = "owner" | "admin" | "approver" | "analyst" | "viewer";
 export type MemberStatus = "invited" | "active" | "deactivated";
 export type ApprovalDomain = "ap" | "ar" | "treasury" | "payroll" | "reconciliation";
 export type ActorVerification =
@@ -22,6 +22,18 @@ export interface MemberAuthority {
   approvalDomains: ApprovalDomain[];
   perItemLimitCents: bigint;
   requiresSecondApproverAboveCents: bigint | null;
+}
+
+export interface UserAgentAuthority {
+  id: string;
+  tenantId: string;
+  userId: string;
+  agent: string;
+  canApprove: boolean;
+  canEdit: boolean;
+  canReject: boolean;
+  maxAmountCents: bigint | null;
+  canDelegate: boolean;
 }
 
 export interface ActorContext {

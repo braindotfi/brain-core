@@ -186,7 +186,7 @@ check(
 check(
   "deployed API mounts canonical action routes",
   apiMain.includes("registerActionRoutes") &&
-    apiMain.includes("registerActionRoutes(child, piService)"),
+    /registerActionRoutes\(\s*child,\s*piService(?:\s*[),])/.test(apiMain),
   "services/api/src/main.ts must mount /v1/actions with the shared PaymentIntentService, not only the standalone execution server",
 );
 

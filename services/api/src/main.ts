@@ -130,8 +130,16 @@ import {
 } from "./well-known/oauth-protected-resource.js";
 import { registerDocsRoutes } from "./docs/routes.js";
 import { registerAssistantQuestionsRoute } from "./assistant/questions-route.js";
+import { registerRoboRoutes } from "./robo/routes.js";
+import { registerRobotMoneyUiRoutes } from "./robotmoney-ui/routes.js";
+import { registerIntegrationRoutes } from "./integrations/routes.js";
+import { NylasAdapter, type NylasAdapterMode } from "./integrations/nylas/adapter.js";
+import { NylasCollectionsEmailSender } from "./integrations/nylas/email-sender.js";
+import { registerNylasRoutes } from "./integrations/nylas/routes.js";
+import { assertEnabledIntegrationsConfigured } from "./integrations/boot-fence.js";
 import { registerSecurityHeaders } from "./security-headers.js";
 import { makeRunLoaders } from "./agents/run-loaders.js";
+import { startAmlComplianceScanner } from "./agents/aml-compliance-scanner.js";
 import { startCollectionsOverdueScanner } from "./agents/collections-overdue-scanner.js";
 import { startCollectionsProposalReconciler } from "./agents/collections-proposal-reconciler.js";
 import { startCashForecastScanner } from "./agents/cash-forecast-scanner.js";
@@ -142,6 +150,7 @@ import { startObligationAnomalyScanner } from "./agents/obligation-anomaly-scann
 import { startPaymentAdvisoryScanner } from "./agents/payment-advisory-scanner.js";
 import { startReconciliationUnreconciledScanner } from "./agents/reconciliation-unreconciled-scanner.js";
 import { startRevenueIntelScanner } from "./agents/revenue-intel-scanner.js";
+import { startSubscriptionManagementScanner } from "./agents/subscription-management-scanner.js";
 import { startSubscriptionScanner } from "./agents/subscription-scanner.js";
 import { startTreasuryScanner } from "./agents/treasury-scanner.js";
 import { startVendorRiskScanner } from "./agents/vendor-risk-scanner.js";
@@ -180,7 +189,13 @@ import {
 } from "@brain/canonical";
 import type { LedgerUploadProjectedEvent } from "@brain/canonical";
 
-import { WikiPageService, registerWikiPlugin, loadRegistry } from "@brain/wiki";
+import {
+  WikiPageService,
+  askWiki,
+  recordDeterministicIntentUsage,
+  registerWikiPlugin,
+  loadRegistry,
+} from "@brain/wiki";
 
 import {
   registerPolicyRoutes,
@@ -197,16 +212,24 @@ import type { PolicyDeps, PolicyRow } from "@brain/policy";
 
 import {
   registerExecutionRoutes,
-  registerEvidenceResolveRoutes,
+  registerEvidenceRoutes,
+  InMemoryEvidenceBlobStore,
   registerMemberRoutes,
+  registerTeamRoutes,
   registerActionRoutes,
   registerPaymentIntentRoutes,
   registerAuthorizationProbeRoutes,
   registerProposalReadRoutes,
+  registerRulesRoutes,
+  registerProposalSnapshotRoutes,
+  registerDecisionAuditLogRoutes,
   ApprovalService,
   ActorResolver,
   OutboxService,
   AgentService,
+  RulesEngineService,
+  DecisionAuditLogEmitter,
+  DecisionAuditLogService,
   PostgresMemberLookup,
   AchPlaidRail,
   OnchainBaseRail,
@@ -235,7 +258,13 @@ import {
   TenantSignedRegistrationRelayer,
   startAgentRegistrationWorker,
 } from "@brain/execution";
-import type { ExecutionDeps, OnchainDispatchParams, OnchainExecutor, Rail } from "@brain/execution";
+import type {
+  ExecutionDeps,
+  OnchainDispatchParams,
+  OnchainExecutor,
+  ProposalDecision,
+  Rail,
+} from "@brain/execution";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
 import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
@@ -473,6 +502,7 @@ async function main(): Promise<void> {
     statementTimeoutMs: cfg.DATABASE_STATEMENT_TIMEOUT_MS,
     applicationName: cfg.SERVICE_NAME,
   });
+  await assertEnabledIntegrationsConfigured(pool);
 
   // H-14: the Wiki layer uses a separate pool connecting as the read-only
   // `brain_wiki_reader` role (SELECT anywhere; write only wiki_* tables) so an
@@ -671,7 +701,7 @@ async function main(): Promise<void> {
   const redis = new Redis(cfg.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
   await redis.connect();
 
-  const audit = new CorrelatingAuditEmitter(
+  const baseAudit = new CorrelatingAuditEmitter(
     new WebhookAuditEmitter(new PostgresAuditEmitter(pool), new WebhookDispatcher(pool)),
   );
 
@@ -735,6 +765,10 @@ async function main(): Promise<void> {
       : {}),
     s3ForcePathStyle: cfg.S3_FORCE_PATH_STYLE,
   });
+  const decisionAuditLogService = new DecisionAuditLogService(pool, blob);
+  const audit = new DecisionAuditLogEmitter(baseAudit, decisionAuditLogService);
+  const rulesEngine = new RulesEngineService(pool);
+  await rulesEngine.validateStartupRules();
 
   // Agent-router routing enqueue (agent-router Phase 1). Shared by
   // PaymentIntent, Ledger, and reconciliation domain-event producers so events
@@ -1729,12 +1763,31 @@ async function main(): Promise<void> {
           return new McpAuthVerifier(pool, onchainScopeChecker);
         })();
 
+  const proposalDecisionService = new ProposalDecisionService({
+    pool,
+    audit,
+    actorResolver,
+    paymentIntents: paymentIntentService,
+  });
+
   const agentService = new AgentService({
     pool,
     audit,
     evaluatePolicy: evaluateLegacyPolicy,
     resolveAgentAuthority: (_ctx, agentId) =>
       internalAgentDefinitions[agentId]?.default_authority ?? null,
+    rulesEngine,
+    autoExecuteProposal: (ctx, input) =>
+      proposalDecisionService.decide(
+        {
+          ...ctx,
+          actor: "system:rules-engine",
+          actorReason: `rule:${input.ruleId}`,
+          scopes: ["execution:read", "payment_intent:approve"],
+        },
+        input.proposalId,
+        input.decision as ProposalDecision,
+      ),
     relayer: agentRegistrationRelayer,
   });
 
@@ -1760,13 +1813,6 @@ async function main(): Promise<void> {
   const proofBuilder = poolProofBuilder(pool, {
     anchorContractAddress: cfg.AUDIT_ANCHOR_ADDRESS ?? null,
     chain: "base-sepolia",
-  });
-
-  const proposalDecisionService = new ProposalDecisionService({
-    pool,
-    audit,
-    actorResolver,
-    paymentIntents: paymentIntentService,
   });
 
   const mcpServer = new BrainMcpServer({
@@ -2424,10 +2470,38 @@ async function main(): Promise<void> {
         await v1.register(async (child) => registerCanonicalRoutes(child, { pool }));
         await v1.register(async (child) => registerWikiPlugin(child, wikiDeps));
         await v1.register(async (child) => registerAssistantQuestionsRoute(child, { pool, log }));
+        await v1.register(async (child) =>
+          registerRoboRoutes(child, {
+            pool,
+            audit,
+            askWiki: ({ deps, options }) => askWiki(deps, options),
+            recordDeterministicIntentUsage,
+            wikiDeps: {
+              llm,
+              embed,
+              redis,
+              metrics,
+              ...(policyReader !== undefined ? { policyReader } : {}),
+              ...(proposalReader !== undefined ? { proposalReader } : {}),
+              ...(auditEntityHistoryReader !== undefined ? { auditEntityHistoryReader } : {}),
+            },
+            questionModel: cfg.WIKI_LLM_MODEL,
+            getProposal,
+            listProposals,
+            auditLog: decisionAuditLogService,
+          }),
+        );
         await v1.register(async (child) => registerPolicyRoutes(child, policyDeps));
         await v1.register(async (child) => registerExecutionRoutes(child, executionDeps));
         await v1.register(async (child) =>
           registerMemberRoutes(child, { pool, audit, revocation: revocationStore }),
+        );
+        await v1.register(async (child) =>
+          registerTeamRoutes(child, {
+            pool,
+            audit,
+            resolverPool,
+          }),
         );
         // PaymentIntentService has its own approval sub-service; the proposal
         // decision route reuses this same money-path service so it cannot bypass
@@ -2469,9 +2543,37 @@ async function main(): Promise<void> {
           enqueue: routingEnqueue,
           recordAgentSpend: (client, spend) => policyService.recordAgentSpend(client, spend),
         });
+        const nylasMode: NylasAdapterMode =
+          cfg.NYLAS_ADAPTER_MODE ?? (cfg.NODE_ENV === "production" ? "real" : "mock");
+        const nylasRedirectUri =
+          cfg.NYLAS_REDIRECT_URI ??
+          (cfg.NODE_ENV === "production"
+            ? cfg.NYLAS_REDIRECT_URI_PROD
+            : cfg.NYLAS_REDIRECT_URI_DEV) ??
+          "http://localhost:3000/v1/integrations/nylas/callback";
+        const nylasAdapter = new NylasAdapter({
+          mode: nylasMode,
+          apiUri: cfg.NYLAS_API_URI,
+          redirectUri: nylasRedirectUri,
+          ...(cfg.NYLAS_CLIENT_ID !== undefined ? { clientId: cfg.NYLAS_CLIENT_ID } : {}),
+          ...(cfg.NYLAS_API_KEY !== undefined ? { apiKey: cfg.NYLAS_API_KEY } : {}),
+        });
+        const collectionsEmailSender = new NylasCollectionsEmailSender(pool, nylasAdapter);
         await v1.register(async (child) => {
           await registerAuthorizationProbeRoutes(child);
-          await registerActionRoutes(child, piService);
+          await registerActionRoutes(child, piService, { pool });
+          await registerRobotMoneyUiRoutes(child, { pool });
+          await registerIntegrationRoutes(child, { pool });
+          await child.register(async (nylasChild) =>
+            registerNylasRoutes(nylasChild, {
+              pool,
+              adapter: nylasAdapter,
+              redirectUri: nylasRedirectUri,
+              ...(cfg.NYLAS_WEBHOOK_SECRET !== undefined
+                ? { webhookSecret: cfg.NYLAS_WEBHOOK_SECRET }
+                : {}),
+            }),
+          );
           await registerPaymentIntentRoutes(child, piService, invoiceShortcut, (ctx, id) =>
             getPaymentIntentAgent(pool, ctx, id),
           );
@@ -2491,10 +2593,30 @@ async function main(): Promise<void> {
         await v1.register(async (child) =>
           registerProposalReadRoutes(child, {
             pool,
-            decisions: { pool, audit, actorResolver, paymentIntents: piService },
+            decisions: {
+              pool,
+              audit,
+              actorResolver,
+              paymentIntents: piService,
+              rules: rulesEngine,
+              collectionsEmailSender,
+            },
           }),
         );
-        await v1.register(async (child) => registerEvidenceResolveRoutes(child, { pool }));
+        await v1.register(async (child) =>
+          registerRulesRoutes(child, { pool, rules: rulesEngine }),
+        );
+        await v1.register(async (child) => registerProposalSnapshotRoutes(child, { pool }));
+        await v1.register(async (child) =>
+          registerDecisionAuditLogRoutes(child, { pool, auditLog: decisionAuditLogService }),
+        );
+        await v1.register(async (child) =>
+          registerEvidenceRoutes(child, {
+            pool,
+            audit,
+            blobStore: new InMemoryEvidenceBlobStore(),
+          }),
+        );
         await v1.register(async (child) => registerAuditRoutes(child, auditDeps));
         // H-20 webhook dead-letter + replay: /v1/webhooks/{endpoint_id}/{dead-letters,replay}.
         await v1.register(async (child) => registerWebhookRoutes(child, { pool }));
@@ -3693,6 +3815,26 @@ async function main(): Promise<void> {
       )
     : undefined;
 
+  const amlComplianceScanner = composition.workers.has("ledger")
+    ? startAmlComplianceScanner({
+        scanPool: ledgerProjectorPool,
+        appPool: pool,
+        runService: agentRunService,
+        metrics,
+        log,
+      })
+    : undefined;
+
+  const subscriptionManagementScanner = composition.workers.has("ledger")
+    ? startSubscriptionManagementScanner({
+        scanPool: ledgerProjectorPool,
+        appPool: pool,
+        runService: agentRunService,
+        metrics,
+        log,
+      })
+    : undefined;
+
   // Authenticated incremental pull (ingestion architecture §10). The
   // cross-tenant source poll needs BYPASSRLS, hence the raw-worker role; all
   // per-partition ingest writes stay tenant-scoped. Credentials are resolved
@@ -4166,6 +4308,8 @@ async function main(): Promise<void> {
           disputeScanner,
           revenueIntelScanner,
           subscriptionScanner,
+          amlComplianceScanner,
+          subscriptionManagementScanner,
           documentExtractionWorker,
           syncWorker,
           outboxWorker,

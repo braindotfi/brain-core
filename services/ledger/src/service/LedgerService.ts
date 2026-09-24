@@ -38,6 +38,7 @@ import {
   findDocumentById,
   findInvoiceById,
   findCounterpartyByNormalizedName,
+  hasOpenCounterpartyReferences,
   findObligationById,
   findTransactionById,
   findLatestBalance,
@@ -49,6 +50,7 @@ import {
   listInvoices as listInvoicesRepo,
   listObligations as listObligationsRepo,
   listTransactions as listTransactionsRepo,
+  softDeleteCounterparty,
   updateCounterpartyIdentity as updateCounterpartyIdentityRepo,
   type AccountRow,
   type BalanceRow,
@@ -149,6 +151,48 @@ export class LedgerService implements ILedgerService {
       account: serializeAccount(result.acct),
       latest_balance: result.latest === null ? null : serializeBalance(result.latest),
     };
+  }
+
+  public async getDepositInstructions(
+    ctx: ServiceCallContext,
+    input: { account_id: string; method: "wire" | "ach" | "onchain" },
+  ): Promise<DepositInstructions> {
+    return withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      const account = await findAccountById(c, input.account_id);
+      if (account === null) throw brainError("ledger_row_not_found", "no such account");
+      const existing = await c.query<DepositInstructionRow>(
+        `SELECT *
+           FROM ledger_deposit_instructions
+          WHERE tenant_id = current_setting('app.tenant_id', true)
+            AND account_id = $1
+            AND method = $2
+          LIMIT 1`,
+        [input.account_id, input.method],
+      );
+      const found = existing.rows[0];
+      if (found !== undefined) return depositInstructionFromRow(found);
+      const generated = generatedDepositInstruction(ctx.tenantId, account, input.method);
+      const inserted = await c.query<DepositInstructionRow>(
+        `INSERT INTO ledger_deposit_instructions (
+           tenant_id, account_id, method, bank_name, routing_number,
+           account_number, memo_reference, onchain_address
+         )
+         VALUES (
+           current_setting('app.tenant_id', true), $1, $2, $3, $4, $5, $6, $7
+         )
+         RETURNING *`,
+        [
+          input.account_id,
+          input.method,
+          generated.bank_name ?? null,
+          generated.routing_number ?? null,
+          generated.account_number ?? null,
+          generated.memo_reference,
+          generated.onchain_address ?? null,
+        ],
+      );
+      return depositInstructionFromRow(inserted.rows[0]!);
+    });
   }
 
   public async listTransactions(
@@ -373,10 +417,14 @@ export class LedgerService implements ILedgerService {
 
       const metadata = metadataFromIdentityFields(input);
       const changedFields = changedIdentityFields(before, input, aliases, metadata);
+      if (input.status !== undefined && input.status !== before.status) {
+        changedFields.push("status");
+      }
       const after = await updateCounterpartyIdentityRepo(c, id, {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(aliasesChanged(before.aliases, aliases) ? { aliases } : {}),
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
         provenance: "human_confirmed",
       });
       if (after === null) return null;
@@ -400,6 +448,28 @@ export class LedgerService implements ILedgerService {
       counterparty: serializeCounterparty(result.after),
       changed_fields: result.changedFields,
     };
+  }
+
+  public async deactivateCounterparty(ctx: ServiceCallContext, id: string): Promise<Counterparty> {
+    const row = await withTenantScope(this.deps.pool, ctx.tenantId, async (c) => {
+      if (await hasOpenCounterpartyReferences(c, id)) {
+        throw brainError("ledger_reconciliation_conflict", "counterparty_has_open_references", {
+          statusOverride: 409,
+          details: { reason: "counterparty_has_open_references", counterparty_id: id },
+        });
+      }
+      return softDeleteCounterparty(c, id);
+    });
+    if (row === null) throw brainError("ledger_row_not_found", "no such counterparty");
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "ledger",
+      actor: ctx.actor,
+      action: "ledger.counterparty.deactivated",
+      inputs: { counterparty_id: id },
+      outputs: { status: "archived" },
+    });
+    return serializeCounterparty(row);
   }
 
   public async transitionCounterpartyTrust(
@@ -668,6 +738,9 @@ function serializeCounterparty(row: CounterpartyRow): Counterparty {
     verified_status: row.verified_status as Counterparty["verified_status"],
     trust_status: parseCounterpartyTrustStatus(row.trust_status ?? "unreviewed"),
     trust_reviewed_at: reviewedAt ?? null,
+    status: row.status,
+    deleted_at:
+      row.deleted_at instanceof Date ? row.deleted_at.toISOString() : (row.deleted_at ?? null),
     aliases: row.aliases,
     linked_accounts: row.linked_accounts,
     agent_id: row.agent_id,
@@ -824,6 +897,60 @@ export interface ManualCounterpartyPatchInput {
   country?: string;
   tax_id?: string;
   aliases?: string[];
+  status?: "active" | "archived";
+}
+
+interface DepositInstructionRow {
+  method: "wire" | "ach" | "onchain";
+  bank_name: string | null;
+  routing_number: string | null;
+  account_number: string | null;
+  memo_reference: string;
+  onchain_address: string | null;
+}
+
+export interface DepositInstructions {
+  bank_name?: string;
+  routing_number?: string;
+  account_number?: string;
+  memo_reference: string;
+  onchain_address?: string;
+}
+
+function depositInstructionFromRow(row: DepositInstructionRow): DepositInstructions {
+  return {
+    ...(row.bank_name !== null ? { bank_name: row.bank_name } : {}),
+    ...(row.routing_number !== null ? { routing_number: row.routing_number } : {}),
+    ...(row.account_number !== null ? { account_number: row.account_number } : {}),
+    memo_reference: row.memo_reference,
+    ...(row.onchain_address !== null ? { onchain_address: row.onchain_address } : {}),
+  };
+}
+
+function generatedDepositInstruction(
+  tenantId: string,
+  account: AccountRow,
+  method: "wire" | "ach" | "onchain",
+): DepositInstructions {
+  const memo = `RM-${tenantId.slice(-6)}-${account.id.slice(-6)}`.toUpperCase();
+  if (method === "onchain") {
+    const external = account.external_account_id ?? "";
+    return {
+      memo_reference: memo,
+      onchain_address: /^0x[0-9a-fA-F]{40}$/.test(external)
+        ? external
+        : "0x0000000000000000000000000000000000000000",
+    };
+  }
+  return {
+    bank_name: account.institution ?? "Brain Clearing",
+    routing_number: "000000000",
+    account_number: account.id
+      .replace(/^acct_/, "")
+      .slice(-12)
+      .padStart(12, "0"),
+    memo_reference: memo,
+  };
 }
 
 function metadataFromIdentityFields(

@@ -15,6 +15,11 @@ import {
   withTenantScope,
   type PaymentIntent,
   type ServiceCallContext,
+  type CardIssuer,
+  type DisputeService,
+  type LedgerDecisionService,
+  type NotificationService,
+  type PaymentReversalService,
 } from "@brain/shared";
 import { applyAll, discoverMigrations } from "../../../../tools/migrate/src/index.js";
 import type { PaymentIntentService } from "../payment-intents/PaymentIntentService.js";
@@ -335,6 +340,118 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
     expect(await decisionAuditCount(tenantA, proposal, "approve")).toBe(1);
   });
 
+  it("executes domain decisions through adapters and records decision.executed", async () => {
+    const freeze = vi.fn(async () => ({ reference_id: "freeze_1", status: "frozen" }));
+    const file = vi.fn(async () => ({ reference_id: "case_1", status: "filed" }));
+    const submit = vi.fn(async () => ({ reference_id: "evidence_1", status: "submitted" }));
+    const refund = vi.fn(async () => ({ reference_id: "refund_1", status: "refunded" }));
+    const commit = vi.fn(async () => ({ reference_id: "match_1", status: "committed" }));
+    const email = vi.fn(async () => ({ reference_id: "email_1", status: "sent" }));
+    const task = vi.fn(async () => ({ reference_id: "task_1", status: "created" }));
+    const domainService = new ProposalDecisionService({
+      pool,
+      audit: new PostgresAuditEmitter(pool),
+      actorResolver: new ActorResolver({ members: new PostgresMemberLookup(pool) }),
+      paymentIntents: {
+        approve: approvePaymentIntent,
+      } as unknown as PaymentIntentService,
+      cardIssuer: { freeze } as unknown as CardIssuer,
+      disputeService: { file, submit_evidence: submit } as unknown as DisputeService,
+      paymentReversalService: { refund } as unknown as PaymentReversalService,
+      ledgerDecisionService: { commit_match: commit } as unknown as LedgerDecisionService,
+      notificationService: { email, task } as unknown as NotificationService,
+    });
+
+    const fraud = newProposalId();
+    const fight = newProposalId();
+    const refundProposal = newProposalId();
+    const close = newProposalId();
+    const escalation = newProposalId();
+    const invoiceApprove = newProposalId();
+    const invoiceReject = newProposalId();
+    const invoiceHold = newProposalId();
+    await seedProposal(tenantA, agentA, fraud, "pending", {
+      type: "flag_transaction",
+      agent_role: "fraud_anomaly",
+      transaction_id: "txn_1",
+      card_id: "card_1",
+    });
+    await seedProposal(tenantA, agentA, fight, "pending", {
+      type: "dispute",
+      agent_role: "dispute",
+      dispute_id: "disp_1",
+      evidence_bundle: [{ kind: "receipt" }],
+    });
+    await seedProposal(tenantA, agentA, refundProposal, "pending", {
+      type: "dispute",
+      agent_role: "dispute",
+      transaction_id: "txn_1",
+      amount: "25.00",
+    });
+    await seedProposal(tenantA, agentA, close, "pending", {
+      type: "reconciliation",
+      agent_role: "reconciliation",
+      candidate_ids: ["cand_1"],
+    });
+    await seedProposal(tenantA, agentA, escalation, "pending", {
+      type: "reconciliation",
+      agent_role: "reconciliation",
+      accountant_contact: "acct@example.com",
+    });
+    for (const proposal of [invoiceApprove, invoiceReject, invoiceHold]) {
+      await seedProposal(tenantA, agentA, proposal, "pending", {
+        type: "invoice_integrity",
+        agent_role: "invoice_integrity",
+        flagged_invoice: { id: `inv_${proposal.slice(-6)}` },
+        vendor_contact: "vendor@example.com",
+      });
+    }
+
+    await domainService.decide(userCtx, fraud, "freeze_card");
+    await domainService.decide(userCtx, fight, "fight");
+    await domainService.decide(userCtx, refundProposal, "refund");
+    await domainService.decide(userCtx, close, "confirm_all_matches");
+    await domainService.decide(userCtx, escalation, "escalate_to_accountant");
+    await domainService.decide(userCtx, invoiceApprove, "approve_as_new");
+    await domainService.decide(userCtx, invoiceReject, "reject_duplicate");
+    await domainService.decide(userCtx, invoiceHold, "hold_and_verify");
+
+    expect(freeze).toHaveBeenCalledWith("card_1");
+    expect(file).toHaveBeenCalledWith("txn_1", "suspected_fraud");
+    expect(submit).toHaveBeenCalledWith("disp_1", [{ kind: "receipt" }]);
+    expect(refund).toHaveBeenCalledWith("txn_1", "25.00", "dispute_refund");
+    expect(commit).toHaveBeenCalledWith("cand_1");
+    expect(email).toHaveBeenCalledWith(
+      "acct@example.com",
+      "Reconciliation close needs review",
+      "Reconciliation close needs review.",
+      [],
+    );
+    expect(email).toHaveBeenCalledWith(
+      "vendor@example.com",
+      "Invoice void notice",
+      expect.stringContaining("was rejected as a duplicate"),
+    );
+    expect(task).toHaveBeenCalledWith(
+      "unassigned",
+      "Verify invoice with vendor",
+      expect.objectContaining({ proposal_id: invoiceHold }),
+    );
+    for (const [proposal, decision] of [
+      [fraud, "freeze_card"],
+      [fight, "fight"],
+      [refundProposal, "refund"],
+      [close, "confirm_all_matches"],
+      [escalation, "escalate_to_accountant"],
+      [invoiceApprove, "approve_as_new"],
+      [invoiceReject, "reject_duplicate"],
+      [invoiceHold, "hold_and_verify"],
+    ] as const) {
+      expect((await proposalRow(tenantA, proposal))?.status).toBe("executed");
+      expect(await decisionExecutedAuditCount(tenantA, proposal, decision)).toBe(1);
+    }
+  });
+
   it("backfills both authoritative sources and serves them without an audit read", async () => {
     const historicalProposal = newProposalId();
     const historicalIntent = newPaymentIntentId();
@@ -553,6 +670,24 @@ suite("proposal decisions integration (requires DATABASE_URL)", () => {
         `SELECT count(*)::text AS count
            FROM audit_events
           WHERE action = 'proposal.decided'
+            AND inputs->>'proposal_id' = $1
+            AND inputs->>'decision' = $2`,
+        [proposal, decision],
+      );
+      return Number(rows[0]?.count ?? "0");
+    });
+  }
+
+  async function decisionExecutedAuditCount(
+    tenant: string,
+    proposal: string,
+    decision: string,
+  ): Promise<number> {
+    return withTenantScope(pool, tenant, async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM audit_events
+          WHERE action = 'decision.executed'
             AND inputs->>'proposal_id' = $1
             AND inputs->>'decision' = $2`,
         [proposal, decision],

@@ -168,8 +168,13 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
     const ctx: ServiceCallContext = { tenantId: tenant, actor: "test" };
     const proposals = await listProposals(pool, ctx, { type: "reconciliation" });
 
-    expect(proposals.proposals).toHaveLength(1);
-    expect(proposals.proposals[0]).toMatchObject({
+    expect(proposals.proposals).toHaveLength(2);
+    const txProposal = proposals.proposals.find(
+      (proposal) =>
+        proposal.details["transaction_id"] === tx &&
+        proposal.details["match_type"] !== "close_aggregate",
+    );
+    expect(txProposal).toMatchObject({
       type: "reconciliation",
       status: "pending",
       risk_band: "standard",
@@ -180,21 +185,25 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
       agent: { id: "reconciliation", kind: "internal", display_name: "Reconciliation" },
       evidence: [{ kind: "transaction", ref: tx, resolvable: true }],
     });
-    expect(proposals.proposals[0]?.narrative).toContain(`proposed invoice match ${invoice}`);
+    expect(txProposal?.narrative).toContain(`proposed invoice match ${invoice}`);
+    expect(
+      proposals.proposals.some((proposal) => proposal.details["match_type"] === "close_aggregate"),
+    ).toBe(true);
 
     const counts = await withTenantScope(pool, tenant, async (client) => {
       const { rows } = await client.query<{ proposal_count: string; run_count: string }>(
         `SELECT
            (SELECT count(*) FROM proposals
              WHERE proposing_agent = 'reconciliation'
-               AND action->>'transaction_id' = $1) AS proposal_count,
+               AND action->>'transaction_id' = $1
+               AND action->>'match_type' <> 'close_aggregate') AS proposal_count,
            (SELECT count(*) FROM agent_runs
              WHERE agent_id = 'reconciliation') AS run_count`,
         [tx],
       );
       return rows[0];
     });
-    expect(counts).toEqual({ proposal_count: "1", run_count: "2" });
+    expect(counts).toEqual({ proposal_count: "1", run_count: "4" });
   });
 
   it("keeps tenants isolated and applies per-tenant fairness", async () => {
@@ -241,8 +250,8 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
 
     const ctxA: ServiceCallContext = { tenantId: tenantA, actor: "test" };
     const ctxB: ServiceCallContext = { tenantId: tenantB, actor: "test" };
-    expect((await listProposals(pool, ctxA, { type: "reconciliation" })).proposals).toHaveLength(1);
-    expect((await listProposals(pool, ctxB, { type: "reconciliation" })).proposals).toHaveLength(1);
+    expect((await listProposals(pool, ctxA, { type: "reconciliation" })).proposals).toHaveLength(2);
+    expect((await listProposals(pool, ctxB, { type: "reconciliation" })).proposals).toHaveLength(2);
   });
 
   it("records missing-required-evidence hold without creating a proposal", async () => {
@@ -266,6 +275,7 @@ suite("reconciliation unreconciled scanner integration (requires DATABASE_URL)",
             counterparty_name: "Hold Co",
             description: "missing evidence row",
             candidates: [],
+            monthly_revenue: null,
           },
         ]),
         appPool: pool,

@@ -84,6 +84,70 @@ describe("runFraudAnomalyScanCycle", () => {
     expect(run.mock.calls[0]?.[1]).toMatchObject({ event: "merchant.risk_detected" });
   });
 
+  it("emits fraud anomaly signals when history context is available", async () => {
+    const row = transaction({
+      observed_region: "US",
+      normal_regions: ["AE", "GB"],
+      observed_hour: "02:00",
+      typical_window: "09:00-17:59",
+      avg_amount_90d: "125.00",
+      typical_merchant_type: "merchant",
+    });
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "fraud_anomaly",
+        action: "flag_transaction",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runFraudAnomalyScanCycle(
+      { scanPool: scanPoolWith([row]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    expect(run.mock.calls[0]?.[1]).toMatchObject({
+      context: {
+        signals: {
+          geo_mismatch: { normal_regions: ["AE", "GB"], observed_region: "US" },
+          off_hours: { typical_window: "09:00-17:59", observed_hour: "02:00" },
+          normal_vs_current: {
+            avg_amount: "125.00",
+            typical_hours: "09:00-17:59",
+            typical_merchant_type: "merchant",
+            geo: "US",
+          },
+        },
+      },
+    });
+  });
+
+  it("omits fraud anomaly signals when history context is unavailable", async () => {
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "fraud_anomaly",
+        action: "flag_transaction",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runFraudAnomalyScanCycle(
+      { scanPool: scanPoolWith([transaction({})]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (run.mock.calls[0]?.[1] as { context?: Record<string, unknown> }).context;
+    expect(context).not.toHaveProperty("signals");
+  });
+
   it("falls back to transaction.unusual for an unknown event hint", async () => {
     const row = transaction({ event_hint: "unexpected", duplicate_count_7d: "0" });
     const run = vi.fn(

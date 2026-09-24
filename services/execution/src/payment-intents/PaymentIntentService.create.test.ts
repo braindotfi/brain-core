@@ -73,6 +73,8 @@ function insertedRow(): PaymentIntentRow {
     destination_counterparty_id: CP,
     amount: "100.00",
     currency: "USD",
+    rate_lock_reference: null,
+    destination_currency: null,
     obligation_id: OBL,
     invoice_id: null,
     status: "approved",
@@ -172,8 +174,7 @@ const baseInput: CreatePaymentIntentInput = {
 
 function insertConfidence(calls: { sql: string; values: unknown[] }[]): unknown {
   const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
-  // confidence is the 14th positional param ($14) -> values index 13.
-  return insert?.values[13];
+  return insert?.values[15];
 }
 
 function insertCreatedByAgent(calls: { sql: string; values: unknown[] }[]): unknown {
@@ -184,8 +185,7 @@ function insertCreatedByAgent(calls: { sql: string; values: unknown[] }[]): unkn
 
 function insertStatus(calls: { sql: string; values: unknown[] }[]): unknown {
   const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
-  // status is the 11th positional param ($11) -> values index 10.
-  return insert?.values[10];
+  return insert?.values[12];
 }
 
 describe("PaymentIntentService.create — confidence capping (RFC 0004 §5.2)", () => {
@@ -444,8 +444,7 @@ describe("PaymentIntentService.create — proposal-layer idempotency (BRAIN-94)"
     await service.create(ctx, { ...baseInput, proposal_dedup_key: DEDUP_KEY });
 
     const insert = calls.find((c) => c.sql.includes("INSERT INTO ledger_payment_intents"));
-    // proposal_dedup_key is the 17th positional param ($17) -> values index 16.
-    expect(insert?.values[16]).toBe(DEDUP_KEY);
+    expect(insert?.values[18]).toBe(DEDUP_KEY);
   });
 
   it("on a unique-violation race, returns the winner row instead of throwing", async () => {

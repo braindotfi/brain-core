@@ -238,7 +238,9 @@ export async function registerMemberRoutes(
       findMemberById(c, request.params.id),
     );
     if (before === null) throw brainError("agent_not_found", "member not found");
-    if (before.role === "admin" && before.active) await assertNotLastAdmin(deps.pool, ctx);
+    if ((before.role === "owner" || before.role === "admin") && before.active) {
+      await assertNotLastAdmin(deps.pool, ctx);
+    }
     let revoked: RevokedSession[] = [];
     const after = await withTenantScope(deps.pool, ctx.tenantId, async (c) => {
       const updated = await updateMember(c, { id: request.params.id, status: "deactivated" });
@@ -392,7 +394,7 @@ async function requireAnyMember(pool: Pool, ctx: ServiceCallContext): Promise<Me
 
 async function requireAdmin(pool: Pool, ctx: ServiceCallContext): Promise<MemberAuthority> {
   const member = await requireAnyMember(pool, ctx);
-  if (member.role !== "admin") {
+  if (member.role !== "owner" && member.role !== "admin") {
     throw brainError("auth_scope_insufficient", "admin member required");
   }
   return member;
@@ -464,9 +466,9 @@ async function assertNotLastAdmin(pool: Pool, ctx: ServiceCallContext): Promise<
 
 function wouldRemoveAdmin(before: MemberAuthority, body: MemberBody): boolean {
   return (
-    before.role === "admin" &&
+    (before.role === "owner" || before.role === "admin") &&
     before.active &&
-    ((body.role !== undefined && body.role !== "admin") ||
+    ((body.role !== undefined && body.role !== "owner" && body.role !== "admin") ||
       body.active === false ||
       body.status === "deactivated" ||
       body.status === "invited")
@@ -552,8 +554,16 @@ function parseLimit(raw: string | undefined, fallback: number): number {
   return Math.min(parsed, fallback);
 }
 
-function parseRole(value: unknown): "admin" | "approver" | "viewer" {
-  if (value === "admin" || value === "approver" || value === "viewer") return value;
+function parseRole(value: unknown): "owner" | "admin" | "approver" | "analyst" | "viewer" {
+  if (
+    value === "owner" ||
+    value === "admin" ||
+    value === "approver" ||
+    value === "analyst" ||
+    value === "viewer"
+  ) {
+    return value;
+  }
   throw brainError("request_body_invalid", "invalid member role");
 }
 

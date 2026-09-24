@@ -44,7 +44,13 @@ function buildInvoiceIntegrityProposal(input: HandlerInput): ProposedAction {
       currency,
       due_date: readString(input.context.due_date) || null,
       finding_type: findingType,
+      finding_kind: findingKindFor(findingType),
       related_obligation_ids: readStringArray(input.context.related_obligation_ids),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("flagged_invoice", input.context.flagged_invoice),
+      ...optionalRecordField("suspected_original", input.context.suspected_original),
+      ...optionalRecordField("match_confidence", input.context.match_confidence),
+      ...optionalRecordField("comparison", input.context.comparison),
       narrative: narrativeFor(findingType, obligationId, amount, currency, input.context),
       summary: summaryFor(findingType, obligationId),
       confidence,
@@ -73,6 +79,10 @@ function findingTypeFor(action: string): FindingType {
     default:
       throw brainError("request_body_invalid", `unsupported invoice_integrity action: ${action}`);
   }
+}
+
+function findingKindFor(findingType: FindingType): string {
+  return findingType === "new_vendor" ? "high_value_new_vendor" : findingType;
 }
 
 function narrativeFor(
@@ -154,4 +164,10 @@ function readNumber(value: unknown): number | null {
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((v): v is string => typeof v === "string");
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }

@@ -101,6 +101,8 @@ export interface Counterparty extends LedgerCommonFields {
     | null;
   trust_status: "unreviewed" | "trusted" | "paused" | "acknowledged";
   trust_reviewed_at: string | null;
+  status?: "active" | "archived";
+  deleted_at?: string | null;
   aliases: string[];
   linked_accounts: string[];
   /** For type="agent": the execution-layer agent id (RFC 0001 §6.3); null otherwise. */

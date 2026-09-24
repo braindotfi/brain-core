@@ -27,6 +27,9 @@ export interface DisputeCandidateRow {
   readonly dispute_age_days: string;
   readonly evidence_completeness: string;
   readonly event_hint: string;
+  readonly historical_win_pct?: string | null;
+  readonly historical_win_sample_size?: string | null;
+  readonly historical_win_time_window?: string | null;
 }
 
 export interface DisputeScannerDeps {
@@ -135,6 +138,10 @@ export async function runDisputeScanCycle(
           evidence_completeness: row.evidence_completeness,
           dispute_confidence: row.evidence_completeness,
           dispute_summary: `${event} dispute ${row.dispute_id}`,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            historical_win_rate: historicalWinRateFor(row),
+          }),
         },
       });
       status = result.status;
@@ -185,6 +192,9 @@ async function listDisputes(
               o.due_date::text AS deadline,
               GREATEST(0, FLOOR(EXTRACT(EPOCH FROM ($2::timestamptz - o.created_at)) / 86400))::text AS dispute_age_days,
               LEAST(1, GREATEST(0, o.confidence))::text AS evidence_completeness,
+              prior_win_rate.pct::text AS historical_win_pct,
+              prior_win_rate.sample_size::text AS historical_win_sample_size,
+              CASE WHEN prior_win_rate.sample_size > 0 THEN '12m' ELSE NULL END AS historical_win_time_window,
               CASE WHEN o.external_key LIKE 'stripe:dispute:%' THEN 'chargeback.received' ELSE 'dispute.created' END AS event_hint
          FROM ledger_obligations o
          JOIN LATERAL (
@@ -195,6 +205,24 @@ async function listDisputes(
             ORDER BY t.transaction_date DESC, t.id DESC
             LIMIT 1
          ) tx ON true
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*) AS sample_size,
+                  CASE
+                    WHEN COUNT(*) > 0 THEN
+                      ROUND(
+                        100.0 * COUNT(*) FILTER (WHERE prior.status = 'cancelled')::numeric /
+                        COUNT(*)::numeric,
+                        2
+                      )
+                    ELSE NULL
+                  END AS pct
+             FROM ledger_obligations prior
+            WHERE prior.owner_id = o.owner_id
+              AND prior.id <> o.id
+              AND prior.type = 'dispute'
+              AND prior.created_at >= $2::timestamptz - interval '12 months'
+              AND prior.status IN ('paid', 'cancelled')
+         ) prior_win_rate ON true
         WHERE o.status = 'disputed'
      ),
      eligible AS (
@@ -286,6 +314,18 @@ function eventFor(row: DisputeCandidateRow): DomainEvent {
   return row.event_hint === "chargeback.received" ? "chargeback.received" : "dispute.created";
 }
 
+function decisionContextFor(row: DisputeCandidateRow): Record<string, unknown> {
+  return {
+    decide_by: `Before dispute deadline ${row.deadline}`,
+    if_wrong:
+      "Fighting a weak case can waste fees and time. Accepting too early can forfeit recoverable funds.",
+    reversible: {
+      state: "yes",
+      label: "Yes until the dispute response is submitted",
+    },
+  };
+}
+
 function normalizeCount(value: number | string | undefined, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -293,4 +333,33 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function historicalWinRateFor(row: DisputeCandidateRow): Record<string, unknown> | undefined {
+  const pct = numberOrUndefined(row.historical_win_pct);
+  const sampleSize = numberOrUndefined(row.historical_win_sample_size);
+  const timeWindow = nonEmpty(row.historical_win_time_window);
+  if (
+    pct === undefined ||
+    sampleSize === undefined ||
+    sampleSize <= 0 ||
+    timeWindow === undefined
+  ) {
+    return undefined;
+  }
+  return { pct, sample_size: sampleSize, time_window: timeWindow };
+}
+
+function numberOrUndefined(value: string | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function nonEmpty(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

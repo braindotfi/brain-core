@@ -9,6 +9,7 @@ describe("railKeyForActionType", () => {
     expect(railKeyForActionType("erp_writeback")).toBe("erp");
     expect(railKeyForActionType("onchain_transfer")).toBe("onchain");
     expect(railKeyForActionType("card_payment")).toBeNull();
+    expect(railKeyForActionType("exchange")).toBeNull();
   });
 });
 

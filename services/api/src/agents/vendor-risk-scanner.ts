@@ -16,6 +16,13 @@ const DEFAULT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const SCANNER_ACTOR = "vendor_risk_scanner";
 const COOLDOWN_TIER = "vendor_risk";
 
+export interface VendorBankComparisonEntry {
+  readonly bank_name?: string;
+  readonly routing_masked?: string;
+  readonly account_masked?: string;
+  readonly beneficiary?: string;
+}
+
 export interface VendorRiskRow {
   readonly tenant_id: string;
   readonly counterparty_id: string;
@@ -30,6 +37,8 @@ export interface VendorRiskRow {
   readonly destination_name: string | null;
   readonly history_risk_score: string;
   readonly event_hint: string;
+  readonly bank_on_file?: VendorBankComparisonEntry | null;
+  readonly bank_on_invoice?: VendorBankComparisonEntry | null;
 }
 
 export interface VendorRiskScannerDeps {
@@ -147,6 +156,10 @@ export async function runVendorRiskScanCycle(
           counterparty_history_id: row.payment_destination_id,
           counterparty_history_changed_at: row.payment_destination_changed_at,
           history_risk_score: row.history_risk_score,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            comparison: comparisonFor(row),
+          }),
         },
       });
       status = result.status;
@@ -201,6 +214,30 @@ async function listVendorRiskRows(
               latest.prior_hash AS prior_destination_hash,
               latest.current_hash AS current_destination_hash,
               latest.actor AS destination_name,
+              jsonb_build_object(
+                'bank_name', NULLIF(COALESCE(
+                  cp.metadata #>> '{bank,bank_name}',
+                  cp.metadata #>> '{bank,name}',
+                  cp.metadata->>'bank_name'
+                ), ''),
+                'routing_masked', NULLIF(COALESCE(
+                  cp.metadata #>> '{bank,routing_masked}',
+                  cp.metadata #>> '{bank,routing_number}',
+                  cp.metadata->>'routing_masked',
+                  cp.metadata->>'routing_number'
+                ), ''),
+                'account_masked', NULLIF(COALESCE(
+                  cp.metadata #>> '{bank,account_masked}',
+                  cp.metadata #>> '{bank,account_number}',
+                  cp.metadata->>'account_masked',
+                  cp.metadata->>'account_number'
+                ), ''),
+                'beneficiary', NULLIF(COALESCE(
+                  cp.metadata #>> '{bank,beneficiary}',
+                  cp.metadata->>'beneficiary'
+                ), '')
+              ) AS bank_on_file,
+              invoice_bank.bank_on_invoice,
               CASE
                 WHEN cp.verified_status IS NULL OR cp.verified_status IN ('unverified', 'self_attested') THEN 0.25
                 ELSE 0
@@ -228,6 +265,41 @@ async function listVendorRiskRows(
             ORDER BY cpi.changed_at DESC, cpi.id ASC
             LIMIT 1
          ) latest ON true
+         LEFT JOIN LATERAL (
+           SELECT jsonb_build_object(
+                    'bank_name', NULLIF(COALESCE(
+                      i.metadata #>> '{bank,bank_name}',
+                      i.metadata #>> '{bank,name}',
+                      i.metadata #>> '{extraction,bank_name}',
+                      i.metadata->>'bank_name'
+                    ), ''),
+                    'routing_masked', NULLIF(COALESCE(
+                      i.metadata #>> '{bank,routing_masked}',
+                      i.metadata #>> '{bank,routing_number}',
+                      i.metadata #>> '{extraction,routing_number}',
+                      i.metadata->>'routing_masked',
+                      i.metadata->>'routing_number'
+                    ), ''),
+                    'account_masked', NULLIF(COALESCE(
+                      i.metadata #>> '{bank,account_masked}',
+                      i.metadata #>> '{bank,account_number}',
+                      i.metadata #>> '{extraction,account_number}',
+                      i.metadata->>'account_masked',
+                      i.metadata->>'account_number'
+                    ), ''),
+                    'beneficiary', NULLIF(COALESCE(
+                      i.metadata #>> '{bank,beneficiary}',
+                      i.metadata #>> '{extraction,beneficiary}',
+                      i.metadata->>'beneficiary'
+                    ), '')
+                  ) AS bank_on_invoice
+             FROM ledger_invoices i
+            WHERE i.owner_id = cp.owner_id
+              AND i.counterparty_id = cp.id
+              AND i.metadata IS NOT NULL
+            ORDER BY i.issue_date DESC, i.id DESC
+            LIMIT 1
+         ) invoice_bank ON true
         WHERE cp.type = 'vendor'
           AND (
             cp.created_at >= $1::timestamptz - interval '7 days'
@@ -268,6 +340,8 @@ async function listVendorRiskRows(
             prior_destination_hash,
             current_destination_hash,
             destination_name,
+            bank_on_file,
+            bank_on_invoice,
             history_risk_score::text AS history_risk_score,
             event_hint,
             eligible_count,
@@ -364,6 +438,22 @@ function eventFor(row: VendorRiskRow): DomainEvent {
   return "vendor.created";
 }
 
+function decisionContextFor(row: VendorRiskRow): Record<string, unknown> {
+  const changedAt = row.payment_destination_changed_at ?? row.created_at;
+  return {
+    decide_by: `Before next payment to ${row.vendor_name}`,
+    if_wrong:
+      "Holding a safe vendor can delay payment. Clearing a risky vendor can send funds to changed bank details.",
+    reversible: {
+      state: "yes",
+      label:
+        changedAt.length > 0
+          ? `Yes before payment release, changed ${changedAt}`
+          : "Yes before payment release",
+    },
+  };
+}
+
 function triggerKeyFor(row: VendorRiskRow, event: DomainEvent): string {
   return `vendor_risk:${event}:counterparty:${row.counterparty_id}:${COOLDOWN_TIER}`;
 }
@@ -375,4 +465,41 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function comparisonFor(row: VendorRiskRow): Record<string, unknown> | undefined {
+  const comparison = definedContext({
+    bank_on_file: displaySafeBankEntry(row.bank_on_file),
+    bank_on_invoice: displaySafeBankEntry(row.bank_on_invoice),
+  });
+  return Object.keys(comparison).length > 0 ? comparison : undefined;
+}
+
+function displaySafeBankEntry(value: unknown): VendorBankComparisonEntry | undefined {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const entry = definedContext({
+    bank_name: stringOrUndefined(record["bank_name"]),
+    routing_masked: maskBankValue(record["routing_masked"]),
+    account_masked: maskBankValue(record["account_masked"]),
+    beneficiary: stringOrUndefined(record["beneficiary"]),
+  }) as VendorBankComparisonEntry;
+  return Object.keys(entry).length > 0 ? entry : undefined;
+}
+
+function maskBankValue(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length > 4) return `****${digits.slice(-4)}`;
+  return value;
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

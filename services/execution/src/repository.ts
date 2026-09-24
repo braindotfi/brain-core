@@ -27,9 +27,13 @@ export interface ProposalRow {
   status: ProposalState;
   approvers_signed: string[];
   proposal_dedup_key: string | null;
-  decision: "approve" | "reject" | "acknowledge" | "undo" | null;
+  decision: string | null;
   decision_audit_id: string | null;
   decided_at: Date | null;
+  sent_message_id: string | null;
+  sent_thread_id: string | null;
+  delivery_status: string | null;
+  sent_at: Date | null;
   created_at: Date;
 }
 
@@ -618,7 +622,7 @@ export interface UserRow {
   id: string;
   tenant_id: string;
   email: string;
-  role: "owner" | "admin" | "approver" | "viewer";
+  role: "owner" | "admin" | "approver" | "analyst" | "viewer";
   created_at: Date;
   status: "pending" | "active" | "disabled";
 }

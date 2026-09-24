@@ -148,6 +148,40 @@ describe("reconciliationHandler", () => {
     }
   });
 
+  it("proposes a close aggregate review when aggregate context is present", () => {
+    const proposed = reconciliationHandler.build({
+      action: "propose_match",
+      context: {
+        transaction_id: "tx_1",
+        close_aggregate: {
+          period_start: "2026-07-01",
+          period_end: "2026-07-31",
+          matched_count: 10,
+          unmatched_count: 2,
+          matched_total: "1000.00",
+          unmatched_total: "50.00",
+          drift: "950.00",
+        },
+      },
+      evidence: EVIDENCE,
+      definition: reconciliationDefinition,
+    });
+
+    expect(proposed.channel).toBe("agent");
+    if (proposed.channel === "agent") {
+      expect(proposed.action).toMatchObject({
+        type: "reconciliation",
+        recommended_action: "propose_match",
+        match_type: "close_aggregate",
+        close_aggregate: {
+          period_start: "2026-07-01",
+          period_end: "2026-07-31",
+          unmatched_count: 2,
+        },
+      });
+    }
+  });
+
   it("fails closed when transaction context is incomplete", () => {
     expect(() =>
       reconciliationHandler.build({

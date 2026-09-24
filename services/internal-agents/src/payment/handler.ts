@@ -89,6 +89,8 @@ function buildPaymentAdvisory(input: HandlerInput): ProposedAction {
         priority_score: item.priorityScore.toFixed(2),
         reason: item.reason,
       })),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("cash_impact", input.context.cash_impact),
       narrative: narrativeFor(top, availableCash, currency),
       summary: `${top.decision} ${currency} ${top.amountText} for ${top.counterpartyName ?? top.counterpartyId}.`,
       risk_band: top.decision === "pay_now" ? "standard" : "watch",
@@ -262,6 +264,12 @@ function optionalMoney(raw: unknown): number | null {
 function optionalString(raw: unknown): string | null {
   const value = readString(raw);
   return value.length > 0 ? value : null;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function daysBetween(now: Date, target: Date): number {

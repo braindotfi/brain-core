@@ -14,7 +14,11 @@ import { PaymentIntentService } from "./payment-intents/PaymentIntentService.js"
 import { registerPaymentIntentRoutes } from "./payment-intents/routes.js";
 import { getPaymentIntentAgent } from "./proposals/read-model.js";
 import { registerProposalReadRoutes } from "./proposals/routes.js";
-import { registerEvidenceResolveRoutes } from "./evidence/routes.js";
+import { registerEvidenceRoutes } from "./evidence/routes.js";
+import { InMemoryEvidenceBlobStore } from "./evidence/blob-store.js";
+import { registerRulesRoutes } from "./rules/routes.js";
+import { registerProposalSnapshotRoutes } from "./proposal-snapshots/routes.js";
+import { registerDecisionAuditLogRoutes } from "./audit-log/routes.js";
 import { OutboxService } from "./outbox/OutboxService.js";
 import type { ExecutionDeps } from "./deps.js";
 import { registerAuthorizationProbeRoutes } from "./authz/probes.js";
@@ -169,10 +173,17 @@ export async function buildExecutionApp(opts: BuildExecutionAppOptions): Promise
         }
       : {}),
   });
-  await registerEvidenceResolveRoutes(app, { pool: opts.deps.pool });
+  await registerRulesRoutes(app, { pool: opts.deps.pool });
+  await registerProposalSnapshotRoutes(app, { pool: opts.deps.pool });
+  await registerDecisionAuditLogRoutes(app, { pool: opts.deps.pool });
+  await registerEvidenceRoutes(app, {
+    pool: opts.deps.pool,
+    audit: opts.deps.audit,
+    blobStore: new InMemoryEvidenceBlobStore(),
+  });
 
   // v0.3 canonical /actions/* routes — share the same PaymentIntentService.
-  await registerActionRoutes(app, paymentIntents);
+  await registerActionRoutes(app, paymentIntents, { pool: opts.deps.pool });
 
   // Feature/mcp-server: optional MCP route registration. When supplied,
   // the boot site has constructed a BrainMcpServer (from @brain/mcp) and

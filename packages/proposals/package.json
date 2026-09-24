@@ -1,0 +1,21 @@
+{
+  "name": "@brain/proposals",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed optional proposal rail payload extensions for Brain proposal read models.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

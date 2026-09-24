@@ -80,6 +80,10 @@ function buildRevenueIntelProposal(input: HandlerInput): ProposedAction {
       ],
       anomalies: revenueTrend === "down" || currentDso - priorDso >= 10 ? atRiskCustomers : [],
       forecast_adjustments: [],
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("concentration", input.context.concentration),
+      ...optionalArrayField("historical_concentration", input.context.historical_concentration),
+      ...optionalRecordField("pipeline_coverage", input.context.pipeline_coverage),
       narrative: narrativeFor({
         trend: revenueTrend,
         revenueDelta,
@@ -180,6 +184,16 @@ function readNumber(value: unknown, fallback: number): number {
   const parsed =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
+}
+
+function optionalArrayField(key: string, value: unknown): Record<string, unknown> {
+  return Array.isArray(value) ? { [key]: value } : {};
 }
 
 function round(value: number): number {

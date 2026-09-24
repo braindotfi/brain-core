@@ -545,7 +545,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("renames with the previous name preserved as an alias and audits changed fields", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -599,7 +599,7 @@ describe("LedgerService manual counterparty endpoints", () => {
   it("updates display_name without rename collision and preserves the previous display name", async () => {
     const audit = new InMemoryAuditEmitter();
     const { pool, calls } = fakePool({
-      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1": [
         {
           ...rowCommon(),
           id: "cp_existing",
@@ -645,7 +645,7 @@ describe("LedgerService manual counterparty endpoints", () => {
 
   it("returns name_conflict on rename collision without mutating", async () => {
     const { pool, calls } = fakePool({
-      "WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)": [
+      "WHERE cp.id = $1": [
         {
           ...rowCommon(),
           id: "cp_existing",

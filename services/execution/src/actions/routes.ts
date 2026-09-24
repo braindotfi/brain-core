@@ -19,11 +19,14 @@
  *   POST   /actions/{action_id}/execute   execute (runs §6 gate)
  */
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Pool } from "pg";
 import {
   brainError,
   isBrainId,
+  newInvoiceId,
   requireScope,
+  withTenantScope,
   type Scope,
   type ServiceCallContext,
 } from "@brain/shared";
@@ -62,14 +65,23 @@ function proposedAgentId(
 
 interface CreateActionBody {
   type?: string;
+  action_type?: string;
   agent_id?: string;
   invoiceId?: string;
   to?: { counterparty_id?: string };
+  counterparty_id?: string;
   amount?: string;
   currency?: string;
   source_account_id?: string;
+  description?: string;
+  due_date?: string;
   memo?: string;
   evidence_ids?: string[];
+}
+
+interface ActionRouteOptions {
+  pool?: Pool;
+  invoiceLinkBaseUrl?: string;
 }
 
 // Free-form `type` → storage PaymentIntent action_type. Conservative
@@ -95,9 +107,94 @@ const VALID_ACTION_STATUSES: ReadonlySet<ActionStatus> = new Set([
   "cancelled",
 ]);
 
+function isPositiveDecimal(value: string | undefined): value is string {
+  return value !== undefined && /^\d+(\.\d+)?$/.test(value) && value !== "0";
+}
+
+function invoiceLinkUrl(baseUrl: string | undefined, invoiceId: string): string {
+  const base = baseUrl ?? "https://pay.robotmoney.local/invoices";
+  return `${base.replace(/\/+$/, "")}/${invoiceId}`;
+}
+
+async function createInvoiceLink(
+  ctx: ServiceCallContext,
+  body: CreateActionBody,
+  options: ActionRouteOptions,
+  reply: FastifyReply,
+): Promise<Record<string, unknown>> {
+  if (options.pool === undefined) {
+    throw brainError("invoice_link_unavailable", "invoice link creation is not configured", {
+      statusOverride: 501,
+    });
+  }
+  const counterpartyId = body.to?.counterparty_id ?? body.counterparty_id;
+  if (
+    counterpartyId === undefined ||
+    !isBrainId(counterpartyId, "cp") ||
+    !isPositiveDecimal(body.amount) ||
+    body.currency === undefined ||
+    !/^[A-Z]{3}$/.test(body.currency)
+  ) {
+    throw brainError(
+      "request_body_invalid",
+      "invoice_link requires counterparty_id, amount, and currency",
+    );
+  }
+  const dueAt = body.due_date !== undefined ? new Date(body.due_date) : null;
+  if (dueAt !== null && Number.isNaN(dueAt.getTime())) {
+    throw brainError("request_body_invalid", "due_date must be ISO8601");
+  }
+  const invoiceId = newInvoiceId();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+  const hostedUrl = invoiceLinkUrl(options.invoiceLinkBaseUrl, invoiceId);
+  await withTenantScope(options.pool, ctx.tenantId, async (client) => {
+    const invoiceNumber = `RM-${invoiceId.slice(4, 14).toUpperCase()}`;
+    await client.query(
+      `INSERT INTO ledger_invoices (
+         id, owner_id, invoice_number, counterparty_id, amount_due, amount_paid,
+         currency, issue_date, due_date, status, linked_document_ids,
+         linked_transaction_ids, source_ids, evidence_ids, provenance, confidence, metadata
+       )
+       VALUES ($1,$2,$3,$4,$5,0,$6,now(),$7,'sent',ARRAY[]::TEXT[],
+         ARRAY[]::TEXT[],ARRAY[]::TEXT[],$8,'human_confirmed',1.0,$9::jsonb)`,
+      [
+        invoiceId,
+        ctx.tenantId,
+        invoiceNumber,
+        counterpartyId,
+        body.amount,
+        body.currency,
+        dueAt?.toISOString() ?? null,
+        body.evidence_ids ?? [],
+        JSON.stringify({
+          description: body.description ?? null,
+          memo: body.memo ?? null,
+          created_by: ctx.actor,
+        }),
+      ],
+    );
+    await client.query(
+      `INSERT INTO ledger_invoice_links (
+         invoice_id, tenant_id, hosted_url, expires_at, created_by
+       )
+       VALUES ($1,$2,$3,$4,$5)`,
+      [invoiceId, ctx.tenantId, hostedUrl, expiresAt, ctx.actor],
+    );
+  });
+  reply.status(201);
+  return {
+    id: invoiceId,
+    action_type: "invoice_link",
+    invoice_id: invoiceId,
+    hosted_url: hostedUrl,
+    expires_at: expiresAt,
+  };
+}
+
 export async function registerActionRoutes(
   app: FastifyInstance,
   service: PaymentIntentService,
+  options: ActionRouteOptions = {},
 ): Promise<void> {
   // POST /actions
   app.post(
@@ -107,12 +204,16 @@ export async function registerActionRoutes(
       const ctx = assertCtx(request);
       requireScope(request.principal!.scopes, SCOPE_PROPOSE);
       const b = request.body ?? {};
-      if (b.type === undefined) {
+      const requestedType = b.type ?? b.action_type;
+      if (requestedType === "invoice_link") {
+        return createInvoiceLink(ctx, b, options, reply);
+      }
+      if (requestedType === undefined) {
         throw brainError("request_body_invalid", "`type` is required");
       }
-      const piType = ACTION_TYPE_TO_PI_TYPE[b.type];
+      const piType = ACTION_TYPE_TO_PI_TYPE[requestedType];
       if (piType === undefined) {
-        throw brainError("request_body_invalid", `unsupported action type: ${b.type}`);
+        throw brainError("request_body_invalid", `unsupported action type: ${requestedType}`);
       }
       // For v0.3 the SDK still requires explicit destination + amount +
       // currency on the body when invoiceId is not the source. The

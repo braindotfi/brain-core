@@ -49,6 +49,10 @@ import { purchaseAdvisorDefinition } from "./purchase_advisor/definition.js";
 import { purchaseAdvisorHandler } from "./purchase_advisor/handler.js";
 import { invoiceIntegrityDefinition } from "./invoice_integrity/definition.js";
 import { invoiceIntegrityHandler } from "./invoice_integrity/handler.js";
+import { amlComplianceDefinition } from "./aml_compliance/definition.js";
+import { amlComplianceHandler } from "./aml_compliance/handler.js";
+import { subscriptionManagementDefinition } from "./subscription_management/definition.js";
+import { subscriptionManagementHandler } from "./subscription_management/handler.js";
 import type { InternalAgentHandler } from "./handler.js";
 
 export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
@@ -72,6 +76,8 @@ export const internalAgentCatalog: readonly InternalAgentDefinition[] = [
   financialHealthDefinition,
   purchaseAdvisorDefinition,
   invoiceIntegrityDefinition,
+  amlComplianceDefinition,
+  subscriptionManagementDefinition,
 ];
 
 /** Definitions keyed by agent_key — used by the router/worker for action resolution. */
@@ -114,4 +120,6 @@ export const internalAgentHandlers: Readonly<Record<string, InternalAgentHandler
   financial_health: financialHealthHandler,
   purchase_advisor: purchaseAdvisorHandler,
   invoice_integrity: invoiceIntegrityHandler,
+  aml_compliance: amlComplianceHandler,
+  subscription_management: subscriptionManagementHandler,
 };

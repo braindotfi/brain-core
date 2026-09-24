@@ -208,6 +208,8 @@ function approvedPaymentIntentRow(): PaymentIntentRow {
     destination_counterparty_id: "cp_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     amount: "100.00",
     currency: "USD",
+    rate_lock_reference: null,
+    destination_currency: null,
     obligation_id: null,
     invoice_id: null,
     proposal_dedup_key: null,

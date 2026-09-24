@@ -27,6 +27,7 @@ COPY shared/package.json shared/tsconfig.json shared/
 # frozen install resolves the full workspace graph, so their manifests must be
 # present here even though the api image does not import them.
 COPY packages/core/package.json packages/core/tsconfig.json packages/core/
+COPY packages/proposals/package.json packages/proposals/tsconfig.json packages/proposals/
 COPY packages/surfaces/package.json packages/surfaces/tsconfig.json packages/surfaces/
 COPY services/api/package.json services/api/tsconfig.json services/api/
 COPY services/raw/package.json services/raw/tsconfig.json services/raw/
@@ -102,6 +103,7 @@ COPY shared/package.json shared/
 # API imports @brain/surfaces for onboarding email delivery; surface-gateway
 # imports both @brain/surfaces and @brain/core.
 COPY packages/core/package.json packages/core/
+COPY packages/proposals/package.json packages/proposals/
 COPY packages/surfaces/package.json packages/surfaces/
 COPY services/api/package.json services/api/
 COPY services/raw/package.json services/raw/
@@ -145,6 +147,7 @@ COPY --from=builder /app/schemas/entity schemas/entity
 COPY --from=builder /app/schemas/relation schemas/relation
 COPY --from=builder /app/shared/dist shared/dist
 COPY --from=builder /app/packages/core/dist packages/core/dist
+COPY --from=builder /app/packages/proposals/dist packages/proposals/dist
 COPY --from=builder /app/packages/surfaces/dist packages/surfaces/dist
 COPY --from=builder /app/services/api/dist services/api/dist
 # BOTH /v1/docs assets. `services/api` build runs copy-spec (now

@@ -35,6 +35,11 @@ const PAYMENT_CONTEXT = {
   amount: "125.00",
   currency: "USD",
 };
+const DECISION_CONTEXT = {
+  decide_by: "Fri Sep 25, 4 days",
+  if_wrong: "Acting too early may interrupt a valid workflow. Waiting too long may increase risk.",
+  reversible: { state: "yes", label: "Yes for 24 hours" },
+};
 const COMPLETE_COLLECTIONS_HANDLER: InternalAgentHandler = {
   agent_key: "collections",
   actions: ["draft_followup", "send_followup", "create_task", "escalate", "propose_payment_plan"],
@@ -49,6 +54,7 @@ const COMPLETE_COLLECTIONS_HANDLER: InternalAgentHandler = {
       recommended_tone: "firm",
       draft_message: "Please remit payment for invoice inv_1.",
       next_escalation_date: "2026-05-29",
+      decision_context: DECISION_CONTEXT,
       evidence_refs: input.evidence.items.map((i) => i.ref),
     },
   }),
@@ -67,6 +73,7 @@ const INFORMATIONAL_RECONCILIATION_HANDLER: InternalAgentHandler = {
       right_entity_id: null,
       confidence_score: 0.15,
       explanation: "No credible reconciliation match was found.",
+      decision_context: DECISION_CONTEXT,
       evidence_refs: input.evidence.items.map((item) => item.ref),
     },
   }),

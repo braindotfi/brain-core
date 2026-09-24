@@ -60,6 +60,14 @@ function buildCollectionsProposal(input: HandlerInput): ProposedAction {
     missing_required_evidence: [...input.evidence.missing_required_evidence],
     critical_missing: input.evidence.critical_missing,
     mode: input.definition?.default_authority === "notify_only" ? "notify_only" : "propose",
+    decision_context: readRecord(input.context.decision_context) ?? undefined,
+    customer_email: readString(input.context.customer_email) || undefined,
+    sender_email: readString(input.context.sender_email) || undefined,
+    msa_clause: readString(input.context.msa_clause) || undefined,
+    customer_tone_signal: readString(input.context.customer_tone_signal) || undefined,
+    notice_history: Array.isArray(input.context.notice_history)
+      ? input.context.notice_history
+      : undefined,
   };
 
   return {
@@ -123,6 +131,14 @@ export function refreshCollectionsActionDaysOverdue(
       daysOverdue,
       tone: recommendation.tone,
     }),
+    ...optionalDraftEmail(existingAction, {
+      counterpartyName,
+      invoiceNumber,
+      amount,
+      currency,
+      daysOverdue,
+      tone: recommendation.tone,
+    }),
     next_escalation_date: nextEscalationDate,
     narrative:
       `${counterpartyName} has ${amount} ${currency} outstanding on invoice ${invoiceNumber}, ` +
@@ -130,6 +146,45 @@ export function refreshCollectionsActionDaysOverdue(
       `with ${recommendation.tone} tone at the ${escalationTierLabel(recommendation.escalationTier)}.`,
     summary: `${amount} ${currency} receivable is ${daysOverdue} days overdue for ${counterpartyName}.`,
     risk_band: recommendation.riskBand,
+  };
+}
+
+function optionalDraftEmail(
+  action: Record<string, unknown>,
+  input: {
+    counterpartyName: string;
+    invoiceNumber: string;
+    amount: string;
+    currency: string;
+    daysOverdue: number;
+    tone: Recommendation["tone"];
+  },
+): Record<string, unknown> {
+  const to = readString(action.customer_email);
+  const from = readString(action.sender_email);
+  if (to.length === 0 || from.length === 0) return {};
+  const msaClause = readString(action.msa_clause);
+  const toneSignal = readString(action.customer_tone_signal);
+  const noticeCount = Array.isArray(action.notice_history) ? action.notice_history.length : 0;
+  const body = [
+    `Hello ${input.counterpartyName},`,
+    `Invoice ${input.invoiceNumber} for ${input.amount} ${input.currency} is ${input.daysOverdue} days overdue.`,
+    noticeCount > 0
+      ? `We have sent ${noticeCount} prior notice(s) about this balance.`
+      : "This is a follow-up on the open balance.",
+    msaClause.length > 0
+      ? `The agreement reference is ${msaClause}.`
+      : "Please send an update on payment timing.",
+    toneSignal.length > 0 ? `I kept the tone ${toneSignal}.` : `I kept the tone ${input.tone}.`,
+  ];
+  return {
+    draft_email: {
+      to,
+      from,
+      subject: `Invoice ${input.invoiceNumber} payment follow-up`,
+      body,
+      edit_actions: ["Edit draft", "Add payment plan offer", "Soften tone"],
+    },
   };
 }
 
@@ -223,6 +278,11 @@ function displayInvoiceId(invoiceId: string): string {
 
 function addDaysIso(base: Date, days: number): string {
   return new Date(base.getTime() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function draftMessage(input: {

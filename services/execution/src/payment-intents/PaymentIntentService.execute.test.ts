@@ -59,6 +59,8 @@ const APPROVED_INTENT_ROW: PaymentIntentRow = {
   destination_counterparty_id: CP_ID,
   amount: "100.00",
   currency: "USD",
+  rate_lock_reference: null,
+  destination_currency: null,
   obligation_id: null,
   invoice_id: null,
   proposal_dedup_key: null,

@@ -49,6 +49,7 @@ import {
 import type { AgentRecord } from "@brain/shared";
 import type { AgentRow, ProposalRow } from "./repository.js";
 import type { AgentRegistrationRelayer } from "./registration-relayer.js";
+import type { RuleEvaluationResult } from "./rules/rules-engine.js";
 
 export interface AgentServiceDeps {
   pool: Pool;
@@ -67,6 +68,17 @@ export interface AgentServiceDeps {
     ctx: ServiceCallContext,
     agentId: string,
   ) => Promise<AgentAuthority | null> | AgentAuthority | null;
+  rulesEngine?: {
+    evaluate(
+      ctx: ServiceCallContext,
+      agentId: string,
+      payload: Record<string, unknown>,
+    ): Promise<RuleEvaluationResult>;
+  };
+  autoExecuteProposal?: (
+    ctx: ServiceCallContext,
+    input: { proposalId: string; decision: string; ruleId: string },
+  ) => Promise<{ status: string; audit_id: string | null }>;
   /**
    * On-chain registration relayer (RFC 0002 Phase C). Optional: when absent or
    * unconfigured, {@link AgentService.confirmRegistration} fails closed and the
@@ -212,7 +224,16 @@ export class AgentService implements IAgentService {
     };
 
     const policyResult = await this.deps.evaluatePolicy(ctx.tenantId, action);
-    const status = outcomeToStatus(policyResult.outcome, authority);
+    const ruleResult = await this.deps.rulesEngine?.evaluate(ctx, agentId, action);
+    if (ruleResult?.matched === true) {
+      action["authority"] = ruleResult.authority;
+      action["authority_rule_id"] = ruleResult.rule_id;
+      action["authority_decision"] = ruleResult.decision;
+    }
+    const status =
+      ruleResult?.authority === "deny"
+        ? "rejected"
+        : outcomeToStatus(policyResult.outcome, authority);
     const id = newProposalId();
 
     const invoiceId = collectionsInvoiceId(agentId, action);
@@ -243,7 +264,7 @@ export class AgentService implements IAgentService {
       refresh: () => Promise<unknown>,
     ): Promise<void> => {
       mutation.proposalId = existing.id;
-      mutation.previousState = {
+      const previousState: ProposalMaterialState = {
         action: existing.action,
         policyVersion: existing.policy_version,
         policyDecision: existing.policy_decision,
@@ -251,7 +272,8 @@ export class AgentService implements IAgentService {
         requiredApprovers: existing.required_approvers,
         status: existing.status,
       };
-      mutation.materialDiff = proposalMaterialDiff(mutation.previousState, refreshedState);
+      mutation.previousState = previousState;
+      mutation.materialDiff = proposalMaterialDiff(previousState, refreshedState);
       if (mutation.materialDiff.changedFields.length === 0) {
         mutation.outcome = "unchanged";
         return;
@@ -386,12 +408,70 @@ export class AgentService implements IAgentService {
         : {}),
     });
 
+    if (!refreshed && status === "pending" && ruleResult?.authority !== "auto") {
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: agentId,
+        action: "decision.proposed",
+        inputs: {
+          proposal_id: mutation.proposalId,
+          decision: ruleResult?.decision ?? String(action["recommended_action"] ?? "review"),
+        },
+        outputs: {
+          agent: agentId,
+          authority_at_time: ruleResult?.authority ?? "propose",
+          rule_id_if_any: ruleResult?.rule_id ?? null,
+          proposal_id: mutation.proposalId,
+        },
+        policyVersion: policyResult.policy_version,
+        ...(policyResult.matched_rule_id !== null
+          ? { policyCheckId: policyResult.matched_rule_id }
+          : {}),
+      });
+    }
+
+    let finalStatus: ProposalRecord["status"] = status;
+    if (
+      ruleResult?.authority === "auto" &&
+      ruleResult.decision !== null &&
+      ruleResult.rule_id !== null &&
+      this.deps.autoExecuteProposal !== undefined
+    ) {
+      const executed = await this.deps.autoExecuteProposal(ctx, {
+        proposalId: mutation.proposalId,
+        decision: ruleResult.decision,
+        ruleId: ruleResult.rule_id,
+      });
+      finalStatus = executed.status as ProposalRecord["status"];
+      await this.deps.audit.emit({
+        tenantId: ctx.tenantId,
+        layer: "agent",
+        actor: "system:rules-engine",
+        action: "decision.auto_executed",
+        inputs: {
+          proposal_id: mutation.proposalId,
+          decision: ruleResult.decision,
+          rule_id: ruleResult.rule_id,
+        },
+        outputs: {
+          status: executed.status,
+          audit_id: executed.audit_id,
+          agent: agentId,
+          authority_at_time: "auto",
+          rule_id_if_any: ruleResult.rule_id,
+        },
+        policyVersion: policyResult.policy_version,
+        policyCheckId: ruleResult.rule_id,
+      });
+    }
+
     return {
       id: mutation.proposalId,
       proposing_agent_id: agentId,
       action,
       policy_decision_id: mutation.proposalId,
-      status,
+      status: finalStatus,
       approvers_signed: [],
       created_at: new Date().toISOString(),
     };
@@ -615,6 +695,17 @@ export class AgentService implements IAgentService {
       action: "agent.action.escalated",
       inputs: { proposal_id: proposalId, note: note ?? null },
       outputs: {},
+    });
+    await this.deps.audit.emit({
+      tenantId: ctx.tenantId,
+      layer: "agent",
+      actor: ctx.actor,
+      action: "decision.escalated",
+      inputs: { proposal_id: proposalId },
+      outputs: {
+        status: "escalated",
+        note: note ?? null,
+      },
     });
   }
 }

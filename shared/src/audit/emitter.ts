@@ -33,6 +33,7 @@ import {
   normalizeAuditSeverity,
   type AuditEvent,
   type AuditEventInput,
+  type NormalizedAuditEventInput,
 } from "./types.js";
 
 // Fixed advisory-lock namespace (int4) for the per-tenant audit chain. Paired
@@ -139,7 +140,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
   }
 
   public async emit(event: AuditEventInput): Promise<AuditEvent> {
-    const normalizedEvent = normalizeAuditEventInput(event);
+    let normalizedEvent = normalizeAuditEventInput(event);
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -329,6 +330,7 @@ export class PostgresAuditEmitter implements AuditEmitter {
          ON CONFLICT (tenant_id) DO NOTHING`,
         [normalizedEvent.tenantId],
       );
+      normalizedEvent = await enrichActorDisplay(client, normalizedEvent);
 
       // This row is authoritative. The advisory lock above serializes compliant
       // emitters; the database trigger independently compare-and-swaps this
@@ -420,5 +422,28 @@ export class PostgresAuditEmitter implements AuditEmitter {
     } finally {
       client.release();
     }
+  }
+}
+
+async function enrichActorDisplay(
+  client: PoolClient,
+  event: NormalizedAuditEventInput,
+): Promise<NormalizedAuditEventInput> {
+  if (event.actorDisplayName !== undefined || event.actorEmail !== undefined) return event;
+  if (!event.actor.startsWith("usr_")) return event;
+  try {
+    const { rows } = await client.query<{ display_name: string; email: string }>(
+      `SELECT display_name, email
+         FROM members
+        WHERE tenant_id = $1
+          AND id = $2
+        LIMIT 1`,
+      [event.tenantId, event.actor],
+    );
+    const row = rows[0];
+    if (row === undefined) return event;
+    return { ...event, actorDisplayName: row.display_name, actorEmail: row.email };
+  } catch {
+    return event;
   }
 }

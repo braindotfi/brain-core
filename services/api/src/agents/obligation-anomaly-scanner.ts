@@ -178,6 +178,7 @@ export async function runObligationAnomalyScanCycle(
           related_obligation_ids: relatedObligationIds,
           group_total_amount: row.structuring_group_total,
           threshold_amount: row.threshold_amount,
+          decision_context: decisionContextFor(row),
         },
       });
       status = result.status;
@@ -464,6 +465,18 @@ function eventFor(row: ObligationAnomalyRow): DomainEvent {
     return row.event_hint;
   }
   return "obligation.high_value_new_vendor";
+}
+
+function decisionContextFor(row: ObligationAnomalyRow): Record<string, unknown> {
+  return {
+    decide_by: `Before payable due date ${row.due_date}`,
+    if_wrong:
+      "Rejecting a valid invoice can delay a vendor. Approving a duplicate or structured invoice can create avoidable loss.",
+    reversible: {
+      state: "yes",
+      label: "Yes before payment approval",
+    },
+  };
 }
 
 function triggerKeyFor(row: ObligationAnomalyRow, event: DomainEvent): string {

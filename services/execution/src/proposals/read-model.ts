@@ -7,6 +7,11 @@ import {
   type TenantScopedClient,
 } from "@brain/shared";
 import type { Pool } from "pg";
+import type {
+  ProposalDomainDecision,
+  ProposalRailFields,
+  ProposalDomainDecisionId,
+} from "@brain/proposals";
 import {
   canonicalEvidenceKind,
   evidenceKindFromRefPrefix,
@@ -24,6 +29,7 @@ export const PROPOSAL_TYPES = [
   "revenue_intel",
   "reconciliation",
   "subscription",
+  "subscription_management",
   "fraud_anomaly",
   "personal_budget",
   "financial_health",
@@ -34,6 +40,7 @@ export const PROPOSAL_TYPES = [
   "debt_optimization",
   "savings",
   "invoice_integrity",
+  "aml_compliance",
 ] as const;
 
 export type ProposalType = (typeof PROPOSAL_TYPES)[number];
@@ -51,6 +58,7 @@ export const AGENT_ROLE_TO_PROPOSAL_TYPE = {
   revenue_intel: "revenue_intel",
   reconciliation: "reconciliation",
   subscription: "subscription",
+  subscription_management: "subscription_management",
   fraud_anomaly: "fraud_anomaly",
   personal_budget: "personal_budget",
   financial_health: "financial_health",
@@ -61,6 +69,7 @@ export const AGENT_ROLE_TO_PROPOSAL_TYPE = {
   debt_optimization: "debt_optimization",
   savings: "savings",
   invoice_integrity: "invoice_integrity",
+  aml_compliance: "aml_compliance",
 } as const satisfies Record<string, ProposalType>;
 
 export const ACTION_TYPE_TO_PROPOSAL_TYPE = {
@@ -185,6 +194,7 @@ const STATUSES = [
   "cancelled",
   "undone",
   "superseded",
+  "blocked",
   "unknown",
 ] as const;
 const STATUS_SET: ReadonlySet<string> = new Set(STATUSES);
@@ -222,6 +232,39 @@ export interface ProposalReadItem {
   policy: ProposalPolicySummary;
   presentation: ProposalPresentation;
   available_decisions: ProposalDecisionAction[];
+  decision_context?: ProposalRailFields["decision_context"];
+  signals?: ProposalRailFields["signals"];
+  comparison?: ProposalRailFields["comparison"];
+  draft_email?: ProposalRailFields["draft_email"];
+  cash_impact?: ProposalRailFields["cash_impact"];
+  historical_win_rate?: ProposalRailFields["historical_win_rate"];
+  allocation_before?: ProposalRailFields["allocation_before"];
+  allocation_after?: ProposalRailFields["allocation_after"];
+  safety_meter?: ProposalRailFields["safety_meter"];
+  estimated_annual_yield_gain?: ProposalRailFields["estimated_annual_yield_gain"];
+  close_aggregate?: ProposalRailFields["close_aggregate"];
+  accountant?: ProposalRailFields["accountant"];
+  materiality?: ProposalRailFields["materiality"];
+  horizon_days?: ProposalRailFields["horizon_days"];
+  drivers?: ProposalRailFields["drivers"];
+  runway_projection?: ProposalRailFields["runway_projection"];
+  concentration?: ProposalRailFields["concentration"];
+  historical_concentration?: ProposalRailFields["historical_concentration"];
+  pipeline_coverage?: ProposalRailFields["pipeline_coverage"];
+  alternatives?: ProposalRailFields["alternatives"];
+  flagged_invoice?: ProposalRailFields["flagged_invoice"];
+  suspected_original?: ProposalRailFields["suspected_original"];
+  match_confidence?: ProposalRailFields["match_confidence"];
+  finding_kind?: ProposalRailFields["finding_kind"];
+  screenings?: ProposalRailFields["screenings"];
+  required_documents?: ProposalRailFields["required_documents"];
+  regulatory_context?: ProposalRailFields["regulatory_context"];
+  jurisdictions_involved?: ProposalRailFields["jurisdictions_involved"];
+  deadline?: ProposalRailFields["deadline"];
+  seats?: ProposalRailFields["seats"];
+  underutilization?: ProposalRailFields["underutilization"];
+  options?: ProposalRailFields["options"];
+  decisions?: ProposalRailFields["decisions"];
 }
 
 export interface ListProposalsInput {
@@ -570,7 +613,25 @@ function serializeProposalRow(row: RawProposalRow): ProposalReadItem {
     policy,
     presentation,
     available_decisions: availableDecisions,
+    ...projectProposalRailFields(proposalType, details),
   };
+}
+
+export function projectProposalRailFields(
+  type: ProposalType,
+  details: Record<string, unknown>,
+): ProposalRailFields {
+  const fields: Record<string, unknown> = {};
+  for (const key of RAIL_FIELD_KEYS[type] ?? []) {
+    const value = details[key];
+    if (value !== undefined) fields[key] = value;
+  }
+  if (type === "vendor_risk" && details["comparison"] !== undefined) {
+    fields.comparison = displaySafeVendorComparison(details["comparison"]);
+  }
+  const decisions = domainDecisionsForProposal(type);
+  if (decisions.length > 0) fields.decisions = decisions;
+  return fields as ProposalRailFields;
 }
 
 export function resolvePublicProposalType(input: {
@@ -796,6 +857,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "changed_field",
     "risk_score",
     "recommended_action",
+    "comparison",
   ],
   payment: [
     "amount",
@@ -822,6 +884,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "operating_minimum",
     "liquidity_risk",
     "recommended_action",
+    "safety_meter",
   ],
   cash_forecast: [
     "current_balance",
@@ -830,6 +893,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "projected_outflows",
     "net_position",
     "shortfall_date",
+    "horizon_days",
   ],
   dispute: ["dispute_id", "transaction_id", "amount", "currency", "deadline", "recommended_action"],
   compliance: [
@@ -847,6 +911,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "revenue_delta_percent",
     "at_risk_customer_count",
     "upcoming_renewal_count",
+    "concentration",
   ],
   reconciliation: [
     "transaction_id",
@@ -856,6 +921,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "right_entity_type",
     "right_entity_id",
     "confidence_score",
+    "close_aggregate",
   ],
   subscription: [
     "merchant",
@@ -865,6 +931,27 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "next_expected_date",
     "recommended_action",
   ],
+  subscription_management: [
+    "subscription_id",
+    "merchant",
+    "current_plan",
+    "renewal_date",
+    "currency",
+    "current_price",
+    "recommended_action",
+  ],
+  aml_compliance: [
+    "payment_id",
+    "beneficiary_id",
+    "amount",
+    "currency",
+    "jurisdictions_involved",
+    "screenings",
+    "required_documents",
+    "regulatory_context",
+    "recommended_action",
+    "deadline",
+  ],
   fraud_anomaly: [
     "transaction_id",
     "counterparty_name",
@@ -873,6 +960,7 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "anomaly_type",
     "anomaly_score",
     "recommended_action",
+    "signals",
   ],
   personal_budget: ["recommended_action", "category", "amount", "currency", "period", "budget_id"],
   financial_health: ["recommended_action", "health_score", "period", "metric", "trend"],
@@ -911,8 +999,155 @@ const KEY_FACT_KEYS: Readonly<Record<ProposalType, readonly string[]>> = {
     "due_date",
     "finding_type",
     "related_obligation_ids",
+    "finding_kind",
   ],
 };
+
+const RAIL_FIELD_KEYS: Readonly<Partial<Record<ProposalType, readonly string[]>>> = {
+  fraud_anomaly: ["decision_context", "signals"],
+  vendor_risk: ["decision_context", "comparison"],
+  payment: ["decision_context", "cash_impact"],
+  collections: ["decision_context", "draft_email"],
+  dispute: ["decision_context", "historical_win_rate"],
+  treasury: [
+    "decision_context",
+    "allocation_before",
+    "allocation_after",
+    "safety_meter",
+    "estimated_annual_yield_gain",
+  ],
+  reconciliation: ["decision_context", "close_aggregate", "accountant", "materiality"],
+  cash_forecast: ["decision_context", "horizon_days", "drivers", "runway_projection"],
+  revenue_intel: [
+    "decision_context",
+    "concentration",
+    "historical_concentration",
+    "pipeline_coverage",
+  ],
+  subscription_management: [
+    "decision_context",
+    "seats",
+    "underutilization",
+    "options",
+    "alternatives",
+  ],
+  aml_compliance: [
+    "decision_context",
+    "jurisdictions_involved",
+    "screenings",
+    "required_documents",
+    "regulatory_context",
+    "deadline",
+  ],
+  invoice_integrity: [
+    "decision_context",
+    "comparison",
+    "flagged_invoice",
+    "suspected_original",
+    "match_confidence",
+    "finding_kind",
+  ],
+};
+
+function domainDecisionsForProposal(type: ProposalType): ProposalDomainDecision[] {
+  switch (type) {
+    case "fraud_anomaly":
+      return [
+        domainDecision("confirm_legit", "Confirm legit", "Mark the charge as legitimate."),
+        domainDecision(
+          "block_merchant",
+          "Block merchant",
+          "Dispute this charge and block future charges from the merchant.",
+        ),
+        domainDecision("freeze_card", "Freeze card", "Freeze the affected card for review."),
+      ];
+    case "dispute":
+      return [
+        domainDecision("gather_evidence", "Gather evidence", "Collect missing dispute evidence."),
+        domainDecision("contest", "Contest", "Proceed with contesting the dispute."),
+        domainDecision("accept", "Accept", "Accept the dispute outcome."),
+        domainDecision("fight", "Fight", "Fight the dispute with the evidence packet."),
+        domainDecision("refund", "Refund", "Issue or prepare the customer refund workflow."),
+      ];
+    case "reconciliation":
+      return [
+        domainDecision(
+          "confirm_all_matches",
+          "Confirm all matches",
+          "Confirm every proposed match in the close set.",
+        ),
+        domainDecision(
+          "escalate_to_accountant",
+          "Escalate to accountant",
+          "Route the exception set to the accounting owner.",
+        ),
+      ];
+    case "invoice_integrity":
+      return [
+        domainDecision("approve_as_new", "Approve as new", "Treat the invoice as a new payable."),
+        domainDecision(
+          "reject_duplicate",
+          "Reject duplicate",
+          "Reject the invoice as a duplicate.",
+        ),
+        domainDecision("hold_and_verify", "Hold and verify", "Hold the invoice for verification."),
+      ];
+    case "aml_compliance":
+      return [
+        domainDecision("provide_docs", "Provide documents", "Attach the requested AML documents."),
+        domainDecision("delegate", "Delegate", "Send the checklist to another user."),
+        domainDecision("hold", "Hold", "Keep the payment paused for compliance review."),
+      ];
+    case "subscription_management":
+      return [
+        domainDecision("downgrade", "Downgrade", "Request a lower seat count."),
+        domainDecision("renegotiate", "Renegotiate", "Draft vendor sales outreach."),
+        domainDecision("cancel", "Cancel", "Mark cancellation for the end of term."),
+        domainDecision("renew", "Renew", "Accept the renewal terms."),
+      ];
+    default:
+      return [];
+  }
+}
+
+function domainDecision(
+  id: ProposalDomainDecisionId,
+  label: string,
+  meaning: string,
+): ProposalDomainDecision {
+  return { id, label, meaning };
+}
+
+function displaySafeVendorComparison(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    bank_on_file: displaySafeBankComparisonEntry(record["bank_on_file"]),
+    bank_on_invoice: displaySafeBankComparisonEntry(record["bank_on_invoice"]),
+  };
+}
+
+function displaySafeBankComparisonEntry(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    bank_name: stringOrUndefined(record["bank_name"]),
+    routing_masked: maskBankValue(record["routing_masked"]),
+    account_masked: maskBankValue(record["account_masked"]),
+    beneficiary: stringOrUndefined(record["beneficiary"]),
+  };
+}
+
+function maskBankValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length > 4) return `****${digits.slice(-4)}`;
+  return value;
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 function labelForKey(key: string): string {
   return key

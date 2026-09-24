@@ -481,6 +481,12 @@ export class PaymentIntentService implements IPaymentIntentService {
           currency: input.currency,
           ...(input.obligation_id !== undefined ? { obligationId: input.obligation_id } : {}),
           ...(input.invoice_id !== undefined ? { invoiceId: input.invoice_id } : {}),
+          ...(input.action_type === "exchange" && input.rate_lock_reference !== undefined
+            ? { rateLockReference: input.rate_lock_reference }
+            : {}),
+          ...(input.action_type === "exchange" && input.destination_currency !== undefined
+            ? { destinationCurrency: input.destination_currency }
+            : {}),
           status,
           policyDecisionId: decision.id,
           evidenceIds: input.evidence_ids ?? [],
@@ -539,6 +545,9 @@ export class PaymentIntentService implements IPaymentIntentService {
       ...(decision.matched_rule_id !== null ? { policyCheckId: decision.matched_rule_id } : {}),
       outcome: decision.outcome,
     });
+    // TODO(aml_compliance): emit payment.cross_border_created and
+    // payment.above_regulatory_threshold here when payment intent rows carry
+    // explicit source and beneficiary jurisdictions.
 
     if (status === "approved") {
       await this.deps.audit.emit({
@@ -1126,6 +1135,10 @@ export class PaymentIntentService implements IPaymentIntentService {
       amount: intent.amount,
       currency: intent.currency,
     };
+    if (intent.action_type === "exchange") {
+      payload["rate_lock_reference"] = intent.rate_lock_reference;
+      payload["destination_currency"] = intent.destination_currency;
+    }
 
     // For on-chain transfers, merge the protocol-specific params into the payload
     // so the outbox worker can dispatch to OnchainBaseRail without further lookups.
@@ -1551,6 +1564,8 @@ export function railFor(actionType: string): string {
     case "wire":
     case "card_payment":
       return "bank_ach";
+    case "exchange":
+      return "exchange";
     case "onchain_transfer":
       return "onchain_base";
     case "x402_settle":
@@ -1693,6 +1708,8 @@ function toRecord(row: PaymentIntentRow): PaymentIntent {
     currency: row.currency,
     obligation_id: row.obligation_id,
     invoice_id: row.invoice_id,
+    rate_lock_reference: row.rate_lock_reference,
+    destination_currency: row.destination_currency,
     status: row.status as PaymentIntent["status"],
     policy_decision_id: row.policy_decision_id,
     approval_ids: row.approval_ids,

@@ -8,7 +8,7 @@ import { API_KEY_ROUTE_CONTRACTS } from "./api-key-route-contracts.js";
 describe("API key route metering contracts", () => {
   it("covers the four commercially issuable product families without duplicates", () => {
     const indexed = validateApiKeyRouteContracts(API_KEY_ROUTE_CONTRACTS);
-    expect(indexed.size).toBe(43);
+    expect(indexed.size).toBe(48);
     expect(
       Object.fromEntries(
         ["ledger", "raw", "audit", "governance"].map((family) => [
@@ -16,7 +16,7 @@ describe("API key route metering contracts", () => {
           API_KEY_ROUTE_CONTRACTS.filter((contract) => contract.productFamily === family).length,
         ]),
       ),
-    ).toEqual({ ledger: 15, raw: 12, audit: 10, governance: 6 });
+    ).toEqual({ ledger: 20, raw: 12, audit: 10, governance: 6 });
     expect(new Set(API_KEY_ROUTE_CONTRACTS.map((contract) => contract.requiredScope))).toEqual(
       new Set(["ledger:read", "raw:read", "raw:write", "audit:read", "governance:read"]),
     );

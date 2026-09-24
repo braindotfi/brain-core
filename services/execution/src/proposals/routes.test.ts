@@ -390,6 +390,39 @@ describe("GET /payment-intents/:id?expand=agent", () => {
 });
 
 describe("POST /proposals/:id/decide", () => {
+  it("accepts executable domain decision ids", async () => {
+    const pool = fakePool({ [TENANT_A]: [] });
+    const app = Fastify();
+    await app.register(requestIdPlugin);
+    await app.register(errorHandlerPlugin);
+    app.addHook("preHandler", async (request) => {
+      request.principal = principal(TENANT_A, ["execution:read"]);
+    });
+    const decisions = Object.create(ProposalDecisionService.prototype) as ProposalDecisionService;
+    decisions.decide = vi.fn(async () => ({
+      id: PROP_1,
+      decision: "freeze_card" as const,
+      status: "executed" as const,
+      audit_id: "evt_1",
+      payment_intent_id: null,
+    }));
+    await registerProposalReadRoutes(app, { pool, decisions });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/proposals/${PROP_1}/decide`,
+      payload: { decision: "freeze_card" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(decisions.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT_A }),
+      PROP_1,
+      "freeze_card",
+    );
+    await app.close();
+  });
+
   it("requires a relevant scope before invoking the decision service", async () => {
     const pool = fakePool({ [TENANT_A]: [] });
     const app = Fastify();

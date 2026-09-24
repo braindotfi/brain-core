@@ -21,6 +21,7 @@ import type { CandidateSignals, RoutingDecision, RoutingInput } from "./types.js
 const INTENT_MATCH_THRESHOLD = 0.5;
 const COST_PENALTY = 0.1;
 const HIGH_CONFIDENCE = 0.85;
+const CATEGORY_MATCH_BONUS = 0.05;
 /**
  * Penalty applied to a candidate whose category does not match the tenant's
  * (and is not `agnostic`). It is a downgrade, not a reject: it flips the
@@ -225,8 +226,15 @@ export class AgentRouter {
       tenantCategory !== undefined &&
       def.category !== "agnostic" &&
       def.category !== tenantCategory;
+    const categoryMatch =
+      tenantCategory !== undefined &&
+      def.category !== "agnostic" &&
+      def.category === tenantCategory;
     const selectionScore =
-      confidence - COST_PENALTY * cost - (categoryMismatch ? CATEGORY_MISMATCH_PENALTY : 0);
+      confidence -
+      COST_PENALTY * cost -
+      (categoryMismatch ? CATEGORY_MISMATCH_PENALTY : 0) +
+      (categoryMatch ? CATEGORY_MATCH_BONUS : 0);
     return { def, confidence, selectionScore, completeness: bundle.completeness, signals };
   }
 

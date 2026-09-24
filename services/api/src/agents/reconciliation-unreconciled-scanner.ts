@@ -40,6 +40,7 @@ export interface ReconciliationUnreconciledRow {
   readonly counterparty_name: string | null;
   readonly description: string | null;
   readonly candidates: readonly ReconciliationCandidateContext[];
+  readonly monthly_revenue: string | null;
 }
 
 export interface ReconciliationScannerDeps {
@@ -66,6 +67,34 @@ interface ReconciliationSelection {
   readonly rows: ReconciliationUnreconciledRow[];
   readonly totalEligible: number;
   readonly totalFair: number;
+}
+
+interface TenantAccountant {
+  readonly name: string;
+  readonly org: string;
+  readonly email: string;
+}
+
+interface ReconciliationCloseAggregateRun {
+  readonly tenant_id: string;
+  readonly transaction_id: string;
+  readonly period_start: string;
+  readonly period_end: string;
+  readonly close_aggregate: {
+    readonly period_start: string;
+    readonly period_end: string;
+    readonly matched_count: number;
+    readonly unmatched_count: number;
+    readonly matched_total: string;
+    readonly unmatched_total: string;
+    readonly drift: string;
+  };
+  readonly materiality?: {
+    readonly unmatched_amount: number;
+    readonly monthly_revenue: number;
+    readonly pct: number;
+  };
+  readonly accountant?: TenantAccountant;
 }
 
 export function startReconciliationUnreconciledScanner(
@@ -100,6 +129,10 @@ export async function runReconciliationUnreconciledScanCycle(
   );
   const capped = selection.totalFair > batchSize;
   const transactions = selection.rows.slice(0, batchSize);
+  const accountants = await listTenantAccountants(
+    deps.appPool,
+    Array.from(new Set(transactions.map((row) => row.tenant_id))),
+  );
   if (capped) {
     const omittedCount = Math.max(selection.totalEligible - batchSize, 0);
     deps.log?.warn(
@@ -120,6 +153,57 @@ export async function runReconciliationUnreconciledScanCycle(
   }
 
   const perTenant = new Map<string, number>();
+  for (const aggregate of closeAggregatesFor(transactions, accountants)) {
+    const event: DomainEvent = "statement.imported";
+    const triggerKey = closeAggregateTriggerKey(aggregate);
+    const claimed = await claimCloseAggregateCooldown(
+      deps.appPool,
+      aggregate,
+      event,
+      triggerKey,
+      now,
+      cooldownMs,
+    );
+    if (!claimed) continue;
+
+    let status = "failed";
+    let runId: string | null = null;
+    let proposalId: string | null = null;
+    try {
+      const result = await deps.runService.run(ctxFor(aggregate.tenant_id), {
+        tenant_id: aggregate.tenant_id,
+        event,
+        context: {
+          transaction_id: aggregate.transaction_id,
+          close_aggregate: aggregate.close_aggregate,
+          decision_context: closeDecisionContextFor(aggregate),
+          ...definedContext({
+            materiality: aggregate.materiality,
+            accountant: aggregate.accountant,
+          }),
+        },
+      });
+      status = result.status;
+      runId = result.run_id;
+      proposalId = result.proposed?.id ?? null;
+    } catch (err) {
+      deps.log?.error(
+        { err, tenantId: aggregate.tenant_id, periodStart: aggregate.period_start },
+        "reconciliation close aggregate run failed",
+      );
+      status = "failed";
+    } finally {
+      await recordCooldownResult(
+        deps.appPool,
+        aggregate.tenant_id,
+        triggerKey,
+        status,
+        runId,
+        proposalId,
+      );
+    }
+  }
+
   for (const row of transactions) {
     perTenant.set(row.tenant_id, (perTenant.get(row.tenant_id) ?? 0) + 1);
     const event = eventFor(row);
@@ -145,6 +229,11 @@ export async function runReconciliationUnreconciledScanCycle(
           counterparty_name: row.counterparty_name,
           description: row.description,
           candidates: row.candidates,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            materiality: materialityFor(row),
+            accountant: accountants.get(row.tenant_id),
+          }),
         },
       });
       status = result.status;
@@ -203,7 +292,15 @@ async function listUnreconciledTransactions(
               tx.transaction_date,
               tx.counterparty_id,
               cp.name AS counterparty_name,
-              COALESCE(tx.description_normalized, tx.description_raw) AS description
+              COALESCE(tx.description_normalized, tx.description_raw) AS description,
+              (
+                SELECT COALESCE(SUM(i.amount_paid), 0)::text
+                  FROM ledger_invoices i
+                 WHERE i.owner_id = tx.owner_id
+                   AND i.status IN ('sent', 'partial', 'paid', 'overdue')
+                   AND i.issue_date >= date_trunc('month', $1::timestamptz)
+                   AND i.issue_date < date_trunc('month', $1::timestamptz) + interval '1 month'
+              ) AS monthly_revenue
          FROM ledger_transactions tx
          LEFT JOIN ledger_counterparties cp
            ON cp.id = tx.counterparty_id AND cp.owner_id = tx.owner_id
@@ -320,6 +417,7 @@ async function listUnreconciledTransactions(
             counterparty_name,
             description,
             candidates,
+            monthly_revenue,
             eligible_count,
             COUNT(*) OVER() AS fair_count
        FROM fair
@@ -374,6 +472,44 @@ async function claimCooldown(
   });
 }
 
+async function claimCloseAggregateCooldown(
+  pool: Pool,
+  aggregate: ReconciliationCloseAggregateRun,
+  event: DomainEvent,
+  triggerKey: string,
+  now: Date,
+  cooldownMs: number,
+): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - cooldownMs);
+  return withTenantScope(pool, aggregate.tenant_id, async (client) => {
+    const { rows } = await client.query<{ trigger_key: string }>(
+      `INSERT INTO agent_trigger_cooldowns (
+         trigger_key, tenant_id, agent_key, event, receivable_kind, receivable_id,
+         aging_tier, last_enqueued_at, last_status
+       )
+       VALUES (
+         $1, current_setting('app.tenant_id', true), 'reconciliation', $2, 'close_period', $3,
+         $4, $5::timestamptz, 'claimed'
+       )
+       ON CONFLICT (tenant_id, trigger_key) DO UPDATE SET
+         last_enqueued_at = EXCLUDED.last_enqueued_at,
+         last_status = 'claimed',
+         updated_at = now()
+       WHERE agent_trigger_cooldowns.last_enqueued_at < $6::timestamptz
+       RETURNING trigger_key`,
+      [
+        triggerKey,
+        event,
+        `${aggregate.period_start}:${aggregate.period_end}`,
+        COOLDOWN_TIER,
+        now.toISOString(),
+        cutoff.toISOString(),
+      ],
+    );
+    return rows.length > 0;
+  });
+}
+
 async function recordCooldownResult(
   pool: Pool,
   tenantId: string,
@@ -408,8 +544,45 @@ function eventFor(row: ReconciliationUnreconciledRow): DomainEvent {
   return row.candidates.length > 0 ? "reconciliation.candidate_found" : "transaction.unreconciled";
 }
 
+function decisionContextFor(row: ReconciliationUnreconciledRow): Record<string, unknown> {
+  return {
+    decide_by: `Before close review for ${dateOnly(row.transaction_date) ?? row.transaction_date}`,
+    if_wrong:
+      "Confirming a weak match can misstate the close. Escalating too early can slow routine reconciliation.",
+    reversible: {
+      state: "yes",
+      label: "Yes before close is finalized",
+    },
+  };
+}
+
+function closeDecisionContextFor(
+  aggregate: ReconciliationCloseAggregateRun,
+): Record<string, unknown> {
+  return {
+    decide_by: `Before close ${aggregate.period_end}`,
+    if_wrong:
+      "Confirming all matches can carry forward unresolved exceptions. Escalating all items can delay close work.",
+    reversible: {
+      state: "yes",
+      label: "Yes before close is finalized",
+    },
+  };
+}
+
 function triggerKeyFor(row: ReconciliationUnreconciledRow, event: DomainEvent): string {
   return `reconciliation:${event}:transaction:${row.transaction_id}:${COOLDOWN_TIER}`;
+}
+
+function closeAggregateTriggerKey(aggregate: ReconciliationCloseAggregateRun): string {
+  return [
+    "reconciliation",
+    "statement.imported",
+    "close_period",
+    aggregate.period_start,
+    aggregate.period_end,
+    COOLDOWN_TIER,
+  ].join(":");
 }
 
 function normalizeCount(value: number | string | undefined, fallback: number): number {
@@ -453,4 +626,134 @@ function normalizeCandidate(raw: unknown): ReconciliationCandidateContext | null
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+async function listTenantAccountants(
+  pool: Pool,
+  tenantIds: readonly string[],
+): Promise<Map<string, TenantAccountant>> {
+  const result = new Map<string, TenantAccountant>();
+  for (const tenantId of tenantIds) {
+    const accountant = await withTenantScope(pool, tenantId, async (client) => {
+      const { rows } = await client.query<{ accountant: unknown }>(
+        `SELECT accountant
+           FROM tenant_profiles
+          WHERE tenant_id = current_setting('app.tenant_id', true)
+          LIMIT 1`,
+      );
+      return normalizeAccountant(rows[0]?.accountant);
+    });
+    if (accountant !== undefined) result.set(tenantId, accountant);
+  }
+  return result;
+}
+
+function normalizeAccountant(value: unknown): TenantAccountant | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const name = stringOrNull(row.name);
+  const org = stringOrNull(row.org);
+  const email = stringOrNull(row.email);
+  if (name === null || org === null || email === null) return undefined;
+  return { name, org, email };
+}
+
+function materialityFor(
+  row: ReconciliationUnreconciledRow,
+): { unmatched_amount: number; monthly_revenue: number; pct: number } | undefined {
+  if (row.candidates.length > 0 || row.monthly_revenue === null) return undefined;
+  const unmatched = numberOrZero(row.amount);
+  const revenue = numberOrZero(row.monthly_revenue);
+  if (revenue <= 0) return undefined;
+  return {
+    unmatched_amount: unmatched,
+    monthly_revenue: revenue,
+    pct: Number(((unmatched / revenue) * 100).toFixed(2)),
+  };
+}
+
+function closeAggregatesFor(
+  rows: readonly ReconciliationUnreconciledRow[],
+  accountants: ReadonlyMap<string, TenantAccountant>,
+): ReconciliationCloseAggregateRun[] {
+  const byTenant = new Map<string, ReconciliationUnreconciledRow[]>();
+  for (const row of rows) {
+    const current = byTenant.get(row.tenant_id) ?? [];
+    current.push(row);
+    byTenant.set(row.tenant_id, current);
+  }
+  return Array.from(byTenant.entries()).flatMap(([tenantId, tenantRows]) => {
+    const aggregate = closeAggregateFor(tenantId, tenantRows, accountants.get(tenantId));
+    return aggregate === null ? [] : [aggregate];
+  });
+}
+
+function closeAggregateFor(
+  tenantId: string,
+  rows: readonly ReconciliationUnreconciledRow[],
+  accountant: TenantAccountant | undefined,
+): ReconciliationCloseAggregateRun | null {
+  if (rows.length === 0) return null;
+  const dates = rows
+    .map((row) => dateOnly(row.transaction_date))
+    .filter((date): date is string => date !== null)
+    .sort();
+  const periodStart = dates[0];
+  const periodEnd = dates.at(-1);
+  if (periodStart === undefined || periodEnd === undefined) return null;
+  let matchedCount = 0;
+  let unmatchedCount = 0;
+  let matchedTotal = 0;
+  let unmatchedTotal = 0;
+  let monthlyRevenue = 0;
+  for (const row of rows) {
+    const amount = numberOrZero(row.amount);
+    monthlyRevenue = Math.max(monthlyRevenue, numberOrZero(row.monthly_revenue ?? "0"));
+    if (row.candidates.length > 0) {
+      matchedCount += 1;
+      matchedTotal += amount;
+    } else {
+      unmatchedCount += 1;
+      unmatchedTotal += amount;
+    }
+  }
+  return {
+    tenant_id: tenantId,
+    transaction_id: rows[0]?.transaction_id ?? "",
+    period_start: periodStart,
+    period_end: periodEnd,
+    close_aggregate: {
+      period_start: periodStart,
+      period_end: periodEnd,
+      matched_count: matchedCount,
+      unmatched_count: unmatchedCount,
+      matched_total: matchedTotal.toFixed(2),
+      unmatched_total: unmatchedTotal.toFixed(2),
+      drift: Math.abs(matchedTotal - unmatchedTotal).toFixed(2),
+    },
+    ...(monthlyRevenue > 0
+      ? {
+          materiality: {
+            unmatched_amount: unmatchedTotal,
+            monthly_revenue: monthlyRevenue,
+            pct: Number(((unmatchedTotal / monthlyRevenue) * 100).toFixed(2)),
+          },
+        }
+      : {}),
+    ...(accountant !== undefined ? { accountant } : {}),
+  };
+}
+
+function dateOnly(value: string): string | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function numberOrZero(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

@@ -8,6 +8,8 @@ export interface CounterpartyRow extends LedgerRowCommon {
   type: string;
   risk_level: string | null;
   verified_status: string | null;
+  status: "active" | "archived";
+  deleted_at: Date | string | null;
   trust_status: string;
   trust_reviewed_at: Date | string | null;
   trust_reviewed_by: string | null;
@@ -29,6 +31,7 @@ export interface CounterpartyListFilters {
   type?: string;
   verified_status?: string;
   trust_status?: string;
+  include_archived?: boolean;
   limit: number;
   cursor?: KeysetCursor;
 }
@@ -38,6 +41,7 @@ export interface CounterpartyIdentityPatch {
   aliases?: string[];
   metadata?: Record<string, unknown>;
   provenance?: "human_confirmed";
+  status?: "active" | "archived";
 }
 
 export async function findCounterpartyById(
@@ -60,7 +64,9 @@ export async function findCounterpartyById(
             AND status IN ('posted', 'cleared')
           GROUP BY counterparty_id
        ) payment_rollup ON payment_rollup.counterparty_id = cp.id
-      WHERE cp.id = $1 AND cp.owner_id = current_setting('app.tenant_id', true)
+      WHERE cp.id = $1
+        AND cp.owner_id = current_setting('app.tenant_id', true)
+        AND cp.deleted_at IS NULL
       LIMIT 1`,
     [id],
   );
@@ -84,6 +90,10 @@ export async function listCounterparties(
   if (filters.trust_status !== undefined) {
     values.push(filters.trust_status);
     where.push(`cp.trust_status = $${values.length}`);
+  }
+  if (filters.include_archived !== true) {
+    where.push(`cp.deleted_at IS NULL`);
+    where.push(`cp.status = 'active'`);
   }
   if (filters.q !== undefined && filters.q !== "") {
     const normalized = normalizeName(filters.q);
@@ -172,6 +182,10 @@ export async function updateCounterpartyIdentity(
     values.push(patch.provenance);
     sets.push(`provenance = $${values.length}`);
   }
+  if (patch.status !== undefined) {
+    values.push(patch.status);
+    sets.push(`status = $${values.length}`);
+  }
   if (sets.length === 0) {
     return findCounterpartyById(client, id);
   }
@@ -185,6 +199,51 @@ export async function updateCounterpartyIdentity(
         AND owner_id = current_setting('app.tenant_id', true)
       RETURNING *`,
     values,
+  );
+  return rows[0] ?? null;
+}
+
+export async function hasOpenCounterpartyReferences(
+  client: TenantScopedClient,
+  id: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ found: number }>(
+    `SELECT 1 AS found
+       FROM ledger_payment_intents
+      WHERE owner_id = current_setting('app.tenant_id', true)
+        AND destination_counterparty_id = $1
+        AND status IN ('proposed','pending_approval','awaiting_second_approval','approved','paused','dispatching')
+      LIMIT 1`,
+    [id],
+  );
+  if (rows[0] !== undefined) return true;
+  const proposals = await client.query<{ found: number }>(
+    `SELECT 1 AS found
+       FROM proposals
+      WHERE tenant_id = current_setting('app.tenant_id', true)
+        AND decision IS NULL
+        AND status IN ('proposed','pending','pending_approval','awaiting_second_approval','approved','paused','dispatching')
+        AND action::text LIKE $1
+      LIMIT 1`,
+    [`%${id}%`],
+  );
+  return proposals.rows[0] !== undefined;
+}
+
+export async function softDeleteCounterparty(
+  client: TenantScopedClient,
+  id: string,
+): Promise<CounterpartyRow | null> {
+  const { rows } = await client.query<CounterpartyRow>(
+    `UPDATE ledger_counterparties
+        SET status = 'archived',
+            deleted_at = COALESCE(deleted_at, now()),
+            updated_at = now()
+      WHERE id = $1
+        AND owner_id = current_setting('app.tenant_id', true)
+        AND deleted_at IS NULL
+      RETURNING *`,
+    [id],
   );
   return rows[0] ?? null;
 }

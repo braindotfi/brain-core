@@ -95,12 +95,14 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "ledger_reconciliation_matches", column: "owner_id" },
   { table: "ledger_payment_intents", column: "owner_id" },
   { table: "ledger_transfers", column: "owner_id" },
+  { table: "ledger_invoice_links", column: "tenant_id" },
   { table: "ledger_invoices", column: "owner_id" },
   { table: "ledger_obligations", column: "owner_id" },
   { table: "ledger_transaction_category_assignments", column: "tenant_id" },
   { table: "ledger_transactions", column: "owner_id" },
   { table: "ledger_documents", column: "owner_id" },
   { table: "ledger_balances", column: "owner_id" },
+  { table: "ledger_deposit_instructions", column: "tenant_id" },
   { table: "ledger_accounts", column: "owner_id" },
   { table: "ledger_counterparties", column: "owner_id" },
   { table: "ledger_categories", column: "tenant_id" },
@@ -108,6 +110,9 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "ledger_projection_quarantine", column: "tenant_id" },
 
   // ---- Layer 3: Wiki ----
+  { table: "robo_messages", column: "tenant_id" },
+  { table: "robo_threads", column: "tenant_id" },
+  { table: "brief_cache", column: "tenant_id" },
   { table: "wiki_question_intent_usage", column: "tenant_id" },
   { table: "wiki_relations", column: "tenant_id" },
   { table: "wiki_pages", column: "tenant_id" },
@@ -134,7 +139,14 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "execution_outbox", column: "tenant_id" },
   { table: "executions", column: "tenant_id" },
   { table: "approvals", column: "tenant_id" },
+  { table: "decision_audit_log_archive_runs", column: "tenant_id" },
+  { table: "decision_audit_log", column: "tenant_id" },
+  { table: "proposal_payload_snapshots", column: "tenant_id" },
+  { table: "user_agent_authority", column: "tenant_id" },
+  { table: "proposal_evidence_links", column: "tenant_id" },
+  { table: "evidence", column: "tenant_id" },
   { table: "proposals", column: "tenant_id" },
+  { table: "agent_authority_rules", column: "tenant_id" },
   { table: "production_agent_tokens", column: "tenant_id" },
   { table: "agents", column: "tenant_id" },
 
@@ -200,6 +212,7 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   // ---- Onboarding / identity (tenants registry last) ----
   { table: "governance_report_snapshots", column: "tenant_id" },
   { table: "assistant_questions", column: "tenant_id" },
+  { table: "pending_invites", column: "tenant_id" },
   { table: "tenant_export_jobs", column: "tenant_id" },
   { table: "email_verifications", column: "tenant_id" },
   { table: "wallet_identities", column: "tenant_id" },
@@ -222,6 +235,13 @@ export const TENANT_SCOPED_TABLES: ReadonlyArray<{
   { table: "api_keys", column: "tenant_id" },
   { table: "agent_api_keys", column: "tenant_id" },
   { table: "tenant_api_entitlements", column: "tenant_id" },
+  { table: "tenant_integrations", column: "tenant_id" },
+  { table: "nylas_grants", column: "tenant_id" },
+  { table: "exchange_quotes", column: "tenant_id" },
+  { table: "trusted_devices", column: "tenant_id" },
+  { table: "user_two_factor_methods", column: "tenant_id" },
+  { table: "tenant_notification_preferences", column: "tenant_id" },
+  { table: "tenant_profiles", column: "tenant_id" },
   { table: "member_identity_links", column: "tenant_id" },
   { table: "members", column: "tenant_id" },
   { table: "users", column: "tenant_id" },
@@ -364,7 +384,7 @@ export class TenantDeletionService {
       // the deletes must not still slip through, and this way there is one
       // atomic all-or-nothing transaction, not a check-then-act gap.
       const memberRes = await client.query<{
-        role: "admin" | "approver" | "viewer";
+        role: "owner" | "admin" | "approver" | "analyst" | "viewer";
         active: boolean;
         status: "invited" | "active" | "deactivated";
       }>(`SELECT role, active, status FROM members WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
@@ -377,7 +397,7 @@ export class TenantDeletionService {
           details: { reason: "actor_unresolved" },
         });
       }
-      if (member.role !== "admin") {
+      if (member.role !== "owner" && member.role !== "admin") {
         throw brainError("auth_scope_insufficient", "admin member required");
       }
       const retentionReceiptId = `retreceipt_${newRequestId()}`;

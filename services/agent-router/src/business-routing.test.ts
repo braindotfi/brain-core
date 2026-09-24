@@ -31,6 +31,12 @@ const TRIPLES: ReadonlyArray<readonly [string, TenantCategory, string]> =
     const category: TenantCategory = d.category === "consumer" ? "consumer" : "business";
     return d.triggers.map((t) => [d.agent_key, category, t] as const);
   });
+const TRIGGER_COUNTS = internalAgentCatalog.reduce((counts, definition) => {
+  for (const trigger of definition.triggers) {
+    counts.set(trigger, (counts.get(trigger) ?? 0) + 1);
+  }
+  return counts;
+}, new Map<string, number>());
 
 describe("router selects each agent for its declared triggers (category-aware)", () => {
   it.each(TRIPLES)(
@@ -39,11 +45,27 @@ describe("router selects each agent for its declared triggers (category-aware)",
       const input =
         trigger === "ledger.upload.projected"
           ? { tenant_id: "tnt_acme", event: trigger, target_agent_id: agentKey }
-          : { tenant_id: "tnt_acme", event: trigger };
+          : (TRIGGER_COUNTS.get(trigger) ?? 0) > 1
+            ? { tenant_id: "tnt_acme", event: trigger, target_agent_id: agentKey }
+            : { tenant_id: "tnt_acme", event: trigger };
       const decision = await router(category).route(CTX, input);
       expect(decision.selected_agent_id).toBe(agentKey);
     },
   );
+
+  it("routes shared business subscription triggers to subscription management by default", async () => {
+    for (const trigger of [
+      "recurring_charge.detected",
+      "vendor.duplicate_detected",
+      "subscription.price_changed",
+    ]) {
+      const decision = await router("business").route(CTX, {
+        tenant_id: "tnt_acme",
+        event: trigger,
+      });
+      expect(decision.selected_agent_id).toBe("subscription_management");
+    }
+  });
 
   it("covers all seven Phase 2 business agents and nine Phase 3 consumer agents", () => {
     const keys = new Set(internalAgentCatalog.map((d) => d.agent_key));

@@ -53,6 +53,12 @@ export const DOMAIN_EVENTS = [
   "transaction.unusual", // fraud_anomaly
   "merchant.risk_detected", // fraud_anomaly
   "duplicate_charge.detected", // fraud_anomaly
+  "payment.cross_border_created", // aml_compliance
+  "payment.above_regulatory_threshold", // aml_compliance
+  "kyc.beneficiary_stale", // aml_compliance
+  "ofac.list_updated", // aml_compliance
+  "subscription.seats_underutilized", // subscription_management
+  "subscription.new_signup_detected", // subscription_management
   // Upload ingestion trigger.
   "ledger.upload.projected",
   "obligation.duplicate_suspected", // invoice_integrity

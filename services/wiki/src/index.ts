@@ -18,6 +18,7 @@ export { loadRegistry, type SchemaRegistry } from "./schemas.js";
 export type { WikiDeps } from "./deps.js";
 export {
   askWiki,
+  recordDeterministicIntentUsage,
   type AskOptions,
   type AskResult,
   type AskDeps,

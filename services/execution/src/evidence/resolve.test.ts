@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   newAccountId,
@@ -29,6 +30,7 @@ const invoiceId = newInvoiceId();
 const obligationId = newObligationId();
 const transactionId = newTransactionId();
 const wikiEntityId = newWikiEntityId();
+const evidenceId = randomUUID();
 
 describe("resolveEvidenceRefs", () => {
   it("resolves every supported kind into a summary and deep link", async () => {
@@ -39,6 +41,7 @@ describe("resolveEvidenceRefs", () => {
       { kind: "obligation", ref: obligationId },
       { kind: "transaction", ref: transactionId },
       { kind: "wiki_entity", ref: wikiEntityId },
+      { kind: "pdf", ref: evidenceId },
     ]);
 
     expect(results).toEqual([
@@ -89,6 +92,14 @@ describe("resolveEvidenceRefs", () => {
         not_found: false,
         summary: "Wiki policy: Evidence Policy",
         deep_link: `/wiki/entity/${wikiEntityId}`,
+      },
+      {
+        kind: "pdf",
+        ref: evidenceId,
+        resolvable: true,
+        not_found: false,
+        summary: "Invoice PDF (pdf, application/pdf, 7 bytes)",
+        deep_link: `/evidence/${evidenceId}`,
       },
     ]);
   });
@@ -203,6 +214,22 @@ function fakePool(): Pool {
       if (sql.includes("FROM wiki_entities") && id === wikiEntityId) {
         return {
           rows: [{ id: wikiEntityId, kind: "policy", attributes: { name: "Evidence Policy" } }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM evidence") && id === evidenceId) {
+        return {
+          rows: [
+            {
+              id: evidenceId,
+              kind: "pdf",
+              name: "Invoice PDF",
+              source: "uploaded",
+              mime_type: "application/pdf",
+              byte_size: "7",
+              archived_at: null,
+            },
+          ],
           rowCount: 1,
         };
       }

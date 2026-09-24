@@ -20,7 +20,7 @@ import type { Pool } from "pg";
 import { brainError } from "../errors.js";
 import { withTenantScope } from "../db/tenant-scoped.js";
 
-export type MemberAuthorityRole = "admin" | "approver" | "viewer";
+export type MemberAuthorityRole = "owner" | "admin" | "approver" | "analyst" | "viewer";
 export type MemberAuthorityStatus = "invited" | "active" | "deactivated";
 
 export interface MemberAuthorityRow {
@@ -64,7 +64,7 @@ export async function requireAdminMember(
       details: { reason: "actor_unresolved" },
     });
   }
-  if (member.role !== "admin") {
+  if (member.role !== "owner" && member.role !== "admin") {
     throw brainError("auth_scope_insufficient", "admin member required", {
       details: { reason: "admin_member_required" },
     });

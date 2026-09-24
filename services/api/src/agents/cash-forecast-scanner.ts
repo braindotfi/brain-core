@@ -16,6 +16,7 @@ const DEFAULT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_MATERIAL_CHANGE_MIN_AMOUNT = 10_000;
 const DEFAULT_MATERIAL_CHANGE_RATIO = 0.1;
 const DEFAULT_LARGE_PAYABLE_AMOUNT = 25_000;
+const FORECAST_HORIZON_DAYS = 180;
 const SCANNER_ACTOR = "cash_forecast_scanner";
 const COOLDOWN_TIER = "forecast";
 
@@ -150,6 +151,12 @@ export async function runCashForecastScanCycle(
           as_of: row.as_of,
           receivables: row.receivables,
           payables: row.payables,
+          horizon_days: FORECAST_HORIZON_DAYS,
+          decision_context: advisoryDecisionContext(),
+          ...definedContext({
+            drivers: driversFor(row, FORECAST_HORIZON_DAYS),
+            runway_projection: runwayProjectionFor(row, now, FORECAST_HORIZON_DAYS),
+          }),
         },
       });
       status = result.status;
@@ -244,7 +251,7 @@ async function listCashForecastPositions(
             WHERE i.owner_id = p.tenant_id
               AND i.currency = p.currency
               AND i.due_date >= $1::timestamptz
-              AND i.due_date <= $1::timestamptz + interval '90 days'
+              AND i.due_date <= $1::timestamptz + interval '180 days'
               AND i.status IN ('sent', 'partial', 'overdue')
               AND i.amount_paid < i.amount_due
          ) receivable ON true
@@ -268,7 +275,7 @@ async function listCashForecastPositions(
             WHERE o.owner_id = p.tenant_id
               AND o.currency = p.currency
               AND o.due_date >= $1::timestamptz
-              AND o.due_date <= $1::timestamptz + interval '90 days'
+              AND o.due_date <= $1::timestamptz + interval '180 days'
               AND o.status IN ('upcoming', 'due', 'overdue')
               AND (o.direction IS NULL OR o.direction = 'payable')
          ) payable ON true
@@ -384,6 +391,18 @@ function ctxFor(tenantId: string): ServiceCallContext {
   };
 }
 
+function advisoryDecisionContext(): Record<string, unknown> {
+  return {
+    decide_by: "Advisory · no action required today",
+    if_wrong:
+      "Acting too aggressively on a forecast can constrain operations. Ignoring the forecast can miss an emerging cash gap.",
+    reversible: {
+      state: "na",
+      label: "Advisory only",
+    },
+  };
+}
+
 function eventFor(row: CashForecastPositionRow, opts: CashForecastScannerOptions): DomainEvent {
   const largePayable = opts.largePayableAmount ?? DEFAULT_LARGE_PAYABLE_AMOUNT;
   if (numberOrZero(row.max_payable_amount) >= largePayable) return "large_payable.created";
@@ -445,4 +464,113 @@ function stringOrNull(value: unknown): string | null {
 function numberOrZero(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function driversFor(
+  row: CashForecastPositionRow,
+  horizonDays: number,
+): Array<Record<string, unknown>> | undefined {
+  const horizonMonths = Math.max(horizonDays / 30, 1);
+  const byKey = new Map<string, CashForecastDriverAccumulator>();
+  for (const flow of row.receivables) {
+    addDriver(byKey, flow, "receivable", "inflow");
+  }
+  for (const flow of row.payables) {
+    addDriver(byKey, flow, "payable", "outflow");
+  }
+  const drivers = Array.from(byKey.values())
+    .sort((a, b) => Math.abs(b.monthlyImpact) - Math.abs(a.monthlyImpact))
+    .slice(0, 5)
+    .map((driver) => ({
+      name: driver.name,
+      category: driver.category,
+      monthly_impact: (driver.monthlyImpact / horizonMonths).toFixed(2),
+      direction: driver.direction,
+    }));
+  return drivers.length > 0 ? drivers : undefined;
+}
+
+function addDriver(
+  drivers: Map<string, CashForecastDriverAccumulator>,
+  flow: CashForecastFlowContext,
+  category: string,
+  direction: string,
+): void {
+  const name = flow.counterparty_name ?? flow.counterparty_id ?? category;
+  const key = `${category}:${name}`;
+  const existing = drivers.get(key);
+  const amount = numberOrZero(flow.amount);
+  drivers.set(key, {
+    name,
+    category,
+    direction,
+    monthlyImpact: (existing?.monthlyImpact ?? 0) + amount,
+  });
+}
+
+interface CashForecastDriverAccumulator {
+  readonly name: string;
+  readonly category: string;
+  readonly direction: string;
+  readonly monthlyImpact: number;
+}
+
+function runwayProjectionFor(
+  row: CashForecastPositionRow,
+  now: Date,
+  horizonDays: number,
+): Array<Record<string, unknown>> | undefined {
+  const flows = datedFlowsFor(row);
+  if (flows.length === 0) return undefined;
+  const projection: Array<Record<string, unknown>> = [];
+  const start = startOfUtcDay(now);
+  let balance = numberOrZero(row.current_balance);
+  let flowIndex = 0;
+  for (let day = 7; day <= horizonDays; day += 7) {
+    const boundary = new Date(start.getTime() + day * 86_400_000);
+    while (flowIndex < flows.length) {
+      const flow = flows[flowIndex];
+      if (flow === undefined || flow.date.getTime() > boundary.getTime()) break;
+      balance += flow.amount;
+      flowIndex += 1;
+    }
+    projection.push({
+      date: boundary.toISOString().slice(0, 10),
+      projected_balance: balance.toFixed(2),
+      projected_runway_months: projectedRunwayMonths(balance, row),
+    });
+  }
+  return projection.length > 0 ? projection : undefined;
+}
+
+function datedFlowsFor(row: CashForecastPositionRow): Array<{ date: Date; amount: number }> {
+  const flows: Array<{ date: Date; amount: number }> = [];
+  for (const flow of row.receivables) {
+    const date = dateOrNull(flow.due_date);
+    if (date !== null) flows.push({ date, amount: numberOrZero(flow.amount) });
+  }
+  for (const flow of row.payables) {
+    const date = dateOrNull(flow.due_date);
+    if (date !== null) flows.push({ date, amount: -numberOrZero(flow.amount) });
+  }
+  return flows.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+function projectedRunwayMonths(balance: number, row: CashForecastPositionRow): number | null {
+  const monthlyOutflow = row.payables.reduce((sum, flow) => sum + numberOrZero(flow.amount), 0);
+  if (monthlyOutflow <= 0) return null;
+  return Number((balance / monthlyOutflow).toFixed(2));
+}
+
+function dateOrNull(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

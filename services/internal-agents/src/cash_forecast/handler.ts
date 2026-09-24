@@ -70,6 +70,7 @@ function buildCashForecastProposal(input: HandlerInput): ProposedAction {
   const confidence = policyConfidenceForEvidence(input.evidence, input.confidence);
   const periodStart = dateOnly(now);
   const periodEnd = dateOnly(addDays(now, 90));
+  const horizonDays = readPositiveInteger(input.context.horizon_days);
 
   return {
     channel: "agent",
@@ -79,6 +80,7 @@ function buildCashForecastProposal(input: HandlerInput): ProposedAction {
       balance_id: balanceId,
       period_start: periodStart,
       period_end: periodEnd,
+      ...(horizonDays !== null ? { horizon_days: horizonDays } : {}),
       current_balance: currentBalanceText,
       currency,
       projected_inflows: projection.projectedInflows,
@@ -97,6 +99,9 @@ function buildCashForecastProposal(input: HandlerInput): ProposedAction {
       },
       receivables: receivables.map(wireFlow),
       payables: payables.map(wireFlow),
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalArrayField("drivers", input.context.drivers),
+      ...optionalArrayField("runway_projection", input.context.runway_projection),
       narrative: narrativeFor({
         currentBalance: currentBalanceText,
         currency,
@@ -252,6 +257,22 @@ function requireMoneyNumber(context: Record<string, unknown>, field: string): nu
 function optionalMoney(raw: unknown): number | null {
   const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   return Number.isFinite(value) ? value : null;
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
+}
+
+function optionalArrayField(key: string, value: unknown): Record<string, unknown> {
+  return Array.isArray(value) ? { [key]: value } : {};
 }
 
 function requireAnyString(

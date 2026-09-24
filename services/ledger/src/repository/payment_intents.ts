@@ -11,6 +11,8 @@ export interface PaymentIntentRow {
   currency: string;
   obligation_id: string | null;
   invoice_id: string | null;
+  rate_lock_reference: string | null;
+  destination_currency: string | null;
   status: string;
   policy_decision_id: string | null;
   approval_ids: string[];
@@ -104,6 +106,8 @@ export interface InsertPaymentIntentInput {
   currency: string;
   obligationId?: string;
   invoiceId?: string;
+  rateLockReference?: string | null;
+  destinationCurrency?: string | null;
   status: string;
   policyDecisionId: string | null;
   evidenceIds: string[];
@@ -135,12 +139,12 @@ export async function insertPaymentIntent(
     `INSERT INTO ledger_payment_intents (
        id, owner_id, created_by_agent_id, action_type,
        source_account_id, destination_counterparty_id,
-       amount, currency, obligation_id, invoice_id,
+       amount, currency, obligation_id, invoice_id, rate_lock_reference, destination_currency,
        status, policy_decision_id, evidence_ids,
        provenance, confidence, evidence_score, risk_level, proposal_dedup_key,
        settlement_pay_to, escrow_id, job_terms_hash
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'inferred',$14,$15,$16,$17,$18,$19,$20)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'inferred',$16,$17,$18,$19,$20,$21,$22)
      RETURNING *`,
     [
       input.id,
@@ -153,6 +157,8 @@ export async function insertPaymentIntent(
       input.currency,
       input.obligationId ?? null,
       input.invoiceId ?? null,
+      input.rateLockReference ?? null,
+      input.destinationCurrency ?? null,
       input.status,
       input.policyDecisionId,
       input.evidenceIds,

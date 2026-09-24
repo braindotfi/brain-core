@@ -88,6 +88,14 @@ function buildTreasuryAdvisory(input: HandlerInput): ProposedAction {
       low_balance_floor: formatMoney(thresholds.lowBalanceFloor),
       liquidity_risk: riskBand,
       expected_yield: optionalString(input.context.expected_yield) ?? "unknown",
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("allocation_before", input.context.allocation_before),
+      ...optionalRecordField("allocation_after", input.context.allocation_after),
+      ...optionalRecordField("safety_meter", input.context.safety_meter),
+      ...optionalRecordField(
+        "estimated_annual_yield_gain",
+        input.context.estimated_annual_yield_gain,
+      ),
       recommended_action: recommended,
       narrative: narrativeFor(
         recommended,
@@ -176,6 +184,12 @@ function optionalMoney(raw: unknown): number | null {
 function optionalString(raw: unknown): string | null {
   const value = readString(raw);
   return value.length > 0 ? value : null;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function formatMoney(value: number): string {

@@ -83,6 +83,51 @@ describe("Wave C scanner cycles", () => {
     });
   });
 
+  it("emits dispute historical win rate when prior outcomes are available", async () => {
+    const run = vi.fn(async (): Promise<AgentRunResult> => agentResult("dispute"));
+
+    await runDisputeScanCycle(
+      {
+        scanPool: scanPoolWith([
+          dispute({
+            historical_win_pct: "66.67",
+            historical_win_sample_size: "3",
+            historical_win_time_window: "12m",
+          }),
+        ]),
+        appPool: cooldownPool(),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    expect((run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1]).toMatchObject({
+      context: {
+        historical_win_rate: { pct: 66.67, sample_size: 3, time_window: "12m" },
+      },
+    });
+  });
+
+  it("omits dispute historical win rate when no prior outcomes are available", async () => {
+    const run = vi.fn(async (): Promise<AgentRunResult> => agentResult("dispute"));
+
+    await runDisputeScanCycle(
+      {
+        scanPool: scanPoolWith([dispute({})]),
+        appPool: cooldownPool(),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (
+      (run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1] as
+        | { context?: Record<string, unknown> }
+        | undefined
+    )?.context;
+    expect(context).not.toHaveProperty("historical_win_rate");
+  });
+
   it("runs revenue intel proposals with notify-only context fields", async () => {
     const run = vi.fn(async (): Promise<AgentRunResult> => agentResult("revenue_intel"));
 
@@ -108,6 +153,64 @@ describe("Wave C scanner cycles", () => {
         }),
       }),
     );
+  });
+
+  it("emits revenue concentration fields when source data is available", async () => {
+    const run = vi.fn(async (): Promise<AgentRunResult> => agentResult("revenue_intel"));
+
+    await runRevenueIntelScanCycle(
+      {
+        scanPool: scanPoolWith([
+          revenue({
+            concentration: {
+              top_customer_pct: 55,
+              top_customer_amount: "5500.00",
+              breakdown: [{ name: "Acme", amount: "5500.00", pct: 55 }],
+            },
+            historical_concentration: [{ period: "2026-Q1", top_customer_pct: 50 }],
+            pipeline_coverage: {
+              quarter: "2026-Q3",
+              plan: "10000.00",
+              weighted_pipeline: "15000.00",
+              coverage_pct: 150,
+            },
+          }),
+        ]),
+        appPool: cooldownPool(),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    expect((run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1]).toMatchObject({
+      context: {
+        concentration: { top_customer_pct: 55 },
+        historical_concentration: [{ period: "2026-Q1", top_customer_pct: 50 }],
+        pipeline_coverage: { quarter: "2026-Q3", coverage_pct: 150 },
+      },
+    });
+  });
+
+  it("omits revenue concentration fields when source data is unavailable", async () => {
+    const run = vi.fn(async (): Promise<AgentRunResult> => agentResult("revenue_intel"));
+
+    await runRevenueIntelScanCycle(
+      {
+        scanPool: scanPoolWith([revenue({})]),
+        appPool: cooldownPool(),
+        runService: { run },
+      },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (
+      (run.mock.calls as unknown as Array<[unknown, unknown]>)[0]?.[1] as
+        | { context?: Record<string, unknown> }
+        | undefined
+    )?.context;
+    expect(context).not.toHaveProperty("concentration");
+    expect(context).not.toHaveProperty("historical_concentration");
+    expect(context).not.toHaveProperty("pipeline_coverage");
   });
 
   it("runs subscription proposals and pins cooldown SELECT shape", async () => {

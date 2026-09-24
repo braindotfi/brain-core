@@ -102,11 +102,15 @@ export function authorizeApproval(input: AuthorizeApprovalInput): ApprovalAuthor
   const requiresAdditionalApproval =
     requiredDistinctApprovals > 1 && existing.size + 1 < requiredDistinctApprovals;
 
-  return { allowed: true, requiresAdditionalApproval, approverRole: member.role };
+  return {
+    allowed: true,
+    requiresAdditionalApproval,
+    approverRole: member.role === "owner" ? "admin" : member.role,
+  };
 }
 
-export function isApprovalCapableRole(role: MemberRole): role is "admin" | "approver" {
-  return role === "admin" || role === "approver";
+export function isApprovalCapableRole(role: MemberRole): role is "owner" | "admin" | "approver" {
+  return role === "owner" || role === "admin" || role === "approver";
 }
 
 export function paymentIntentApprovalDomain(

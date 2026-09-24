@@ -26,6 +26,11 @@ export interface CollectionsOverdueReceivableRow {
   due_date: string;
   days_overdue: number;
   aging_tier: string;
+  customer_email?: string | null;
+  sender_email?: string | null;
+  msa_clause?: string | null;
+  customer_tone_signal?: string | null;
+  notice_history?: readonly unknown[];
 }
 
 export interface CollectionsOverdueScannerDeps {
@@ -130,6 +135,14 @@ export async function runCollectionsOverdueScanCycle(
           due_date: row.due_date,
           days_overdue: row.days_overdue,
           aging_tier: row.aging_tier,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            customer_email: row.customer_email ?? undefined,
+            sender_email: row.sender_email ?? undefined,
+            msa_clause: row.msa_clause ?? undefined,
+            customer_tone_signal: row.customer_tone_signal ?? undefined,
+            notice_history: row.notice_history,
+          }),
         },
       });
       status = result.status;
@@ -185,6 +198,21 @@ async function listOverdueReceivables(
               (i.amount_due - i.amount_paid)::text AS amount,
               i.currency,
               i.due_date,
+              COALESCE(
+                i.metadata->>'customer_email',
+                cp.metadata->>'email',
+                cp.metadata #>> '{contact,email}'
+              ) AS customer_email,
+              COALESCE(
+                i.metadata->>'sender_email',
+                i.metadata #>> '{collections,from_email}'
+              ) AS sender_email,
+              COALESCE(i.metadata->>'msa_clause', i.metadata #>> '{msa,clause}') AS msa_clause,
+              COALESCE(
+                i.metadata->>'customer_tone_signal',
+                cp.metadata #>> '{collections,tone_signal}'
+              ) AS customer_tone_signal,
+              COALESCE(i.metadata->'notice_history', '[]'::jsonb) AS notice_history,
               GREATEST(FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - i.due_date)) / 86400), 1)::int
                 AS days_overdue
          FROM ledger_invoices i
@@ -234,6 +262,11 @@ async function listOverdueReceivables(
             amount,
             currency,
             due_date::text AS due_date,
+            customer_email,
+            sender_email,
+            msa_clause,
+            customer_tone_signal,
+            notice_history,
             days_overdue,
             aging_tier,
             eligible_count,
@@ -313,6 +346,18 @@ function eventFor(agingTier: string): DomainEvent {
   return agingTier === "1_14" ? "invoice.overdue" : "receivable.aging_threshold_crossed";
 }
 
+function decisionContextFor(row: CollectionsOverdueReceivableRow): Record<string, unknown> {
+  return {
+    decide_by: `Before next escalation on invoice ${row.invoice_number}`,
+    if_wrong:
+      "Following up too firmly can strain a customer relationship. Waiting can reduce collection odds and delay cash.",
+    reversible: {
+      state: "yes",
+      label: "Yes before the email is sent",
+    },
+  };
+}
+
 function triggerKeyFor(row: CollectionsOverdueReceivableRow, event: DomainEvent): string {
   return `collections:${event}:invoice:${row.id}:aging:${row.aging_tier}`;
 }
@@ -324,4 +369,8 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

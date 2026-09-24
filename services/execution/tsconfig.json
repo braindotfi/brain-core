@@ -16,6 +16,9 @@
     },
     {
       "path": "../../schemas"
+    },
+    {
+      "path": "../../packages/proposals"
     }
   ]
 }

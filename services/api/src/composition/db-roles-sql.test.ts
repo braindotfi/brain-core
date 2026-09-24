@@ -144,7 +144,7 @@ describe("infra/db-roles.sql — §4 least-privilege roles", () => {
     // ledger_payment_intents) between the two halves and stay green.
     expect(SQL).toContain(
       "GRANT SELECT ON raw_sync_partitions, wallet_identities, users, members, member_identity_links,\n" +
-        "  member_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,\n" +
+        "  member_invites, pending_invites, session_refresh_tokens, api_keys, api_rate_limit_tiers,\n" +
         "  tenant_api_entitlements, api_key_rate_limit_overrides, agents, oauth_clients,\n" +
         "  oauth_authorization_codes, oauth_refresh_tokens TO brain_resolver;",
     );

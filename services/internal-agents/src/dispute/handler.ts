@@ -55,6 +55,8 @@ function buildDisputeProposal(input: HandlerInput): ProposedAction {
       evidence_completeness: round(evidenceCompleteness),
       evidence_bundle: checklist,
       evidence_checklist: checklist,
+      ...optionalRecordField("decision_context", input.context.decision_context),
+      ...optionalRecordField("historical_win_rate", input.context.historical_win_rate),
       recommended_action: recommendedAction,
       narrative: narrativeFor(recommendedAction, {
         disputeId,
@@ -149,6 +151,12 @@ function readNumber(value: unknown, fallback: number): number {
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(parsed)) return fallback;
   return parsed;
+}
+
+function optionalRecordField(key: string, value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 function round(value: number): number {

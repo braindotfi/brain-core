@@ -99,6 +99,128 @@ export const PolicyResultSchema = z.object({
 });
 export type PolicyResult = z.infer<typeof PolicyResultSchema>;
 
+export const ProposalDomainDecisionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  meaning: z.string().min(1),
+});
+export type ProposalDomainDecision = z.infer<typeof ProposalDomainDecisionSchema>;
+
+export const ProposalDecisionContextSchema = z.object({
+  decide_by: z.string().min(1),
+  if_wrong: z.string().min(1),
+  reversible: z.object({
+    state: z.enum(["yes", "no", "na"]),
+    label: z.string().min(1),
+  }),
+});
+export type ProposalDecisionContext = z.infer<typeof ProposalDecisionContextSchema>;
+
+const BankComparisonEntrySchema = z.object({
+  bank_name: z.string().optional(),
+  routing_masked: z.string().optional(),
+  account_masked: z.string().optional(),
+  beneficiary: z.string().optional(),
+});
+
+export const ProposalRailFieldsSchema = z
+  .object({
+    decision_context: ProposalDecisionContextSchema.optional(),
+    signals: z
+      .object({
+        geo_mismatch: z
+          .object({
+            normal_regions: z.array(z.string()),
+            observed_region: z.string(),
+          })
+          .optional(),
+        off_hours: z
+          .object({
+            typical_window: z.string(),
+            observed_hour: z.string(),
+          })
+          .optional(),
+        normal_vs_current: z.record(z.string(), z.unknown()).optional(),
+      })
+      .optional(),
+    comparison: z
+      .object({
+        bank_on_file: BankComparisonEntrySchema.optional(),
+        bank_on_invoice: BankComparisonEntrySchema.optional(),
+        quantity_a: z.unknown().optional(),
+        quantity_b: z.unknown().optional(),
+        po_ref_a: z.string().optional(),
+        po_ref_b: z.string().optional(),
+      })
+      .optional(),
+    draft_email: z
+      .object({
+        to: z.string(),
+        from: z.string(),
+        subject: z.string(),
+        body: z.array(z.string()),
+        edit_actions: z.array(z.string()),
+      })
+      .optional(),
+    cash_impact: z
+      .object({
+        source_account_id: z.string(),
+        balance_before: z.number(),
+        balance_after: z.number(),
+      })
+      .optional(),
+    historical_win_rate: z
+      .object({
+        pct: z.number(),
+        sample_size: z.number().int(),
+        time_window: z.string(),
+      })
+      .optional(),
+    allocation_before: z.record(z.string(), z.unknown()).optional(),
+    allocation_after: z.record(z.string(), z.unknown()).optional(),
+    safety_meter: z.record(z.string(), z.unknown()).optional(),
+    estimated_annual_yield_gain: z.record(z.string(), z.unknown()).optional(),
+    close_aggregate: z.record(z.string(), z.unknown()).optional(),
+    accountant: z
+      .object({
+        name: z.string(),
+        org: z.string(),
+        email: z.string(),
+      })
+      .optional(),
+    materiality: z
+      .object({
+        unmatched_amount: z.number(),
+        monthly_revenue: z.number(),
+        pct: z.number(),
+      })
+      .optional(),
+    horizon_days: z.number().int().optional(),
+    drivers: z.array(z.record(z.string(), z.unknown())).optional(),
+    runway_projection: z.array(z.record(z.string(), z.unknown())).optional(),
+    concentration: z.record(z.string(), z.unknown()).optional(),
+    historical_concentration: z.array(z.record(z.string(), z.unknown())).optional(),
+    pipeline_coverage: z.record(z.string(), z.unknown()).optional(),
+    alternatives: z
+      .array(z.object({ name: z.string(), note: z.string(), price: z.string() }))
+      .optional(),
+    flagged_invoice: z.record(z.string(), z.unknown()).optional(),
+    suspected_original: z.record(z.string(), z.unknown()).optional(),
+    match_confidence: z.record(z.string(), z.unknown()).optional(),
+    finding_kind: z.string().optional(),
+    screenings: z.record(z.string(), z.unknown()).optional(),
+    required_documents: z.array(z.unknown()).optional(),
+    regulatory_context: z.record(z.string(), z.unknown()).optional(),
+    jurisdictions_involved: z.array(z.string()).optional(),
+    deadline: z.string().optional(),
+    seats: z.record(z.string(), z.unknown()).optional(),
+    underutilization: z.record(z.string(), z.unknown()).optional(),
+    options: z.array(z.record(z.string(), z.unknown())).optional(),
+    decisions: z.array(ProposalDomainDecisionSchema).optional(),
+  })
+  .partial();
+export type ProposalRailFields = z.infer<typeof ProposalRailFieldsSchema>;
+
 export const ProposalSchema = z.object({
   id: z.string().min(1),
   tenantId: z.string().min(1),
@@ -113,6 +235,7 @@ export const ProposalSchema = z.object({
   executionTarget: SurfaceExecutionTargetSchema.optional(),
   payee: PayeeSchema.optional(),
   policy: PolicyResultSchema,
+  inbox: ProposalRailFieldsSchema.optional(),
   /** ISO timestamp. After this the proposal auto expires and cannot be approved. */
   expiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),

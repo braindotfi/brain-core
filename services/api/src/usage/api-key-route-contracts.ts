@@ -25,6 +25,8 @@ export const API_KEY_ROUTE_CONTRACTS = [
 
   contract("GET", "/ledger/accounts", "listAccounts", "ledger:read", "ledger"),
   contract("GET", "/ledger/accounts/:account_id", "getAccount", "ledger:read", "ledger"),
+  contract("GET", "/accounts", "listUiAccounts", "ledger:read", "ledger"),
+  contract("GET", "/accounts/:id", "getUiAccount", "ledger:read", "ledger"),
   contract("GET", "/ledger/balances", "listBalances", "ledger:read", "ledger"),
   contract("GET", "/ledger/transactions", "listTransactions", "ledger:read", "ledger"),
   contract(
@@ -39,6 +41,15 @@ export const API_KEY_ROUTE_CONTRACTS = [
     "GET",
     "/ledger/counterparties/:counterparty_id",
     "getCounterparty",
+    "ledger:read",
+    "ledger",
+  ),
+  contract("GET", "/contacts", "listContacts", "ledger:read", "ledger"),
+  contract("GET", "/contacts/:id", "getContact", "ledger:read", "ledger"),
+  contract(
+    "POST",
+    "/ledger/deposit-instructions",
+    "getDepositInstructions",
     "ledger:read",
     "ledger",
   ),

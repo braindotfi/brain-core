@@ -45,6 +45,14 @@ describe("runCashForecastScanCycle", () => {
           balance_id: "bal_1",
           current_balance: "1000.00",
           currency: "USD",
+          horizon_days: 180,
+          drivers: expect.arrayContaining([
+            expect.objectContaining({ name: "Acme", category: "receivable", direction: "inflow" }),
+            expect.objectContaining({ name: "Vendor", category: "payable", direction: "outflow" }),
+          ]),
+          runway_projection: expect.arrayContaining([
+            expect.objectContaining({ date: "2026-08-02", projected_balance: "1500.00" }),
+          ]),
           receivables: expect.arrayContaining([expect.objectContaining({ invoice_id: "inv_1" })]),
           payables: expect.arrayContaining([expect.objectContaining({ obligation_id: "obl_1" })]),
         }),
@@ -102,6 +110,36 @@ describe("runCashForecastScanCycle", () => {
     );
 
     expect(run.mock.calls[0]?.[1]).toMatchObject({ event: "forecast.requested" });
+  });
+
+  it("omits cash forecast drivers and runway when no flows are available", async () => {
+    const row = position({
+      receivables: [],
+      payables: [],
+      total_flow_amount: "0.00",
+      max_payable_amount: "0.00",
+    });
+    const run = vi.fn(
+      async (_ctx: unknown, _input: unknown): Promise<AgentRunResult> => ({
+        status: "proposal_created",
+        routing_decision_id: "agrd_1",
+        run_id: "agnr_1",
+        selected_agent_id: "cash_forecast",
+        action: "generate_forecast",
+        shadow_mode: false,
+        reason: {},
+      }),
+    );
+
+    await runCashForecastScanCycle(
+      { scanPool: scanPoolWith([row]), appPool: cooldownPool(), runService: { run } },
+      { now: new Date("2026-07-19T00:00:00.000Z") },
+    );
+
+    const context = (run.mock.calls[0]?.[1] as { context?: Record<string, unknown> }).context;
+    expect(context).toMatchObject({ horizon_days: 180 });
+    expect(context).not.toHaveProperty("drivers");
+    expect(context).not.toHaveProperty("runway_projection");
   });
 
   it("reports the true eligible backlog when the global cap is hit", async () => {

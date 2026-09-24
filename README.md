@@ -84,6 +84,12 @@ RobotMoney exposes four surfaces. Pick whichever matches your stack. They share 
 | MCP server      | Third-party agents over the Model Context Protocol        | [MCP server](mcp-server/overview.md)           |
 | Smart contracts | On-chain settlement, programmable accounts, scope attests | [Smart contracts](smart-contracts/overview.md) |
 
+## Provider Modes
+
+Local development runs stub-only by default. Leave provider env vars empty and do not enable tenant integrations.
+
+For a fully wired environment, set the provider env vars in `.env.example`, then enable each tenant adapter through `/v1/tenant/integrations/{adapter_kind}`. Setup steps for ComplyAdvantage, Sumsub, Stripe Issuing, Chargeflow, directory providers, SaaS vendor APIs, Anthropic, Postmark, Twilio, and S3 live in [docs/services/adapter-setup.md](docs/services/adapter-setup.md).
+
 ## A First Request
 
 ```bash

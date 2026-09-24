@@ -6,7 +6,13 @@
     "noEmit": true,
     "paths": {
       "@brain/shared": ["../../shared/src/index.ts"],
-      "@brain/shared/*": ["../../shared/src/*.ts"]
+      "@brain/shared/*": ["../../shared/src/*.ts"],
+      "@brain/execution": ["../../services/execution/src/index.ts"],
+      "@brain/internal-agents": ["../../services/internal-agents/src/index.ts"],
+      "@brain/ledger": ["../../services/ledger/src/index.ts"],
+      "@brain/policy": ["../../services/policy/src/index.ts"],
+      "@brain/proposals": ["../../packages/proposals/src/index.ts"],
+      "@brain/wiki": ["../../services/wiki/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

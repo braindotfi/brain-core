@@ -1,5 +1,5 @@
 /**
- * Workflow-specific handler payloads for all 20 agents (Agent Autonomy v3, 2.1).
+ * Workflow-specific handler payloads for registered agents (Agent Autonomy v3, 2.1).
  *
  * agentProposal() stays the shared fallback. This registry is the typed contract
  * for each agent's proposal payload: the required fields the plan enumerates per
@@ -12,8 +12,9 @@
  */
 
 export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  // Business (8)
+  // Business
   collections: [
+    "decision_context",
     "invoice_id",
     "counterparty_id",
     "amount_due",
@@ -24,6 +25,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   treasury: [
+    "decision_context",
     "source_account_id",
     "target_account_id",
     "available_cash",
@@ -34,6 +36,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   payment: [
+    "decision_context",
     "amount",
     "currency",
     "source_account_id",
@@ -42,6 +45,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   vendor_risk: [
+    "decision_context",
     "vendor_id",
     "changed_field",
     "previous_value_hash",
@@ -51,6 +55,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   cash_forecast: [
+    "decision_context",
     "period_start",
     "period_end",
     "projected_inflows",
@@ -60,6 +65,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   dispute: [
+    "decision_context",
     "transaction_id",
     "dispute_reason",
     "evidence_bundle",
@@ -74,7 +80,22 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "recommended_remediation",
     "evidence_refs",
   ],
+  aml_compliance: [
+    "decision_context",
+    "payment_id",
+    "beneficiary_id",
+    "amount",
+    "currency",
+    "jurisdictions_involved",
+    "screenings",
+    "required_documents",
+    "regulatory_context",
+    "recommended_action",
+    "deadline",
+    "evidence_refs",
+  ],
   revenue_intel: [
+    "decision_context",
     "period",
     "segment",
     "top_movers",
@@ -82,7 +103,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "forecast_adjustments",
     "evidence_refs",
   ],
-  // Consumer (8)
+  // Consumer
   personal_budget: [
     "period",
     "category_targets",
@@ -129,7 +150,7 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
   ],
   financial_health: ["score", "trend", "key_drivers", "recommended_actions", "evidence_refs"],
   purchase_advisor: ["intent", "options", "recommended_option", "total_cost", "evidence_refs"],
-  // Agnostic (3)
+  // Agnostic
   subscription: [
     "merchant",
     "recurring_amount",
@@ -139,7 +160,20 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "estimated_savings",
     "evidence_refs",
   ],
+  subscription_management: [
+    "decision_context",
+    "subscription_id",
+    "merchant",
+    "current_plan",
+    "renewal_date",
+    "currency",
+    "current_price",
+    "options",
+    "recommended_action",
+    "evidence_refs",
+  ],
   reconciliation: [
+    "decision_context",
     "match_type",
     "left_entity_id",
     "right_entity_id",
@@ -148,13 +182,21 @@ export const AGENT_PAYLOAD_REQUIRED_FIELDS: Readonly<Record<string, readonly str
     "evidence_refs",
   ],
   fraud_anomaly: [
+    "decision_context",
     "transaction_id",
     "anomaly_type",
     "anomaly_score",
     "recommended_action",
     "evidence_refs",
   ],
-  invoice_integrity: ["obligation_id", "finding_type", "amount", "currency", "evidence_refs"],
+  invoice_integrity: [
+    "decision_context",
+    "obligation_id",
+    "finding_type",
+    "amount",
+    "currency",
+    "evidence_refs",
+  ],
 };
 
 export interface AgentPayloadValidation {

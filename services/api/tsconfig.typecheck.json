@@ -6,8 +6,22 @@
     "noEmit": true,
     "paths": {
       "@brain/api": ["./src/index.ts"],
-      "@brain/shared": ["../shared/src/index.ts"],
-      "@brain/shared/*": ["../shared/src/*.ts"]
+      "@brain/shared": ["../../shared/src/index.ts"],
+      "@brain/shared/*": ["../../shared/src/*.ts"],
+      "@brain/raw": ["../../services/raw/src/index.ts"],
+      "@brain/audit": ["../../services/audit/src/index.ts"],
+      "@brain/canonical": ["../../services/canonical/src/index.ts"],
+      "@brain/wiki": ["../../services/wiki/src/index.ts"],
+      "@brain/agent-router": ["../../services/agent-router/src/index.ts"],
+      "@brain/execution": ["../../services/execution/src/index.ts"],
+      "@brain/ledger": ["../../services/ledger/src/index.ts"],
+      "@brain/internal-agents": ["../../services/internal-agents/src/index.ts"],
+      "@brain/policy": ["../../services/policy/src/index.ts"],
+      "@brain/mcp": ["../../services/mcp/src/index.ts"],
+      "@brain/surfaces": ["../../packages/surfaces/src/index.ts"],
+      "@brain/proposals": ["../../packages/proposals/src/index.ts"],
+      "@brain/schemas": ["../../schemas/index.ts"],
+      "@brain/schemas/*": ["../../schemas/*.ts"]
     }
   },
   "include": ["src/**/*.ts"]

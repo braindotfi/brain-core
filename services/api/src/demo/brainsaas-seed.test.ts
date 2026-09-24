@@ -364,6 +364,23 @@ describe("seedBrainSaasDemo", () => {
     expect(result.agentId).not.toBe(ACTOR);
   });
 
+  it("seeds Home money settings and accountant for the demo tenant", async () => {
+    const { pool, audit } = deps();
+    await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);
+
+    const profileUpsert = scopedCalls.find((c) => c.sql.includes("INSERT INTO tenant_profiles"));
+    expect(profileUpsert).toBeDefined();
+    expect(profileUpsert!.sql).toContain("ON CONFLICT (tenant_id) DO UPDATE");
+    expect(profileUpsert!.sql).toContain("accountant = COALESCE");
+    expect(profileUpsert!.values).toEqual([
+      TENANT,
+      "Brightline Systems Inc.",
+      JSON.stringify({ name: "Priya Sharma", org: "Ledger.io", email: "priya@ledger.io" }),
+      "acct_brainsaas_operating",
+      "4900.00",
+    ]);
+  });
+
   it("inserts one active policy and deactivates prior ones", async () => {
     const { pool, audit } = deps();
     await seedBrainSaasDemo(pool, audit, TENANT, ACTOR);

@@ -39,7 +39,9 @@ export interface AgentRecord {
     | "partner"
     | "partner_execute"
     | "collections"
-    | "treasury";
+    | "treasury"
+    | "aml_compliance"
+    | "subscription_management";
   display_name: string;
   scope_hash: string | null;
   onchain_address: string | null;
@@ -68,6 +70,7 @@ export interface ProposalRecord {
     | "failed"
     | "undone"
     | "superseded"
+    | "blocked"
     | "unknown";
   approvers_signed: string[];
   created_at: string;

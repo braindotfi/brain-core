@@ -180,7 +180,12 @@ export {
 // LLM + embeddings (§2 stack: Claude + OpenAI)
 export * from "./llm/types.js";
 export * from "./llm/answer-guard.js";
-export { AnthropicAdapter, type AnthropicAdapterOptions } from "./llm/anthropic.js";
+export {
+  AnthropicAdapter,
+  RoboAnthropicAdapter,
+  type AnthropicAdapterOptions,
+  type RoboAnthropicAdapterOptions,
+} from "./llm/anthropic.js";
 export {
   OpenAICompletionAdapter,
   OpenAIEmbeddingAdapter,
@@ -233,3 +238,7 @@ export {
   type ManagedIntervalOptions,
 } from "./workers/managed-interval.js";
 export { leasedCycle, type LeasedCycleOptions } from "./workers/advisory-lease.js";
+
+export * from "./adapters/aml.js";
+export * from "./adapters/decision-execution.js";
+export * from "./adapters/subscription.js";

@@ -147,6 +147,10 @@ export async function runPaymentAdvisoryScanCycle(
           available_cash: row.available_cash,
           discount_expires_at: row.discount_expires_at,
           discount_amount: row.discount_amount,
+          decision_context: decisionContextFor(row),
+          ...definedContext({
+            cash_impact: cashImpactFor(row),
+          }),
           payables: [
             {
               obligation_id: row.obligation_id,
@@ -360,6 +364,31 @@ function ctxFor(tenantId: string): ServiceCallContext {
   };
 }
 
+function decisionContextFor(row: PaymentAdvisoryRow): Record<string, unknown> {
+  const dueDate = row.discount_expires_at ?? row.due_date;
+  return {
+    decide_by: `Before ${dueDate}`,
+    if_wrong:
+      "Paying now can reduce cash sooner than needed. Waiting can miss a due date or discount window.",
+    reversible: {
+      state: "yes",
+      label: "Yes until payment execution",
+    },
+  };
+}
+
+function cashImpactFor(row: PaymentAdvisoryRow): Record<string, unknown> | undefined {
+  if (row.source_account_id === null || row.available_cash === null) return undefined;
+  const balanceBefore = Number(row.available_cash);
+  const amount = Number(row.amount);
+  if (!Number.isFinite(balanceBefore) || !Number.isFinite(amount)) return undefined;
+  return {
+    source_account_id: row.source_account_id,
+    balance_before: balanceBefore,
+    balance_after: Number((balanceBefore - amount).toFixed(2)),
+  };
+}
+
 function eventFor(row: PaymentAdvisoryRow): DomainEvent {
   return row.event_hint === "payable.discount_expiring"
     ? "payable.discount_expiring"
@@ -377,4 +406,8 @@ function normalizeCount(value: number | string | undefined, fallback: number): n
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function definedContext(input: Record<string, unknown | undefined>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }

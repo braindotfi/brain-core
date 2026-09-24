@@ -74,6 +74,8 @@ interface CreateBody {
   currency?: string;
   obligation_id?: string;
   invoice_id?: string;
+  rate_lock_reference?: string;
+  destination_currency?: string;
   agent_id?: string;
   evidence_ids?: string[];
   /** x402 settlement recipient on-chain address (required for x402_settle). */
@@ -104,6 +106,7 @@ export function isAcceptedActionType(t: string | undefined): boolean {
 export function isValidCurrency(actionType: string | undefined, currency: string): boolean {
   // Both on-chain settlement actions are USDC-denominated (D-4).
   if (actionType === "x402_settle" || actionType === "escrow_release") return currency === "USDC";
+  if (actionType === "exchange") return /^[A-Z0-9]{3,6}$/.test(currency);
   return /^[A-Z]{3}$/.test(currency);
 }
 
@@ -162,6 +165,18 @@ export async function registerPaymentIntentRoutes(
       ) {
         throw brainError("request_body_invalid", "missing or malformed PaymentIntent fields");
       }
+      if (
+        b.action_type === "exchange" &&
+        (b.rate_lock_reference === undefined ||
+          b.rate_lock_reference.length === 0 ||
+          b.destination_currency === undefined ||
+          !/^[A-Z0-9]{3,6}$/.test(b.destination_currency))
+      ) {
+        throw brainError(
+          "request_body_invalid",
+          "exchange requires rate_lock_reference and destination_currency",
+        );
+      }
       // x402 settlement requires the on-chain recipient up front; the §6 gate
       // (check 6.5) re-validates it against the resolved counterparty's address.
       if (
@@ -193,6 +208,12 @@ export async function registerPaymentIntentRoutes(
         currency: b.currency,
         ...(b.obligation_id !== undefined ? { obligation_id: b.obligation_id } : {}),
         ...(b.invoice_id !== undefined ? { invoice_id: b.invoice_id } : {}),
+        ...(b.action_type === "exchange" && b.rate_lock_reference !== undefined
+          ? { rate_lock_reference: b.rate_lock_reference }
+          : {}),
+        ...(b.action_type === "exchange" && b.destination_currency !== undefined
+          ? { destination_currency: b.destination_currency }
+          : {}),
         ...(agentId !== undefined ? { agent_id: agentId } : {}),
         ...(b.evidence_ids !== undefined ? { evidence_ids: b.evidence_ids } : {}),
         ...(b.action_type === "x402_settle" && b.pay_to !== undefined ? { pay_to: b.pay_to } : {}),
