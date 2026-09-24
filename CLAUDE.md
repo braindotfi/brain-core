@@ -62,7 +62,10 @@ latest `origin/main`. This branch adds on-chain delayed activation for broader
 BrainSmartAccount session-key grants before the external audit. Constructor
 initial session keys are the only immediate new-holder path, so new customers
 can start without waiting 24 hours. There is no callable initializer after
-deployment.
+deployment. Tenant account replacement is controlled by
+`BrainTenantAccountRegistry`: first assignment is instant, replacement waits 24
+hours, and backend dispatch must verify registry account codehash and tenantId
+before use.
 
 Historical branch context: `feature/members-approval-attribution`. Members,
 approval authority, and actor attribution are moving into core as the normative

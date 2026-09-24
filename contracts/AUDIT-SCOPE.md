@@ -142,7 +142,31 @@ On-chain registry of signed policy versions (content hash + EIP-712 attestation)
 **Coverage:** unit + fuzz per external function; invariant "registered versions
 carry a content hash matching the stored policy."
 
-## BrainSmartAccount (765 LoC)
+## BrainTenantAccountRegistry (137 LoC)
+
+Authoritative tenant to BrainSmartAccount binding. This is a separate contract
+rather than a BrainPolicyRegistry extension because account assignment has its
+own replacement delay, cancellation, and backend resolution semantics. Keeping it
+separate avoids mixing policy-version quorum state with deployment routing state.
+
+**Critical invariants:**
+
+- First account assignment for a tenant is immediate.
+- Replacing an existing tenant account is delayed by `ACCOUNT_CHANGE_DELAY`.
+- Pending account replacement can be cancelled before activation.
+- A replacement cannot activate before its executable timestamp.
+- Every assigned account must report the same `tenantId()` as the registry key.
+- Only the registry owner can assign, cancel, activate, or rotate ownership.
+
+**Hardening:** delayed account replacement closes the system-level bypass where a
+new BrainSmartAccount could be deployed with broad constructor keys and then
+substituted as the tenant account.
+
+**Coverage:** unit tests cover instant first assignment, delayed replacement,
+early activation rejection, activation replay rejection, cancellation, owner-only
+operations, and tenant mismatch rejection.
+
+## BrainSmartAccount (769 LoC)
 
 Smart account with directly-called session keys; the payment agent executes
 on-chain via a session key under a deterministic gate. NOT ERC-4337: no
@@ -159,7 +183,8 @@ attack surface to audit.
   elapses. This includes new holders, raised caps, extended expiry, added
   targets, added selectors, added recipients, and shorter spend periods.
 - Session keys supplied to the constructor are creation-only and active
-  immediately. There is no post-deploy initializer to reuse this path.
+  immediately. There is no post-deploy initializer to reuse this path. The
+  constructor enforces `MAX_INITIAL_KEYS` and rejects duplicate initial holders.
 - Stricter or equal grants can activate immediately.
 - Pause, pauseAll, revoke, and pending-grant cancel remain immediate.
 - Owner rotation is access-controlled (hardware-wallet swap path).
@@ -172,7 +197,8 @@ attack surface to audit.
   into pending state. `activatePendingSessionKeyGrant` can activate only after
   the delay. Initial keys passed to the constructor are the only immediate
   new-holder path, so new customers can start without waiting. There is no
-  callable initializer after deployment. `cancelPendingSessionKeyGrant` and
+  callable initializer after deployment. The constructor rejects duplicate
+  holders and more than `MAX_INITIAL_KEYS`. `cancelPendingSessionKeyGrant` and
   `revokeSessionKey` clear pending broader grants.
 - R-06 / R-07 (Opus 4.8 peer review F-3 + F-4, batch 8): the `SessionKey` struct
   now carries an explicit `capToken` field. When non-zero (ERC20 mode), caps
@@ -194,7 +220,10 @@ edge cases. Plus R-06 / R-07 tests: USDC 6dp cap enforces in token units, DAI
 target/capToken mismatch, execute rejects value > 0 in ERC20 mode, native mode
 preserved. Creation-path tests cover immediate initial grants, no initializer
 reuse, delayed post-creation new keys, and redeploy not changing an existing
-account.
+account. Extra delayed-grant tests cover activation replay, non-owner activation
+and cancellation, expiry extension, earlier validAfter, maxPerPeriod increase,
+selector addition, mode change, token change, cap offset change, policyVersion
+change, pin removal and change, and zero-period transitions.
 
 ## BrainMCPAgentRegistry (287 LoC)
 

@@ -712,6 +712,16 @@ const envSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)
     .optional(),
+  /** Tenant to BrainSmartAccount registry. Required before production on-chain dispatch. */
+  BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .optional(),
+  /** Expected BrainSmartAccount runtime codehash for registry-resolved accounts. */
+  BRAIN_SMART_ACCOUNT_CODEHASH: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
   /** 0x 32-byte policy version digest the session key was granted for. Defaults to zero bytes32. */
   BRAIN_ONCHAIN_POLICY_VERSION: z
     .string()

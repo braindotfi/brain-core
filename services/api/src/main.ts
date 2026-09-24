@@ -239,6 +239,7 @@ import type { ExecutionDeps, OnchainDispatchParams, OnchainExecutor, Rail } from
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
 import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
+import { buildTenantSmartAccountResolver } from "./rails/tenantAccountRegistry.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
 import { anchorCycleReason } from "./anchor-cycle.js";
@@ -1020,11 +1021,22 @@ async function main(): Promise<void> {
   const invoiceShortcut = makeInvoiceShortcutResolver(ledgerService, pool);
 
   // Resolve on-chain dispatch params at execute time. Only wired when both the
-  // session key and the BrainSmartAccount address are configured. The actual
+  // session key and a smart-account source are configured. The actual
   // recipient/currency/calldata logic (F3/F4 fixes) lives in
   // resolveOnchainTransferParams so it is unit-testable independent of boot.
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
+  const tenantSmartAccountResolver =
+    cfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS !== undefined &&
+    cfg.BRAIN_SMART_ACCOUNT_CODEHASH !== undefined &&
+    onchainRpcUrl !== undefined
+      ? buildTenantSmartAccountResolver({
+          registryAddress: cfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS,
+          expectedCodehash: cfg.BRAIN_SMART_ACCOUNT_CODEHASH,
+          rpcUrl: onchainRpcUrl,
+          chainId: cfg.BRAIN_BASE_CHAIN_ID,
+        })
+      : undefined;
   // F3: token transfers need real ERC-20 calldata. USDC is the only token
   // contract this deployment has an address for (BRAIN_X402_USDC_ADDRESS);
   // any other currency has no known contract, so resolveOnchainTransferParams
@@ -1046,15 +1058,20 @@ async function main(): Promise<void> {
         },
       ) => Promise<OnchainDispatchParams | null>)
     | undefined =
-    sessionKey !== undefined && smartAccount !== undefined
+    sessionKey !== undefined && (tenantSmartAccountResolver !== undefined || smartAccount !== undefined)
       ? async (ctx, intent) => {
           const cp = await ledgerService.findCounterpartyById(
             ctx,
             intent.destination_counterparty_id,
           );
           if (cp === null) return null;
+          const resolvedSmartAccount =
+            tenantSmartAccountResolver !== undefined
+              ? await tenantSmartAccountResolver.resolve(ctx.tenantId)
+              : smartAccount;
+          if (resolvedSmartAccount === undefined) return null;
           return resolveOnchainTransferParams(cp, intent, {
-            smartAccount,
+            smartAccount: resolvedSmartAccount,
             holder: getHolderAddress(sessionKey as `0x${string}`),
             policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
             usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,

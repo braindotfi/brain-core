@@ -130,6 +130,8 @@ contract BrainSmartAccount {
     ///         executeViaSessionKey bounded, so a key can never be granted with
     ///         an allowlist too large to execute against.
     uint256 public constant MAX_ALLOWLIST = 32;
+    /// @notice Upper bound on constructor bootstrap grants.
+    uint256 public constant MAX_INITIAL_KEYS = 12;
     /// @notice Minimum delay before a broader session-key grant can activate.
     uint256 public constant GRANT_INCREASE_DELAY = 24 hours;
 
@@ -253,6 +255,7 @@ contract BrainSmartAccount {
     error PolicyVersionNotRegistered(bytes32 policyVersion);
     error NoPendingSessionKeyGrant(address holder);
     error PendingSessionKeyGrantNotReady(address holder, uint256 executableAt);
+    error DuplicateInitialKeyHolder(address holder);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -268,7 +271,13 @@ contract BrainSmartAccount {
         tenantId = _tenantId;
         policyRegistry = _policyRegistry;
 
+        if (initialSessionKeys.length > MAX_INITIAL_KEYS) revert AllowlistTooLarge(MAX_INITIAL_KEYS);
         for (uint256 i = 0; i < initialSessionKeys.length; ++i) {
+            for (uint256 j = 0; j < i; ++j) {
+                if (initialSessionKeys[i].holder == initialSessionKeys[j].holder) {
+                    revert DuplicateInitialKeyHolder(initialSessionKeys[i].holder);
+                }
+            }
             _validateSessionKey(initialSessionKeys[i]);
             _storeSessionKey(initialSessionKeys[i]);
         }
