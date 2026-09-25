@@ -52,6 +52,7 @@ jobs:
           working_directory: infra
           version: v1.28.11
           additional_args: --minimum-severity HIGH
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   container_scan:
     name: container scan (high + critical)
