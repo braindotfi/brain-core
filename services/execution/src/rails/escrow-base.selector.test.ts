@@ -12,7 +12,7 @@
  * constant fails here, and the guard now also rejects new hex selector literals.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { keccak256, toHex } from "viem";
@@ -42,12 +42,12 @@ function makeRail(capture: { data?: string }) {
     executor,
     escrowAddress: ESCROW,
     holderAddress: HOLDER,
-    smartAccount: SMART_ACCOUNT,
+    resolveSmartAccount: async () => SMART_ACCOUNT,
   });
 }
 
 function dispatchInput(action: Record<string, unknown>) {
-  return { action } as never;
+  return { tenantId: "tnt_1", action } as never;
 }
 
 describe("escrow rail release selector", () => {
@@ -109,5 +109,28 @@ describe("escrow rail amount validation", () => {
     );
     expect(result.receipt["released_units"]).toBe("250000");
     expect(capture.data?.slice(0, 10)).toBe(EXPECTED_SELECTOR);
+  });
+
+  it("resolves the smart account from the tenant id", async () => {
+    const resolveSmartAccount = vi.fn(async () => SMART_ACCOUNT);
+    const rail = new EscrowBaseRail({
+      executor: {
+        readNonce: async () => 0n,
+        execute: async (args: OnchainExecuteArgs): Promise<OnchainExecuteResult> => {
+          expect(args.smartAccount).toBe(SMART_ACCOUNT);
+          return { txHash: "0x" + "99".repeat(32), blockNumber: 1n, gasUsed: 21_000n };
+        },
+      },
+      escrowAddress: ESCROW,
+      holderAddress: HOLDER,
+      resolveSmartAccount,
+    });
+
+    await rail.dispatch({
+      tenantId: "tnt_verified",
+      action: { escrow_id: ESCROW_ID, amount_units: "250000" },
+    } as never);
+
+    expect(resolveSmartAccount).toHaveBeenCalledWith("tnt_verified");
   });
 });

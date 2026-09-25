@@ -65,10 +65,17 @@ BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS
 BRAIN_SMART_ACCOUNT_CODEHASH
 ```
 
-`BRAIN_ONCHAIN_SMART_ACCOUNT` remains a compatibility fallback. Production
-on-chain dispatch must resolve the tenant account from
-`BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and verify `BRAIN_SMART_ACCOUNT_CODEHASH`
-plus `tenantId()` before use.
+`BRAIN_ONCHAIN_SMART_ACCOUNT` remains a local and test compatibility fallback.
+Production on-chain dispatch must resolve the tenant account from
+`BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and verify `BRAIN_SMART_ACCOUNT_CODEHASH`,
+`tenantId()`, `owner()`, and `policyRegistry()` before use. Store the expected
+owner and policy registry in the tenant onboarding record before enabling
+smart-account rails for that tenant.
+
+The production `BrainTenantAccountRegistry` owner must be a Safe multisig
+configured as 2 of 3. It must be separate from the deployer key and from tenant
+owner keys. `DeployTenantAccountRegistry.s.sol` refuses an EOA owner, so set
+`TENANT_ACCOUNT_REGISTRY_OWNER` to the deployed Safe address before broadcast.
 
 `BRAIN_X402_USDC_ADDRESS` is now required for gate check 6.6 to run at all. The
 escrow resolver is wired only when BOTH `BRAIN_ESCROW_ADDRESS` and
@@ -101,6 +108,8 @@ Storage does not carry across a redeploy. For each tenant, in order:
    `BrainTenantAccountRegistry`. The first assignment is active immediately.
    Replacing an existing account waits `ACCOUNT_CHANGE_DELAY`, can be cancelled,
    and then requires `activatePendingAccountChange(tenantId)`.
+   The registry owner action must come from the Safe. Do not run assignment or
+   activation from the deployer key.
 7. **Session keys.** For new customer accounts, pass the first session keys in
    the `BrainSmartAccount` constructor. Those keys are active immediately and
    this path exists only at creation. There is no initializer to call later. For

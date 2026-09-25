@@ -9,11 +9,13 @@ contract DeployTenantAccountRegistry is Script {
     uint256 internal constant BASE_SEPOLIA_CHAIN_ID = 84_532;
 
     error WrongChain(uint256 chainId);
+    error RegistryOwnerMustBeContract(address owner);
 
     function run() external {
         if (block.chainid != BASE_SEPOLIA_CHAIN_ID) revert WrongChain(block.chainid);
 
         address owner = vm.envAddress("TENANT_ACCOUNT_REGISTRY_OWNER");
+        if (owner.code.length == 0) revert RegistryOwnerMustBeContract(owner);
 
         vm.startBroadcast();
         BrainTenantAccountRegistry registry = new BrainTenantAccountRegistry(owner);

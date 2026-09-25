@@ -32,6 +32,18 @@ contract DeployScriptsTest is Test {
         script.run();
     }
 
+    function test_deployTenantAccountRegistry_rejectsEoaOwner() public {
+        vm.chainId(84_532);
+        address eoaOwner = address(0xA11CE);
+        vm.setEnv("TENANT_ACCOUNT_REGISTRY_OWNER", vm.toString(eoaOwner));
+        DeployTenantAccountRegistry script = new DeployTenantAccountRegistry();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployTenantAccountRegistry.RegistryOwnerMustBeContract.selector, eoaOwner)
+        );
+        script.run();
+    }
+
     function test_grantSessionKeyPaymentSelectorsExcludeApprove() public {
         GrantSessionKey script = new GrantSessionKey();
         bytes4[] memory selectors = script.paymentSelectors();

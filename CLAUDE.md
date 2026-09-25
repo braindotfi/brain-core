@@ -64,8 +64,12 @@ initial session keys are the only immediate new-holder path, so new customers
 can start without waiting 24 hours. There is no callable initializer after
 deployment. Tenant account replacement is controlled by
 `BrainTenantAccountRegistry`: first assignment is instant, replacement waits 24
-hours, and backend dispatch must verify registry account codehash and tenantId
-before use.
+hours, and backend dispatch must verify registry account codehash, tenantId,
+owner, and policyRegistry before use. Production registry ownership must be a
+Safe multisig configured as 2 of 3, separate from the deployer key and from
+tenant owner keys. Production smart-account rails must use
+`BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and `BRAIN_SMART_ACCOUNT_CODEHASH`;
+`BRAIN_ONCHAIN_SMART_ACCOUNT` is local and test fallback only.
 
 Historical branch context: `feature/members-approval-attribution`. Members,
 approval authority, and actor attribution are moving into core as the normative

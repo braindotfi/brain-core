@@ -73,6 +73,19 @@ contract BrainTenantAccountRegistryTest is Test {
         registry.activatePendingAccountChange(TENANT);
     }
 
+    function test_ownerCannotSkipReplacementDelay() public {
+        BrainSmartAccount accountA = _account(TENANT);
+        BrainSmartAccount accountB = _account(TENANT);
+        vm.startPrank(owner);
+        registry.assignAccount(TENANT, address(accountA));
+        registry.assignAccount(TENANT, address(accountB));
+        vm.expectRevert();
+        registry.activatePendingAccountChange(TENANT);
+        vm.stopPrank();
+
+        assertEq(registry.accountOf(TENANT), address(accountA));
+    }
+
     function test_cancelPendingReplacement() public {
         BrainSmartAccount accountA = _account(TENANT);
         BrainSmartAccount accountB = _account(TENANT);

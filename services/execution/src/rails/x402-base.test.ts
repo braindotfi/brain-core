@@ -61,6 +61,7 @@ describe("X402BaseRail.dispatch", () => {
       pay_to: PAY_TO,
     });
     // idempotency key is threaded to the client (exactly-once settle).
+    expect(calls[0]!.tenantId).toBe("tnt_1");
     expect(calls[0]!.idempotencyKey).toBe("pi:pi_1:dec_1");
   });
 

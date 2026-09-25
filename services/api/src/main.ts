@@ -240,6 +240,7 @@ import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
 import {
   buildTenantAwareOnchainParamsResolver,
+  buildTenantOnchainAccountRecordResolver,
   buildTenantSmartAccountResolver,
 } from "./rails/tenantAccountRegistry.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
@@ -355,6 +356,7 @@ import {
 import {
   assertAtLeastOneLiveRailInProduction,
   assertEscrowRailHasStateLoader,
+  assertSmartAccountRegistryForProduction,
 } from "./composition/rails-prod-fence.js";
 import { closeAllPools } from "./composition/close-pools.js";
 import { runShutdown } from "./composition/shutdown.js";
@@ -1032,17 +1034,40 @@ async function main(): Promise<void> {
   // resolveOnchainTransferParams so it is unit-testable independent of boot.
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
+  const smartAccountRailConfigured = sessionKey !== undefined && onchainRpcUrl !== undefined;
+  const tenantRegistryAddress = onchainCfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS;
+  const smartAccountCodehash = onchainCfg.BRAIN_SMART_ACCOUNT_CODEHASH;
+  const tenantRegistryConfigured =
+    tenantRegistryAddress !== undefined &&
+    smartAccountCodehash !== undefined &&
+    onchainRpcUrl !== undefined;
+  assertSmartAccountRegistryForProduction({
+    nodeEnv: cfg.NODE_ENV,
+    smartAccountRailConfigured,
+    hasTenantAccountRegistry: tenantRegistryConfigured,
+    missingEnv: [
+      tenantRegistryAddress === undefined ? "BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS" : null,
+      smartAccountCodehash === undefined ? "BRAIN_SMART_ACCOUNT_CODEHASH" : null,
+    ].filter((name): name is string => name !== null),
+  });
   const tenantSmartAccountResolver =
-    onchainCfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS !== undefined &&
-    onchainCfg.BRAIN_SMART_ACCOUNT_CODEHASH !== undefined &&
+    tenantRegistryAddress !== undefined &&
+    smartAccountCodehash !== undefined &&
     onchainRpcUrl !== undefined
       ? buildTenantSmartAccountResolver({
-          registryAddress: onchainCfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS,
-          expectedCodehash: onchainCfg.BRAIN_SMART_ACCOUNT_CODEHASH,
+          registryAddress: tenantRegistryAddress,
+          expectedCodehash: smartAccountCodehash,
           rpcUrl: onchainRpcUrl,
           chainId: cfg.BRAIN_BASE_CHAIN_ID,
+          resolveExpectedAccount: buildTenantOnchainAccountRecordResolver(pool),
         })
       : undefined;
+  const fallbackSmartAccount = cfg.NODE_ENV === "production" ? undefined : smartAccount;
+  const dispatchSmartAccountResolver =
+    tenantSmartAccountResolver ??
+    (fallbackSmartAccount !== undefined
+      ? { resolve: async (): Promise<string> => fallbackSmartAccount }
+      : undefined);
   // F3: token transfers need real ERC-20 calldata. USDC is the only token
   // contract this deployment has an address for (BRAIN_X402_USDC_ADDRESS);
   // any other currency has no known contract, so resolveOnchainTransferParams
@@ -1065,11 +1090,11 @@ async function main(): Promise<void> {
       ) => Promise<OnchainDispatchParams | null>)
     | undefined =
     sessionKey !== undefined &&
-    (tenantSmartAccountResolver !== undefined || smartAccount !== undefined)
+    (tenantSmartAccountResolver !== undefined || fallbackSmartAccount !== undefined)
       ? buildTenantAwareOnchainParamsResolver({
           sessionKey: sessionKey as `0x${string}`,
           ...(tenantSmartAccountResolver !== undefined ? { tenantSmartAccountResolver } : {}),
-          ...(smartAccount !== undefined ? { fallbackSmartAccount: smartAccount } : {}),
+          ...(fallbackSmartAccount !== undefined ? { fallbackSmartAccount } : {}),
           policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
           ...(cfg.BRAIN_X402_USDC_ADDRESS !== undefined
             ? { usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS }
@@ -1255,7 +1280,7 @@ async function main(): Promise<void> {
       // (the same executor + smart account OnchainBaseRail/EscrowBaseRail
       // use), so it needs the same on-chain executor and smart-account
       // configuration those rails require.
-      cfg.BRAIN_ONCHAIN_SMART_ACCOUNT !== undefined &&
+      dispatchSmartAccountResolver !== undefined &&
       onchainExecutor !== undefined
     ) {
       const x402Client = buildX402Client({
@@ -1263,7 +1288,7 @@ async function main(): Promise<void> {
         usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
         network: cfg.BRAIN_X402_NETWORK,
         executor: onchainExecutor,
-        smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
+        resolveSmartAccount: (tenantId) => dispatchSmartAccountResolver.resolve(tenantId),
         holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
         getUsdcDecimals: makeBaseGetErc20Decimals(onchainRpcUrl, cfg.BRAIN_BASE_CHAIN_ID),
       });
@@ -1275,14 +1300,14 @@ async function main(): Promise<void> {
       cfg.BRAIN_ESCROW_ADDRESS !== undefined &&
       onchainExecutor !== undefined &&
       cfg.BRAIN_SESSION_KEY !== undefined &&
-      cfg.BRAIN_ONCHAIN_SMART_ACCOUNT !== undefined
+      dispatchSmartAccountResolver !== undefined
     ) {
       configured.push(
         new EscrowBaseRail({
           executor: onchainExecutor,
           escrowAddress: cfg.BRAIN_ESCROW_ADDRESS,
           holderAddress: getHolderAddress(cfg.BRAIN_SESSION_KEY as `0x${string}`),
-          smartAccount: cfg.BRAIN_ONCHAIN_SMART_ACCOUNT,
+          resolveSmartAccount: (tenantId) => dispatchSmartAccountResolver.resolve(tenantId),
         }),
       );
       liveNames.push("escrow_base");

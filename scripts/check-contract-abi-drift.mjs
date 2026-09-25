@@ -20,6 +20,7 @@
  *   TENANT_ACCOUNT_REGISTRY_ABI -> BrainTenantAccountRegistry
  *   REPUTATION_ABI           -> BrainReputationRegistry
  *   BRAIN_SMART_ACCOUNT_ABI  -> BrainSmartAccount
+ *   BRAIN_SMART_ACCOUNT_AUTHORITY_ABI -> BrainSmartAccount
  *
  * To add a new mapping, extend `KNOWN_VARS` below. Anything else is silently
  * ignored (so USDC_ABI etc. stay out of scope without the guard tripping).
@@ -63,6 +64,7 @@ const KNOWN_VARS = {
   TENANT_ACCOUNT_REGISTRY_ABI: "BrainTenantAccountRegistry",
   REPUTATION_ABI: "BrainReputationRegistry",
   BRAIN_SMART_ACCOUNT_ABI: "BrainSmartAccount",
+  BRAIN_SMART_ACCOUNT_AUTHORITY_ABI: "BrainSmartAccount",
 };
 
 /**

@@ -157,14 +157,22 @@ separate avoids mixing policy-version quorum state with deployment routing state
 - A replacement cannot activate before its executable timestamp.
 - Every assigned account must report the same `tenantId()` as the registry key.
 - Only the registry owner can assign, cancel, activate, or rotate ownership.
+- The registry owner for production must be a Safe multisig configured as 2 of 3. It must be separate from the deployer key and from tenant owner keys. The
+  deploy script rejects an EOA registry owner so production deploys cannot set a
+  single externally owned account as registry owner.
+- Backend dispatch must resolve tenant accounts through this registry and verify
+  the account codehash, `tenantId()`, `owner()`, and `policyRegistry()` against
+  the tenant onboarding record before any smart-account rail can use it.
 
 **Hardening:** delayed account replacement closes the system-level bypass where a
 new BrainSmartAccount could be deployed with broad constructor keys and then
-substituted as the tenant account.
+substituted as the tenant account. The Safe owner rule limits who can make a
+first assignment or schedule a replacement.
 
 **Coverage:** unit tests cover instant first assignment, delayed replacement,
 early activation rejection, activation replay rejection, cancellation, owner-only
-operations, and tenant mismatch rejection.
+operations, tenant mismatch rejection, owner inability to skip the delay, and
+deployment rejection for an EOA registry owner.
 
 ## BrainSmartAccount (769 LoC)
 

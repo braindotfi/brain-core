@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertAtLeastOneLiveRailInProduction,
   assertEscrowRailHasStateLoader,
+  assertSmartAccountRegistryForProduction,
 } from "./rails-prod-fence.js";
 
 describe("assertAtLeastOneLiveRailInProduction", () => {
@@ -95,5 +96,51 @@ describe("assertEscrowRailHasStateLoader", () => {
         missingEnv: [],
       }),
     ).toThrow(/all of resolveEscrowState's required env appears set/);
+  });
+});
+
+describe("assertSmartAccountRegistryForProduction", () => {
+  it("throws in production when a smart-account rail is configured without registry env", () => {
+    expect(() =>
+      assertSmartAccountRegistryForProduction({
+        nodeEnv: "production",
+        smartAccountRailConfigured: true,
+        hasTenantAccountRegistry: false,
+        missingEnv: ["BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS"],
+      }),
+    ).toThrow(/Missing: BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS/);
+  });
+
+  it("is silent in production when the registry env is complete", () => {
+    expect(() =>
+      assertSmartAccountRegistryForProduction({
+        nodeEnv: "production",
+        smartAccountRailConfigured: true,
+        hasTenantAccountRegistry: true,
+        missingEnv: [],
+      }),
+    ).not.toThrow();
+  });
+
+  it("keeps the legacy fallback available outside production", () => {
+    expect(() =>
+      assertSmartAccountRegistryForProduction({
+        nodeEnv: "test",
+        smartAccountRailConfigured: true,
+        hasTenantAccountRegistry: false,
+        missingEnv: ["BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS"],
+      }),
+    ).not.toThrow();
+  });
+
+  it("is silent in production when no smart-account rail is configured", () => {
+    expect(() =>
+      assertSmartAccountRegistryForProduction({
+        nodeEnv: "production",
+        smartAccountRailConfigured: false,
+        hasTenantAccountRegistry: false,
+        missingEnv: ["BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS"],
+      }),
+    ).not.toThrow();
   });
 });
