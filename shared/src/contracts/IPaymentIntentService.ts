@@ -28,6 +28,7 @@ export type PaymentIntentActionType =
   | "onchain_transfer"
   | "erp_writeback"
   | "card_payment"
+  | "exchange"
   // x402 USDC-on-Base settlement (RFC 0001 §7.1). Shadow-gated end-to-end.
   | "x402_settle"
   // Release of an on-chain BrainEscrow lock (RFC 0001 §7.6). Shadow-gated.

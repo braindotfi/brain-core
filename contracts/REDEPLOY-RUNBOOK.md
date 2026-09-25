@@ -36,15 +36,15 @@ demo policy digest registered before account construction.
 
 ## Deploy order
 
-| Order | Contract                  | Constructor arg                          | Depends on                 |
-| ----- | ------------------------- | ---------------------------------------- | -------------------------- |
-| 1     | `BrainPolicyRegistry`     | `admin` (bootstrap admin, now rotatable) | none                       |
-| 2     | `BrainMCPAgentRegistry`   | `admin`                                  | none                       |
-| 3     | `BrainAuditAnchor`        | `publisher` (Safe multi-sig in prod)     | none                       |
-| 4     | `BrainReputationRegistry` | `attestor`                               | none                       |
-| 5     | `BrainEscrow`             | `arbiter`                                | none                       |
-| 6     | `BrainSmartAccount`       | `owner`, `tenantId`, `policyRegistry`, `initialSessionKeys` | 1, and a registered policy |
-| 7     | `BrainTenantAccountRegistry` | `owner`                                  | none                       |
+| Order | Contract                     | Constructor arg                                             | Depends on                 |
+| ----- | ---------------------------- | ----------------------------------------------------------- | -------------------------- |
+| 1     | `BrainPolicyRegistry`        | `admin` (bootstrap admin, now rotatable)                    | none                       |
+| 2     | `BrainMCPAgentRegistry`      | `admin`                                                     | none                       |
+| 3     | `BrainAuditAnchor`           | `publisher` (Safe multi-sig in prod)                        | none                       |
+| 4     | `BrainReputationRegistry`    | `attestor`                                                  | none                       |
+| 5     | `BrainEscrow`                | `arbiter`                                                   | none                       |
+| 6     | `BrainSmartAccount`          | `owner`, `tenantId`, `policyRegistry`, `initialSessionKeys` | 1, and a registered policy |
+| 7     | `BrainTenantAccountRegistry` | `owner`                                                     | none                       |
 
 `BrainSignatureChecker` is a library with only `internal` functions, so it is
 inlined into both registries. There is nothing separate to deploy or link.

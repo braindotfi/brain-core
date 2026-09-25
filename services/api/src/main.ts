@@ -238,8 +238,10 @@ import {
 import type { ExecutionDeps, OnchainDispatchParams, OnchainExecutor, Rail } from "@brain/execution";
 import { buildPlaidTransferClient } from "./rails/plaidClient.js";
 import { buildOnchainExecutor, getHolderAddress } from "./rails/onchainExecutor.js";
-import { resolveOnchainTransferParams } from "./rails/onchainTransferParams.js";
-import { buildTenantSmartAccountResolver } from "./rails/tenantAccountRegistry.js";
+import {
+  buildTenantAwareOnchainParamsResolver,
+  buildTenantSmartAccountResolver,
+} from "./rails/tenantAccountRegistry.js";
 import { buildPolicyRegistrar } from "./policyRegistrar.js";
 import { buildX402Client } from "./rails/x402Client.js";
 import { anchorCycleReason } from "./anchor-cycle.js";
@@ -441,6 +443,10 @@ try {
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  const onchainCfg = cfg as typeof cfg & {
+    BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS?: string;
+    BRAIN_SMART_ACCOUNT_CODEHASH?: string;
+  };
 
   initTracing({
     otlpEndpoint: cfg.OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -1027,12 +1033,12 @@ async function main(): Promise<void> {
   const sessionKey = cfg.BRAIN_SESSION_KEY;
   const smartAccount = cfg.BRAIN_ONCHAIN_SMART_ACCOUNT;
   const tenantSmartAccountResolver =
-    cfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS !== undefined &&
-    cfg.BRAIN_SMART_ACCOUNT_CODEHASH !== undefined &&
+    onchainCfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS !== undefined &&
+    onchainCfg.BRAIN_SMART_ACCOUNT_CODEHASH !== undefined &&
     onchainRpcUrl !== undefined
       ? buildTenantSmartAccountResolver({
-          registryAddress: cfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS,
-          expectedCodehash: cfg.BRAIN_SMART_ACCOUNT_CODEHASH,
+          registryAddress: onchainCfg.BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS,
+          expectedCodehash: onchainCfg.BRAIN_SMART_ACCOUNT_CODEHASH,
           rpcUrl: onchainRpcUrl,
           chainId: cfg.BRAIN_BASE_CHAIN_ID,
         })
@@ -1058,26 +1064,21 @@ async function main(): Promise<void> {
         },
       ) => Promise<OnchainDispatchParams | null>)
     | undefined =
-    sessionKey !== undefined && (tenantSmartAccountResolver !== undefined || smartAccount !== undefined)
-      ? async (ctx, intent) => {
-          const cp = await ledgerService.findCounterpartyById(
-            ctx,
-            intent.destination_counterparty_id,
-          );
-          if (cp === null) return null;
-          const resolvedSmartAccount =
-            tenantSmartAccountResolver !== undefined
-              ? await tenantSmartAccountResolver.resolve(ctx.tenantId)
-              : smartAccount;
-          if (resolvedSmartAccount === undefined) return null;
-          return resolveOnchainTransferParams(cp, intent, {
-            smartAccount: resolvedSmartAccount,
-            holder: getHolderAddress(sessionKey as `0x${string}`),
-            policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
-            usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS,
-            getUsdcDecimals: getOnchainTransferTokenDecimals,
-          });
-        }
+    sessionKey !== undefined &&
+    (tenantSmartAccountResolver !== undefined || smartAccount !== undefined)
+      ? buildTenantAwareOnchainParamsResolver({
+          sessionKey: sessionKey as `0x${string}`,
+          ...(tenantSmartAccountResolver !== undefined ? { tenantSmartAccountResolver } : {}),
+          ...(smartAccount !== undefined ? { fallbackSmartAccount: smartAccount } : {}),
+          policyVersion: cfg.BRAIN_ONCHAIN_POLICY_VERSION,
+          ...(cfg.BRAIN_X402_USDC_ADDRESS !== undefined
+            ? { usdcAddress: cfg.BRAIN_X402_USDC_ADDRESS }
+            : {}),
+          ...(getOnchainTransferTokenDecimals !== undefined
+            ? { getUsdcDecimals: getOnchainTransferTokenDecimals }
+            : {}),
+          findCounterpartyById: (ctx, id) => ledgerService.findCounterpartyById(ctx, id),
+        })
       : undefined;
 
   // Resolve Plaid credentials at DISPATCH time (see the outbox worker wiring

@@ -17,6 +17,7 @@
  *
  *   ESCROW_ABI               -> BrainEscrow
  *   REGISTRY_ABI             -> BrainMCPAgentRegistry
+ *   TENANT_ACCOUNT_REGISTRY_ABI -> BrainTenantAccountRegistry
  *   REPUTATION_ABI           -> BrainReputationRegistry
  *   BRAIN_SMART_ACCOUNT_ABI  -> BrainSmartAccount
  *
@@ -59,6 +60,7 @@ const CONTRACTS_OUT = join(ROOT, "contracts", "out");
 const KNOWN_VARS = {
   ESCROW_ABI: "BrainEscrow",
   REGISTRY_ABI: "BrainMCPAgentRegistry",
+  TENANT_ACCOUNT_REGISTRY_ABI: "BrainTenantAccountRegistry",
   REPUTATION_ABI: "BrainReputationRegistry",
   BRAIN_SMART_ACCOUNT_ABI: "BrainSmartAccount",
 };
