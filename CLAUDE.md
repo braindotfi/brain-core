@@ -71,6 +71,10 @@ tenant owner keys. Production smart-account rails must use
 `BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and `BRAIN_SMART_ACCOUNT_CODEHASH`;
 `BRAIN_ONCHAIN_SMART_ACCOUNT` is local and test fallback only.
 
+Branch `wip/robotmoney-backend-unsaved` currently owns API migrations 0050
+through 0055. When that work is split into PRs, rebase or renumber those
+migrations against the then-current `origin/main` sequence before merge.
+
 Historical branch context: `feature/members-approval-attribution`. Members,
 approval authority, and actor attribution are moving into core as the normative
 money-path contract in `docs/contracts/members-attribution.md`.
