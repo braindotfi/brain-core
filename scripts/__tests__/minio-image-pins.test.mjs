@@ -37,6 +37,15 @@ test("CI mirror pins preserve upstream digests", () => {
   assert.equal(imageDigest(CI_CLIENT_IMAGE), imageDigest(UPSTREAM_CLIENT_IMAGE));
 });
 
+test("mirror workflow copies Docker Hub sources by digest", () => {
+  const workflow = readFileSync(".github/workflows/mirror-minio-ci-images.yml", "utf8");
+
+  assert.match(workflow, /SERVER_UPSTREAM: docker\.io\/minio\/minio@sha256:/);
+  assert.match(workflow, /CLIENT_UPSTREAM: docker\.io\/minio\/mc@sha256:/);
+  assert.match(workflow, /DOCKERHUB_USERNAME/);
+  assert.match(workflow, /DOCKERHUB_TOKEN/);
+});
+
 test("active MinIO operations do not reference archived Docker Hub images", () => {
   for (const path of [
     "docker-compose.prod.yml",

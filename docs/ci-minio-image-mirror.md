@@ -11,12 +11,13 @@ The CI defaults are:
 - Client: `ghcr.io/braindotfi/mirror-minio-mc:RELEASE.2024-10-08T09-37-26Z@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62`
 
 Run the manual `Mirror MinIO CI images` workflow after changing either pin.
-The workflow copies the upstream Quay image into GHCR with `skopeo copy
---preserve-digests` and verifies the manifest digest before exiting.
+The workflow copies the upstream Docker Hub image into GHCR with `skopeo copy
+--preserve-digests` and verifies the source and mirrored manifest digests
+before exiting.
 
-If Quay requires authentication during mirroring, set repository secrets
-`MINIO_QUAY_USERNAME` and `MINIO_QUAY_PASSWORD`. The normal pull path in CI does
-not need those Quay credentials.
+Docker Hub authentication is required during mirroring. Set repository secrets
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. The normal pull path in CI does not
+need those Docker Hub credentials.
 
 Production deploy compose files still use the existing Quay pins. This change is
 limited to the CI fixture that was failing before the test suite started.
