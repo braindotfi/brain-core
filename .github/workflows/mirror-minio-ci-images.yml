@@ -1,0 +1,64 @@
+name: Mirror MinIO CI images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      SERVER_UPSTREAM: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      SERVER_MIRROR_TAG: ghcr.io/braindotfi/mirror-minio:RELEASE.2025-09-07T16-13-09Z
+      SERVER_DIGEST: sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      CLIENT_UPSTREAM: quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62
+      CLIENT_MIRROR_TAG: ghcr.io/braindotfi/mirror-minio-mc:RELEASE.2024-10-08T09-37-26Z
+      CLIENT_DIGEST: sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62
+      QUAY_USERNAME: ${{ secrets.MINIO_QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.MINIO_QUAY_PASSWORD }}
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Login to Quay when credentials are available
+        run: |
+          if [ -n "$QUAY_USERNAME" ] && [ -n "$QUAY_PASSWORD" ]; then
+            echo "$QUAY_PASSWORD" | skopeo login quay.io \
+              --username "$QUAY_USERNAME" \
+              --password-stdin
+          fi
+
+      - name: Copy pinned images
+        run: |
+          skopeo copy --all --preserve-digests \
+            "docker://$SERVER_UPSTREAM" \
+            "docker://$SERVER_MIRROR_TAG"
+          skopeo copy --all --preserve-digests \
+            "docker://$CLIENT_UPSTREAM" \
+            "docker://$CLIENT_MIRROR_TAG"
+
+      - name: Verify mirrored digests
+        run: |
+          verify_digest() {
+            image="$1"
+            expected="$2"
+            actual="sha256:$(skopeo inspect --raw "docker://$image" | sha256sum | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "Digest mismatch for $image. Expected $expected but found $actual."
+              exit 1
+            fi
+          }
+
+          verify_digest "$SERVER_MIRROR_TAG" "$SERVER_DIGEST"
+          verify_digest "$CLIENT_MIRROR_TAG" "$CLIENT_DIGEST"
