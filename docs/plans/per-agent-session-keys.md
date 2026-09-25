@@ -176,6 +176,21 @@ per-payment child grants. For stable per-agent grants, reuse the cap-mode
 vocabulary and validation but keep the lifecycle in an agent session-key
 service.
 
+## Production Policy To Grant Builder
+
+PR B must add a production policy-to-grant builder. It must read the signed
+tenant policy, derive the exact BrainSmartAccount `SessionKey` shape, and reject
+any constructor key or post-creation grant that does not match policy exactly.
+
+Required checks:
+
+- The tenant policy is registered in BrainPolicyRegistry.
+- Mode, token, targets, selectors, recipients, caps, period, expiry, pin fields,
+  and policy version all match the signed tenant policy.
+- Constructor initial keys are not accepted from free-form script input.
+- Bootstrap caps and expiry are bounded by production onboarding policy.
+- Any mismatch fails closed before deployment or grant submission.
+
 ## Decision: No Short Lived Per Task Keys
 
 Use one pre-granted session key per tenant agent. Do not create short-lived
@@ -233,18 +248,13 @@ Recommended rule:
 The database should store scheduled grant changes separately from active holder
 metadata so pending increases cannot be confused with executable authority.
 
-## Open Decision: On Chain Delay for Increases
+## Approved Decision: On Chain Delay for Increases
 
-With no contract change, the 24-hour delay is enforced in the backend only. The
-activation service, rotation service, policy service, and dispatch path would
-refuse to submit or use a broader grant before the delay expires.
+PR A, `feat/smart-account-delayed-grants`, adds the 24-hour delay as an
+on-chain security control before the external audit. PR B must consume that
+contract flow rather than implementing a backend-only waiting period.
 
-The owner key can still call `grantSessionKey` directly and skip the backend
-delay. That is true today because BrainSmartAccount treats the owner as final
-authority. Backend policy can detect and alert on an unexpected on-chain grant,
-but it cannot prevent an owner transaction that bypasses the service.
-
-An on-chain delay would require BrainSmartAccount changes:
+The contract change adds:
 
 1. Add pending session-key grants or pending grant changes.
 2. Classify a grant as broader, equal, or stricter than the active grant.
@@ -254,8 +264,8 @@ An on-chain delay would require BrainSmartAccount changes:
 6. Add events and read methods so the backend can show pending increases.
 7. Update grant scripts, TypeScript callers, and contract tests.
 
-Estimated effort: 4 to 6 engineering days for the contract and callers, plus 2
-to 3 days for focused tests and runbook updates.
+Estimated effort for PR A remains 6 to 9 engineering days for the contract,
+callers, focused tests, and runbook updates.
 
 Main risks:
 
@@ -265,10 +275,9 @@ Main risks:
 - More contract surface area increases audit work.
 - Emergency access needs careful design so it cannot become a bypass.
 
-Recommendation: add the on-chain delay before the external audit if the product
-requires the 24-hour delay to be a hard security control. If the delay is an
-operator governance control, keep it backend-only for this phase and document
-that the owner key can bypass it.
+Approved recommendation: add the on-chain delay before the external audit
+because the product needs "raising a limit takes time" to be enforced by the
+contract, not only by backend services.
 
 ## Pause, Revoke, and Rotation
 
@@ -362,8 +371,11 @@ cannot be used with another tenant's smart account.
 
 ## Contract Impact
 
-No BrainSmartAccount change is required for one key per agent. The existing
-contract already has:
+PR B depends on the BrainSmartAccount and BrainTenantAccountRegistry changes in
+PR A. One key per agent uses the existing per-holder model, and broader
+post-creation grants must use the delayed-grant flow from PR A.
+
+The contract already has:
 
 - Per-holder session key storage.
 - Per-holder nonce.
@@ -372,9 +384,27 @@ contract already has:
 - Account-wide pause.
 - Policy version binding at grant time.
 
-Contract changes would be needed only if the team chooses central gas payment,
-meta-transactions, ERC-4337, batched grants, or on-chain agent ids. Those changes
-must be flagged for external audit before mainnet.
+Further contract changes would be needed only if the team chooses central gas
+payment, meta-transactions, ERC-4337, batched grants, or on-chain agent ids.
+Those changes must be flagged for external audit before mainnet.
+
+## Registry Monitoring And Emergency Cancel
+
+PR B must add monitoring for BrainTenantAccountRegistry events. The monitor
+should alert on first assignment, scheduled replacement, cancelled replacement,
+activated replacement, owner transfer, and any account whose codehash, tenant id,
+owner, or policy registry does not match the tenant onboarding record.
+
+Emergency cancel runbook:
+
+1. Detect an unexpected pending replacement event.
+2. Verify the tenant, current account, pending account, executable timestamp,
+   transaction hash, caller, and registry owner Safe transaction.
+3. Submit `cancelPendingAccountChange(tenantId)` through the registry owner Safe.
+4. Confirm the pending replacement is cleared on-chain.
+5. Keep all smart-account rails fail-closed for the tenant until the resolver
+   verifies the active account again.
+6. Record a critical audit event with the detected event and cancel transaction.
 
 ## Tests Needed
 
@@ -448,16 +478,19 @@ Done:
 - Current shared-key architecture audited at a planning level.
 - Existing BrainSmartAccount holder model confirmed to support per-agent keys.
 - Existing per-task session-key helper assessed for reuse.
-- No contract change recommended for the base feature.
+- On-chain delayed grants approved for PR A before PR B implementation.
 
 Pending:
 
+- Wait for PR A delayed-grant and tenant-account-registry changes to merge.
 - Implement Azure Key Vault signing adapter.
 - Add per-agent session-key metadata table.
+- Add production policy-to-grant builder from signed tenant policy.
 - Add activation grant service.
 - Add pause, revoke, rotate, and tenant deletion flows.
 - Add owner-key custody migration checks.
 - Add delayed privilege increase scheduling.
+- Add registry event monitoring and emergency cancel runbook.
 - Route on-chain dispatch by tenant id and agent id.
 - Add gas top-up and sweep operations.
 - Add migration feature flag.
