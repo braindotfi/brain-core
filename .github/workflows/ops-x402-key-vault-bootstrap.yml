@@ -173,7 +173,7 @@ jobs:
           test "${actual_subscription,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
           test "${TF_VAR_subscription_id,,}" = "${EXPECTED_SUBSCRIPTION_ID,,}"
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.13.2
           terraform_wrapper: false
