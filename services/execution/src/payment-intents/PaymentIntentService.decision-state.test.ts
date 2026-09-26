@@ -120,6 +120,8 @@ function paymentIntentRow(): PaymentIntentRow {
     currency: "USD",
     obligation_id: null,
     invoice_id: null,
+    rate_lock_reference: null,
+    destination_currency: null,
     status: "pending_approval",
     policy_decision_id: newPolicyDecisionId(),
     approval_ids: [],

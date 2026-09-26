@@ -89,7 +89,7 @@ export interface EscrowBaseRailDeps {
   /** 0x 20-byte holder (session-key) address — used for nonce-reading. */
   holderAddress: string;
   /**
-   * 0x 20-byte BrainSmartAccount address.
+   * Resolves the tenant's verified BrainSmartAccount address.
    *
    * The release IS routed through `BrainSmartAccount.executeViaSessionKey`, so
    * `msg.sender` at BrainEscrow is the SMART ACCOUNT, not the session-key EOA.
@@ -104,7 +104,7 @@ export interface EscrowBaseRailDeps {
    * key's caps. In NATIVE mode it would be metered against msg.value, which is
    * always zero here.
    */
-  smartAccount: string;
+  resolveSmartAccount: (tenantId: string) => Promise<string>;
 }
 
 export class EscrowBaseRail implements Rail {
@@ -112,30 +112,31 @@ export class EscrowBaseRail implements Rail {
   private readonly executor: OnchainExecutor;
   private readonly escrowAddress: string;
   private readonly holderAddress: string;
-  private readonly smartAccount: string;
+  private readonly resolveSmartAccount: (tenantId: string) => Promise<string>;
 
   public constructor(deps: EscrowBaseRailDeps) {
     this.executor = deps.executor;
     this.escrowAddress = deps.escrowAddress;
     this.holderAddress = deps.holderAddress;
-    this.smartAccount = deps.smartAccount;
+    this.resolveSmartAccount = deps.resolveSmartAccount;
   }
 
   public async dispatch(input: RailDispatchInput): Promise<RailDispatchResult> {
     const action = parseEscrowAction(input.action);
     const data = encodeRelease(action.escrow_id, action.amount_units);
+    const smartAccount = await this.resolveSmartAccount(input.tenantId);
 
     // Route the release through BrainSmartAccount.executeViaSessionKey so the
     // session-key authorization chain is maintained: SmartAccount → BrainEscrow.
     const nonce = await this.executor.readNonce({
-      smartAccount: this.smartAccount,
+      smartAccount,
       holder: this.holderAddress,
     });
 
     let txHash: string;
     try {
       const result = await this.executor.execute({
-        smartAccount: this.smartAccount,
+        smartAccount,
         holder: this.holderAddress,
         nonce,
         target: this.escrowAddress,

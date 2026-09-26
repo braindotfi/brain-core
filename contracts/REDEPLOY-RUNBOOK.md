@@ -1,7 +1,7 @@
 # Contracts redeploy runbook (audit remediation)
 
 Every contract in `contracts/src` changed. Contracts are immutable, so this is a
-**redeploy plus re-registration**, not an upgrade. All six are currently live on
+**redeploy plus re-registration**, not an upgrade. The existing contracts are currently live on
 Base Sepolia and referenced from `.env`, so the old addresses keep working until
 you cut over; nothing here is destructive to existing state.
 
@@ -19,25 +19,32 @@ So the order is forced:
 
 1. `BrainPolicyRegistry`
 2. bootstrap a tenant signer, then `registerPolicy` for each tenant
-3. `BrainSmartAccount` (constructed with that registry address)
-4. `grantSessionKey`
+3. `BrainSmartAccount` (constructed with that registry address and any initial
+   session keys)
+4. `BrainTenantAccountRegistry`
+5. `assignAccount` in `BrainTenantAccountRegistry`
+6. `grantSessionKey` for keys added after creation
 
 Deploying the account first, or against a registry with no policy registered for
 its tenant, leaves an account that cannot grant any session key.
 
-`script/DeployOnchainDemo.s.sol` already does all four steps in one broadcast and
-is the reference for the sequence.
+`script/DeployOnchainDemo.s.sol` registers the policy, then constructs the
+account with an initial key so the demo holder is active immediately. The
+initial key uses script constants for mode, caps, expiry, and policyVersion.
+Only the recipient comes from the environment. Those constants mirror the signed
+demo policy digest registered before account construction.
 
 ## Deploy order
 
-| Order | Contract                  | Constructor arg                          | Depends on                 |
-| ----- | ------------------------- | ---------------------------------------- | -------------------------- |
-| 1     | `BrainPolicyRegistry`     | `admin` (bootstrap admin, now rotatable) | none                       |
-| 2     | `BrainMCPAgentRegistry`   | `admin`                                  | none                       |
-| 3     | `BrainAuditAnchor`        | `publisher` (Safe multi-sig in prod)     | none                       |
-| 4     | `BrainReputationRegistry` | `attestor`                               | none                       |
-| 5     | `BrainEscrow`             | `arbiter`                                | none                       |
-| 6     | `BrainSmartAccount`       | `owner`, `tenantId`, `policyRegistry`    | 1, and a registered policy |
+| Order | Contract                     | Constructor arg                                             | Depends on                 |
+| ----- | ---------------------------- | ----------------------------------------------------------- | -------------------------- |
+| 1     | `BrainPolicyRegistry`        | `admin` (bootstrap admin, now rotatable)                    | none                       |
+| 2     | `BrainMCPAgentRegistry`      | `admin`                                                     | none                       |
+| 3     | `BrainAuditAnchor`           | `publisher` (Safe multi-sig in prod)                        | none                       |
+| 4     | `BrainReputationRegistry`    | `attestor`                                                  | none                       |
+| 5     | `BrainEscrow`                | `arbiter`                                                   | none                       |
+| 6     | `BrainSmartAccount`          | `owner`, `tenantId`, `policyRegistry`, `initialSessionKeys` | 1, and a registered policy |
+| 7     | `BrainTenantAccountRegistry` | `owner`                                                     | none                       |
 
 `BrainSignatureChecker` is a library with only `internal` functions, so it is
 inlined into both registries. There is nothing separate to deploy or link.
@@ -54,7 +61,21 @@ AUDIT_ANCHOR_ADDRESS
 BRAIN_REPUTATION_REGISTRY_ADDRESS
 BRAIN_ESCROW_ADDRESS
 BRAIN_ONCHAIN_SMART_ACCOUNT
+BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS
+BRAIN_SMART_ACCOUNT_CODEHASH
 ```
+
+`BRAIN_ONCHAIN_SMART_ACCOUNT` remains a local and test compatibility fallback.
+Production on-chain dispatch must resolve the tenant account from
+`BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and verify `BRAIN_SMART_ACCOUNT_CODEHASH`,
+`tenantId()`, `owner()`, and `policyRegistry()` before use. Store the expected
+owner and policy registry in the tenant onboarding record before enabling
+smart-account rails for that tenant.
+
+The production `BrainTenantAccountRegistry` owner must be a Safe multisig
+configured as 2 of 3. It must be separate from the deployer key and from tenant
+owner keys. `DeployTenantAccountRegistry.s.sol` refuses an EOA owner, so set
+`TENANT_ACCOUNT_REGISTRY_OWNER` to the deployed Safe address before broadcast.
 
 `BRAIN_X402_USDC_ADDRESS` is now required for gate check 6.6 to run at all. The
 escrow resolver is wired only when BOTH `BRAIN_ESCROW_ADDRESS` and
@@ -83,9 +104,28 @@ Storage does not carry across a redeploy. For each tenant, in order:
    `scripts/ops/register-prod-agent.ts` (dry-run by default, `--broadcast` to
    send). Its ABI and call site are already updated for the new `authSigner`
    parameter.
-6. **Session keys.** `GrantSessionKey.s.sol` (ERC20) or
+6. **Tenant account registry.** Assign the tenant's BrainSmartAccount in
+   `BrainTenantAccountRegistry`. The first assignment is active immediately.
+   Replacing an existing account waits `ACCOUNT_CHANGE_DELAY`, can be cancelled,
+   and then requires `activatePendingAccountChange(tenantId)`.
+   The registry owner action must come from the Safe. Do not run assignment or
+   activation from the deployer key.
+7. **Session keys.** For new customer accounts, pass the first session keys in
+   the `BrainSmartAccount` constructor. Those keys are active immediately and
+   this path exists only at creation. There is no initializer to call later. For
+   deployed accounts, use `GrantSessionKey.s.sol` (ERC20) or
    `GrantSessionKeyNative.s.sol` (NATIVE). Note the ERC20 script now takes a
-   fourth argument, the allowed recipient.
+   fourth argument, the allowed recipient. A new or broader holder grant is
+   scheduled, not active. Wait `GRANT_INCREASE_DELAY`, then call
+   `ActivateSessionKeyGrant.s.sol` or call
+   `activatePendingSessionKeyGrant(holder)` from the owner key. Stricter or
+   equal grants activate immediately. `cancelPendingSessionKeyGrant(holder)`
+   cancels a pending broader grant.
+
+Bootstrap limits for constructor keys are policy-derived. The deployment path
+uses fixed allowed mode, max caps, max expiry, period, and policyVersion constants
+that match the registered tenant policy digest. Do not accept constructor key
+mode, caps, expiry, or policyVersion from free-form script input.
 
 ### Signature-shape changes to expect
 
@@ -117,6 +157,18 @@ which was impossible before.
 ## Session-key cap mode: pick the right one
 
 Granting the wrong mode is the easiest way to ship an unmetered key.
+
+Broader grants are now delayed on-chain. The contract treats these as broader:
+new holders, raised `maxPerTx`, raised `maxPerPeriod`, extended `validUntil`,
+earlier `validAfter`, new targets, new selectors, new ERC20 recipients, shorter
+period windows, removed pinning, changed policy version, changed cap token, or
+changed cap mode. Lower caps, removed allowlist entries, later `validAfter`, and
+added pinning can activate immediately when every other field is equal or
+stricter.
+
+Pause, account-wide pause, revoke, and pending-grant cancel remain immediate
+owner actions. `revokeSessionKey(holder)` also clears any pending broader grant
+for that holder.
 
 | Use case                | Mode     | `capAmountOffset`            | Notes                                                                                            |
 | ----------------------- | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |

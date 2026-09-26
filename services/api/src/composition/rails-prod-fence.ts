@@ -35,6 +35,13 @@ export interface EscrowRailLoaderFenceInput {
   missingEnv: readonly string[];
 }
 
+export interface SmartAccountRegistryFenceInput {
+  nodeEnv: string | undefined;
+  smartAccountRailConfigured: boolean;
+  hasTenantAccountRegistry: boolean;
+  missingEnv: readonly string[];
+}
+
 /**
  * Throws when production booted with zero live rails. No-op otherwise — the
  * caller still emits its own info/warn log.
@@ -45,11 +52,27 @@ export function assertAtLeastOneLiveRailInProduction(input: RailsProdFenceInput)
   throw new Error(
     "No live payment rails configured in NODE_ENV=production. At least one of " +
       "PLAID_CLIENT_ID+PLAID_SECRET (bank_ach), BRAIN_SESSION_KEY+BASE_RPC_URL " +
+      "+BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS+BRAIN_SMART_ACCOUNT_CODEHASH " +
       "(onchain_base), BRAIN_X402_FACILITATOR_URL+BRAIN_X402_USDC_ADDRESS " +
-      "(x402_base), or BRAIN_ESCROW_ADDRESS+BRAIN_ONCHAIN_SMART_ACCOUNT " +
+      "+BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS+BRAIN_SMART_ACCOUNT_CODEHASH " +
+      "(x402_base), or BRAIN_ESCROW_ADDRESS+BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS " +
+      "+BRAIN_SMART_ACCOUNT_CODEHASH " +
       "(escrow_base) must be set. The dev-stub fallback fails closed at " +
       "dispatch but lets the api boot; refusing to start so the orchestrator " +
       "surfaces the misconfiguration as CrashLoopBackoff.",
+  );
+}
+
+export function assertSmartAccountRegistryForProduction(
+  input: SmartAccountRegistryFenceInput,
+): void {
+  if (input.nodeEnv !== "production") return;
+  if (!input.smartAccountRailConfigured) return;
+  if (input.hasTenantAccountRegistry) return;
+  const missing = input.missingEnv.length > 0 ? ` Missing: ${input.missingEnv.join(", ")}.` : "";
+  throw new Error(
+    "Smart-account rails require BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS and " +
+      `BRAIN_SMART_ACCOUNT_CODEHASH in NODE_ENV=production.${missing}`,
   );
 }
 

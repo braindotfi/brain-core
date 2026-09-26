@@ -57,9 +57,27 @@ fail the build if anything under packages/surfaces imports @brain/core.
 
 ## Branch
 
-`feature/members-approval-attribution`. Branch from latest `origin/main`.
-Members, approval authority, and actor attribution are moving into core as the
-normative money-path contract in `docs/contracts/members-attribution.md`.
+Current contract branch: `feat/smart-account-delayed-grants`. Branch from
+latest `origin/main`. This branch adds on-chain delayed activation for broader
+BrainSmartAccount session-key grants before the external audit. Constructor
+initial session keys are the only immediate new-holder path, so new customers
+can start without waiting 24 hours. There is no callable initializer after
+deployment. Tenant account replacement is controlled by
+`BrainTenantAccountRegistry`: first assignment is instant, replacement waits 24
+hours, and backend dispatch must verify registry account codehash, tenantId,
+owner, and policyRegistry before use. Production registry ownership must be a
+Safe multisig configured as 2 of 3, separate from the deployer key and from
+tenant owner keys. Production smart-account rails must use
+`BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS` and `BRAIN_SMART_ACCOUNT_CODEHASH`;
+`BRAIN_ONCHAIN_SMART_ACCOUNT` is local and test fallback only.
+
+Branch `wip/robotmoney-backend-unsaved` currently owns API migrations 0050
+through 0055. When that work is split into PRs, rebase or renumber those
+migrations against the then-current `origin/main` sequence before merge.
+
+Historical branch context: `feature/members-approval-attribution`. Members,
+approval authority, and actor attribution are moving into core as the normative
+money-path contract in `docs/contracts/members-attribution.md`.
 
 ## Commands (from root)
 

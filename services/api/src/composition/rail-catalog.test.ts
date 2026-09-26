@@ -114,6 +114,8 @@ describe("computeRailPostures", () => {
       BRAIN_X402_USDC_ADDRESS: "0x" + "ab".repeat(20),
       BRAIN_SESSION_KEY: "0x" + "cd".repeat(32),
       BASE_RPC_URL: "https://rpc.test",
+      BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS: "0x" + "ef".repeat(20),
+      BRAIN_SMART_ACCOUNT_CODEHASH: "0x" + "12".repeat(32),
     });
     const x402 = computeRailPostures(RAIL_CATALOG, c, setOf()).find((p) => p.name === "x402_base")!;
     expect(x402.requiredEnvPresent).toBe(true);

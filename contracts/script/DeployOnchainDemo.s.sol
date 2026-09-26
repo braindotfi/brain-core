@@ -20,12 +20,12 @@ import {BrainPolicyRegistry} from "../src/BrainPolicyRegistry.sol";
 /// ONCHAIN_RECIPIENT == the EOA address for that key. The smart account
 /// will send ETH to itself, which is fine on testnet and avoids losing funds.
 ///
-/// Why a policy registry is deployed here: BrainSmartAccount.grantSessionKey now
-/// VERIFIES that a key's policyVersion is a policy hash the tenant actually
-/// registered. The registry address used to be passed as address(0) and never
-/// read, so the "policy-version binding" the architecture documents claim was an
-/// unread field. Deploy order is therefore registry first, policy registered,
-/// then the account.
+/// Why a policy registry is deployed here: BrainSmartAccount validates that a
+/// key's policyVersion is a policy hash the tenant actually registered. The
+/// registry address used to be passed as address(0) and never read, so the
+/// "policy-version binding" the architecture documents claim was an unread
+/// field. Deploy order is therefore registry first, policy registered, then the
+/// account with its initial key.
 ///
 /// After broadcast, copy the logged BRAIN_ONCHAIN_SMART_ACCOUNT and
 /// POLICY_REGISTRY_ADDRESS into brain-core/.env, then restart the API server.
@@ -37,6 +37,10 @@ contract DeployOnchainDemo is Script {
 
     /// @dev bytes32(uint256(1)) matches BRAIN_ONCHAIN_POLICY_VERSION=0x000...001.
     bytes32 private constant _DEMO_POLICY_HASH = bytes32(uint256(1));
+    uint256 private constant _MAX_BOOTSTRAP_VALIDITY = 30 days;
+    uint256 private constant _BOOTSTRAP_MAX_PER_TX = 0.05 ether;
+    uint256 private constant _BOOTSTRAP_MAX_PER_PERIOD = 0.5 ether;
+    uint256 private constant _BOOTSTRAP_PERIOD = 86_400;
 
     function _sign(uint256 pk, bytes32 domain, bytes32 structHash) private pure returns (bytes memory) {
         bytes32 digest = keccak256(abi.encodePacked(hex"1901", domain, structHash));
@@ -78,7 +82,7 @@ contract DeployOnchainDemo is Script {
         return BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 30 days,
+            validUntil: block.timestamp + _MAX_BOOTSTRAP_VALIDITY,
             allowedTargets: targets,
             allowedSelectors: new bytes4[](0),
             capMode: BrainSmartAccount.CapMode.NATIVE,
@@ -87,11 +91,19 @@ contract DeployOnchainDemo is Script {
             capAmountOffset: 0,
             pinOffset: 0,
             pinValue: bytes32(0),
-            maxPerTx: 0.05 ether,
-            maxPerPeriod: 0.5 ether,
-            periodSeconds: 86_400,
+            maxPerTx: _BOOTSTRAP_MAX_PER_TX,
+            maxPerPeriod: _BOOTSTRAP_MAX_PER_PERIOD,
+            periodSeconds: _BOOTSTRAP_PERIOD,
             policyVersion: _DEMO_POLICY_HASH
         });
+    }
+
+    function _validateBootstrapKey(BrainSmartAccount.SessionKey memory key) private view {
+        require(key.capMode == BrainSmartAccount.CapMode.NATIVE, "bootstrap mode not allowed");
+        require(key.maxPerTx <= _BOOTSTRAP_MAX_PER_TX, "bootstrap per tx too high");
+        require(key.maxPerPeriod <= _BOOTSTRAP_MAX_PER_PERIOD, "bootstrap period cap too high");
+        require(key.validUntil <= block.timestamp + _MAX_BOOTSTRAP_VALIDITY, "bootstrap expiry too long");
+        require(key.policyVersion == _DEMO_POLICY_HASH, "bootstrap policy mismatch");
     }
 
     function run() external {
@@ -103,8 +115,10 @@ contract DeployOnchainDemo is Script {
         vm.startBroadcast(deployerKey);
 
         BrainPolicyRegistry registry = _deployRegistry(deployerKey, deployer, tenantIdHash);
-        BrainSmartAccount account = new BrainSmartAccount(deployer, tenantIdHash, address(registry));
-        account.grantSessionKey(_nativeKey(deployer, recipient));
+        BrainSmartAccount.SessionKey[] memory initialKeys = new BrainSmartAccount.SessionKey[](1);
+        initialKeys[0] = _nativeKey(deployer, recipient);
+        _validateBootstrapKey(initialKeys[0]);
+        BrainSmartAccount account = new BrainSmartAccount(deployer, tenantIdHash, address(registry), initialKeys);
 
         // Fund the smart account so it can forward value to the target.
         payable(address(account)).transfer(0.1 ether);

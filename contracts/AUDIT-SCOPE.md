@@ -142,7 +142,39 @@ On-chain registry of signed policy versions (content hash + EIP-712 attestation)
 **Coverage:** unit + fuzz per external function; invariant "registered versions
 carry a content hash matching the stored policy."
 
-## BrainSmartAccount (256 LoC)
+## BrainTenantAccountRegistry (137 LoC)
+
+Authoritative tenant to BrainSmartAccount binding. This is a separate contract
+rather than a BrainPolicyRegistry extension because account assignment has its
+own replacement delay, cancellation, and backend resolution semantics. Keeping it
+separate avoids mixing policy-version quorum state with deployment routing state.
+
+**Critical invariants:**
+
+- First account assignment for a tenant is immediate.
+- Replacing an existing tenant account is delayed by `ACCOUNT_CHANGE_DELAY`.
+- Pending account replacement can be cancelled before activation.
+- A replacement cannot activate before its executable timestamp.
+- Every assigned account must report the same `tenantId()` as the registry key.
+- Only the registry owner can assign, cancel, activate, or rotate ownership.
+- The registry owner for production must be a Safe multisig configured as 2 of 3. It must be separate from the deployer key and from tenant owner keys. The
+  deploy script rejects an EOA registry owner so production deploys cannot set a
+  single externally owned account as registry owner.
+- Backend dispatch must resolve tenant accounts through this registry and verify
+  the account codehash, `tenantId()`, `owner()`, and `policyRegistry()` against
+  the tenant onboarding record before any smart-account rail can use it.
+
+**Hardening:** delayed account replacement closes the system-level bypass where a
+new BrainSmartAccount could be deployed with broad constructor keys and then
+substituted as the tenant account. The Safe owner rule limits who can make a
+first assignment or schedule a replacement.
+
+**Coverage:** unit tests cover instant first assignment, delayed replacement,
+early activation rejection, activation replay rejection, cancellation, owner-only
+operations, tenant mismatch rejection, owner inability to skip the delay, and
+deployment rejection for an EOA registry owner.
+
+## BrainSmartAccount (769 LoC)
 
 Smart account with directly-called session keys; the payment agent executes
 on-chain via a session key under a deterministic gate. NOT ERC-4337: no
@@ -155,11 +187,27 @@ attack surface to audit.
   a replayed/stale nonce reverts.
 - **Re-entrancy:** the external call is guarded by a per-holder re-entrancy lock.
 - A revoked session key cannot execute.
+- A broader session-key grant cannot activate until `GRANT_INCREASE_DELAY`
+  elapses. This includes new holders, raised caps, extended expiry, added
+  targets, added selectors, added recipients, and shorter spend periods.
+- Session keys supplied to the constructor are creation-only and active
+  immediately. There is no post-deploy initializer to reuse this path. The
+  constructor enforces `MAX_INITIAL_KEYS` and rejects duplicate initial holders.
+- Stricter or equal grants can activate immediately.
+- Pause, pauseAll, revoke, and pending-grant cancel remain immediate.
 - Owner rotation is access-controlled (hardware-wallet swap path).
 
 **Hardening:**
 
 - H-03 added the per-holder replay nonce + re-entrancy guard.
+- H-04 adds on-chain delayed broader grants. `grantSessionKey` now validates the
+  key, compares it to the active holder grant, and schedules broader authority
+  into pending state. `activatePendingSessionKeyGrant` can activate only after
+  the delay. Initial keys passed to the constructor are the only immediate
+  new-holder path, so new customers can start without waiting. There is no
+  callable initializer after deployment. The constructor rejects duplicate
+  holders and more than `MAX_INITIAL_KEYS`. `cancelPendingSessionKeyGrant` and
+  `revokeSessionKey` clear pending broader grants.
 - R-06 / R-07 (Opus 4.8 peer review F-3 + F-4, batch 8): the `SessionKey` struct
   now carries an explicit `capToken` field. When non-zero (ERC20 mode), caps
   are denominated in the token's raw units (USDC=6dp, DAI=18dp), the target
@@ -170,11 +218,20 @@ attack surface to audit.
   grant time so caps are always meterable. Closes the "unit-blind ERC20 cap"
   and "non-decodable selector bypasses caps" findings.
 
-**Coverage:** unit (execute happy path, owner rotation, session-key revoke) +
-fuzz + invariant "a revoked session key cannot execute." Plus R-06 / R-07 tests:
-USDC 6dp cap enforces in token units, DAI 18dp cap same, grant rejects
-non-decodable selector in ERC20 mode, grant rejects target/capToken mismatch,
-execute rejects value > 0 in ERC20 mode, native mode preserved.
+**Coverage:** unit (execute happy path, owner rotation, session-key revoke,
+pending grant schedule, cancel, and activation) + fuzz + invariant "a revoked
+session key cannot execute." Delayed-grant tests cover: broader grant blocked
+before 24 hours and allowed after; stricter grant instant; pause and revoke
+instant; owner cannot skip the delay; target, recipient, and period comparison
+edge cases. Plus R-06 / R-07 tests: USDC 6dp cap enforces in token units, DAI
+18dp cap same, grant rejects non-decodable selector in ERC20 mode, grant rejects
+target/capToken mismatch, execute rejects value > 0 in ERC20 mode, native mode
+preserved. Creation-path tests cover immediate initial grants, no initializer
+reuse, delayed post-creation new keys, and redeploy not changing an existing
+account. Extra delayed-grant tests cover activation replay, non-owner activation
+and cancellation, expiry extension, earlier validAfter, maxPerPeriod increase,
+selector addition, mode change, token change, cap offset change, policyVersion
+change, pin removal and change, and zero-period transitions.
 
 ## BrainMCPAgentRegistry (287 LoC)
 

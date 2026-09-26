@@ -49,6 +49,8 @@ function baseRow(status: string): PaymentIntentRow {
     currency: "USD",
     obligation_id: null,
     invoice_id: null,
+    rate_lock_reference: null,
+    destination_currency: null,
     status,
     policy_decision_id: PD,
     approval_ids: [],

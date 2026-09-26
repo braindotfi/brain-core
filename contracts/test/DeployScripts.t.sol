@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import "forge-std/Test.sol";
 import {DeployEscrow} from "../script/DeployEscrow.s.sol";
 import {DeploySmartAccount} from "../script/DeploySmartAccount.s.sol";
+import {DeployTenantAccountRegistry} from "../script/DeployTenantAccountRegistry.s.sol";
 import {GrantSessionKey} from "../script/GrantSessionKey.s.sol";
 
 contract DeployScriptsTest is Test {
@@ -20,6 +21,26 @@ contract DeployScriptsTest is Test {
         DeploySmartAccount script = new DeploySmartAccount();
 
         vm.expectRevert(abi.encodeWithSelector(DeploySmartAccount.WrongChain.selector, uint256(8453)));
+        script.run();
+    }
+
+    function test_deployTenantAccountRegistry_rejectsMainnetChain() public {
+        vm.chainId(8453);
+        DeployTenantAccountRegistry script = new DeployTenantAccountRegistry();
+
+        vm.expectRevert(abi.encodeWithSelector(DeployTenantAccountRegistry.WrongChain.selector, uint256(8453)));
+        script.run();
+    }
+
+    function test_deployTenantAccountRegistry_rejectsEoaOwner() public {
+        vm.chainId(84_532);
+        address eoaOwner = address(0xA11CE);
+        vm.setEnv("TENANT_ACCOUNT_REGISTRY_OWNER", vm.toString(eoaOwner));
+        DeployTenantAccountRegistry script = new DeployTenantAccountRegistry();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployTenantAccountRegistry.RegistryOwnerMustBeContract.selector, eoaOwner)
+        );
         script.run();
     }
 

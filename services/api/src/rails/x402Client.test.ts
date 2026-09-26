@@ -35,7 +35,7 @@ function makeClient(over: Partial<Parameters<typeof buildX402Client>[0]> = {}) {
     usdcAddress: USDC,
     network: "base-sepolia",
     executor,
-    smartAccount: SMART_ACCOUNT,
+    resolveSmartAccount: vi.fn().mockResolvedValue(SMART_ACCOUNT),
     holderAddress: HOLDER,
     getUsdcDecimals: vi.fn().mockResolvedValue(6),
     ...over,
@@ -71,6 +71,7 @@ describe("buildX402Client.settle", () => {
 
     const out = await client.settle({
       payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
+      tenantId: "tnt_1",
       amount: "12.34",
       idempotencyKey: "ik_1",
     });
@@ -103,7 +104,12 @@ describe("buildX402Client.settle", () => {
     execute.mockResolvedValue({ txHash: "0xTX", blockNumber: 1n, gasUsed: 1n });
     const payee = "0xe3abc18b2718c20882e8a0d2142623c897de3544";
     const client = makeClient({ executor });
-    await client.settle({ payTo: payee, amount: "1.00", idempotencyKey: "ik_2" });
+    await client.settle({
+      tenantId: "tnt_1",
+      payTo: payee,
+      amount: "1.00",
+      idempotencyKey: "ik_2",
+    });
     const call = execute.mock.calls[0]![0] as { target: string; value: bigint; data: string };
     expect(call.target).toBe(USDC); // the call targets the token, not the payee
     expect(call.value).toBe(0n); // no native value; the transfer is in calldata
@@ -118,6 +124,7 @@ describe("buildX402Client.settle", () => {
     const client = makeClient({ executor, getUsdcDecimals });
     await expect(
       client.settle({
+        tenantId: "tnt_1",
         payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
         amount: "1.00",
         idempotencyKey: "ik_3",
@@ -133,6 +140,7 @@ describe("buildX402Client.settle", () => {
     const client = makeClient({ executor });
     await expect(
       client.settle({
+        tenantId: "tnt_1",
         payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
         amount: "1.00",
         idempotencyKey: "ik_4",
@@ -148,6 +156,7 @@ describe("buildX402Client.settle", () => {
     fetchSpy.mockResolvedValue(new Response("upstream down", { status: 503 }));
     const client = makeClient({ executor });
     const out = await client.settle({
+      tenantId: "tnt_1",
       payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_5",
@@ -163,6 +172,7 @@ describe("buildX402Client.settle", () => {
     fetchSpy.mockRejectedValue(new Error("ECONNREFUSED"));
     const client = makeClient({ executor });
     const out = await client.settle({
+      tenantId: "tnt_1",
       payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_6",
@@ -176,6 +186,7 @@ describe("buildX402Client.settle", () => {
     execute.mockResolvedValue({ txHash: "0xCONFIRMED", blockNumber: 1n, gasUsed: 1n });
     const client = makeClient({ executor });
     await client.settle({
+      tenantId: "tnt_1",
       payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
       amount: "1.00",
       idempotencyKey: "ik_unique_xyz",
@@ -189,5 +200,22 @@ describe("buildX402Client.settle", () => {
     expect(body.amount).toBe("1.00");
     expect(body.asset).toBe("USDC");
     expect(body.network).toBe("base-sepolia");
+  });
+
+  it("resolves the smart account from the tenant id", async () => {
+    const { executor, readNonce, execute } = makeExecutor();
+    readNonce.mockResolvedValue(0n);
+    execute.mockResolvedValue({ txHash: "0xCONFIRMED", blockNumber: 1n, gasUsed: 1n });
+    const resolveSmartAccount = vi.fn().mockResolvedValue(SMART_ACCOUNT);
+    const client = makeClient({ executor, resolveSmartAccount });
+    await client.settle({
+      tenantId: "tnt_verified",
+      payTo: "0x19732c2b2656017fc00f5af5dcc33269e58a1d34",
+      amount: "1.00",
+      idempotencyKey: "ik_resolver",
+    });
+
+    expect(resolveSmartAccount).toHaveBeenCalledWith("tnt_verified");
+    expect(readNonce).toHaveBeenCalledWith({ smartAccount: SMART_ACCOUNT, holder: HOLDER });
   });
 });

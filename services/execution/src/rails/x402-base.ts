@@ -25,6 +25,8 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^\d+(\.\d+)?$/;
 
 export interface X402SettleArgs {
+  /** Tenant whose BrainSmartAccount should be resolved for settlement. */
+  tenantId: string;
   /** Recipient address (the payee). */
   payTo: string;
   /** Settled amount as a decimal string (USDC). */
@@ -98,6 +100,7 @@ export class X402BaseRail implements Rail {
     let result: X402SettleResult;
     try {
       result = await this.client.settle({
+        tenantId: input.tenantId,
         payTo: action.pay_to,
         amount: action.amount,
         idempotencyKey: input.idempotencyKey,

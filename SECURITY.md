@@ -65,6 +65,14 @@ blocked on the external smart-contract audit.
 | `BrainEscrow`             | `0x5924BD26Bc827FB3cAd6f3a0DBDC793562555Cc0` | pending external audit |
 | `BrainReputationRegistry` | `0xcEf6C25aE3DF9c5cfC0B3E11D031eAAa2c26026C` | pending external audit |
 
+`BrainSmartAccount` delayed grants are in scope for the external audit. Broader
+session-key authority now has a hard on-chain 24-hour delay before activation:
+raised caps, extended expiry, added targets, added selectors, added recipients,
+shorter spend periods, and new holders wait. Lower caps, pause, account-wide
+pause, revoke, and pending-grant cancel remain immediate. The Sepolia address
+above is the current staging deployment until this PR is deployed to Base
+Sepolia after tests pass. Mainnet remains blocked on the external audit.
+
 > **`BrainPolicyRegistry` address note.** This is the registry the running
 > deployment uses (`POLICY_REGISTRY_ADDRESS`), verified live on Base Sepolia:
 > `latestVersion` returns 8 (actively registered policies). A second instance

@@ -22,8 +22,8 @@
  * client routes through it -- no separate unchecked receipt wait remains.
  *
  * Env: BRAIN_X402_FACILITATOR_URL, BRAIN_X402_USDC_ADDRESS, BRAIN_X402_NETWORK,
- * BRAIN_ONCHAIN_SMART_ACCOUNT. Session key signs on behalf of the tenant's
- * smart account.
+ * BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS, BRAIN_SMART_ACCOUNT_CODEHASH.
+ * Session key signs on behalf of the tenant's registry-resolved smart account.
  */
 
 import { encodeFunctionData, parseAbi, parseUnits } from "viem";
@@ -44,8 +44,8 @@ export interface BuildX402ClientOpts {
   network: string;
   /** Shared on-chain executor (same one OnchainBaseRail/EscrowBaseRail use). */
   executor: OnchainExecutor;
-  /** 0x 20-byte BrainSmartAccount address the session key executes through. */
-  smartAccount: string;
+  /** Resolves the tenant's verified BrainSmartAccount address at dispatch time. */
+  resolveSmartAccount: (tenantId: string) => Promise<string>;
   /** 0x 20-byte session-key holder (the signer) address. */
   holderAddress: string;
   /** Reads USDC.decimals() -- injected so this module stays viem-client-light. */
@@ -55,6 +55,7 @@ export interface BuildX402ClientOpts {
 export function buildX402Client(opts: BuildX402ClientOpts): X402Client {
   return {
     async settle(args: X402SettleArgs): Promise<X402SettleResult> {
+      const smartAccount = await opts.resolveSmartAccount(args.tenantId);
       // 1. Read USDC decimals and encode the ERC-20 transfer calldata.
       const decimals = await opts.getUsdcDecimals(opts.usdcAddress);
       const amountUnits = parseUnits(args.amount, decimals);
@@ -67,11 +68,11 @@ export function buildX402Client(opts: BuildX402ClientOpts): X402Client {
       // 2. Route the transfer through BrainSmartAccount.executeViaSessionKey
       //    so the on-chain caps and replay guard apply (F1).
       const nonce = await opts.executor.readNonce({
-        smartAccount: opts.smartAccount,
+        smartAccount,
         holder: opts.holderAddress,
       });
       const result = await opts.executor.execute({
-        smartAccount: opts.smartAccount,
+        smartAccount,
         holder: opts.holderAddress,
         nonce,
         target: opts.usdcAddress,

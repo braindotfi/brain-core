@@ -7,6 +7,7 @@ export const EXECUTABLE_PAYMENT_INTENT_ACTION_TYPES = [
   "onchain_transfer",
   "erp_writeback",
   "card_payment",
+  "exchange",
   "x402_settle",
   "escrow_release",
 ] as const satisfies readonly PaymentIntentActionType[];

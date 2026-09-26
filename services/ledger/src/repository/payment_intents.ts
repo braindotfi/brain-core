@@ -9,6 +9,8 @@ export interface PaymentIntentRow {
   destination_counterparty_id: string;
   amount: string;
   currency: string;
+  rate_lock_reference: string | null;
+  destination_currency: string | null;
   obligation_id: string | null;
   invoice_id: string | null;
   status: string;

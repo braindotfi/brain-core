@@ -22,9 +22,10 @@ contract DeploySmartAccount is Script {
         address owner = vm.envAddress("SMART_ACCOUNT_OWNER");
         address policyRegistry = vm.envAddress("BRAIN_POLICY_REGISTRY");
         bytes32 tenantId = vm.envOr("SMART_ACCOUNT_TENANT_ID", keccak256("demo-tenant"));
+        BrainSmartAccount.SessionKey[] memory initialKeys = new BrainSmartAccount.SessionKey[](0);
 
         vm.startBroadcast();
-        BrainSmartAccount account = new BrainSmartAccount(owner, tenantId, policyRegistry);
+        BrainSmartAccount account = new BrainSmartAccount(owner, tenantId, policyRegistry, initialKeys);
         vm.stopBroadcast();
 
         console2.log("BrainSmartAccount deployed:");

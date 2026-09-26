@@ -75,6 +75,8 @@ function insertedRow(): PaymentIntentRow {
     currency: "USD",
     obligation_id: OBL,
     invoice_id: null,
+    rate_lock_reference: null,
+    destination_currency: null,
     status: "approved",
     policy_decision_id: PD,
     approval_ids: [],

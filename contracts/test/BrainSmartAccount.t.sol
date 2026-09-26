@@ -148,7 +148,7 @@ contract BrainSmartAccountTest is Test {
         vm.warp(1_000_233);
         registry = new StubPolicyRegistry();
         registry.setRegistered(TENANT, POLICY_VER, true);
-        acct = new BrainSmartAccount(ownerKey, TENANT, address(registry));
+        acct = new BrainSmartAccount(ownerKey, TENANT, address(registry), _emptyInitialKeys());
         target = new Target();
         vm.deal(address(acct), 100 ether);
     }
@@ -165,6 +165,19 @@ contract BrainSmartAccountTest is Test {
         out[0] = s;
     }
 
+    function _emptyInitialKeys() internal pure returns (BrainSmartAccount.SessionKey[] memory out) {
+        out = new BrainSmartAccount.SessionKey[](0);
+    }
+
+    function _initialKeys(BrainSmartAccount.SessionKey memory key)
+        internal
+        pure
+        returns (BrainSmartAccount.SessionKey[] memory out)
+    {
+        out = new BrainSmartAccount.SessionKey[](1);
+        out[0] = key;
+    }
+
     /// @dev CALL-mode key over Target.ping, metering the `n` argument. Caps are
     ///      expressed in the same magnitudes the old value-metered tests used,
     ///      so their arithmetic carries over unchanged.
@@ -176,7 +189,85 @@ contract BrainSmartAccountTest is Test {
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: h,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + 3 days + 3600,
+            allowedTargets: _addrs(t),
+            allowedSelectors: _sels(Target.ping.selector),
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: perTx,
+            maxPerPeriod: perPeriod,
+            periodSeconds: period,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+        _activatePendingGrant(h);
+    }
+
+    /// @dev NATIVE-mode key: pure ETH transfer to `recipient`, no calldata.
+    function _grantNativeKey(address recipient, uint256 perTx, uint256 perPeriod) internal {
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + 3 days + 3600,
+            allowedTargets: _addrs(recipient),
+            allowedSelectors: new bytes4[](0),
+            capMode: BrainSmartAccount.CapMode.NATIVE,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: perTx,
+            maxPerPeriod: perPeriod,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+        _activatePendingGrant(holder);
+    }
+
+    /// @dev ERC20-mode key bound to `token`, recipients `[payee]`.
+    function _grantErc20Key(address token, bytes4[] memory selectors, uint256 perTx, uint256 perPeriod) internal {
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + 3 days + 3600,
+            allowedTargets: _addrs(token),
+            allowedSelectors: selectors,
+            capMode: BrainSmartAccount.CapMode.ERC20,
+            capToken: token,
+            allowedRecipients: _addrs(payee),
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: perTx,
+            maxPerPeriod: perPeriod,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+        _activatePendingGrant(holder);
+    }
+
+    function _activatePendingGrant(address h) internal {
+        vm.warp(block.timestamp + acct.GRANT_INCREASE_DELAY());
+        vm.prank(ownerKey);
+        acct.activatePendingSessionKeyGrant(h);
+    }
+
+    function _regrantSameCallKey(address h, address t, uint256 perTx, uint256 perPeriod, uint256 period) internal {
+        BrainSmartAccount.SessionKey memory current = acct.sessionKey(h);
+        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
+            holder: h,
+            validAfter: block.timestamp,
+            validUntil: current.validUntil,
             allowedTargets: _addrs(t),
             allowedSelectors: _sels(Target.ping.selector),
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -194,52 +285,6 @@ contract BrainSmartAccountTest is Test {
         acct.grantSessionKey(key);
     }
 
-    /// @dev NATIVE-mode key: pure ETH transfer to `recipient`, no calldata.
-    function _grantNativeKey(address recipient, uint256 perTx, uint256 perPeriod) internal {
-        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
-            holder: holder,
-            validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
-            allowedTargets: _addrs(recipient),
-            allowedSelectors: new bytes4[](0),
-            capMode: BrainSmartAccount.CapMode.NATIVE,
-            capToken: address(0),
-            allowedRecipients: new address[](0),
-            capAmountOffset: 0,
-            pinOffset: 0,
-            pinValue: bytes32(0),
-            maxPerTx: perTx,
-            maxPerPeriod: perPeriod,
-            periodSeconds: 86_400,
-            policyVersion: POLICY_VER
-        });
-        vm.prank(ownerKey);
-        acct.grantSessionKey(key);
-    }
-
-    /// @dev ERC20-mode key bound to `token`, recipients `[payee]`.
-    function _grantErc20Key(address token, bytes4[] memory selectors, uint256 perTx, uint256 perPeriod) internal {
-        BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
-            holder: holder,
-            validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
-            allowedTargets: _addrs(token),
-            allowedSelectors: selectors,
-            capMode: BrainSmartAccount.CapMode.ERC20,
-            capToken: token,
-            allowedRecipients: _addrs(payee),
-            capAmountOffset: 0,
-            pinOffset: 0,
-            pinValue: bytes32(0),
-            maxPerTx: perTx,
-            maxPerPeriod: perPeriod,
-            periodSeconds: 86_400,
-            policyVersion: POLICY_VER
-        });
-        vm.prank(ownerKey);
-        acct.grantSessionKey(key);
-    }
-
     function _transferSels() internal pure returns (bytes4[] memory out) {
         out = new bytes4[](2);
         out[0] = 0xa9059cbb; // transfer(address,uint256)
@@ -250,16 +295,170 @@ contract BrainSmartAccountTest is Test {
         return abi.encodeCall(Target.ping, (n));
     }
 
+    function _callKey(
+        address h,
+        address t,
+        uint256 validAfter,
+        uint256 validUntil,
+        uint256 perTx,
+        uint256 perPeriod,
+        uint256 period
+    ) internal pure returns (BrainSmartAccount.SessionKey memory) {
+        return BrainSmartAccount.SessionKey({
+            holder: h,
+            validAfter: validAfter,
+            validUntil: validUntil,
+            allowedTargets: _addrs(t),
+            allowedSelectors: _sels(Target.ping.selector),
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: PING_AMOUNT_OFFSET,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: perTx,
+            maxPerPeriod: perPeriod,
+            periodSeconds: period,
+            policyVersion: POLICY_VER
+        });
+    }
+
     // --- constructor validation (M1) -------------------------------------
 
     function test_M1_constructor_rejectsZeroOwner() public {
         vm.expectRevert(BrainSmartAccount.ZeroAddress.selector);
-        new BrainSmartAccount(address(0), TENANT, address(registry));
+        new BrainSmartAccount(address(0), TENANT, address(registry), _emptyInitialKeys());
     }
 
     function test_M1_constructor_rejectsZeroPolicyRegistry() public {
         vm.expectRevert(BrainSmartAccount.ZeroAddress.selector);
-        new BrainSmartAccount(ownerKey, TENANT, address(0));
+        new BrainSmartAccount(ownerKey, TENANT, address(0), _emptyInitialKeys());
+    }
+
+    function test_M1_initialGrantActiveImmediately() public {
+        BrainSmartAccount.SessionKey memory key =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(key));
+
+        assertEq(fresh.sessionKey(holder).holder, holder);
+        (,, bool exists) = fresh.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
+
+        vm.prank(holder);
+        fresh.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+        assertEq(target.counter(), 0.5 ether);
+    }
+
+    function test_M1_initialGrantRejectsInvalidKey() public {
+        BrainSmartAccount.SessionKey memory key =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        key.policyVersion = keccak256("not-registered");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.PolicyVersionNotRegistered.selector, key.policyVersion)
+        );
+        new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(key));
+    }
+
+    function test_M1_initialGrantRejectsDuplicateHolders() public {
+        BrainSmartAccount.SessionKey[] memory keys = new BrainSmartAccount.SessionKey[](2);
+        keys[0] = _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        keys[1] = _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.DuplicateInitialKeyHolder.selector, holder));
+        new BrainSmartAccount(ownerKey, TENANT, address(registry), keys);
+    }
+
+    function test_M1_initialGrantRejectsTooManyKeys() public {
+        uint256 count = acct.MAX_INITIAL_KEYS() + 1;
+        BrainSmartAccount.SessionKey[] memory keys = new BrainSmartAccount.SessionKey[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            keys[i] = _callKey(
+                address(uint160(0x1000 + i)),
+                address(target),
+                block.timestamp,
+                block.timestamp + 3600,
+                1 ether,
+                5 ether,
+                86_400
+            );
+        }
+
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.AllowlistTooLarge.selector, acct.MAX_INITIAL_KEYS()));
+        new BrainSmartAccount(ownerKey, TENANT, address(registry), keys);
+    }
+
+    function test_M1_creationPathCannotBeReusedAfterDeployment() public {
+        BrainSmartAccount.SessionKey memory key =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(key));
+
+        bytes memory initializerCall = abi.encodeWithSignature(
+            "initializeSessionKeys((address,uint256,uint256,address[],bytes4[],uint8,address,address[],uint256,uint256,bytes32,uint256,uint256,uint256,bytes32)[])",
+            _initialKeys(key)
+        );
+        vm.prank(ownerKey);
+        (bool ok,) = address(fresh).call(initializerCall);
+        assertFalse(ok);
+    }
+
+    function test_M1_newKeyAddedAfterCreationWaits() public {
+        BrainSmartAccount.SessionKey memory initial =
+            _callKey(holder, address(target), block.timestamp, block.timestamp + 3600, 1 ether, 5 ether, 86_400);
+        BrainSmartAccount fresh = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(initial));
+        address laterHolder = address(0xC0DE);
+        BrainSmartAccount.SessionKey memory later = _callKey(
+            laterHolder,
+            address(target),
+            block.timestamp,
+            block.timestamp + fresh.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        fresh.grantSessionKey(later);
+
+        assertEq(fresh.sessionKey(laterHolder).holder, address(0));
+        (,, bool exists) = fresh.pendingSessionKeyGrant(laterHolder);
+        assertTrue(exists);
+
+        vm.prank(laterHolder);
+        vm.expectRevert(BrainSmartAccount.NotHolder.selector);
+        fresh.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+    }
+
+    function test_M1_ownerCannotReinitializeOrRedeployToSkipExistingAccountDelay() public {
+        address laterHolder = address(0xC0DE);
+        BrainSmartAccount.SessionKey memory later = _callKey(
+            laterHolder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(later);
+
+        BrainSmartAccount replacement = new BrainSmartAccount(ownerKey, TENANT, address(registry), _initialKeys(later));
+
+        assertEq(acct.sessionKey(laterHolder).holder, address(0));
+        (,, bool exists) = acct.pendingSessionKeyGrant(laterHolder);
+        assertTrue(exists);
+        assertEq(replacement.sessionKey(laterHolder).holder, laterHolder);
+
+        bytes memory initializerCall = abi.encodeWithSignature(
+            "initializeSessionKeys((address,uint256,uint256,address[],bytes4[],uint8,address,address[],uint256,uint256,bytes32,uint256,uint256,uint256,bytes32)[])",
+            _initialKeys(later)
+        );
+        vm.prank(ownerKey);
+        (bool ok,) = address(acct).call(initializerCall);
+        assertFalse(ok);
+        assertEq(acct.sessionKey(laterHolder).holder, address(0));
     }
 
     // --- grant authorization + validation --------------------------------
@@ -443,11 +642,11 @@ contract BrainSmartAccountTest is Test {
         BrainPolicyRegistry real = _realRegistryWithPolicy(0xF00D);
         assertTrue(real.isRegisteredHash(TENANT, POLICY_VER));
 
-        BrainSmartAccount bound = new BrainSmartAccount(ownerKey, TENANT, address(real));
+        BrainSmartAccount bound = new BrainSmartAccount(ownerKey, TENANT, address(real), _emptyInitialKeys());
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + bound.GRANT_INCREASE_DELAY() + 3600,
             allowedTargets: _addrs(address(target)),
             allowedSelectors: _sels(Target.ping.selector),
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -463,6 +662,9 @@ contract BrainSmartAccountTest is Test {
         });
         vm.prank(ownerKey);
         bound.grantSessionKey(key);
+        vm.warp(block.timestamp + bound.GRANT_INCREASE_DELAY());
+        vm.prank(ownerKey);
+        bound.activatePendingSessionKeyGrant(holder);
         assertEq(bound.sessionKey(holder).policyVersion, POLICY_VER);
 
         // A hash the tenant never registered is refused by the same account.
@@ -472,6 +674,470 @@ contract BrainSmartAccountTest is Test {
             abi.encodeWithSelector(BrainSmartAccount.PolicyVersionNotRegistered.selector, key.policyVersion)
         );
         bound.grantSessionKey(key);
+    }
+
+    // --- delayed broader grants -----------------------------------------
+
+    function test_delayedGrant_newGrantBlockedBeforeDelayAndAllowedAfter() public {
+        BrainSmartAccount.SessionKey memory key = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+
+        (BrainSmartAccount.SessionKey memory pendingKey, uint256 executableAt, bool exists) =
+            acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+        assertEq(pendingKey.holder, holder);
+        assertEq(acct.sessionKey(holder).holder, address(0));
+
+        vm.prank(ownerKey);
+        vm.expectRevert(
+            abi.encodeWithSelector(BrainSmartAccount.PendingSessionKeyGrantNotReady.selector, holder, executableAt)
+        );
+        acct.activatePendingSessionKeyGrant(holder);
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.NotHolder.selector);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+
+        vm.warp(executableAt);
+        vm.prank(ownerKey);
+        acct.activatePendingSessionKeyGrant(holder);
+        assertEq(acct.sessionKey(holder).holder, holder);
+
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+    }
+
+    function test_delayedGrant_ownerCannotSkipDelayForRaisedCap() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory raised = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            2 ether,
+            5 ether,
+            86_400
+        );
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(raised);
+
+        assertEq(acct.sessionKey(holder).maxPerTx, 1 ether);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(2 ether));
+
+        _activatePendingGrant(holder);
+        assertEq(acct.sessionKey(holder).maxPerTx, 2 ether);
+
+        vm.prank(holder);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(2 ether));
+    }
+
+    function test_delayedGrant_stricterChangeIsInstant() public {
+        _grantCallKeyFor(holder, address(target), 2 ether, 5 ether, 86_400);
+        _regrantSameCallKey(holder, address(target), 1 ether, 4 ether, 86_400);
+
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
+        assertEq(acct.sessionKey(holder).maxPerTx, 1 ether);
+        assertEq(acct.sessionKey(holder).maxPerPeriod, 4 ether);
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(2 ether));
+    }
+
+    function test_delayedGrant_pauseAndRevokeRemainInstant() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory raised = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            2 ether,
+            5 ether,
+            86_400
+        );
+        vm.prank(ownerKey);
+        acct.grantSessionKey(raised);
+
+        vm.prank(ownerKey);
+        acct.pauseSessionKey(holder);
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.KeyPaused.selector);
+        acct.executeViaSessionKey(0, address(target), 0, _ping(0.5 ether));
+
+        vm.prank(ownerKey);
+        acct.revokeSessionKey(holder);
+        assertEq(acct.sessionKey(holder).holder, address(0));
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
+    }
+
+    function test_delayedGrant_cancelPendingGrant() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory raised = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            2 ether,
+            5 ether,
+            86_400
+        );
+        vm.prank(ownerKey);
+        acct.grantSessionKey(raised);
+
+        vm.prank(ownerKey);
+        acct.cancelPendingSessionKeyGrant(holder);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
+
+        vm.prank(ownerKey);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.NoPendingSessionKeyGrant.selector, holder));
+        acct.activatePendingSessionKeyGrant(holder);
+    }
+
+    function test_delayedGrant_comparisonAddingTargetWaits() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        Target other = new Target();
+        address[] memory targets = new address[](2);
+        targets[0] = address(target);
+        targets[1] = address(other);
+        BrainSmartAccount.SessionKey memory broader = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+        broader.allowedTargets = targets;
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.TargetNotAllowed.selector, address(other)));
+        acct.executeViaSessionKey(0, address(other), 0, _ping(0.5 ether));
+    }
+
+    function test_delayedGrant_comparisonAddingRecipientWaits() public {
+        MockERC20 token = new MockERC20();
+        _grantErc20Key(address(token), _transferSels(), 100, 500);
+        token.mint(address(acct), 1000);
+
+        address otherPayee = address(0xCAFE);
+        address[] memory recipients = new address[](2);
+        recipients[0] = payee;
+        recipients[1] = otherPayee;
+        BrainSmartAccount.SessionKey memory broader = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            allowedTargets: _addrs(address(token)),
+            allowedSelectors: _transferSels(),
+            capMode: BrainSmartAccount.CapMode.ERC20,
+            capToken: address(token),
+            allowedRecipients: recipients,
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: 100,
+            maxPerPeriod: 500,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.RecipientNotAllowed.selector, otherPayee));
+        acct.executeViaSessionKey(0, address(token), 0, abi.encodeCall(MockERC20.transfer, (otherPayee, uint256(10))));
+    }
+
+    function test_delayedGrant_comparisonShorterPeriodWaits() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory broader = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            600
+        );
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+        assertEq(acct.sessionKey(holder).periodSeconds, 86_400);
+    }
+
+    function test_delayedGrant_activateTwiceFails() public {
+        BrainSmartAccount.SessionKey memory key = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+
+        _activatePendingGrant(holder);
+
+        vm.prank(ownerKey);
+        vm.expectRevert(abi.encodeWithSelector(BrainSmartAccount.NoPendingSessionKeyGrant.selector, holder));
+        acct.activatePendingSessionKeyGrant(holder);
+    }
+
+    function test_delayedGrant_nonOwnerCannotActivateOrCancel() public {
+        BrainSmartAccount.SessionKey memory key = _callKey(
+            holder,
+            address(target),
+            block.timestamp,
+            block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
+            1 ether,
+            5 ether,
+            86_400
+        );
+        vm.prank(ownerKey);
+        acct.grantSessionKey(key);
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.activatePendingSessionKeyGrant(holder);
+
+        vm.prank(holder);
+        vm.expectRevert(BrainSmartAccount.NotOwner.selector);
+        acct.cancelPendingSessionKeyGrant(holder);
+    }
+
+    function test_delayedGrant_comparisonValidUntilIncreaseWaits() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory current = acct.sessionKey(holder);
+        BrainSmartAccount.SessionKey memory broader =
+            _callKey(holder, address(target), block.timestamp, current.validUntil + 1, 1 ether, 5 ether, 86_400);
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonValidAfterDecreaseWaits() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory current = acct.sessionKey(holder);
+        BrainSmartAccount.SessionKey memory broader =
+            _callKey(holder, address(target), current.validAfter - 1, current.validUntil, 1 ether, 5 ether, 86_400);
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonMaxPerPeriodIncreaseWaits() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory current = acct.sessionKey(holder);
+        BrainSmartAccount.SessionKey memory broader =
+            _callKey(holder, address(target), block.timestamp, current.validUntil, 1 ether, 6 ether, 86_400);
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonAddingSelectorWaits() public {
+        MockERC20 token = new MockERC20();
+        _grantErc20Key(address(token), _sels(bytes4(0xa9059cbb)), 100, 500);
+        BrainSmartAccount.SessionKey memory broader = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: acct.sessionKey(holder).validUntil,
+            allowedTargets: _addrs(address(token)),
+            allowedSelectors: _transferSels(),
+            capMode: BrainSmartAccount.CapMode.ERC20,
+            capToken: address(token),
+            allowedRecipients: _addrs(payee),
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: 100,
+            maxPerPeriod: 500,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonCapOffsetChangeWaits() public {
+        MockEscrow escrow = new MockEscrow();
+        _grantEscrowKey(address(escrow), 4, keccak256("escrow"));
+        _activatePendingGrant(holder);
+        BrainSmartAccount.SessionKey memory broader = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: acct.sessionKey(holder).validUntil,
+            allowedTargets: _addrs(address(escrow)),
+            allowedSelectors: _sels(MockEscrow.refund.selector),
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: 68,
+            pinOffset: 4,
+            pinValue: keccak256("escrow"),
+            maxPerTx: 1 ether,
+            maxPerPeriod: 5 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonModeTokenAndOffsetChangesWait() public {
+        MockERC20 token = new MockERC20();
+        _grantErc20Key(address(token), _transferSels(), 100, 500);
+        BrainSmartAccount.SessionKey memory modeChange =
+            _callKey(holder, address(target), block.timestamp, acct.sessionKey(holder).validUntil, 100, 500, 86_400);
+        vm.prank(ownerKey);
+        acct.grantSessionKey(modeChange);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(ownerKey);
+        acct.cancelPendingSessionKeyGrant(holder);
+
+        MockERC20 otherToken = new MockERC20();
+        BrainSmartAccount.SessionKey memory tokenChange = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: acct.sessionKey(holder).validUntil,
+            allowedTargets: _addrs(address(otherToken)),
+            allowedSelectors: _transferSels(),
+            capMode: BrainSmartAccount.CapMode.ERC20,
+            capToken: address(otherToken),
+            allowedRecipients: _addrs(payee),
+            capAmountOffset: 0,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: 100,
+            maxPerPeriod: 500,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(tokenChange);
+        (,, exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonPolicyVersionChangeWaits() public {
+        bytes32 nextPolicy = keccak256("pol-v2");
+        registry.setRegistered(TENANT, nextPolicy, true);
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory broader = _callKey(
+            holder, address(target), block.timestamp, acct.sessionKey(holder).validUntil, 1 ether, 5 ether, 86_400
+        );
+        broader.policyVersion = nextPolicy;
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(broader);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonPinRemovalAndChangeWait() public {
+        MockEscrow escrow = new MockEscrow();
+        bytes32 escrowId = keccak256("escrow");
+        _grantEscrowKey(address(escrow), 4, escrowId);
+        _activatePendingGrant(holder);
+
+        BrainSmartAccount.SessionKey memory removePin = BrainSmartAccount.SessionKey({
+            holder: holder,
+            validAfter: block.timestamp,
+            validUntil: acct.sessionKey(holder).validUntil,
+            allowedTargets: _addrs(address(escrow)),
+            allowedSelectors: _sels(MockEscrow.refund.selector),
+            capMode: BrainSmartAccount.CapMode.CALL,
+            capToken: address(0),
+            allowedRecipients: new address[](0),
+            capAmountOffset: 36,
+            pinOffset: 0,
+            pinValue: bytes32(0),
+            maxPerTx: 1 ether,
+            maxPerPeriod: 5 ether,
+            periodSeconds: 86_400,
+            policyVersion: POLICY_VER
+        });
+        vm.prank(ownerKey);
+        acct.grantSessionKey(removePin);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(ownerKey);
+        acct.cancelPendingSessionKeyGrant(holder);
+
+        removePin.pinOffset = 4;
+        removePin.pinValue = keccak256("other-escrow");
+        vm.prank(ownerKey);
+        acct.grantSessionKey(removePin);
+        (,, exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+    }
+
+    function test_delayedGrant_comparisonPeriodZeroTransitions() public {
+        _grantCallKeyFor(holder, address(target), 1 ether, 5 ether, 86_400);
+        BrainSmartAccount.SessionKey memory unlimited =
+            _callKey(holder, address(target), block.timestamp, acct.sessionKey(holder).validUntil, 1 ether, 5 ether, 0);
+
+        vm.prank(ownerKey);
+        acct.grantSessionKey(unlimited);
+        (,, bool exists) = acct.pendingSessionKeyGrant(holder);
+        assertTrue(exists);
+
+        vm.prank(ownerKey);
+        acct.cancelPendingSessionKeyGrant(holder);
+        BrainSmartAccount.SessionKey memory stricter = _callKey(
+            holder, address(target), block.timestamp, acct.sessionKey(holder).validUntil, 1 ether, 5 ether, 172_800
+        );
+        vm.prank(ownerKey);
+        acct.grantSessionKey(stricter);
+        (,, exists) = acct.pendingSessionKeyGrant(holder);
+        assertFalse(exists);
     }
 
     // --- execute happy path + scope enforcement --------------------------
@@ -538,18 +1204,18 @@ contract BrainSmartAccountTest is Test {
     /// cumulative cap TWICE. The window now anchors to validAfter.
     function test_H1_perTaskKeyCannotDoubleSpendAcrossEpochBoundary() public {
         uint256 amount = 1 ether;
-        // validAfter = 1_000_233, validUntil = 1_000_833, period = 600.
-        // The epoch-aligned boundary at 1_000_800 falls INSIDE that lifetime.
         _grantCallKeyFor(holder, address(target), amount, amount, 600);
-        // Shorten the key to exactly one period so it is a true per-task key.
-        assertEq(acct.sessionKey(holder).validAfter, 1_000_233);
+        uint256 anchor = acct.windowAnchor(holder);
+        uint256 epochBoundary = ((anchor / 600) + 1) * 600;
+        assertLt(epochBoundary, anchor + 600);
+        assertLt(epochBoundary, acct.sessionKey(holder).validUntil);
 
         vm.prank(holder);
         acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
         assertEq(acct.spentInCurrentWindow(holder), amount);
 
-        // Cross the epoch-aligned 600s boundary while the key is still valid.
-        vm.warp(1_000_800);
+        // Cross the epoch-aligned 600s boundary while the anchored window holds.
+        vm.warp(epochBoundary);
         assertLt(block.timestamp, acct.sessionKey(holder).validUntil);
 
         vm.prank(holder);
@@ -564,10 +1230,11 @@ contract BrainSmartAccountTest is Test {
     /// FROM ITS OWN ANCHOR.
     function test_H1_windowRollsOverAfterAFullPeriodFromAnchor() public {
         _grantCallKeyFor(holder, address(target), 1 ether, 1 ether, 600);
+        uint256 anchor = acct.windowAnchor(holder);
         vm.prank(holder);
         acct.executeViaSessionKey(0, address(target), 0, _ping(1 ether));
 
-        vm.warp(1_000_233 + 600);
+        vm.warp(anchor + 600);
         assertEq(acct.spentInCurrentWindow(holder), 0);
         vm.prank(holder);
         acct.executeViaSessionKey(1, address(target), 0, _ping(1 ether));
@@ -599,7 +1266,7 @@ contract BrainSmartAccountTest is Test {
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
             allowedTargets: _addrs(address(target)),
             allowedSelectors: _sels(Target.noArgs.selector),
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -615,6 +1282,7 @@ contract BrainSmartAccountTest is Test {
         });
         vm.prank(ownerKey);
         acct.grantSessionKey(key);
+        _activatePendingGrant(holder);
 
         vm.prank(holder);
         vm.expectRevert(
@@ -976,7 +1644,7 @@ contract BrainSmartAccountTest is Test {
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: rhAddr,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + acct.GRANT_INCREASE_DELAY() + 3600,
             allowedTargets: _addrs(rhAddr),
             allowedSelectors: _sels(ReentrantHolder.reenter.selector),
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -992,6 +1660,7 @@ contract BrainSmartAccountTest is Test {
         });
         vm.prank(ownerKey);
         acct.grantSessionKey(key);
+        _activatePendingGrant(rhAddr);
 
         vm.prank(rhAddr);
         acct.executeViaSessionKey(0, rhAddr, 0, abi.encodeCall(ReentrantHolder.reenter, (1)));
@@ -1109,7 +1778,7 @@ contract BrainSmartAccountTest is Test {
         vm.expectRevert(BrainSmartAccount.ExceedsPerTxCap.selector);
         acct.executeViaSessionKey(0, address(target), 0, _ping(2 ether));
 
-        vm.warp(block.timestamp + 3601);
+        vm.warp(acct.sessionKey(holder).validUntil);
         vm.prank(holder);
         vm.expectRevert(BrainSmartAccount.KeyNotActive.selector);
         acct.executeViaSessionKey(0, address(target), 0, _ping(1 ether));
@@ -1304,7 +1973,7 @@ contract BrainSmartAccountTest is Test {
 
         // Routine refresh, well inside the same period.
         vm.warp(block.timestamp + 60);
-        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        _regrantSameCallKey(holder, address(target), amount, amount, 600);
 
         assertEq(acct.windowAnchor(holder), anchor, "anchor moved on re-grant");
         assertEq(acct.spentInCurrentWindow(holder), amount, "window budget reset on re-grant");
@@ -1317,14 +1986,14 @@ contract BrainSmartAccountTest is Test {
     /// Revoke-then-regrant is the same reset with one extra owner transaction.
     function test_H1_revokeThenRegrantDoesNotResetTheWindowBudget() public {
         uint256 amount = 1 ether;
-        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        _grantCallKeyFor(holder, address(target), amount, amount, 7 days);
         vm.prank(holder);
         acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
 
         vm.prank(ownerKey);
         acct.revokeSessionKey(holder);
         vm.warp(block.timestamp + 60);
-        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        _grantCallKeyFor(holder, address(target), amount, amount, 7 days);
 
         assertEq(acct.spentInCurrentWindow(holder), amount);
         vm.prank(holder);
@@ -1342,7 +2011,7 @@ contract BrainSmartAccountTest is Test {
         acct.executeViaSessionKey(0, address(target), 0, _ping(amount));
 
         vm.warp(anchor + 600);
-        _grantCallKeyFor(holder, address(target), amount, amount, 600);
+        _regrantSameCallKey(holder, address(target), amount, amount, 600);
         assertEq(acct.spentInCurrentWindow(holder), 0);
 
         vm.prank(holder);
@@ -1385,7 +2054,7 @@ contract BrainSmartAccountTest is Test {
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + 3 days + 3600,
             allowedTargets: _addrs(FAKE_TOKEN),
             allowedSelectors: _callKeyOverToken(sel),
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -1451,7 +2120,7 @@ contract BrainSmartAccountTest is Test {
         BrainSmartAccount.SessionKey memory key = BrainSmartAccount.SessionKey({
             holder: holder,
             validAfter: block.timestamp,
-            validUntil: block.timestamp + 3600,
+            validUntil: block.timestamp + 3 days + 3600,
             allowedTargets: _addrs(escrow),
             allowedSelectors: sels,
             capMode: BrainSmartAccount.CapMode.CALL,
@@ -1475,6 +2144,7 @@ contract BrainSmartAccountTest is Test {
     function test_callMode_pinBindsTheObjectTheCallActsOn() public {
         MockEscrow escrow = new MockEscrow();
         _grantEscrowKey(address(escrow), 4, ESCROW_A);
+        _activatePendingGrant(holder);
 
         // The pinned escrow still works.
         vm.prank(holder);

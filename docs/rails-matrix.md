@@ -40,44 +40,44 @@ rail with all required env vars set; otherwise the boot fence at
 
 ### `onchain_base`
 
-| Attribute          | Value                                                              |
-| ------------------ | ------------------------------------------------------------------ |
-| Description        | ERC-20 transfer on Base via `BrainSmartAccount` session key        |
-| Implementation     | `OnchainBaseRail` over viem with KMS-signed session key            |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)        |
-| Required env       | `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                |
-| Production allowed | yes                                                                |
-| Audit required     | no (BrainSmartAccount in audit scope; not gated by this rail)      |
-| Approval floor     | Required. Policy `allow` routes to human approval before dispatch. |
-| Failure mode       | viem revert or RPC timeout → audit-after `ok: false`               |
+| Attribute          | Value                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Description        | ERC-20 transfer on Base via `BrainSmartAccount` session key                                                  |
+| Implementation     | `OnchainBaseRail` over viem with KMS-signed session key                                                      |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                  |
+| Required env       | `BRAIN_SESSION_KEY`, `BASE_RPC_URL`, `BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS`, `BRAIN_SMART_ACCOUNT_CODEHASH` |
+| Production allowed | yes                                                                                                          |
+| Audit required     | no (BrainSmartAccount in audit scope; not gated by this rail)                                                |
+| Approval floor     | Required. Policy `allow` routes to human approval before dispatch.                                           |
+| Failure mode       | viem revert or RPC timeout → audit-after `ok: false`                                                         |
 
 ### `x402_base`
 
-| Attribute          | Value                                                                                                                                         |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                                                                        |
-| Implementation     | `X402BaseRail` against a real `X402Client`                                                                                                    |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                                                   |
-| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`                                                  |
-| Production allowed | yes                                                                                                                                           |
-| Audit required     | no                                                                                                                                            |
-| Approval floor     | Required unless the signed policy rule sets `onchain_settlement_permitted: true` and an `x402_autonomous_max_amount` cap covering the amount. |
-| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                                                                 |
+| Attribute          | Value                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Description        | Per-call USDC settlement via Coinbase x402 facilitator                                                                                                                |
+| Implementation     | `X402BaseRail` against a real `X402Client`                                                                                                                            |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (default 84532 Sepolia; 8453 mainnet)                                                                                                           |
+| Required env       | `BRAIN_X402_FACILITATOR_URL`, `BRAIN_X402_USDC_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`, `BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS`, `BRAIN_SMART_ACCOUNT_CODEHASH` |
+| Production allowed | yes                                                                                                                                                                   |
+| Audit required     | no                                                                                                                                                                    |
+| Approval floor     | Required unless the signed policy rule sets `onchain_settlement_permitted: true` and an `x402_autonomous_max_amount` cap covering the amount.                         |
+| Failure mode       | facilitator 4xx/5xx → audit-after `ok: false`                                                                                                                         |
 
 ### `escrow_base`
 
-| Attribute          | Value                                                                                                                                                                                                                                           |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Description        | Conditional USDC release via `BrainEscrow.release()` (RFC 0001 §7.6, M2M settlement)                                                                                                                                                            |
-| Implementation     | `EscrowBaseRail` over `OnchainExecutor`                                                                                                                                                                                                         |
-| Chain              | `BRAIN_BASE_CHAIN_ID` (84532 Sepolia and 31337 local are testnet-allowed; non-testnet chains are blocked on audit)                                                                                                                              |
-| Required env       | `BRAIN_ESCROW_ADDRESS`, `BRAIN_ONCHAIN_SMART_ACCOUNT`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`, `BRAIN_X402_USDC_ADDRESS` (binds the escrow's token to the settlement asset for §6 check 6.6; without it the rail dispatches but 6.6 stays dormant) |
-| Production allowed | yes                                                                                                                                                                                                                                             |
-| Audit required     | **yes**                                                                                                                                                                                                                                         |
-| Approval floor     | Required. Policy `allow` routes to human approval before dispatch.                                                                                                                                                                              |
-| Mainnet boot fence | `composition/escrow-audit-gate.ts`: throws on boot if escrow is set on any non-testnet chain without committed audit approval for that chain plus `BRAIN_ESCROW_AUDIT_RECEIPT` or `BRAIN_ESCROW_AUDIT_APPROVED="true"`                          |
-| Audit attestation  | Either `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean. The receipt is preferred because it carries diligence metadata.                     |
-| Failure mode       | `release()` revert → audit-after `ok: false`                                                                                                                                                                                                    |
+| Attribute          | Value                                                                                                                                                                                                                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Description        | Conditional USDC release via `BrainEscrow.release()` (RFC 0001 §7.6, M2M settlement)                                                                                                                                                                                                      |
+| Implementation     | `EscrowBaseRail` over `OnchainExecutor`                                                                                                                                                                                                                                                   |
+| Chain              | `BRAIN_BASE_CHAIN_ID` (84532 Sepolia and 31337 local are testnet-allowed; non-testnet chains are blocked on audit)                                                                                                                                                                        |
+| Required env       | `BRAIN_ESCROW_ADDRESS`, `BRAIN_SESSION_KEY`, `BASE_RPC_URL`, `BRAIN_TENANT_ACCOUNT_REGISTRY_ADDRESS`, `BRAIN_SMART_ACCOUNT_CODEHASH`, `BRAIN_X402_USDC_ADDRESS` (binds the escrow's token to the settlement asset for §6 check 6.6; without it the rail dispatches but 6.6 stays dormant) |
+| Production allowed | yes                                                                                                                                                                                                                                                                                       |
+| Audit required     | **yes**                                                                                                                                                                                                                                                                                   |
+| Approval floor     | Required. Policy `allow` routes to human approval before dispatch.                                                                                                                                                                                                                        |
+| Mainnet boot fence | `composition/escrow-audit-gate.ts`: throws on boot if escrow is set on any non-testnet chain without committed audit approval for that chain plus `BRAIN_ESCROW_AUDIT_RECEIPT` or `BRAIN_ESCROW_AUDIT_APPROVED="true"`                                                                    |
+| Audit attestation  | Either `BRAIN_ESCROW_AUDIT_RECEIPT` (preferred. URL/filepath/hash pointing at the audit report) or the legacy `BRAIN_ESCROW_AUDIT_APPROVED="true"` boolean. The receipt is preferred because it carries diligence metadata.                                                               |
+| Failure mode       | `release()` revert → audit-after `ok: false`                                                                                                                                                                                                                                              |
 
 ### On-chain Approval And Reservation Rules
 

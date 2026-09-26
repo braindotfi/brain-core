@@ -210,6 +210,8 @@ function approvedPaymentIntentRow(): PaymentIntentRow {
     currency: "USD",
     obligation_id: null,
     invoice_id: null,
+    rate_lock_reference: null,
+    destination_currency: null,
     proposal_dedup_key: null,
     settlement_pay_to: null,
     escrow_id: null,

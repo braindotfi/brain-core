@@ -69,9 +69,10 @@ contract GrantSessionKeyNative is Script {
 
         vm.startBroadcast(deployerKey);
         BrainSmartAccount(payable(smartAccount)).grantSessionKey(key);
+        (, uint256 executableAt, bool pending) = BrainSmartAccount(payable(smartAccount)).pendingSessionKeyGrant(holder);
         vm.stopBroadcast();
 
-        console2.log("Native ETH session key granted:");
+        console2.log("Native ETH session key submitted:");
         console2.log("  smartAccount     =", smartAccount);
         console2.log("  holder           =", holder);
         console2.log("  allowedRecipient =", allowedRecipient);
@@ -79,5 +80,11 @@ contract GrantSessionKeyNative is Script {
         console2.log("  maxPerPeriod     = 0.01 ETH / day");
         console2.log("  validUntil       =", key.validUntil);
         console2.log("  policyVersion    =", vm.toString(key.policyVersion));
+        if (pending) {
+            console2.log("  status           = pending");
+            console2.log("  executableAt     =", executableAt);
+        } else {
+            console2.log("  status           = active");
+        }
     }
 }

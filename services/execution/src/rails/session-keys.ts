@@ -1,5 +1,5 @@
 /**
- * Per-task minimum-privilege session keys (Agent Autonomy v3, 3.3).
+ * Deprecated per-task minimum-privilege session keys (Agent Autonomy v3, 3.3).
  *
  * Instead of one long-lived agent session key, derive a one-time child key per
  * approved PaymentIntent, bounded to the EXACT recipient, the EXACT amount
@@ -20,9 +20,9 @@
  *     full cap TWICE. Windows now anchor to `validAfter`, which this helper
  *     sets to the issuance time.
  *
- * This helper produces the BrainSmartAccount.SessionKey params the owner passes
- * to grantSessionKey. Resolving a ledger counterparty_id to its on-chain payout
- * address is the caller's responsibility (cross-service lookup).
+ * @deprecated New post-creation grants wait 24 hours on-chain, so short-lived
+ * per-task grants are no longer viable. PR B must use one pre-granted key per
+ * agent with tight caps, recipients, targets, and policy binding.
  */
 
 /** Mirrors BrainSmartAccount.CapMode. Values match the Solidity enum ordinals. */
@@ -88,6 +88,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ERC20_TRANSFER = "0xa9059cbb";
 const ERC20_TRANSFER_FROM = "0x23b872dd";
 
+/** @deprecated Use a pre-granted per-agent key with tight policy caps. */
 export function derivePerTaskSessionKey(input: DerivePerTaskKeyInput): PerTaskSessionKeyParams {
   const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
   const ttl = input.ttlSeconds ?? DEFAULT_TASK_KEY_TTL_SECONDS;
