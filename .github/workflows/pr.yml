@@ -48,6 +48,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Scan Terraform
         uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+        env:
+          INPUT_GITHUB_TOKEN: ${{ github.token }}
         with:
           working_directory: infra
           version: v1.28.11
