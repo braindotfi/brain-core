@@ -1,0 +1,63 @@
+name: RobotMoney SDK package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "Brain_API_Specification.yaml"
+      - "clients/sdk/**"
+      - ".github/workflows/robotmoney-sdk.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: publish SDK to GitHub Packages
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/sdk
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v6.0.10
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@braindotfi"
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+      - name: Verify generated types
+        run: pnpm run codegen:check
+      - name: Test
+        run: pnpm run test
+      - name: Build package
+        run: pnpm run build
+      - name: Check published version
+        id: package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "$NAME@$VERSION" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.package.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish
+      - name: Already published
+        if: steps.package.outputs.exists == 'true'
+        run: echo "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }} is already published."
