@@ -21,7 +21,7 @@ Show the architecture diagram or just say:
 Open a terminal. The SDK is five lines:
 
 ```typescript
-import { Brain } from "@brainfinance/sdk";
+import { Brain } from "@braindotfi/brain-core-sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_TOKEN!, environment: "sandbox" });
 const accounts = await brain.accounts.list();
@@ -37,7 +37,7 @@ BRAIN_TOKEN=$(pnpm -C tools/dev-token exec tsx src/index.ts --tenant tnt_01GOLDE
 
 **Expected output:** Two bank accounts (First National, Silicon Valley Bank), one card (Brex), one counterparty (Stripe). Tenant is "Brain Inc." The data is live from Postgres. Not mocked.
 
-**Talking point:** This is the SDK investors use. The published package is `@brainfinance/sdk`.
+**Talking point:** This is the SDK investors use. The published package is `@braindotfi/brain-core-sdk`.
 
 ---
 

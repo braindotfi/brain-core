@@ -1,11 +1,11 @@
-# @brainfinance/sdk
+# @braindotfi/brain-core-sdk
 
 The typed HTTP client for the Brain API.
 
 ## Install
 
 ```bash
-npm install @brainfinance/sdk@rc
+npm install @braindotfi/brain-core-sdk@rc
 ```
 
 ### Release-candidate compatibility
@@ -98,7 +98,7 @@ issued for a tenant with the read-only `ledger:read`, `audit:read`, and
 `Authorization: Bearer brain_sk_...`:
 
 ```typescript
-import { Brain } from "@brainfinance/sdk";
+import { Brain } from "@braindotfi/brain-core-sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY! });
 ```
@@ -148,7 +148,7 @@ const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 ### High-Level (`Brain` Class)
 
 ```typescript
-import { Brain } from "@brainfinance/sdk";
+import { Brain } from "@braindotfi/brain-core-sdk";
 
 const brain = new Brain({ token: process.env.BRAIN_TOKEN! });
 
@@ -255,7 +255,7 @@ For endpoints not yet wrapped by the `Brain` class, or for callers who
 want direct typed-fetch access:
 
 ```typescript
-import { createBrainHttpClient } from "@brainfinance/sdk";
+import { createBrainHttpClient } from "@braindotfi/brain-core-sdk";
 
 const http = createBrainHttpClient({
   token: process.env.BRAIN_TOKEN!,
@@ -275,7 +275,7 @@ response shapes are inferred, there is no hand-written type surface to drift.
 ## Codegen
 
 ```bash
-pnpm --filter @brainfinance/sdk run codegen
+pnpm --filter @braindotfi/brain-core-sdk run codegen
 ```
 
 Regenerates `src/generated/openapi.d.ts` from
@@ -286,9 +286,9 @@ into CI.
 
 ## Publish Target
 
-Published to the public npm registry as
-[`@brainfinance/sdk`](https://www.npmjs.com/package/@brainfinance/sdk) under
-the `rc` dist-tag. The package ships `dist/` (ESM + type declarations),
+Published to GitHub Packages as
+[`@braindotfi/brain-core-sdk`](https://github.com/orgs/braindotfi/packages/npm/package/brain-core-sdk)
+under the `rc` dist-tag. The package ships `dist/` (ESM + type declarations),
 this README, and the Apache-2.0 LICENSE only.
 
 ## Conventions

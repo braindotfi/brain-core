@@ -23,7 +23,7 @@ RobotMoney is not a bank, a custodian, an accounting tool, an agent marketplace,
 ## A First Integration
 
 ```typescript
-import { Brain } from "@brainfinance/sdk";
+import { Brain } from "@braindotfi/brain-core-sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY!, environment: "sandbox" });
 
@@ -87,11 +87,11 @@ RobotMoney exposes four surfaces. Pick whichever matches your stack. They share 
 ## A First Request
 
 ```bash
-npm install @brainfinance/sdk
+npm install @braindotfi/brain-core-sdk
 ```
 
 ```typescript
-import { Brain } from "@brainfinance/sdk";
+import { Brain } from "@braindotfi/brain-core-sdk";
 
 const brain = new Brain({ apiKey: process.env.BRAIN_API_KEY!, environment: "sandbox" });
 

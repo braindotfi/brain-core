@@ -1,5 +1,5 @@
 {
-  "name": "@brainfinance/sdk",
+  "name": "@braindotfi/brain-core-sdk",
   "version": "0.1.0-rc.0",
   "description": "Typed client for the Brain HTTP API. Generated from Brain_API_Specification.yaml.",
   "license": "Apache-2.0",
@@ -21,6 +21,7 @@
     "LICENSE"
   ],
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "access": "public",
     "tag": "rc"
   },
