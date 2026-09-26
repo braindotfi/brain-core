@@ -248,7 +248,7 @@ jobs:
 
       - name: Download exact reviewed plan
         if: ${{ inputs.action == 'apply' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: x402-key-vault-bootstrap-plan
           path: infra/x402-key-vault-bootstrap/reviewed
