@@ -1,0 +1,81 @@
+name: Mirror MinIO CI images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      SERVER_UPSTREAM: docker.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      SERVER_MIRROR_TAG: ghcr.io/braindotfi/mirror-minio:RELEASE.2025-09-07T16-13-09Z
+      SERVER_DIGEST: sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      CLIENT_UPSTREAM: docker.io/minio/mc@sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62
+      CLIENT_MIRROR_TAG: ghcr.io/braindotfi/mirror-minio-mc:RELEASE.2024-10-08T09-37-26Z
+      CLIENT_DIGEST: sha256:c0d345a438dcac5677c1158e4ac46637069b67b3cc38e7b04c08cf93bdee4a62
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Login to Docker Hub
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are required."
+            exit 1
+          fi
+          echo "$DOCKERHUB_TOKEN" | skopeo login docker.io \
+            --username "$DOCKERHUB_USERNAME" \
+            --password-stdin
+
+      - name: Verify source digests
+        run: |
+          verify_digest() {
+            image="$1"
+            expected="$2"
+            actual="sha256:$(skopeo inspect --raw "docker://$image" | sha256sum | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "Digest mismatch for $image. Expected $expected but found $actual."
+              exit 1
+            fi
+          }
+
+          verify_digest "$SERVER_UPSTREAM" "$SERVER_DIGEST"
+          verify_digest "$CLIENT_UPSTREAM" "$CLIENT_DIGEST"
+
+      - name: Copy pinned images
+        run: |
+          skopeo copy --all --preserve-digests \
+            "docker://$SERVER_UPSTREAM" \
+            "docker://$SERVER_MIRROR_TAG"
+          skopeo copy --all --preserve-digests \
+            "docker://$CLIENT_UPSTREAM" \
+            "docker://$CLIENT_MIRROR_TAG"
+
+      - name: Verify mirrored digests
+        run: |
+          verify_digest() {
+            image="$1"
+            expected="$2"
+            actual="sha256:$(skopeo inspect --raw "docker://$image" | sha256sum | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "Digest mismatch for $image. Expected $expected but found $actual."
+              exit 1
+            fi
+          }
+
+          verify_digest "$SERVER_MIRROR_TAG" "$SERVER_DIGEST"
+          verify_digest "$CLIENT_MIRROR_TAG" "$CLIENT_DIGEST"

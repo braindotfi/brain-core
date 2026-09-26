@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: pr-${{ github.ref }}
@@ -234,6 +235,12 @@ jobs:
 
       - name: Build workspace packages
         run: pnpm run build
+
+      - name: Login to GHCR for mirrored MinIO images
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password-stdin
 
       - name: Start scoped MinIO policy fixture
         run: |
